@@ -1,0 +1,97 @@
+#!/bin/bash
+
+INSTALL_DIR := @prefix@
+srcdir := $(shell cd @top_srcdir@ && pwd)
+
+PACKAGES := gcc
+gcc_version := 4.9.1
+
+GNU_MIRROR := ftp://mirrors.kernel.org/gnu
+
+MAKE_JOBS := 16
+
+LINUX_DIR := $(srcdir)/linux-headers/
+
+# Check that we have gawk installed.  Set awk=gawk if necessary.
+SHELL := /bin/sh
+ifeq ($(shell awk --version | grep GNU),)
+ifeq ($(shell gawk --version),)
+$(error You must have gawk installed on your system!)
+else
+SHELL := PATH="$(srcdir)/scripts:$(PATH)" $(SHELL)
+endif
+endif
+
+$(addprefix src/original-,$(PACKAGES)):
+	mkdir -p src
+	rm -rf $@ $(subst original-,,$@)-*
+	cd src && curl $(GNU_MIRROR)/$(subst src/original-,,$@)/$(subst src/original-,,$@)-$($(subst src/original-,,$@)_version)/$(subst src/original-,,$@)-$($(subst src/original-,,$@)_version).tar.bz2 | tar jx
+	mv $(subst original-,,$@)-$(gcc_version) $@
+
+$(addprefix src/,$(PACKAGES)): src/%: src/original-%
+	rm -rf $@.tmp
+	cp -r $< $@.tmp
+	cp -rs $(srcdir)/$(shell basename $@)/* $@.tmp
+	cd $@.tmp && patch -p1 < $(srcdir)/patches/$(shell basename $@)
+	mv $@.tmp $@
+
+.PHONY: patches $(addprefix $(srcdir)/patches/,$(PACKAGES))
+$(addprefix $(srcdir)/patches/,$(PACKAGES)): $(srcdir)/patches/%: src/%
+	-cd src/$(shell basename $@) && rm `cd $(srcdir)/$(shell basename $@) && find . -type f`
+	-cd src && diff -rupN original-$(shell basename $@) $(shell basename $@) | filterdiff --remove-timestamps > $@
+	cp -rs $(srcdir)/$(shell basename $@)/* src/$(shell basename $@)
+
+patches: $(addprefix $(srcdir)/patches/,$(PACKAGES))
+
+build-gcc-linux-stage1: src/gcc
+	-cp -rs $(srcdir)/gcc src 2> /dev/null
+	rm -rf $@
+	mkdir $@
+	cd $@ && $(shell pwd)/$</configure \
+		--target=riscv-linux \
+		--prefix=$(INSTALL_DIR) \
+		--enable-shared \
+		--disable-threads \
+		--enable-tls \
+		--enable-languages=c \
+		--disable-libatomic \
+		--disable-libmudflap \
+		--disable-libssp \
+		--disable-libquadmath \
+		--disable-libgomp \
+		--disable-nls \
+		--disable-multilib \
+		--disable-bootstrap
+	-$(MAKE) -C $@ -j $(MAKE_JOBS) inhibit-libc=true
+	$(MAKE) -C $@ -j $(MAKE_JOBS) install
+
+build-gcc-linux-stage2: src/gcc
+	-cp -rs $(srcdir)/gcc src 2> /dev/null
+	rm -rf $@
+	mkdir $@
+	cd $@ && $(shell pwd)/$</configure \
+		--target=riscv-linux \
+		--prefix=$(INSTALL_DIR) \
+		--enable-shared \
+		--disable-threads \
+		--enable-tls \
+		--enable-languages=c,c++ \
+		--disable-libatomic \
+		--disable-libmudflap \
+		--disable-libssp \
+		--disable-libquadmath \
+		--disable-nls \
+		--disable-multilib \
+		--disable-bootstrap \
+		--with-headers=$(LINUX_DIR)/include
+	$(MAKE) -C $@ -j $(MAKE_JOBS)
+	$(MAKE) -C $@ -j $(MAKE_JOBS) install
+
+clean:
+	rm -rf build-* $(addprefix src/,$(PACKAGES))
+
+distclean:
+	rm -rf build-* src
+
+# All of the packages install themselves, so our install target does nothing.
+install:
