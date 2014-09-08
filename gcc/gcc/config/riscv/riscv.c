@@ -2938,12 +2938,32 @@ mips_print_operand_reloc (FILE *file, rtx op, const char **relocs)
       fputc (')', file);
 }
 
+static const char *
+riscv_memory_model_suffix (enum memmodel model)
+{
+  switch (model)
+    {
+      case MEMMODEL_ACQ_REL:
+      case MEMMODEL_SEQ_CST:
+	return ".sc";
+      case MEMMODEL_ACQUIRE:
+      case MEMMODEL_CONSUME:
+	return ".aq";
+      case MEMMODEL_RELEASE:
+	return ".rl";
+      case MEMMODEL_RELAXED:
+	return "";
+      default: gcc_unreachable();
+    }
+}
+
 /* Implement TARGET_PRINT_OPERAND.  The MIPS-specific operand codes are:
 
    'h'	Print the high-part relocation associated with OP, after stripping
 	  any outermost HIGH.
    'R'	Print the low-part relocation associated with OP.
    'C'	Print the integer branch condition for comparison OP.
+   'A'	Print the atomic operation suffix for memory model OP.
    'z'	Print $0 if OP is zero, otherwise print OP normally.  */
 
 static void
@@ -2969,6 +2989,10 @@ mips_print_operand (FILE *file, rtx op, int letter)
     case 'C':
       /* The RTL names match the instruction names. */
       fputs (GET_RTX_NAME (code), file);
+      break;
+
+    case 'A':
+      fputs (riscv_memory_model_suffix ((enum memmodel)INTVAL (op)), file);
       break;
 
     default:
