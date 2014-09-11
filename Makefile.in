@@ -3,13 +3,15 @@
 INSTALL_DIR := @prefix@
 srcdir := $(shell cd @top_srcdir@ && pwd)
 
-PACKAGES := binutils gcc
+PACKAGES := binutils gcc glibc
 gcc_version := 4.9.1
 binutils_version := 2.24
+glibc_version := 2.20
 
 GNU_MIRROR := ftp://mirrors.kernel.org/gnu
 gcc_url := $(GNU_MIRROR)/gcc/gcc-$(gcc_version)/gcc-$(gcc_version).tar.bz2
 binutils_url := $(GNU_MIRROR)/binutils/binutils-$(binutils_version).tar.bz2
+glibc_url := $(GNU_MIRROR)/glibc/glibc-$(glibc_version).tar.bz2
 
 MAKE_JOBS := 16
 
@@ -24,6 +26,8 @@ else
 SHELL := PATH="$(srcdir)/scripts:$(PATH)" $(SHELL)
 endif
 endif
+
+linux: build-gcc-linux-stage2
 
 $(addprefix src/original-,$(PACKAGES)):
 	mkdir -p src
@@ -41,7 +45,7 @@ $(addprefix src/,$(PACKAGES)): src/%: src/original-%
 .PHONY: patches $(addprefix $(srcdir)/patches/,$(PACKAGES))
 $(addprefix $(srcdir)/patches/,$(PACKAGES)): $(srcdir)/patches/%: src/%
 	-cd src/$(shell basename $@) && rm `cd $(srcdir)/$(shell basename $@) && find . -type f`
-	-cd src && diff -rupN original-$(shell basename $@) $(shell basename $@) | filterdiff --remove-timestamps > $@
+	-cd src && diff --exclude=manual --exclude=autom4te.cache -rupN original-$(shell basename $@) $(shell basename $@) | filterdiff --remove-timestamps > $@
 	cp -rs $(srcdir)/$(shell basename $@)/* src/$(shell basename $@)
 
 patches: $(addprefix $(srcdir)/patches/,$(PACKAGES))
@@ -57,6 +61,22 @@ build-binutils-linux: src/binutils
 		--enable-languages=c \
 		--with-newlib \
 		--disable-multilib
+	$(MAKE) -C $@ -j $(MAKE_JOBS)
+	$(MAKE) -C $@ -j $(MAKE_JOBS) install
+
+build-glibc-linux: src/glibc build-gcc-linux-stage1
+	-cp -rs $(srcdir)/binutils src 2> /dev/null
+	rm -rf $@
+	mkdir $@
+	cd $@ && $(shell pwd)/$</configure \
+		--host=riscv-linux \
+		--prefix=$(INSTALL_DIR)/riscv-linux \
+		libc_cv_forced_unwind=yes \
+		libc_cv_c_cleanup=yes \
+		--enable-shared \
+		--enable-__thread \
+		--disable-multilib \
+		--with-headers=$(LINUX_DIR)/include
 	$(MAKE) -C $@ -j $(MAKE_JOBS)
 	$(MAKE) -C $@ -j $(MAKE_JOBS) install
 
@@ -82,7 +102,7 @@ build-gcc-linux-stage1: src/gcc build-binutils-linux
 	-$(MAKE) -C $@ -j $(MAKE_JOBS) inhibit-libc=true
 	$(MAKE) -C $@ -j $(MAKE_JOBS) install
 
-build-gcc-linux-stage2: src/gcc
+build-gcc-linux-stage2: src/gcc build-glibc-linux
 	-cp -rs $(srcdir)/gcc src 2> /dev/null
 	rm -rf $@
 	mkdir $@
