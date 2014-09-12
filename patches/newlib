@@ -1,0 +1,217 @@
+--- original-newlib/libgloss/configure
++++ newlib/libgloss/configure
+@@ -710,6 +710,7 @@ i960
+ sparc
+ wince
+ mips
++riscv
+ rs6000
+ mn10200
+ mn10300
+@@ -2470,6 +2471,10 @@ case "${target}" in
+ 	subdirs="$subdirs mips"
+ 
+ 	;;
++  riscv*-*-*)
++	subdirs="$subdirs riscv"
++
++	;;
+   powerpc-*-*|powerpcle-*-*)
+ 	subdirs="$subdirs rs6000"
+ 
+--- original-newlib/libgloss/configure.in
++++ newlib/libgloss/configure.in
+@@ -61,6 +61,9 @@ case "${target}" in
+   mips*-*-*)
+ 	AC_CONFIG_SUBDIRS([mips])
+ 	;;
++  riscv*-*-*)
++	AC_CONFIG_SUBDIRS([riscv])
++	;;
+   powerpc-*-*|powerpcle-*-*)
+ 	AC_CONFIG_SUBDIRS([rs6000])
+ 	;;
+--- original-newlib/newlib/configure.host
++++ newlib/newlib/configure.host
+@@ -198,6 +198,10 @@ case "${host_cpu}" in
+   mep)
+ 	machine_dir=mep
+ 	;;
++  riscv*)
++	machine_dir=riscv
++	newlib_cflags="${newlib_cflags} -DREENTRANT_SYSCALLS_PROVIDED"
++	;;
+   mips*)
+ 	machine_dir=mips
+ 	;;
+--- original-newlib/newlib/libc/include/machine/ieeefp.h
++++ newlib/newlib/libc/include/machine/ieeefp.h
+@@ -152,6 +152,14 @@
+ #define __IEEE_LITTLE_ENDIAN
+ #endif
+ 
++#ifdef __riscv__
++# ifdef _RISCVEL
++#  define __IEEE_LITTLE_ENDIAN
++# else
++#  define __IEEE_BIG_ENDIAN
++# endif
++#endif
++
+ #ifdef __i960__
+ #define __IEEE_LITTLE_ENDIAN
+ #endif
+--- original-newlib/newlib/libc/include/machine/setjmp.h
++++ newlib/newlib/libc/include/machine/setjmp.h
+@@ -258,6 +258,11 @@ _BEGIN_STD_C
+ #define _JBLEN 0x44
+ #endif
+ 
++#ifdef __riscv__
++#define _JBTYPE long
++#define _JBLEN ((16*sizeof(long) + 16*sizeof(double))/sizeof(long))
++#endif
++
+ #ifdef _JBLEN
+ #ifdef _JBTYPE
+ typedef	_JBTYPE jmp_buf[_JBLEN];
+--- original-newlib/newlib/libc/include/sys/stat.h
++++ newlib/newlib/libc/include/sys/stat.h
+@@ -31,8 +31,23 @@ struct	stat
+   uid_t		st_uid;
+   gid_t		st_gid;
+   dev_t		st_rdev;
++#if defined(__riscv__)
++  dev_t		__pad1;
++#endif
+   off_t		st_size;
+-#if defined(__rtems__)
++#if defined(__riscv__)
++  unsigned int	st_blksize;
++  unsigned int	__pad2;
++  unsigned long long	st_blocks;
++  time_t	st_atime;
++  time_t	__pad3;
++  time_t	st_mtime;
++  time_t	__pad4;
++  time_t	st_ctime;
++  time_t	__pad5;
++  unsigned int	__unused4;
++  unsigned int	__unused5;
++#elif defined(__rtems__)
+   struct timespec st_atim;
+   struct timespec st_mtim;
+   struct timespec st_ctim;
+--- original-newlib/newlib/libc/include/sys/types.h
++++ newlib/newlib/libc/include/sys/types.h
+@@ -125,6 +125,9 @@ struct itimerspec {
+ typedef	long	daddr_t;
+ typedef	char *	caddr_t;
+ 
++#ifdef __ino_t_defined
++typedef __ino_t ino_t;
++#else
+ #ifndef __CYGWIN__
+ #if defined(__MS_types__) || defined(__rtems__) || \
+     defined(__sparc__) || defined(__SPU__)
+@@ -133,6 +136,7 @@ typedef	unsigned long	ino_t;
+ typedef	unsigned short	ino_t;
+ #endif
+ #endif /*__CYGWIN__*/
++#endif /*__ino_t_defined*/
+ 
+ #ifdef __MS_types__
+ typedef unsigned long vm_offset_t;
+@@ -176,6 +180,9 @@ typedef	long key_t;
+ #endif
+ typedef _ssize_t ssize_t;
+ 
++#ifdef __mode_t_defined
++typedef __mode_t mode_t;
++#else
+ #ifndef __CYGWIN__
+ #ifdef __MS_types__
+ typedef	char *	addr_t;
+@@ -192,8 +199,13 @@ typedef unsigned int mode_t _ST_INT32;
+ #endif
+ #endif /* ! __MS_types__ */
+ #endif /*__CYGWIN__*/
++#endif /*__mode_t_defined*/
+ 
++#ifdef __nlink_t_defined
++typedef __nlink_t nlink_t;
++#else
+ typedef unsigned short nlink_t;
++#endif /*__nlink_t_defined*/
+ 
+ /* We don't define fd_set and friends if we are compiling POSIX
+    source, or if we have included (or may include as indicated
+--- original-newlib/newlib/libc/libc.texinfo
++++ newlib/newlib/libc/libc.texinfo
+@@ -426,7 +426,7 @@ usage as the ANSI C version from @file{s
+ @printindex cp
+ 
+ @tex
+-% I think something like @colophon should be in texinfo.  In the
++% I think something like @@colophon should be in texinfo.  In the
+ % meantime:
+ \long\def\colophon{\hbox to0pt{}\vfill
+ \centerline{The body of this manual is set in}
+@@ -437,7 +437,7 @@ usage as the ANSI C version from @file{s
+ \centerline{{\sl\fontname\tensl\/}}
+ \centerline{are used for emphasis.}\vfill}
+ \page\colophon
+-% Blame: pesch@cygnus.com, 28mar91.
++% Blame: pesch@@cygnus.com, 28mar91.
+ @end tex
+ 
+ @contents
+--- original-newlib/newlib/libc/machine/configure
++++ newlib/newlib/libc/machine/configure
+@@ -981,6 +981,7 @@ m88k
+ mep
+ microblaze
+ mips
++riscv
+ mn10200
+ mn10300
+ moxie
+@@ -12665,6 +12666,8 @@ subdirs="$subdirs a29k"
+  ;;
+ 	mips) subdirs="$subdirs mips"
+  ;;
++	riscv) subdirs="$subdirs riscv"
++ ;;
+ 	mn10200) subdirs="$subdirs mn10200"
+  ;;
+ 	mn10300) subdirs="$subdirs mn10300"
+--- original-newlib/newlib/libc/machine/configure.in
++++ newlib/newlib/libc/machine/configure.in
+@@ -46,6 +46,7 @@ if test -n "${machine_dir}"; then
+ 	mep ) AC_CONFIG_SUBDIRS(mep) ;;
+ 	microblaze ) AC_CONFIG_SUBDIRS(microblaze) ;;
+ 	mips) AC_CONFIG_SUBDIRS(mips) ;;
++	riscv) AC_CONFIG_SUBDIRS(riscv) ;;
+ 	mn10200) AC_CONFIG_SUBDIRS(mn10200) ;;
+ 	mn10300) AC_CONFIG_SUBDIRS(mn10300) ;;
+ 	moxie) AC_CONFIG_SUBDIRS(moxie) ;;
+--- original-newlib/newlib/libm/libm.texinfo
++++ newlib/newlib/libm/libm.texinfo
+@@ -134,7 +134,7 @@ For such platforms, the long double math
+ @printindex cp
+ 
+ @tex
+-% I think something like @colophon should be in texinfo.  In the
++% I think something like @@colophon should be in texinfo.  In the
+ % meantime:
+ \long\def\colophon{\hbox to0pt{}\vfill
+ \centerline{The body of this manual is set in}
+@@ -145,7 +145,7 @@ For such platforms, the long double math
+ \centerline{{\sl\fontname\tensl\/}}
+ \centerline{are used for emphasis.}\vfill}
+ \page\colophon
+-% Blame: pesch@cygnus.com, 28mar91.
++% Blame: pesch@@cygnus.com, 28mar91.
+ @end tex
+ 
+ @contents

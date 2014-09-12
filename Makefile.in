@@ -3,15 +3,17 @@
 INSTALL_DIR := @prefix@
 srcdir := $(shell cd @top_srcdir@ && pwd)
 
-PACKAGES := binutils gcc glibc
+PACKAGES := binutils gcc glibc newlib
 gcc_version := 4.9.1
 binutils_version := 2.24
 glibc_version := 2.20
+newlib_version := 1.18.0
 
 GNU_MIRROR := ftp://mirrors.kernel.org/gnu
-gcc_url := $(GNU_MIRROR)/gcc/gcc-$(gcc_version)/gcc-$(gcc_version).tar.bz2
-binutils_url := $(GNU_MIRROR)/binutils/binutils-$(binutils_version).tar.bz2
-glibc_url := $(GNU_MIRROR)/glibc/glibc-$(glibc_version).tar.bz2
+gcc_url := $(GNU_MIRROR)/gcc/gcc-$(gcc_version)/gcc-$(gcc_version).tar.gz
+binutils_url := $(GNU_MIRROR)/binutils/binutils-$(binutils_version).tar.gz
+glibc_url := $(GNU_MIRROR)/glibc/glibc-$(glibc_version).tar.gz
+newlib_url := ftp://sourceware.org/pub/newlib/newlib-$(newlib_version).tar.gz
 
 MAKE_JOBS := 16
 
@@ -27,12 +29,14 @@ SHELL := PATH="$(srcdir)/scripts:$(PATH)" $(SHELL)
 endif
 endif
 
+newlib: build-gcc-newlib
+
 linux: build-gcc-linux-stage2
 
 $(addprefix src/original-,$(PACKAGES)):
 	mkdir -p src
 	rm -rf $@ $(subst original-,,$@)-*
-	cd src && curl $($(subst src/original-,,$@)_url) | tar jx
+	cd src && curl $($(subst src/original-,,$@)_url) | tar zx
 	mv $(subst original-,,$@)-$($(subst src/original-,,$@)_version) $@
 
 $(addprefix src/,$(PACKAGES)): src/%: src/original-%
@@ -58,8 +62,6 @@ build-binutils-linux: src/binutils
 		--target=riscv-linux \
 		--prefix=$(INSTALL_DIR) \
 		--enable-tls \
-		--enable-languages=c \
-		--with-newlib \
 		--disable-multilib
 	$(MAKE) -C $@ -j $(MAKE_JOBS)
 	$(MAKE) -C $@ -j $(MAKE_JOBS) install
@@ -121,6 +123,46 @@ build-gcc-linux-stage2: src/gcc build-glibc-linux
 		--with-headers=$(LINUX_DIR)/include
 	$(MAKE) -C $@ -j $(MAKE_JOBS)
 	$(MAKE) -C $@ -j $(MAKE_JOBS) install
+
+build-binutils-newlib: src/binutils
+	-cp -rs $(srcdir)/binutils src 2> /dev/null
+	rm -rf $@
+	mkdir $@
+	cd $@ && \
+	CFLAGS+=-Wno-error=deprecated-declarations \
+	$(shell pwd)/$</configure \
+		--target=riscv-elf \
+		--prefix=$(INSTALL_DIR) \
+		--enable-tls
+	$(MAKE) -C $@ -j $(MAKE_JOBS)
+	$(MAKE) -C $@ -j $(MAKE_JOBS) install
+
+src/newlib-gcc: src/gcc src/newlib
+	rm -rf $@
+	cp -rs $(shell pwd)/src/gcc $@
+	cp -rs $(shell pwd)/src/newlib/newlib $@
+	cp -rs $(shell pwd)/src/newlib/libgloss $@
+
+build-gcc-newlib: src/newlib-gcc build-binutils-newlib
+	-cp -rs $(srcdir)/binutils src 2> /dev/null
+	rm -rf $@
+	mkdir $@
+	cd $@ && $(shell pwd)/$</configure \
+		--target=riscv-elf \
+		--prefix=$(INSTALL_DIR) \
+		--disable-shared \
+		--disable-threads \
+		--enable-tls \
+		--enable-languages=c,c++ \
+		--with-newlib \
+		--disable-libmudflap \
+		--disable-libssp \
+		--disable-libquadmath \
+		--disable-libgomp \
+		--disable-nls
+	$(MAKE) -C $@ -j $(MAKE_JOBS) inhibit-libc=true
+	$(MAKE) -C $@ -j $(MAKE_JOBS) install
+	for i in $(INSTALL_DIR)/bin/riscv-elf-*; do j=`echo $$i | sed 's/riscv-elf-/riscv-/'`; if [ ! -f $$j ]; then ln -s `basename $$i` $$j; fi; done
 
 clean:
 	rm -rf build-* $(addprefix src/,$(PACKAGES))

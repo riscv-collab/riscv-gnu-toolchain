@@ -1,0 +1,218 @@
+#-------------------------------------------------------------------------
+# Source files
+#-------------------------------------------------------------------------
+
+gloss_hdrs = \
+	machine/syscfg.h \
+	machine/syscall.h \
+	machine/bthread.h \
+	memory.h \
+
+gloss_srcs = \
+	syscalls.c \
+	bthread-keys.c \
+
+# Extra files
+
+crt0_asm      = crt0.S
+linker_script = riscv.ld
+
+# Multilib support variables.
+# TOP is used instead of MULTI{BUILD,SRC}TOP.
+
+MULTIDIRS =
+MULTISUBDIR =
+MULTIDO = true
+MULTICLEAN = true
+
+#-------------------------------------------------------------------------
+# Basic setup
+#-------------------------------------------------------------------------
+
+# Remove all default implicit rules since they can cause subtle bugs
+# and they just make things run slower
+
+.SUFFIXES:
+% : %,v
+% : RCS/%,v
+% : RCS/%
+% : s.%
+% : SCCS/s.%
+
+# Default is to build the prereqs of the all target (defined at bottom)
+
+default : all
+.PHONY : default
+
+# Source directory
+
+obj_dir := .
+src_dir := @srcdir@
+VPATH   := $(src_dir) $(src_dir)/machine
+
+# Installation directories
+
+prefix  := @prefix@
+DESTDIR ?= $(prefix)
+
+install_hdrs_dir := $(DESTDIR)$(prefix)/$(target_alias)/include/machine
+install_libs_dir  = $(DESTDIR)$(prefix)/$(target_alias)/lib${MULTISUBDIR}
+
+#-------------------------------------------------------------------------
+# Programs and flags 
+#-------------------------------------------------------------------------
+
+# C compiler
+
+CC            := @CC@
+CFLAGS        := @CFLAGS@
+CPPFLAGS      := -I$(obj_dir) -I$(src_dir)
+COMPILE       := $(CC) -MMD -MP $(CPPFLAGS) $(CFLAGS)
+
+# Library creation
+
+AR            := @AR@
+RANLIB        := @RANLIB@
+
+# Installation
+
+MKINSTALLDIRS := $(src_dir)/mk-install-dirs.sh
+INSTALL       := @INSTALL@
+INSTALL_HDR   := $(INSTALL) -m 444
+INSTALL_LIB   := $(INSTALL) -m 644
+
+#-------------------------------------------------------------------------
+# Build Object Files from C Source
+#-------------------------------------------------------------------------
+
+gloss_c_srcs = $(filter %.c, $(gloss_srcs))
+gloss_c_objs = $(patsubst %.c, %.o, $(notdir $(gloss_c_srcs)))
+gloss_c_deps = $(patsubst %.c, %.d, $(notdir $(gloss_c_srcs)))
+
+$(gloss_c_objs) : %.o : %.c
+	$(COMPILE) -c $<
+
+objs += $(gloss_c_objs)
+deps += $(gloss_c_deps)
+junk += $(gloss_c_deps) $(gloss_c_objs)
+
+#-------------------------------------------------------------------------
+# Build Object Files from Assembly Source
+#-------------------------------------------------------------------------
+
+gloss_asm_srcs = $(filter %.S, $(gloss_srcs))
+gloss_asm_objs = $(patsubst %.S, %.o, $(notdir $(gloss_asm_srcs)))
+gloss_asm_deps = $(patsubst %.S, %.d, $(notdir $(gloss_asm_srcs)))
+
+$(gloss_asm_objs) : %.o : %.S
+	$(COMPILE) -c $<
+
+objs += $(gloss_asm_objs)
+deps += $(gloss_asm_deps)
+junk += $(gloss_asm_deps) $(gloss_asm_objs)
+
+#-------------------------------------------------------------------------
+# Build libgloss.a
+#-------------------------------------------------------------------------
+
+gloss_lib  = libgloss.a
+$(gloss_lib) : $(objs)
+	$(AR) rcv $@ $^
+	$(RANLIB) $@
+
+junk += $(gloss_libs)
+
+install_hdrs += $(gloss_hdrs)
+install_libs += $(gloss_lib)
+
+#-------------------------------------------------------------------------
+# Build crt0.o
+#-------------------------------------------------------------------------
+
+crt0_obj  = $(patsubst %.S, %.o, $(crt0_asm))
+crt0_deps = $(patsubst %.S, %.d, $(crt0_asm))
+
+$(crt0_obj) : %.o : %.S
+	$(COMPILE) -c $<
+
+deps += $(crt0_deps)
+junk += $(crt0_deps) $(crt0_obj)
+
+install_libs += $(crt0_obj)
+
+#-------------------------------------------------------------------------
+# Linker Script
+#-------------------------------------------------------------------------
+# Currently we install the maven linker script in the target lib
+# directory. This should by default be part of gcc's search path, and we
+# have also changed mips-maven.h so that the default maven spec file
+# always includes -Tmaven.ld on the linker command line. There is
+# probably a better way to handle setting up the default linker script.
+
+install_libs += $(addprefix $(src_dir)/, $(linker_script))
+
+#-------------------------------------------------------------------------
+# Autodependency files
+#-------------------------------------------------------------------------
+
+-include $(deps)
+
+deps : $(deps)
+.PHONY : deps
+
+#-------------------------------------------------------------------------
+# Installation
+#-------------------------------------------------------------------------
+
+install_hdrs_wdir += $(addprefix $(src_dir)/, $(install_hdrs))
+install-hdrs : $(install_hdrs_wdir)
+	$(MKINSTALLDIRS) $(install_hdrs_dir)
+	for file in $^; do \
+    $(INSTALL_HDR) $$file $(install_hdrs_dir); \
+  done
+
+install-libs : $(install_libs)
+	$(MKINSTALLDIRS) $(install_libs_dir)
+	for file in $^; do \
+    $(INSTALL_LIB) $$file $(install_libs_dir); \
+  done
+
+install : install-hdrs install-libs 
+.PHONY : install install-hdrs install-libs
+
+#-------------------------------------------------------------------------
+# Regenerate configure information
+#-------------------------------------------------------------------------
+
+configure_prereq = \
+  $(src_dir)/configure.ac \
+
+$(src_dir)/configure : $(configure_prereq)
+	cd $(src_dir) && autoconf
+
+config.status : $(src_dir)/configure
+	./config.status --recheck
+
+Makefile : $(src_dir)/Makefile.in config.status
+	./config.status
+
+dist_junk += config.status Makefile config.log
+
+#-------------------------------------------------------------------------
+# Default
+#-------------------------------------------------------------------------
+
+all : $(install_libs)
+.PHONY : all
+
+#-------------------------------------------------------------------------
+# Clean up junk
+#-------------------------------------------------------------------------
+
+clean :
+	rm -rf *~ \#* $(junk)
+
+distclean :
+	rm -rf *~ \#* $(junk) $(dist_junk)
+
+.PHONY : clean distclean
