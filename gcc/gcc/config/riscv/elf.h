@@ -23,9 +23,9 @@ along with GCC; see the file COPYING3.  If not see
 #define LIB_SPEC ""
 
 #undef  STARTFILE_SPEC
-#define STARTFILE_SPEC "crti%O%s crtbegin%O%s"
+#define STARTFILE_SPEC "crt0%O%s crtbegin%O%s"
 
 #undef  ENDFILE_SPEC
-#define ENDFILE_SPEC "crtend%O%s crtn%O%s"
+#define ENDFILE_SPEC "crtend%O%s"
 
 #define NO_IMPLICIT_EXTERN_C 1
