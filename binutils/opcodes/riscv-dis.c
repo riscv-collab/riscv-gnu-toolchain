@@ -431,13 +431,13 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
 	  break;
 
 	case '>':
-	  (*info->fprintf_func) (info->stream, "0x%lx",
-				 (l >> OP_SH_SHAMT) & OP_MASK_SHAMT);
+	  (*info->fprintf_func) (info->stream, "0x%x",
+				 (unsigned)((l >> OP_SH_SHAMT) & OP_MASK_SHAMT));
 	  break;
 
 	case '<':
-	  (*info->fprintf_func) (info->stream, "0x%lx",
-				 (l >> OP_SH_SHAMTW) & OP_MASK_SHAMTW);
+	  (*info->fprintf_func) (info->stream, "0x%x",
+				 (unsigned)((l >> OP_SH_SHAMTW) & OP_MASK_SHAMTW));
 	  break;
 
 	case 'S':
