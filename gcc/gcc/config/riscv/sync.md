@@ -134,7 +134,7 @@
    (match_operand:SI 5 "const_int_operand" "")  ;; is_weak
    (match_operand:SI 6 "const_int_operand" "")  ;; mod_s
    (match_operand:SI 7 "const_int_operand" "")] ;; mod_f
-  ""
+  "TARGET_ATOMIC"
 {
   emit_insn (gen_atomic_cas_value_strong<mode> (operands[1], operands[2],
 						operands[3], operands[4],
@@ -159,7 +159,7 @@
   [(match_operand:QI 0 "register_operand" "")     ;; bool output
    (match_operand:QI 1 "memory_operand" "+YR")    ;; memory
    (match_operand:SI 2 "const_int_operand" "")]   ;; model
-  ""
+  "TARGET_ATOMIC"
 {
   /* We have no QImode atomics, so use the address LSBs to form a mask,
      then use an aligned SImode atomic. */
