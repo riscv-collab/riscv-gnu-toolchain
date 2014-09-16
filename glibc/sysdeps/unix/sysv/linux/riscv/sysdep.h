@@ -1,5 +1,4 @@
-/* Copyright (C) 2000, 2002, 2003, 2004, 2005, 2006, 2009
-   Free Software Foundation, Inc.
+/* Copyright (C) 2011-2014
    This file is part of the GNU C Library.
 
    The GNU C Library is free software; you can redistribute it and/or
@@ -13,22 +12,15 @@
    Lesser General Public License for more details.
 
    You should have received a copy of the GNU Lesser General Public
-   License along with the GNU C Library; if not, write to the Free
-   Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-   02111-1307 USA.  */
+   License along with the GNU C Library.  If not, see
+   <http://www.gnu.org/licenses/>.  */
 
-#ifndef _LINUX_MIPS_SYSDEP_H
-#define _LINUX_MIPS_SYSDEP_H 1
+#ifndef _LINUX_RISCV_SYSDEP_H
+#define _LINUX_RISCV_SYSDEP_H 1
 
-/* There is some commonality.  */
 #include <sysdeps/unix/riscv/sysdep.h>
-
+#include <sysdeps/unix/sysv/linux/generic/sysdep.h>
 #include <tls.h>
-
-/* In order to get __set_errno() definition in INLINE_SYSCALL.  */
-#ifndef __ASSEMBLER__
-#include <errno.h>
-#endif
 
 /* For Linux we can use the system call table in the header file
 	/usr/include/asm/unistd.h
@@ -41,15 +33,10 @@
 # define SYS_ify(syscall_name)	__NR_/**/syscall_name
 #endif
 
-#ifdef __ASSEMBLER__
+#ifndef __ASSEMBLER__
 
-/* We don't want the label for the error handler to be visible in the symbol
-   table when we define it here.  */
-#ifdef __PIC__
-# define SYSCALL_ERROR_LABEL 99b
-#endif
-
-#else   /* ! __ASSEMBLER__ */
+/* In order to get __set_errno() definition in INLINE_SYSCALL.  */
+#include <errno.h>
 
 /* Define a macro which expands into the inline wrapper code for a system
    call.  */
@@ -238,7 +225,7 @@
 })
 
 #define __SYSCALL_CLOBBERS "v1", "memory"
-#endif /* __ASSEMBLER__ */
+#endif /* ! __ASSEMBLER__ */
 
 /* Pointer mangling is not supported.  */
 #define PTR_MANGLE(var) (void) (var)

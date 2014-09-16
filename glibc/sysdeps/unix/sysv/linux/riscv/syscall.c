@@ -27,10 +27,10 @@ long syscall (long syscall_number, long arg1, long arg2, long arg3,
 			     arg5, arg6, arg7);
 
   if (INTERNAL_SYSCALL_ERROR_P(ret, err))
-  {
-    __set_errno(INTERNAL_SYSCALL_ERRNO(ret, err));
-    ret = -1;
-  }
+    {
+      extern long __syscall_error() attribute_hidden;
+      return __syscall_error();
+    }
 
   return ret;
 }
