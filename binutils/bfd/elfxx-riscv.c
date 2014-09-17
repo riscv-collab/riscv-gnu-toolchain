@@ -3396,14 +3396,12 @@ _bfd_riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	    h->pointer_equality_needed = TRUE;
 	  /* Fall through.  */
 
-	case R_RISCV_CALL_PLT:
-	  if (info->shared && h)
-	    h->needs_plt = TRUE;
 	case R_RISCV_JAL:
 	case R_RISCV_CALL:
+	case R_RISCV_CALL_PLT:
+	case R_RISCV_BRANCH:
 	  if (h)
 	    ((struct mips_elf_link_hash_entry *) h)->has_static_relocs = TRUE;
-	case R_RISCV_BRANCH:
 	  break;
 	}
 
@@ -3507,7 +3505,9 @@ _bfd_riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 
 	  break;
 
-	case R_RISCV_JAL:
+	case R_RISCV_CALL_PLT:
+	  if (info->shared && h)
+	    h->needs_plt = TRUE;
 	  break;
 
 	case R_RISCV_HI20:
