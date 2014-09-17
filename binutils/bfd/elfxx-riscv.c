@@ -3657,37 +3657,32 @@ _bfd_riscv_elf_adjust_dynamic_symbol (struct bfd_link_info *info,
       return TRUE;
     }
 
-  /* Otherwise, there is nothing further to do for symbols defined
-     in regular objects.  */
-  if (h->def_regular)
-    return TRUE;
-
-  /* There's also nothing more to do if we'll convert all relocations
-     against this symbol into dynamic relocations.  */
-  if (!hmips->has_static_relocs)
-    return TRUE;
-
-  /* We must allocate the symbol in our .dynbss section, which will
-     become part of the .bss section of the executable.  There will be
-     an entry for this symbol in the .dynsym section.  The dynamic
-     object will contain position independent code, so all references
-     from the dynamic object to this symbol will go through the global
-     offset table.  The dynamic linker will use the .dynsym entry to
-     determine the address it must put in the global offset table, so
-     both the dynamic object and the regular object will refer to the
-     same memory location for the variable.  */
-
-  if ((h->root.u.def.section->flags & SEC_ALLOC) != 0)
+  if (!info->shared && !h->def_regular && hmips->has_static_relocs)
     {
-      mips_elf_allocate_dynamic_relocations (dynobj, info, 1);
-      h->needs_copy = 1;
+      /* We must allocate the symbol in our .dynbss section, which will
+	 become part of the .bss section of the executable.  There will be
+	 an entry for this symbol in the .dynsym section.  The dynamic
+	 object will contain position independent code, so all references
+	 from the dynamic object to this symbol will go through the global
+	 offset table.  The dynamic linker will use the .dynsym entry to
+	 determine the address it must put in the global offset table, so
+	 both the dynamic object and the regular object will refer to the
+	 same memory location for the variable.  */
+
+      if ((h->root.u.def.section->flags & SEC_ALLOC) != 0)
+	{
+	  mips_elf_allocate_dynamic_relocations (dynobj, info, 1);
+	  h->needs_copy = 1;
+	}
+
+      /* All relocations against this symbol that could have been made
+	 dynamic will now refer to the local copy instead.  */
+      hmips->possibly_dynamic_relocs = 0;
+
+      return _bfd_elf_adjust_dynamic_copy (h, htab->sdynbss);
     }
 
-  /* All relocations against this symbol that could have been made
-     dynamic will now refer to the local copy instead.  */
-  hmips->possibly_dynamic_relocs = 0;
-
-  return _bfd_elf_adjust_dynamic_copy (h, htab->sdynbss);
+  return TRUE;
 }
 
 bfd_boolean
