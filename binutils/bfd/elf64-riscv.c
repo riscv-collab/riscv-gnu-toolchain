@@ -1,10 +1,8 @@
-/* MIPS-specific support for 64-bit ELF
-   Copyright 1996, 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005,
-   2006, 2007, 2008, 2009, 2010
-   Free Software Foundation, Inc.
-   Ian Lance Taylor, Cygnus Support
-   Linker support added by Mark Mitchell, CodeSourcery, LLC.
-   <mark@codesourcery.com>
+/* RISC-V-specific support for 64-bit ELF
+   Copyright 2011-2014 Free Software Foundation, Inc.
+
+   Contributed by Andrew Waterman (waterman@cs.berkeley.edu) at UC Berkeley.
+   Based on MIPS target.
 
    This file is part of BFD, the Binary File Descriptor library.
 
@@ -24,24 +22,7 @@
    MA 02110-1301, USA.  */
 
 
-/* This file supports the 64-bit MIPS ELF ABI.
-
-   The MIPS 64-bit ELF ABI uses an unusual reloc format.  This file
-   overrides the usual ELF reloc handling, and handles reading and
-   writing the relocations here.  */
-
-/* TODO: Many things are unsupported, even if there is some code for it
- .       (which was mostly stolen from elf32-mips.c and slightly adapted).
- .
- .   - Relocation handling for REL relocs is wrong in many cases and
- .     generally untested.
- .   - Relocation handling for RELA relocs related to GOT support are
- .     also likely to be wrong.
- .   - Support for MIPS16 is untested.
- .   - Combined relocs with RSS_* entries are unsupported.
- .   - The whole GOT handling for NewABI is missing, some parts of
- .     the OldABI version is still lying around and should be removed.
- */
+/* This file supports the 64-bit RISC-V ELF ABI. */
 
 #include "sysdep.h"
 #include "bfd.h"
@@ -56,20 +37,20 @@
 
 #include "opcode/riscv.h"
 
-static bfd_boolean mips_elf64_object_p
+static bfd_boolean riscv_elf64_object_p
   (bfd *);
-static bfd_boolean elf64_mips_grok_prstatus
+static bfd_boolean elf64_riscv_grok_prstatus
   (bfd *, Elf_Internal_Note *);
-static bfd_boolean elf64_mips_grok_psinfo
+static bfd_boolean elf64_riscv_grok_psinfo
   (bfd *, Elf_Internal_Note *);
 
 /* The number of local .got entries we reserve.  */
-#define MIPS_RESERVED_GOTNO (2)
+#define RISCV_RESERVED_GOTNO (2)
 
-/* Set the right machine number for a MIPS ELF file.  */
+/* Set the right machine number for a RISC-V ELF file.  */
 
 static bfd_boolean
-mips_elf64_object_p (bfd *abfd)
+riscv_elf64_object_p (bfd *abfd)
 {
   bfd_default_set_arch_mach (abfd, bfd_arch_riscv, bfd_mach_riscv64);
   return TRUE;
@@ -77,7 +58,7 @@ mips_elf64_object_p (bfd *abfd)
 
 /* Support for core dump NOTE sections.  */
 static bfd_boolean
-elf64_mips_grok_prstatus (bfd *abfd, Elf_Internal_Note *note)
+elf64_riscv_grok_prstatus (bfd *abfd, Elf_Internal_Note *note)
 {
   int offset;
   unsigned int size;
@@ -87,7 +68,7 @@ elf64_mips_grok_prstatus (bfd *abfd, Elf_Internal_Note *note)
       default:
 	return FALSE;
 
-      case 480:		/* Linux/MIPS - N64 kernel */
+      case 480:		/* Linux/RISC-V - N64 kernel */
 	/* pr_cursig */
 	elf_tdata (abfd)->core->signal = bfd_get_16 (abfd, note->descdata + 12);
 
@@ -107,14 +88,14 @@ elf64_mips_grok_prstatus (bfd *abfd, Elf_Internal_Note *note)
 }
 
 static bfd_boolean
-elf64_mips_grok_psinfo (bfd *abfd, Elf_Internal_Note *note)
+elf64_riscv_grok_psinfo (bfd *abfd, Elf_Internal_Note *note)
 {
   switch (note->descsz)
     {
       default:
 	return FALSE;
 
-      case 136:		/* Linux/MIPS - N64 kernel elf_prpsinfo */
+      case 136:		/* Linux/RISC-V - 64-bit kernel elf_prpsinfo */
 	elf_tdata (abfd)->core->program
 	 = _bfd_elfcore_strndup (abfd, note->descdata + 40, 16);
 	elf_tdata (abfd)->core->command
@@ -137,14 +118,14 @@ elf64_mips_grok_psinfo (bfd *abfd, Elf_Internal_Note *note)
 }
 
 #define ELF_ARCH			bfd_arch_riscv
-#define ELF_TARGET_ID			MIPS_ELF_DATA
+#define ELF_TARGET_ID			RISCV_ELF_DATA
 #define ELF_MACHINE_CODE		EM_RISCV
 
 #define elf_backend_collect		TRUE
 #define elf_backend_type_change_ok	TRUE
 #define elf_backend_can_gc_sections	TRUE
 #define elf_info_to_howto		riscv_elf_info_to_howto_rela
-#define elf_backend_object_p		mips_elf64_object_p
+#define elf_backend_object_p		riscv_elf64_object_p
 #define elf_backend_symbol_processing	_bfd_riscv_elf_symbol_processing
 #define elf_backend_create_dynamic_sections \
 				_bfd_riscv_elf_create_dynamic_sections
@@ -172,12 +153,12 @@ elf64_mips_grok_psinfo (bfd *abfd, Elf_Internal_Note *note)
 #define elf_backend_ignore_discarded_relocs \
 					_bfd_riscv_elf_ignore_discarded_relocs
 
-#define elf_backend_grok_prstatus	elf64_mips_grok_prstatus
-#define elf_backend_grok_psinfo		elf64_mips_grok_psinfo
+#define elf_backend_grok_prstatus	elf64_riscv_grok_prstatus
+#define elf_backend_grok_psinfo		elf64_riscv_grok_psinfo
 
-#define elf_backend_got_header_size	(4 * MIPS_RESERVED_GOTNO)
+#define elf_backend_got_header_size	(4 * RISCV_RESERVED_GOTNO)
 
-/* MIPS ELF64 can use a mixture of REL and RELA, but some Relocations
+/* RISC-V ELF64 can use a mixture of REL and RELA, but some Relocations
    work better/work only in RELA, so we default to this.  */
 #define elf_backend_may_use_rel_p	1
 #define elf_backend_may_use_rela_p	1
@@ -190,9 +171,6 @@ elf64_mips_grok_psinfo (bfd *abfd, Elf_Internal_Note *note)
 
 #define elf_backend_write_section	_bfd_riscv_elf_write_section
 
-/* We don't set bfd_elf64_bfd_is_local_label_name because the 32-bit
-   MIPS-specific function only applies to IRIX5, which had no 64-bit
-   ABI.  */
 #define bfd_elf64_new_section_hook	_bfd_riscv_elf_new_section_hook
 #define bfd_elf64_bfd_get_relocated_section_contents \
 				bfd_generic_get_relocated_section_contents
@@ -206,7 +184,7 @@ elf64_mips_grok_psinfo (bfd *abfd, Elf_Internal_Note *note)
 
 #define bfd_elf64_bfd_relax_section     _bfd_riscv_relax_section
 
-/* MIPS ELF64 archive functions.  */
+/* RISC-V ELF64 archive functions.  */
 #define bfd_elf64_archive_functions
 extern bfd_boolean bfd_elf64_archive_slurp_armap
   (bfd *);
@@ -232,7 +210,7 @@ extern bfd_boolean bfd_elf64_archive_write_armap
 			riscv_elf_bfd_reloc_type_lookup
 #define bfd_elf64_bfd_reloc_name_lookup \
 			riscv_elf_bfd_reloc_name_lookup
-/* The SGI style (n)64 NewABI.  */
+
 #define TARGET_LITTLE_SYM		bfd_elf64_riscv_vec
 #define TARGET_LITTLE_NAME		"elf64-littleriscv"
 

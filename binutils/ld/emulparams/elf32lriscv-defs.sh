@@ -1,7 +1,7 @@
 # This is an ELF platform.
 SCRIPT_NAME=elf
 
-# Handle both big- and little-ended 32-bit MIPS objects.
+# Handle both big- and little-ended 32-bit RISC-V objects.
 ARCH=riscv
 OUTPUT_FORMAT="elf32-littleriscv"
 
@@ -30,7 +30,7 @@ SHLIB_TEXT_START_ADDR=0x1000000
 MAXPAGESIZE="CONSTANT (MAXPAGESIZE)"
 ENTRY=_start
 
-# Unlike most targets, the MIPS backend puts all dynamic relocations
+# Unlike most targets, the RISC-V backend puts all dynamic relocations
 # in a single dynobj section, which it also calls ".rel.dyn".  It does
 # this so that it can easily sort all dynamic relocations before the
 # output section has been populated.

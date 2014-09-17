@@ -1,9 +1,8 @@
-/* tc-mips.h -- header file for tc-mips.c.
-   Copyright 1993, 1994, 1995, 1996, 1997, 2000, 2001, 2002, 2003, 2004,
-   2005, 2006, 2007  Free Software Foundation, Inc.
-   Contributed by the OSF and Ralph Campbell.
-   Written by Keith Knowles and Ralph Campbell, working independently.
-   Modified for ECOFF support by Ian Lance Taylor of Cygnus Support.
+/* tc-riscv.h -- header file for tc-riscv.c.
+   Copyright 2011-2014 Free Software Foundation, Inc.
+
+   Contributed by Andrew Waterman (waterman@cs.berkeley.edu) at UC Berkeley.
+   Based on MIPS target.
 
    This file is part of GAS.
 
@@ -42,8 +41,8 @@ struct expressionS;
 #define LOCAL_LABELS_FB 1
 
 #define md_relax_frag(segment, fragp, stretch) \
-  mips_relax_frag(segment, fragp, stretch)
-extern int mips_relax_frag (asection *, struct frag *, long);
+  riscv_relax_frag(segment, fragp, stretch)
+extern int riscv_relax_frag (asection *, struct frag *, long);
 
 #define md_section_align(seg,size)	(size)
 #define md_undefined_symbol(name)	(0)
@@ -51,36 +50,34 @@ extern int mips_relax_frag (asection *, struct frag *, long);
 
 #define NOP_OPCODE RISCV_NOP
 
-extern void mips_handle_align (struct frag *);
-#define HANDLE_ALIGN(fragp)  mips_handle_align (fragp)
+extern void riscv_handle_align (struct frag *);
+#define HANDLE_ALIGN(fragp)  riscv_handle_align (fragp)
 
 #define MAX_MEM_FOR_RS_ALIGN_CODE  (1 + 2)
 
 struct insn_label_list;
-struct mips_segment_info {
+struct riscv_segment_info {
   struct insn_label_list *labels;
-  unsigned int mips16 : 1;
 };
-#define TC_SEGMENT_INFO_TYPE struct mips_segment_info
+#define TC_SEGMENT_INFO_TYPE struct riscv_segment_info
 
-/* This field is nonzero if the symbol is the target of a MIPS16 jump.  */
 #define TC_SYMFIELD_TYPE int
 
 /* The ISA of the target may change based on command-line arguments.  */
-#define TARGET_FORMAT mips_target_format()
-extern const char *mips_target_format (void);
+#define TARGET_FORMAT riscv_target_format()
+extern const char *riscv_target_format (void);
 
-#define md_after_parse_args() mips_after_parse_args()
-extern void mips_after_parse_args (void);
+#define md_after_parse_args() riscv_after_parse_args()
+extern void riscv_after_parse_args (void);
 
-#define tc_init_after_args() mips_init_after_args()
-extern void mips_init_after_args (void);
+#define tc_init_after_args() riscv_init_after_args()
+extern void riscv_init_after_args (void);
 
-#define md_parse_long_option(arg) mips_parse_long_option (arg)
-extern int mips_parse_long_option (const char *);
+#define md_parse_long_option(arg) riscv_parse_long_option (arg)
+extern int riscv_parse_long_option (const char *);
 
-#define tc_frob_label(sym) mips_define_label (sym)
-extern void mips_define_label (symbolS *);
+#define tc_frob_label(sym) riscv_define_label (sym)
+extern void riscv_define_label (symbolS *);
 
 /* Let the linker resolve all the relocs due to relaxation. */
 #define tc_fix_adjustable(fixp) 0
@@ -98,30 +95,30 @@ extern void mips_define_label (symbolS *);
 #define TC_VALIDATE_FIX_SUB(FIX, SEG) TC_FORCE_RELOCATION_SUB_SAME(FIX, SEG)
 #define DIFF_EXPR_OK 1
 
-extern void mips_pop_insert (void);
-#define md_pop_insert()		mips_pop_insert()
+extern void riscv_pop_insert (void);
+#define md_pop_insert()		riscv_pop_insert()
 
-extern void mips_clear_insn_labels (void);
-#define md_flush_pending_output mips_clear_insn_labels
+extern void riscv_clear_insn_labels (void);
+#define md_flush_pending_output riscv_clear_insn_labels
 
-extern void mips_enable_auto_align (void);
-#define md_elf_section_change_hook()	mips_enable_auto_align()
+extern void riscv_enable_auto_align (void);
+#define md_elf_section_change_hook()	riscv_enable_auto_align()
 
 enum dwarf2_format;
-extern enum dwarf2_format mips_dwarf2_format (asection *);
-#define DWARF2_FORMAT(SEC) mips_dwarf2_format (SEC)
+extern enum dwarf2_format riscv_dwarf2_format (asection *);
+#define DWARF2_FORMAT(SEC) riscv_dwarf2_format (SEC)
 
-extern int mips_dwarf2_addr_size (void);
-#define DWARF2_ADDR_SIZE(bfd) mips_dwarf2_addr_size ()
-#define DWARF2_FDE_RELOC_SIZE mips_dwarf2_addr_size ()
+extern int riscv_dwarf2_addr_size (void);
+#define DWARF2_ADDR_SIZE(bfd) riscv_dwarf2_addr_size ()
+#define DWARF2_FDE_RELOC_SIZE riscv_dwarf2_addr_size ()
 
 #define TARGET_USE_CFIPOP 1
 
-#define tc_cfi_frame_initial_instructions mips_cfi_frame_initial_instructions
-extern void mips_cfi_frame_initial_instructions (void);
+#define tc_cfi_frame_initial_instructions riscv_cfi_frame_initial_instructions
+extern void riscv_cfi_frame_initial_instructions (void);
 
-#define tc_regname_to_dw2regnum tc_mips_regname_to_dw2regnum
-extern int tc_mips_regname_to_dw2regnum (char *regname);
+#define tc_regname_to_dw2regnum tc_riscv_regname_to_dw2regnum
+extern int tc_riscv_regname_to_dw2regnum (char *regname);
 
 #define DWARF2_DEFAULT_RETURN_COLUMN LINK_REG
 #define DWARF2_CIE_DATA_ALIGNMENT (-4)

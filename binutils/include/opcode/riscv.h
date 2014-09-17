@@ -260,15 +260,6 @@ struct riscv_opcode
    disassembler, and requires special treatment by the assembler.  */
 #define INSN_MACRO                  0xffffffff
 
-/* These are the bits which may be set in the pinfo2 field of an
-   instruction. */
-
-/* MIPS ISA defines, use instead of hardcoding ISA level.  */
-
-#define       ISA_UNKNOWN     0               /* Gas internal use.  */
-#define       ISA_RV32        1
-#define       ISA_RV64        2
-
 /* This is a list of macro expanded instructions.
 
    _I appended means immediate
@@ -323,4 +314,4 @@ extern struct riscv_opcode *riscv_opcodes;
 extern int bfd_riscv_num_opcodes;
 #define NUMOPCODES bfd_riscv_num_opcodes
 
-#endif /* _MIPS_H_ */
+#endif /* _RISCV_H_ */

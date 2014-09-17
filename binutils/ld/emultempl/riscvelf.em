@@ -28,17 +28,17 @@ fragment <<EOF
 #define is_riscv_elf(bfd)				\
   (bfd_get_flavour (bfd) == bfd_target_elf_flavour	\
    && elf_tdata (bfd) != NULL				\
-   && elf_object_id (bfd) == MIPS_ELF_DATA)
+   && elf_object_id (bfd) == RISCV_ELF_DATA)
 
 static void
 riscv_after_parse (void)
 {
-  /* .gnu.hash and the MIPS ABI require .dynsym to be sorted in different
+  /* .gnu.hash and the RISC-V ABI require .dynsym to be sorted in different
      ways.  .gnu.hash needs symbols to be grouped by hash code whereas the
-     MIPS ABI requires a mapping between the GOT and the symbol table.  */
+     RISC-V ABI requires a mapping between the GOT and the symbol table.  */
   if (link_info.emit_gnu_hash)
     {
-      einfo ("%X%P: .gnu.hash is incompatible with the MIPS ABI\n");
+      einfo ("%X%P: .gnu.hash is incompatible with the RISC-V ABI\n");
       link_info.emit_hash = TRUE;
       link_info.emit_gnu_hash = FALSE;
     }

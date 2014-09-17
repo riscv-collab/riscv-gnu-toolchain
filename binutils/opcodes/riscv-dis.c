@@ -1,8 +1,8 @@
-/* Print mips instructions for GDB, the GNU debugger, or for objdump.
-   Copyright 1989, 1991, 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999,
-   2000, 2001, 2002, 2003, 2005, 2007, 2008
-   Free Software Foundation, Inc.
-   Contributed by Nobuyuki Hikichi(hikichi@sra.co.jp).
+/* RISC-V disassembler
+   Copyright 2011-2014 Free Software Foundation, Inc.
+
+   Contributed by Andrew Waterman (waterman@cs.berkeley.edu) at UC Berkeley.
+   Based on MIPS target.
 
    This file is part of the GNU opcodes library.
 
@@ -34,7 +34,7 @@
 
 /* FIXME: These should be shared with gdb somehow.  */
 
-static const char * const mips_gpr_names_numeric[32] =
+static const char * const riscv_gpr_names_numeric[32] =
 {
   "x0",   "x1",   "x2",   "x3",   "x4",   "x5",   "x6",   "x7",
   "x8",   "x9",   "x10",  "x11",  "x12",  "x13",  "x14",  "x15",
@@ -42,7 +42,7 @@ static const char * const mips_gpr_names_numeric[32] =
   "x24",  "x25",  "x26",  "x27",  "x28",  "x29",  "x30",  "x31"
 };
 
-static const char* mips_gpr_names_abi[32] = {
+static const char* riscv_gpr_names_abi[32] = {
   "zero", "ra", "s0", "s1",  "s2",  "s3",  "s4",  "s5",
   "s6",   "s7", "s8", "s9", "s10", "s11",  "sp",  "tp",
   "v0",   "v1", "a0", "a1",  "a2",  "a3",  "a4",  "a5",
@@ -50,7 +50,7 @@ static const char* mips_gpr_names_abi[32] = {
 };
 
 
-static const char * const mips_fpr_names_numeric[32] =
+static const char * const riscv_fpr_names_numeric[32] =
 {
   "f0",   "f1",   "f2",   "f3",   "f4",   "f5",   "f6",   "f7",
   "f8",   "f9",   "f10",  "f11",  "f12",  "f13",  "f14",  "f15",
@@ -58,14 +58,14 @@ static const char * const mips_fpr_names_numeric[32] =
   "f24",  "f25",  "f26",  "f27",  "f28",  "f29",  "f30",  "f31"
 };
 
-static const char* mips_fpr_names_abi[32] = {
+static const char* riscv_fpr_names_abi[32] = {
   "fs0", "fs1",  "fs2",  "fs3",  "fs4",  "fs5",  "fs6",  "fs7",
   "fs8", "fs9", "fs10", "fs11", "fs12", "fs13", "fs14", "fs15",
   "fv0", "fv1", "fa0",   "fa1",  "fa2",  "fa3",  "fa4",  "fa5",
   "fa6", "fa7", "ft0",   "ft1",  "ft2",  "ft3",  "ft4",  "ft5"
 };
 
-static const char * const mips_vgr_reg_names_riscv[32] =
+static const char * const riscv_vgr_reg_names_riscv[32] =
 {
   "vx0",  "vx1",  "vx2",  "vx3",  "vx4",  "vx5",  "vx6",  "vx7",
   "vx8",  "vx9",  "vx10", "vx11", "vx12", "vx13", "vx14", "vx15",
@@ -73,7 +73,7 @@ static const char * const mips_vgr_reg_names_riscv[32] =
   "vx24", "vx25", "vx26", "vx27", "vx28", "vx29", "vx30", "vx31"
 };
 
-static const char * const mips_vfp_reg_names_riscv[32] =
+static const char * const riscv_vfp_reg_names_riscv[32] =
 {
   "vf0",  "vf1",  "vf2",  "vf3",  "vf4",  "vf5",  "vf6",  "vf7",
   "vf8",  "vf9",  "vf10", "vf11", "vf12", "vf13", "vf14", "vf15",
@@ -81,28 +81,28 @@ static const char * const mips_vfp_reg_names_riscv[32] =
   "vf24", "vf25", "vf26", "vf27", "vf28", "vf29", "vf30", "vf31"
 };
 
-struct mips_abi_choice
+struct riscv_abi_choice
 {
   const char * name;
   const char * const *gpr_names;
   const char * const *fpr_names;
 };
 
-struct mips_abi_choice mips_abi_choices[] =
+struct riscv_abi_choice riscv_abi_choices[] =
 {
-  { "numeric", mips_gpr_names_numeric, mips_fpr_names_numeric },
-  { "32", mips_gpr_names_abi, mips_fpr_names_abi },
-  { "64", mips_gpr_names_abi, mips_fpr_names_abi },
+  { "numeric", riscv_gpr_names_numeric, riscv_fpr_names_numeric },
+  { "32", riscv_gpr_names_abi, riscv_fpr_names_abi },
+  { "64", riscv_gpr_names_abi, riscv_fpr_names_abi },
 };
 
-struct mips_arch_choice
+struct riscv_arch_choice
 {
   const char *name;
   int bfd_mach_valid;
   unsigned long bfd_mach;
 };
 
-const struct mips_arch_choice mips_arch_choices[] =
+const struct riscv_arch_choice riscv_arch_choices[] =
 {
   { "numeric",	0, 0 },
   { "rv32",	1, bfd_mach_riscv32 },
@@ -117,42 +117,42 @@ struct riscv_private_data
 };
 
 /* ISA and processor type to disassemble for, and register names to use.
-   set_default_mips_dis_options and parse_mips_dis_options fill in these
+   set_default_riscv_dis_options and parse_riscv_dis_options fill in these
    values.  */
-static const char * const *mips_gpr_names;
-static const char * const *mips_fpr_names;
+static const char * const *riscv_gpr_names;
+static const char * const *riscv_fpr_names;
 
 /* Other options */
 static int no_aliases;	/* If set disassemble as most general inst.  */
 
-static const struct mips_abi_choice *
+static const struct riscv_abi_choice *
 choose_abi_by_name (const char *name, unsigned int namelen)
 {
-  const struct mips_abi_choice *c;
+  const struct riscv_abi_choice *c;
   unsigned int i;
 
-  for (i = 0, c = NULL; i < ARRAY_SIZE (mips_abi_choices) && c == NULL; i++)
-    if (strncmp (mips_abi_choices[i].name, name, namelen) == 0
-	&& strlen (mips_abi_choices[i].name) == namelen)
-      c = &mips_abi_choices[i];
+  for (i = 0, c = NULL; i < ARRAY_SIZE (riscv_abi_choices) && c == NULL; i++)
+    if (strncmp (riscv_abi_choices[i].name, name, namelen) == 0
+	&& strlen (riscv_abi_choices[i].name) == namelen)
+      c = &riscv_abi_choices[i];
 
   return c;
 }
 
 static void
-set_default_mips_dis_options (struct disassemble_info *info ATTRIBUTE_UNUSED)
+set_default_riscv_dis_options (struct disassemble_info *info ATTRIBUTE_UNUSED)
 {
-  mips_gpr_names = mips_gpr_names_abi;
-  mips_fpr_names = mips_fpr_names_abi;
+  riscv_gpr_names = riscv_gpr_names_abi;
+  riscv_fpr_names = riscv_fpr_names_abi;
   no_aliases = 0;
 }
 
 static void
-parse_mips_dis_option (const char *option, unsigned int len)
+parse_riscv_dis_option (const char *option, unsigned int len)
 {
   unsigned int i, optionlen, vallen;
   const char *val;
-  const struct mips_abi_choice *chosen_abi;
+  const struct riscv_abi_choice *chosen_abi;
 
   /* Try to match options that are simple flags */
   if (CONST_STRNEQ (option, "no-aliases"))
@@ -182,7 +182,7 @@ parse_mips_dis_option (const char *option, unsigned int len)
     {
       chosen_abi = choose_abi_by_name (val, vallen);
       if (chosen_abi != NULL)
-	mips_gpr_names = chosen_abi->gpr_names;
+	riscv_gpr_names = chosen_abi->gpr_names;
       return;
     }
 
@@ -191,7 +191,7 @@ parse_mips_dis_option (const char *option, unsigned int len)
     {
       chosen_abi = choose_abi_by_name (val, vallen);
       if (chosen_abi != NULL)
-	mips_fpr_names = chosen_abi->fpr_names;
+	riscv_fpr_names = chosen_abi->fpr_names;
       return;
     }
 
@@ -199,7 +199,7 @@ parse_mips_dis_option (const char *option, unsigned int len)
 }
 
 static void
-parse_mips_dis_options (const char *options)
+parse_riscv_dis_options (const char *options)
 {
   const char *option_end;
 
@@ -220,7 +220,7 @@ parse_mips_dis_options (const char *options)
       while (*option_end != ',' && *option_end != '\0')
 	option_end++;
 
-      parse_mips_dis_option (options, option_end - options);
+      parse_riscv_dis_option (options, option_end - options);
 
       /* Go on to the next one.  If option_end points to a comma, it
 	 will be skipped above.  */
@@ -315,42 +315,42 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
             case 'd':
               (*info->fprintf_func)
                 ( info->stream, "%s",
-                  mips_vgr_reg_names_riscv[(l >> OP_SH_VRD) & OP_MASK_VRD]);
+                  riscv_vgr_reg_names_riscv[(l >> OP_SH_VRD) & OP_MASK_VRD]);
               break;
             case 's':
               (*info->fprintf_func)
                 ( info->stream, "%s",
-                  mips_vgr_reg_names_riscv[(l >> OP_SH_VRS) & OP_MASK_VRS]);
+                  riscv_vgr_reg_names_riscv[(l >> OP_SH_VRS) & OP_MASK_VRS]);
               break;
             case 't':
               (*info->fprintf_func)
                 ( info->stream, "%s",
-                  mips_vgr_reg_names_riscv[(l >> OP_SH_VRT) & OP_MASK_VRT]);
+                  riscv_vgr_reg_names_riscv[(l >> OP_SH_VRT) & OP_MASK_VRT]);
               break;
             case 'r':
               (*info->fprintf_func)
                 ( info->stream, "%s",
-                  mips_vgr_reg_names_riscv[(l >> OP_SH_VRR) & OP_MASK_VRR]);
+                  riscv_vgr_reg_names_riscv[(l >> OP_SH_VRR) & OP_MASK_VRR]);
               break;
             case 'D':
               (*info->fprintf_func)
                 ( info->stream, "%s",
-                  mips_vfp_reg_names_riscv[(l >> OP_SH_VFD) & OP_MASK_VFD]);
+                  riscv_vfp_reg_names_riscv[(l >> OP_SH_VFD) & OP_MASK_VFD]);
               break;
             case 'S':
               (*info->fprintf_func)
                 ( info->stream, "%s",
-                  mips_vfp_reg_names_riscv[(l >> OP_SH_VFS) & OP_MASK_VFS]);
+                  riscv_vfp_reg_names_riscv[(l >> OP_SH_VFS) & OP_MASK_VFS]);
               break;
             case 'T':
               (*info->fprintf_func)
                 ( info->stream, "%s",
-                  mips_vfp_reg_names_riscv[(l >> OP_SH_VFT) & OP_MASK_VFT]);
+                  riscv_vfp_reg_names_riscv[(l >> OP_SH_VFT) & OP_MASK_VFT]);
               break;
             case 'R':
               (*info->fprintf_func)
                 ( info->stream, "%s",
-                  mips_vfp_reg_names_riscv[(l >> OP_SH_VFR) & OP_MASK_VFR]);
+                  riscv_vfp_reg_names_riscv[(l >> OP_SH_VFR) & OP_MASK_VFR]);
               break;
           }
           break;
@@ -368,12 +368,12 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
 
 	case 'b':
 	case 's':
-	  (*info->fprintf_func) (info->stream, "%s", mips_gpr_names[rs1]);
+	  (*info->fprintf_func) (info->stream, "%s", riscv_gpr_names[rs1]);
 	  break;
 
 	case 't':
 	  (*info->fprintf_func) (info->stream, "%s",
-				 mips_gpr_names[(l >> OP_SH_RS2) & OP_MASK_RS2]);
+				 riscv_gpr_names[(l >> OP_SH_RS2) & OP_MASK_RS2]);
 	  break;
 
 	case 'u':
@@ -423,11 +423,11 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
 	    pd->hi_addr[rd] = pc + (EXTRACT_UTYPE_IMM (l) << RISCV_IMM_BITS);
 	  else if ((l & MASK_LUI) == MATCH_LUI)
 	    pd->hi_addr[rd] = EXTRACT_UTYPE_IMM (l) << RISCV_IMM_BITS;
-	  (*info->fprintf_func) (info->stream, "%s", mips_gpr_names[rd]);
+	  (*info->fprintf_func) (info->stream, "%s", riscv_gpr_names[rd]);
 	  break;
 
 	case 'z':
-	  (*info->fprintf_func) (info->stream, "%s", mips_gpr_names[0]);
+	  (*info->fprintf_func) (info->stream, "%s", riscv_gpr_names[0]);
 	  break;
 
 	case '>':
@@ -442,21 +442,21 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
 
 	case 'S':
 	case 'U':
-	  (*info->fprintf_func) (info->stream, "%s", mips_fpr_names[rs1]);
+	  (*info->fprintf_func) (info->stream, "%s", riscv_fpr_names[rs1]);
 	  break;
 
 	case 'T':
 	  (*info->fprintf_func) (info->stream, "%s",
-				 mips_fpr_names[(l >> OP_SH_RS2) & OP_MASK_RS2]);
+				 riscv_fpr_names[(l >> OP_SH_RS2) & OP_MASK_RS2]);
 	  break;
 
 	case 'D':
-	  (*info->fprintf_func) (info->stream, "%s", mips_fpr_names[rd]);
+	  (*info->fprintf_func) (info->stream, "%s", riscv_fpr_names[rd]);
 	  break;
 
 	case 'R':
 	  (*info->fprintf_func) (info->stream, "%s",
-				 mips_fpr_names[(l >> OP_SH_RS3) & OP_MASK_RS3]);
+				 riscv_fpr_names[(l >> OP_SH_RS3) & OP_MASK_RS3]);
 	  break;
 
 	case 'E':
@@ -607,18 +607,18 @@ riscv_rvc_uncompress(unsigned long rvc_insn)
 }
 #endif
 
-/* Print the mips instruction at address MEMADDR in debugged memory,
+/* Print the RISC-V instruction at address MEMADDR in debugged memory,
    on using INFO.  Returns length of the instruction, in bytes.
    BIGENDIAN must be 1 if this is big-endian code, 0 if
    this is little-endian code.  */
 
 static int
-print_insn_mips (bfd_vma memaddr, insn_t word, disassemble_info *info)
+riscv_disassemble_insn (bfd_vma memaddr, insn_t word, disassemble_info *info)
 {
   const struct riscv_opcode *op;
   static bfd_boolean init = 0;
   static const char *extension = NULL;
-  static const struct riscv_opcode *mips_hash[OP_MASK_OP + 1];
+  static const struct riscv_opcode *riscv_hash[OP_MASK_OP + 1];
   struct riscv_private_data *pd;
   int insnlen;
 
@@ -633,7 +633,7 @@ print_insn_mips (bfd_vma memaddr, insn_t word, disassemble_info *info)
         for (op = riscv_opcodes; op < &riscv_opcodes[NUMOPCODES]; op++)
           if (i == ((op->match >> OP_SH_OP) & OP_MASK_OP))
             {
-              mips_hash[i] = op;
+              riscv_hash[i] = op;
               break;
             }
 
@@ -674,7 +674,7 @@ print_insn_mips (bfd_vma memaddr, insn_t word, disassemble_info *info)
   info->target = 0;
   info->target2 = 0;
 
-  op = mips_hash[(word >> OP_SH_OP) & OP_MASK_OP];
+  op = riscv_hash[(word >> OP_SH_OP) & OP_MASK_OP];
   if (op != NULL)
     {
       for (; op < &riscv_opcodes[NUMOPCODES]; op++)
@@ -711,8 +711,8 @@ print_insn_riscv (bfd_vma memaddr, struct disassemble_info *info)
   bfd_vma n;
   int status;
 
-  set_default_mips_dis_options (info);
-  parse_mips_dis_options (info->disassembler_options);
+  set_default_riscv_dis_options (info);
+  parse_riscv_dis_options (info->disassembler_options);
 
   /* Instructions are a sequence of 2-byte packets in little-endian order. */
   for (n = 0; n < sizeof(insn) && n < riscv_insn_length (insn); n += 2)
@@ -730,16 +730,16 @@ print_insn_riscv (bfd_vma memaddr, struct disassemble_info *info)
       insn |= (insn_t)i2 << (8*n);
     }
 
-  return print_insn_mips (memaddr, insn, info);
+  return riscv_disassemble_insn (memaddr, insn, info);
 }
 
 void
-print_mips_disassembler_options (FILE *stream)
+print_riscv_disassembler_options (FILE *stream)
 {
   unsigned int i;
 
   fprintf (stream, _("\n\
-The following MIPS specific disassembler options are supported for use\n\
+The following RISC-V-specific disassembler options are supported for use\n\
 with the -M switch (multiple options should be separated by commas):\n"));
 
   fprintf (stream, _("\n\
@@ -753,8 +753,8 @@ with the -M switch (multiple options should be separated by commas):\n"));
   fprintf (stream, _("\n\
   For the options above, the following values are supported for \"ABI\":\n\
    "));
-  for (i = 0; i < ARRAY_SIZE (mips_abi_choices); i++)
-    fprintf (stream, " %s", mips_abi_choices[i].name);
+  for (i = 0; i < ARRAY_SIZE (riscv_abi_choices); i++)
+    fprintf (stream, " %s", riscv_abi_choices[i].name);
   fprintf (stream, _("\n"));
 
   fprintf (stream, _("\n"));

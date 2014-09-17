@@ -1,10 +1,7 @@
 /* RISC-V ELF support for BFD.
-   Copyright 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2001, 2002,
-   2003, 2004, 2005, 2008, 2009, 2010
-   Free Software Foundation, Inc.
+   Copyright 2011-2014 Free Software Foundation, Inc.
 
-   By Andrew Waterman, University of California,
-   <waterman@eecs.berkeley.edu>.
+   Contributed by Andrw Waterman <waterman@cs.berkeley.edu> at UC Berkeley.
    Based on MIPS ELF support for BFD, by Ian Lance Taylor.
 
    This file is part of BFD, the Binary File Descriptor library.
@@ -161,9 +158,6 @@ static inline unsigned int riscv_elf_name_to_flag(const char* name)
 
 /* Small undefined symbol.  */
 #define SHN_RISCV_SUNDEFINED	(SHN_LORESERVE + 4)
-
-/* Get ELf32_xxx struct definitions */
-#include "mips.h"
 
 /* Number of local global offset table entries.  */
 #define DT_RISCV_LOCAL_GOTNO	0x70000000

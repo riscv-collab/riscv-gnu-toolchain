@@ -1,10 +1,8 @@
-/* tc-mips.c -- assemble code for a MIPS chip.
-   Copyright 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2001, 2002,
-   2003, 2004, 2005, 2006, 2007, 2008, 2009  Free Software Foundation, Inc.
-   Contributed by the OSF and Ralph Campbell.
-   Written by Keith Knowles and Ralph Campbell, working independently.
-   Modified for ECOFF and R4000 support by Ian Lance Taylor of Cygnus
-   Support.
+/* tc-riscv.c -- RISC-V assembler
+   Copyright 2011-2014 Free Software Foundation, Inc.
+
+   Contributed by Andrew Waterman (waterman@cs.berkeley.edu) at UC Berkeley.
+   Based on MIPS target.
 
    This file is part of GAS.
 
@@ -43,8 +41,8 @@
 
 #ifdef OBJ_MAYBE_ELF
 /* Clean up namespace so we can include obj-elf.h too.  */
-static int mips_output_flavor (void);
-static int mips_output_flavor (void) { return OUTPUT_FLAVOR; }
+static int riscv_output_flavor (void);
+static int riscv_output_flavor (void) { return OUTPUT_FLAVOR; }
 #undef OBJ_PROCESS_STAB
 #undef OUTPUT_FLAVOR
 #undef S_GET_ALIGN
@@ -61,7 +59,7 @@ static int mips_output_flavor (void) { return OUTPUT_FLAVOR; }
 #include "obj-elf.h"
 /* Fix any of them that we actually care about.  */
 #undef OUTPUT_FLAVOR
-#define OUTPUT_FLAVOR mips_output_flavor()
+#define OUTPUT_FLAVOR riscv_output_flavor()
 #endif
 
 #if defined (OBJ_ELF)
@@ -75,9 +73,9 @@ static int mips_output_flavor (void) { return OUTPUT_FLAVOR; }
 
 /* Information about an instruction, including its format, operands
    and fixups.  */
-struct mips_cl_insn
+struct riscv_cl_insn
 {
-  /* The opcode's entry in riscv_opcodes or mips16_opcodes.  */
+  /* The opcode's entry in riscv_opcodes. */
   const struct riscv_opcode *insn_mo;
 
   /* The 16-bit or 32-bit bitstring of the instruction itself.  This is
@@ -216,13 +214,13 @@ riscv_set_arch(const char* arg)
    pseudo-op.  We use a struct so that .set push and .set pop are more
    reliable.  */
 
-struct mips_set_options
+struct riscv_set_options
 {
   /* Enable RVC instruction compression */
   int rvc;
 };
 
-static struct mips_set_options mips_opts =
+static struct riscv_set_options riscv_opts =
 {
   /* rvc */ 0
 };
@@ -271,7 +269,7 @@ static int auto_align = 1;
 
 /* Debugging level.  -g sets this to 2.  -gN sets this to N.  -g0 is
    equivalent to seeing no -g option at all.  */
-static int mips_debug = 0;
+static int riscv_debug = 0;
 
 /* For ECOFF and ELF, relocations against symbols are done in two
    parts, with a HI relocation and a LO relocation.  Each relocation
@@ -284,10 +282,10 @@ static int mips_debug = 0;
    relocation.  We then sort them so that they immediately precede the
    corresponding LO relocation.  */
 
-struct mips_hi_fixup
+struct riscv_hi_fixup
 {
   /* Next HI fixup.  */
-  struct mips_hi_fixup *next;
+  struct riscv_hi_fixup *next;
   /* This fixup.  */
   fixS *fixp;
   /* The section this fixup is in.  */
@@ -333,11 +331,11 @@ struct mips_hi_fixup
   (((STRUCT) >> (SHIFT)) & (MASK))
 
 /* Change INSN's opcode so that the operand given by FIELD has value VALUE.
-   INSN is a mips_cl_insn structure and VALUE is evaluated exactly once. */
+   INSN is a riscv_cl_insn structure and VALUE is evaluated exactly once. */
 #define INSERT_OPERAND(FIELD, INSN, VALUE) \
   INSERT_BITS ((INSN).insn_opcode, VALUE, OP_MASK_##FIELD, OP_SH_##FIELD)
 
-/* Extract the operand given by FIELD from mips_cl_insn INSN.  */
+/* Extract the operand given by FIELD from riscv_cl_insn INSN.  */
 #define EXTRACT_OPERAND(FIELD, INSN) \
   EXTRACT_BITS ((INSN).insn_opcode, OP_MASK_##FIELD, OP_SH_##FIELD)
 
@@ -353,12 +351,10 @@ struct mips_hi_fixup
 #define internalError()							\
     as_fatal (_("internal Error, line %d, %s"), __LINE__, __FILE__)
 
-enum mips_regclass { MIPS_GR_REG, MIPS_FP_REG };
-
 static void append_insn
-  (struct mips_cl_insn *ip, expressionS *p, bfd_reloc_code_real_type r);
-static void macro (struct mips_cl_insn * ip);
-static void mips_ip (char *str, struct mips_cl_insn * ip);
+  (struct riscv_cl_insn *ip, expressionS *p, bfd_reloc_code_real_type r);
+static void macro (struct riscv_cl_insn * ip);
+static void riscv_ip (char *str, struct riscv_cl_insn * ip);
 static void my_getExpression (expressionS *, char *);
 static void s_align (int);
 static void s_change_sec (int);
@@ -368,36 +364,20 @@ static void s_float_cons (int);
 static void s_riscv_option (int);
 static void s_dtprelword (int);
 static void s_dtpreldword (int);
-static int validate_mips_insn (const struct riscv_opcode *);
+static int validate_riscv_insn (const struct riscv_opcode *);
 static int relaxed_branch_length (fragS *fragp, asection *sec, int update);
 
-/* Pseudo-op table.
+/* Pseudo-op table. */
 
-   The following pseudo-ops from the Kane and Heinrich MIPS book
-   should be defined here, but are currently unsupported: .alias,
-   .galive, .gjaldef, .gjrlive, .livereg, .noalias.
-
-   The following pseudo-ops from the Kane and Heinrich MIPS book are
-   specific to the type of debugging information being generated, and
-   should be defined by the object format: .aent, .begin, .bend,
-   .bgnb, .end, .endb, .ent, .fmask, .frame, .loc, .mask, .verstamp,
-   .vreg.
-
-   The following pseudo-ops from the Kane and Heinrich MIPS book are
-   not MIPS CPU specific, but are also not specific to the object file
-   format.  This file is probably the best place to define them, but
-   they are not currently supported: .asm0, .endr, .lab, .struct.  */
-
-static const pseudo_typeS mips_pseudo_table[] =
+static const pseudo_typeS riscv_pseudo_table[] =
 {
-  /* MIPS specific pseudo-ops.  */
+  /* RISC-V-specific pseudo-ops.  */
   {"option", s_riscv_option, 0},
   {"rdata", s_change_sec, 'r'},
   {"dtprelword", s_dtprelword, 0},
   {"dtpreldword", s_dtpreldword, 0},
 
-  /* Relatively generic pseudo-ops that happen to be used on MIPS
-     chips.  */
+  /* Relatively generic pseudo-ops supported by RISC-V assemblers. */
   {"asciiz", stringer, 8 + 1},
   {"bss", s_change_sec, 'b'},
   {"err", s_err, 0},
@@ -442,9 +422,9 @@ static const pseudo_typeS mips_pseudo_table[] =
 extern void pop_insert (const pseudo_typeS *);
 
 void
-mips_pop_insert (void)
+riscv_pop_insert (void)
 {
-  pop_insert (mips_pseudo_table);
+  pop_insert (riscv_pseudo_table);
 }
 
 /* Symbols labelling the current insn.  */
@@ -459,7 +439,7 @@ static struct insn_label_list *free_insn_labels;
 #define label_list tc_segment_info_data.labels
 
 void
-mips_clear_insn_labels (void)
+riscv_clear_insn_labels (void)
 {
   register struct insn_label_list **pl;
   segment_info_type *si;
@@ -479,7 +459,7 @@ mips_clear_insn_labels (void)
 static char *expr_end;
 
 /* Expressions which appear in instructions.  These are set by
-   mips_ip.  */
+   riscv_ip.  */
 
 static expressionS imm_expr;
 static expressionS offset_expr;
@@ -492,7 +472,7 @@ static bfd_reloc_code_real_type offset_reloc = BFD_RELOC_UNUSED;
 /* The default target format to use.  */
 
 const char *
-mips_target_format (void)
+riscv_target_format (void)
 {
   return rv64 ? "elf64-littleriscv" : "elf32-littleriscv";
 }
@@ -500,7 +480,7 @@ mips_target_format (void)
 /* Return the length of instruction INSN.  */
 
 static inline unsigned int
-insn_length (const struct mips_cl_insn *insn)
+insn_length (const struct riscv_cl_insn *insn)
 {
   return riscv_insn_length (insn->insn_opcode);
 }
@@ -529,7 +509,7 @@ imm_bits_needed(int32_t imm)
 
 /* If insn can be compressed, compress it and return 1; else return 0. */
 static int
-riscv_rvc_compress(struct mips_cl_insn* insn)
+riscv_rvc_compress(struct riscv_cl_insn* insn)
 {
   int rd = EXTRACT_OPERAND(RD, *insn);
   int rs1 = EXTRACT_OPERAND(RS1, *insn);
@@ -794,7 +774,7 @@ riscv_rvc_compress(struct mips_cl_insn* insn)
 /* Initialise INSN from opcode entry MO.  Leave its position unspecified.  */
 
 static void
-create_insn (struct mips_cl_insn *insn, const struct riscv_opcode *mo)
+create_insn (struct riscv_cl_insn *insn, const struct riscv_opcode *mo)
 {
   insn->insn_mo = mo;
   insn->insn_opcode = mo->match;
@@ -806,7 +786,7 @@ create_insn (struct mips_cl_insn *insn, const struct riscv_opcode *mo)
 /* Install INSN at the location specified by its "frag" and "where" fields.  */
 
 static void
-install_insn (const struct mips_cl_insn *insn)
+install_insn (const struct riscv_cl_insn *insn)
 {
   char *f = insn->frag->fr_literal + insn->where;
   md_number_to_chars (f, insn->insn_opcode, insn_length(insn));
@@ -816,7 +796,7 @@ install_insn (const struct mips_cl_insn *insn)
    and install the opcode in the new location.  */
 
 static void
-move_insn (struct mips_cl_insn *insn, fragS *frag, long where)
+move_insn (struct riscv_cl_insn *insn, fragS *frag, long where)
 {
   insn->frag = frag;
   insn->where = where;
@@ -831,14 +811,14 @@ move_insn (struct mips_cl_insn *insn, fragS *frag, long where)
 /* Add INSN to the end of the output.  */
 
 static void
-add_fixed_insn (struct mips_cl_insn *insn)
+add_fixed_insn (struct riscv_cl_insn *insn)
 {
   char *f = frag_more (insn_length (insn));
   move_insn (insn, frag_now, f - frag_now->fr_literal);
 }
 
 static void
-add_relaxed_insn (struct mips_cl_insn *insn, int max_chars, int var,
+add_relaxed_insn (struct riscv_cl_insn *insn, int max_chars, int var,
       relax_substateT subtype, symbolS *symbol, offsetT offset)
 {
   frag_grow (max_chars);
@@ -1211,7 +1191,7 @@ md_begin (void)
 	{
 	  if (riscv_opcodes[i].pinfo != INSN_MACRO)
 	    {
-	      if (!validate_mips_insn (&riscv_opcodes[i]))
+	      if (!validate_riscv_insn (&riscv_opcodes[i]))
 		as_fatal (_("Broken assembler.  No assembly attempted."));
 	    }
 	  ++i;
@@ -1233,7 +1213,7 @@ md_begin (void)
 	}
     }
 
-  mips_clear_insn_labels ();
+  riscv_clear_insn_labels ();
 
   /* set the default alignment for the text section (2**2) */
   record_alignment (text_section, 2);
@@ -1242,15 +1222,15 @@ md_begin (void)
 void
 md_assemble (char *str)
 {
-  struct mips_cl_insn insn;
+  struct riscv_cl_insn insn;
 
   imm_expr.X_op = O_absent;
   offset_expr.X_op = O_absent;
   imm_reloc = BFD_RELOC_UNUSED;
   offset_reloc = BFD_RELOC_UNUSED;
 
-  mips_ip (str, &insn);
-  DBG ((_("returned from mips_ip(%s) insn_opcode = 0x%x\n"),
+  riscv_ip (str, &insn);
+  DBG ((_("returned from riscv_ip(%s) insn_opcode = 0x%x\n"),
     str, insn.insn_opcode));
   
 
@@ -1278,7 +1258,7 @@ md_assemble (char *str)
    RELOC_TYPE.  */
 
 static void
-append_insn (struct mips_cl_insn *ip, expressionS *address_expr,
+append_insn (struct riscv_cl_insn *ip, expressionS *address_expr,
 	     bfd_reloc_code_real_type reloc_type)
 {
 #ifdef OBJ_ELF
@@ -1290,14 +1270,14 @@ append_insn (struct mips_cl_insn *ip, expressionS *address_expr,
 #if 0
   /* don't compress instructions with relocs */
   int compressible = (reloc_type == BFD_RELOC_UNUSED ||
-    address_expr == NULL || address_expr->X_op == O_constant) && mips_opts.rvc;
+    address_expr == NULL || address_expr->X_op == O_constant) && riscv_opts.rvc;
 
   /* speculate that branches/jumps can be compressed.  if not, we'll relax. */
-  if (address_expr != NULL && mips_opts.rvc)
+  if (address_expr != NULL && riscv_opts.rvc)
   {
     int compressible_branch = reloc_type == BFD_RELOC_12_PCREL &&
       (INSN_MATCHES(*ip, BEQ) || INSN_MATCHES(*ip, BNE));
-    int compressible_jump = reloc_type == BFD_RELOC_MIPS_JMP &&
+    int compressible_jump = reloc_type == BFD_RELOC_RISCV_JMP &&
       INSN_MATCHES(*ip, JAL);
     if(compressible_branch || compressible_jump)
     {
@@ -1357,14 +1337,14 @@ append_insn (struct mips_cl_insn *ip, expressionS *address_expr,
 
 	  howto = bfd_reloc_type_lookup (stdoutput, reloc_type);
 	  if (howto == NULL)
-	    as_bad (_("Unsupported MIPS relocation number %d"), reloc_type);
+	    as_bad (_("Unsupported RISC-V relocation number %d"), reloc_type);
 	 
 	  ip->fixp = fix_new_exp (ip->frag, ip->where,
 				  bfd_get_reloc_size (howto),
 				  address_expr,
 				  reloc_type == BFD_RELOC_12_PCREL ||
 				  reloc_type == BFD_RELOC_RISCV_CALL ||
-				  reloc_type == BFD_RELOC_MIPS_JMP,
+				  reloc_type == BFD_RELOC_RISCV_JMP,
 				  reloc_type);
 
 	  /* These relocations can have an addend that won't fit in
@@ -1390,7 +1370,7 @@ append_insn (struct mips_cl_insn *ip, expressionS *address_expr,
   install_insn (ip);
 
   /* We just output an insn, so the next one doesn't have a label.  */
-  mips_clear_insn_labels ();
+  riscv_clear_insn_labels ();
 }
 
 /* Build an instruction created by a macro expansion.  This is passed
@@ -1402,7 +1382,7 @@ static void
 macro_build (expressionS *ep, const char *name, const char *fmt, ...)
 {
   const struct riscv_opcode *mo;
-  struct mips_cl_insn insn;
+  struct riscv_cl_insn insn;
   bfd_reloc_code_real_type r;
   va_list args;
 
@@ -1533,7 +1513,7 @@ riscv_call (int destreg, int tempreg, expressionS *ep,
 /* Warn if an expression is not a constant.  */
 
 static void
-check_absolute_expr (struct mips_cl_insn *ip, expressionS *ex)
+check_absolute_expr (struct riscv_cl_insn *ip, expressionS *ex)
 {
   if (ex->X_op == O_big)
     as_bad (_("unsupported large constant"));
@@ -1583,26 +1563,9 @@ load_const (int reg, expressionS *ep)
   }
 }
 
-/*
- *			Build macros
- *   This routine implements the seemingly endless macro or synthesized
- * instructions and addressing modes in the mips assembly language. Many
- * of these macros are simple and are similar to each other. These could
- * probably be handled by some kind of table or grammar approach instead of
- * this verbose method. Others are not simple macros but are more like
- * optimizing code generation.
- *   One interesting optimization is when several store macros appear
- * consecutively that would load AT with the upper half of the same address.
- * The ensuing load upper instructions are ommited. This implies some kind
- * of global optimization. We currently only optimize within a single macro.
- *   For many of the load and store macros if the address is specified as a
- * constant expression in the first 64k of memory (ie ld $2,0x4000c) we
- * first load register 'at' with zero and use it as the base register. The
- * mips assembler simply uses register $zero. Just one tiny optimization
- * we're missing.
- */
+/* Expand RISC-V assembly macros into one or more instructions. */
 static void
-macro (struct mips_cl_insn *ip)
+macro (struct riscv_cl_insn *ip)
 {
   unsigned int rd, rs1, rs2;
   int mask;
@@ -1744,7 +1707,7 @@ do_call:
    by the match/mask part of the instruction definition, or by the
    operand list.  */
 static int
-validate_mips_insn (const struct riscv_opcode *opc)
+validate_riscv_insn (const struct riscv_opcode *opc)
 {
   const char *p = opc->args;
   char c;
@@ -1752,7 +1715,7 @@ validate_mips_insn (const struct riscv_opcode *opc)
 
   if ((used_bits & opc->match) != opc->match)
     {
-      as_bad (_("internal: bad mips opcode (mask error): %s %s"),
+      as_bad (_("internal: bad RISC-V opcode (mask error): %s %s"),
 	      opc->name, opc->args);
       return 0;
     }
@@ -1789,7 +1752,7 @@ validate_mips_insn (const struct riscv_opcode *opc)
         case 'R': USE_BITS (OP_MASK_VFR, OP_SH_VFR); break;
 
         default:
-          as_bad (_("internal: bad mips opcode (unknown extension operand type `#%c'): %s %s"),
+          as_bad (_("internal: bad RISC-V opcode (unknown extension operand type `#%c'): %s %s"),
                   c, opc->name, opc->args);
           return 0;
         }
@@ -1824,14 +1787,14 @@ validate_mips_insn (const struct riscv_opcode *opc)
       case ']': break;
       case '0': break;
       default:
-	as_bad (_("internal: bad mips opcode (unknown operand type `%c'): %s %s"),
+	as_bad (_("internal: bad RISC-V opcode (unknown operand type `%c'): %s %s"),
 		c, opc->name, opc->args);
 	return 0;
       }
 #undef USE_BITS
   if (used_bits != required_bits)
     {
-      as_bad (_("internal: bad mips opcode (bits 0x%lx undefined): %s %s"),
+      as_bad (_("internal: bad RISC-V opcode (bits 0x%lx undefined): %s %s"),
 	      ~(long)(used_bits & required_bits), opc->name, opc->args);
       return 0;
     }
@@ -1967,7 +1930,7 @@ my_getSmallExpression (expressionS *ep, bfd_reloc_code_real_type *reloc,
    is an address expression.  */
 
 static void
-mips_ip (char *str, struct mips_cl_insn *ip)
+riscv_ip (char *str, struct riscv_cl_insn *ip)
 {
   char *s;
   const char *args;
@@ -2178,13 +2141,7 @@ mips_ip (char *str, struct mips_cl_insn *ip)
 		continue;
 	      break;
 
-	    case '<':		/* must be at least one digit */
-	      /*
-	       * According to the manual, if the shift amount is greater
-	       * than 31 or less than 0, then the shift amount should be
-	       * mod 32.  In reality the mips assembler issues an error.
-	       * We issue a warning and mask out all but the low 5 bits.
-	       */
+	    case '<':		/* shift amount, 0 - 31 */
 	      my_getExpression (&imm_expr, s);
 	      check_absolute_expr (ip, &imm_expr);
 	      if ((unsigned long) imm_expr.X_add_number > 31)
@@ -2195,7 +2152,7 @@ mips_ip (char *str, struct mips_cl_insn *ip)
 	      s = expr_end;
 	      continue;
 
-	    case '>':		/* shift amount, 0-63 */
+	    case '>':		/* shift amount, 0 - (XLEN-1) */
 	      my_getExpression (&imm_expr, s);
 	      check_absolute_expr (ip, &imm_expr);
 	      if ((unsigned long) imm_expr.X_add_number > (rv64 ? 63 : 31))
@@ -2387,7 +2344,7 @@ alu_op:
 	    case 'a':		/* 26 bit address */
 	      my_getExpression (&offset_expr, s);
 	      s = expr_end;
-	      offset_reloc = BFD_RELOC_MIPS_JMP;
+	      offset_reloc = BFD_RELOC_RISCV_JMP;
 	      continue;
 
 	    case 'c':
@@ -2480,17 +2437,17 @@ md_parse_option (int c, char *arg)
     {
     case 'g':
       if (arg == NULL)
-	mips_debug = 2;
+	riscv_debug = 2;
       else
-	mips_debug = atoi (arg);
+	riscv_debug = atoi (arg);
       break;
 
     case OPTION_MRVC:
-      mips_opts.rvc = 1;
+      riscv_opts.rvc = 1;
       break;
 
     case OPTION_MNO_RVC:
-      mips_opts.rvc = 0;
+      riscv_opts.rvc = 0;
       break;
 
     case OPTION_M32:
@@ -2520,14 +2477,14 @@ md_parse_option (int c, char *arg)
 }
 
 void
-mips_after_parse_args (void)
+riscv_after_parse_args (void)
 {
   if (riscv_subsets == NULL)
     riscv_set_arch("RVIMAFDXcustom");
 }
 
 void
-mips_init_after_args (void)
+riscv_init_after_args (void)
 {
   /* initialize opcodes */
   bfd_riscv_num_opcodes = bfd_riscv_num_builtin_opcodes;
@@ -2557,8 +2514,8 @@ md_apply_fix (fixS *fixP, valueT *valP, segT seg ATTRIBUTE_UNUSED)
 
   switch (fixP->fx_r_type)
     {
-    case BFD_RELOC_MIPS_TLS_DTPREL32:
-    case BFD_RELOC_MIPS_TLS_DTPREL64:
+    case BFD_RELOC_RISCV_TLS_DTPREL32:
+    case BFD_RELOC_RISCV_TLS_DTPREL64:
     case BFD_RELOC_RISCV_TPREL_HI20:
     case BFD_RELOC_RISCV_TPREL_LO12_I:
     case BFD_RELOC_RISCV_TPREL_LO12_S:
@@ -2650,7 +2607,7 @@ md_apply_fix (fixS *fixP, valueT *valP, segT seg ATTRIBUTE_UNUSED)
     case BFD_RELOC_RISCV_TLS_PCREL_LO12:
     case BFD_RELOC_RISCV_CALL:
     case BFD_RELOC_RISCV_CALL_PLT:
-    case BFD_RELOC_MIPS_JMP:
+    case BFD_RELOC_RISCV_JMP:
     case BFD_RELOC_12_PCREL:
       return;
 
@@ -2671,15 +2628,12 @@ md_apply_fix (fixS *fixP, valueT *valP, segT seg ATTRIBUTE_UNUSED)
 
 /* Align the current frag to a given power of two.  If a particular
    fill byte should be used, FILL points to an integer that contains
-   that byte, otherwise FILL is null.
-
-   The MIPS assembler also automatically adjusts any preceding
-   label.  */
+   that byte, otherwise FILL is null.  Adjust any preceding label. */
 
 static void
-mips_align (int to, int *fill, symbolS *label)
+riscv_align (int to, int *fill, symbolS *label)
 {
-  mips_clear_insn_labels ();
+  riscv_clear_insn_labels ();
   if (fill == NULL && subseg_text_p (now_seg))
     frag_align_code (to, 0);
   else
@@ -2701,14 +2655,6 @@ s_align (int x ATTRIBUTE_UNUSED)
 {
   int temp, fill_value, *fill_ptr;
   long max_alignment = 28;
-
-  /* o Note that the assembler pulls down any immediately preceding label
-       to the aligned address.
-     o It's not documented but auto alignment is reinstated by
-       a .align pseudo instruction.
-     o Note also that after auto alignment is turned off the mips assembler
-       issues an error on attempt to assemble an improperly aligned data item.
-       We don't.  */
 
   temp = get_absolute_expression ();
   if (temp > max_alignment)
@@ -2732,7 +2678,7 @@ s_align (int x ATTRIBUTE_UNUSED)
       struct insn_label_list *l = si->label_list;
       /* Auto alignment should be switched on by next section change.  */
       auto_align = 1;
-      mips_align (temp, fill_ptr, l != NULL ? l->label : NULL);
+      riscv_align (temp, fill_ptr, l != NULL ? l->label : NULL);
     }
   else
     {
@@ -2756,7 +2702,7 @@ s_change_sec (int sec)
     obj_elf_section_change_hook ();
 #endif
 
-  mips_clear_insn_labels ();
+  riscv_clear_insn_labels ();
 
   switch (sec)
     {
@@ -2834,7 +2780,7 @@ s_change_section (int ignore ATTRIBUTE_UNUSED)
 }
 
 void
-mips_enable_auto_align (void)
+riscv_enable_auto_align (void)
 {
   auto_align = 1;
 }
@@ -2847,10 +2793,10 @@ s_cons (int log_size)
   symbolS *label;
 
   label = l != NULL ? l->label : NULL;
-  mips_clear_insn_labels ();
+  riscv_clear_insn_labels ();
   if (log_size > 0 && auto_align)
-    mips_align (log_size, 0, label);
-  mips_clear_insn_labels ();
+    riscv_align (log_size, 0, label);
+  riscv_clear_insn_labels ();
   cons (1 << log_size);
 }
 
@@ -2863,30 +2809,30 @@ s_float_cons (int type)
 
   label = l != NULL ? l->label : NULL;
 
-  mips_clear_insn_labels ();
+  riscv_clear_insn_labels ();
 
   if (auto_align)
     {
       if (type == 'd')
-	mips_align (3, 0, label);
+	riscv_align (3, 0, label);
       else
-	mips_align (2, 0, label);
+	riscv_align (2, 0, label);
     }
 
-  mips_clear_insn_labels ();
+  riscv_clear_insn_labels ();
 
   float_cons (type);
 }
 
 /* This structure is used to hold a stack of .set values.  */
 
-struct mips_option_stack
+struct riscv_option_stack
 {
-  struct mips_option_stack *next;
-  struct mips_set_options options;
+  struct riscv_option_stack *next;
+  struct riscv_set_options options;
 };
 
-static struct mips_option_stack *mips_opts_stack;
+static struct riscv_option_stack *riscv_opts_stack;
 
 /* Handle the .set pseudo-op.  */
 
@@ -2901,29 +2847,29 @@ s_riscv_option (int x ATTRIBUTE_UNUSED)
   *input_line_pointer = '\0';
 
   if (strcmp (name, "rvc") == 0)
-    mips_opts.rvc = 1;
+    riscv_opts.rvc = 1;
   else if (strcmp (name, "norvc") == 0)
-    mips_opts.rvc = 0;
+    riscv_opts.rvc = 0;
   else if (strcmp (name, "push") == 0)
     {
-      struct mips_option_stack *s;
+      struct riscv_option_stack *s;
 
-      s = (struct mips_option_stack *) xmalloc (sizeof *s);
-      s->next = mips_opts_stack;
-      s->options = mips_opts;
-      mips_opts_stack = s;
+      s = (struct riscv_option_stack *) xmalloc (sizeof *s);
+      s->next = riscv_opts_stack;
+      s->options = riscv_opts;
+      riscv_opts_stack = s;
     }
   else if (strcmp (name, "pop") == 0)
     {
-      struct mips_option_stack *s;
+      struct riscv_option_stack *s;
 
-      s = mips_opts_stack;
+      s = riscv_opts_stack;
       if (s == NULL)
 	as_bad (_(".set pop with no .set push"));
       else
 	{
-	  mips_opts = s->options;
-	  mips_opts_stack = s->next;
+	  riscv_opts = s->options;
+	  riscv_opts_stack = s->next;
 	  free (s);
 	}
     }
@@ -2967,8 +2913,8 @@ s_dtprel_internal (size_t bytes)
   md_number_to_chars (p, 0, bytes);
   fix_new_exp (frag_now, p - frag_now->fr_literal, bytes, &ex, FALSE,
 	       (bytes == 8
-		? BFD_RELOC_MIPS_TLS_DTPREL64
-		: BFD_RELOC_MIPS_TLS_DTPREL32));
+		? BFD_RELOC_RISCV_TLS_DTPREL64
+		: BFD_RELOC_RISCV_TLS_DTPREL32));
 
   demand_empty_rest_of_line ();
 }
@@ -3071,7 +3017,7 @@ tc_gen_reloc (asection *section ATTRIBUTE_UNUSED, fixS *fixp)
 }
 
 int
-mips_relax_frag (asection *sec, fragS *fragp, long stretch ATTRIBUTE_UNUSED)
+riscv_relax_frag (asection *sec, fragS *fragp, long stretch ATTRIBUTE_UNUSED)
 {
   if (RELAX_BRANCH_P (fragp->fr_subtype))
     {
@@ -3116,7 +3062,7 @@ md_convert_frag_branch (bfd *abfd ATTRIBUTE_UNUSED, segT asec ATTRIBUTE_UNUSED,
 	  if((insn & MASK_C_J) == MATCH_C_J)
 	    {
 	      insn = MATCH_JAL;
-	      reloc_type = BFD_RELOC_MIPS_JMP;
+	      reloc_type = BFD_RELOC_RISCV_JMP;
 	    }
 	  else if((insn & MASK_C_BEQ) == MATCH_C_BEQ)
 	    insn = MATCH_BEQ | (rs1 << OP_SH_RS1) | (rs2 << OP_SH_RS2);
@@ -3155,7 +3101,7 @@ md_convert_frag_branch (bfd *abfd ATTRIBUTE_UNUSED, segT asec ATTRIBUTE_UNUSED,
 
 	  /* Jump to the target. */
 	  fixp = fix_new_exp (fragp, buf - (bfd_byte *)fragp->fr_literal,
-			  4, &exp, FALSE, BFD_RELOC_MIPS_JMP);
+			  4, &exp, FALSE, BFD_RELOC_RISCV_JMP);
 	  md_number_to_chars ((char *) buf, MATCH_JAL, 4);
 	  buf += 4;
 	}
@@ -3194,7 +3140,7 @@ md_convert_frag(bfd *abfd, segT asec, fragS *fragp)
    can not move it.  */
 
 void
-mips_define_label (symbolS *sym)
+riscv_define_label (symbolS *sym)
 {
   segment_info_type *si = seg_info (now_seg);
   struct insn_label_list *l;
@@ -3217,7 +3163,7 @@ mips_define_label (symbolS *sym)
 }
 
 void
-mips_handle_align (fragS *fragp)
+riscv_handle_align (fragS *fragp)
 {
   char *p;
 
@@ -3242,7 +3188,7 @@ RISC-V options:\n\
 }
 
 enum dwarf2_format
-mips_dwarf2_format (asection *sec ATTRIBUTE_UNUSED)
+riscv_dwarf2_format (asection *sec ATTRIBUTE_UNUSED)
 {
   if (HAVE_32BIT_SYMBOLS)
     return dwarf2_format_32bit;
@@ -3251,20 +3197,20 @@ mips_dwarf2_format (asection *sec ATTRIBUTE_UNUSED)
 }
 
 int
-mips_dwarf2_addr_size (void)
+riscv_dwarf2_addr_size (void)
 {
   return rv64 ? 8 : 4;
 }
 
 /* Standard calling conventions leave the CFA at SP on entry.  */
 void
-mips_cfi_frame_initial_instructions (void)
+riscv_cfi_frame_initial_instructions (void)
 {
   cfi_add_CFA_def_cfa_register (SP);
 }
 
 int
-tc_mips_regname_to_dw2regnum (char *regname)
+tc_riscv_regname_to_dw2regnum (char *regname)
 {
   unsigned int regnum = -1;
   unsigned int reg;
