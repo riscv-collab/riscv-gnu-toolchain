@@ -1016,16 +1016,7 @@ typedef struct {
 #define ASM_GENERATE_INTERNAL_LABEL(LABEL,PREFIX,NUM)			\
   sprintf ((LABEL), "*%s%s%ld", (LOCAL_LABEL_PREFIX), (PREFIX), (long)(NUM))
 
-/* Put small global uninitialized data in .sbss, otherwise in .bss. */
-
-#undef  ASM_OUTPUT_ALIGNED_COMMON
-#define ASM_OUTPUT_ALIGNED_COMMON(FILE, NAME, SIZE, ALIGN)		\
-do {									\
-  targetm.asm_out.globalize_label (FILE, NAME);				\
-  ASM_OUTPUT_ALIGNED_LOCAL (FILE, NAME, SIZE, ALIGN);			\
-} while (0)
-
-/* Likewise, for local data. */
+/* Put small local data in .sbss, otherwise in .bss. */
 
 #undef  ASM_OUTPUT_ALIGNED_LOCAL
 #define ASM_OUTPUT_ALIGNED_LOCAL(FILE, NAME, SIZE, ALIGN)		\
