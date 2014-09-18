@@ -1016,22 +1016,6 @@ typedef struct {
 #define ASM_GENERATE_INTERNAL_LABEL(LABEL,PREFIX,NUM)			\
   sprintf ((LABEL), "*%s%s%ld", (LOCAL_LABEL_PREFIX), (PREFIX), (long)(NUM))
 
-/* Put small local data in .sbss, otherwise in .bss. */
-
-#undef  ASM_OUTPUT_ALIGNED_LOCAL
-#define ASM_OUTPUT_ALIGNED_LOCAL(FILE, NAME, SIZE, ALIGN)		\
-do {									\
-  if (riscv_size_ok_for_small_data_p (SIZE))				\
-    switch_to_section (sbss_section);					\
-  else									\
-    switch_to_section (bss_section);					\
-  ASM_OUTPUT_ALIGN (FILE, exact_log2 ((ALIGN) / BITS_PER_UNIT));	\
-  ASM_OUTPUT_TYPE_DIRECTIVE (FILE, NAME, "object");			\
-  ASM_OUTPUT_SIZE_DIRECTIVE (FILE, NAME, SIZE);				\
-  ASM_OUTPUT_LABEL (FILE, NAME);					\
-  ASM_OUTPUT_SKIP (FILE, (SIZE) ? (SIZE) : 1);				\
-} while (0)
-
 /* This is how to output an element of a case-vector that is absolute.  */
 
 #define ASM_OUTPUT_ADDR_VEC_ELT(STREAM, VALUE)				\
