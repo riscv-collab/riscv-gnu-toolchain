@@ -398,7 +398,7 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
 	case 'o':
 	  maybe_print_address (pd, rs1, EXTRACT_ITYPE_IMM (l));
 	case 'j':
-	  if ((l & MASK_ADDI) == MATCH_ADDI)
+	  if ((l & MASK_ADDI) == MATCH_ADDI || (l & MASK_JALR) == MATCH_JALR)
 	    maybe_print_address (pd, rs1, EXTRACT_ITYPE_IMM (l));
 	  (*info->fprintf_func) (info->stream, "%d", (int)EXTRACT_ITYPE_IMM (l));
 	  break;
