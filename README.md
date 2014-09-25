@@ -1,13 +1,23 @@
 RISC-V GNU Compiler Toolchain
 =============================
 
-Author  : Andrew Waterman
-
-Date    : September 11, 2014
-
 This is the RISC-V C and C++ cross-compiler. It supports two build modes:
 a generic ELF/Newlib toolchain and a more sophisticated Linux-ELF/glibc
 toolchain.
+
+Author
+------
+
+Andrew Waterman
+
+Contributors
+------------
+
+- Yunsup Lee
+- Quan Nguyen
+- Albert Ou
+- Darius Rad
+- ultraembedded (github id)
 
 ### Installation (Newlib)
 
