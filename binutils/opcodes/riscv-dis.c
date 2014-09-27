@@ -42,7 +42,7 @@ static const char * const riscv_gpr_names_numeric[32] =
   "x24",  "x25",  "x26",  "x27",  "x28",  "x29",  "x30",  "x31"
 };
 
-static const char* riscv_gpr_names_abi[32] = {
+static const char * const riscv_gpr_names_abi[32] = {
   "zero", "ra", "s0", "s1",  "s2",  "s3",  "s4",  "s5",
   "s6",   "s7", "s8", "s9", "s10", "s11",  "sp",  "tp",
   "v0",   "v1", "a0", "a1",  "a2",  "a3",  "a4",  "a5",
@@ -58,7 +58,7 @@ static const char * const riscv_fpr_names_numeric[32] =
   "f24",  "f25",  "f26",  "f27",  "f28",  "f29",  "f30",  "f31"
 };
 
-static const char* riscv_fpr_names_abi[32] = {
+static const char * const riscv_fpr_names_abi[32] = {
   "fs0", "fs1",  "fs2",  "fs3",  "fs4",  "fs5",  "fs6",  "fs7",
   "fs8", "fs9", "fs10", "fs11", "fs12", "fs13", "fs14", "fs15",
   "fv0", "fv1", "fa0",   "fa1",  "fa2",  "fa3",  "fa4",  "fa5",
@@ -714,7 +714,7 @@ print_insn_riscv (bfd_vma memaddr, struct disassemble_info *info)
   set_default_riscv_dis_options (info);
   parse_riscv_dis_options (info->disassembler_options);
 
-  /* Instructions are a sequence of 2-byte packets in little-endian order. */
+  /* Instructions are a sequence of 2-byte packets in little-endian order.  */
   for (n = 0; n < sizeof(insn) && n < riscv_insn_length (insn); n += 2)
     {
       status = (*info->read_memory_func) (memaddr + n, (bfd_byte*)&i2, 2, info);

@@ -17,6 +17,7 @@ Contributors
 - Quan Nguyen
 - Albert Ou
 - Darius Rad
+- Matt Thomas
 - ultraembedded (github id)
 
 ### Installation (Newlib)

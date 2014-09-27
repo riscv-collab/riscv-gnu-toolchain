@@ -75,7 +75,7 @@ static int riscv_output_flavor (void) { return OUTPUT_FLAVOR; }
    and fixups.  */
 struct riscv_cl_insn
 {
-  /* The opcode's entry in riscv_opcodes. */
+  /* The opcode's entry in riscv_opcodes.  */
   const struct riscv_opcode *insn_mo;
 
   /* The 16-bit or 32-bit bitstring of the instruction itself.  This is
@@ -367,7 +367,7 @@ static void s_dtpreldword (int);
 static int validate_riscv_insn (const struct riscv_opcode *);
 static int relaxed_branch_length (fragS *fragp, asection *sec, int update);
 
-/* Pseudo-op table. */
+/* Pseudo-op table.  */
 
 static const pseudo_typeS riscv_pseudo_table[] =
 {
@@ -377,7 +377,7 @@ static const pseudo_typeS riscv_pseudo_table[] =
   {"dtprelword", s_dtprelword, 0},
   {"dtpreldword", s_dtpreldword, 0},
 
-  /* Relatively generic pseudo-ops supported by RISC-V assemblers. */
+  /* Relatively generic pseudo-ops supported by RISC-V assemblers.  */
   {"asciiz", stringer, 8 + 1},
   {"bss", s_change_sec, 'b'},
   {"err", s_err, 0},

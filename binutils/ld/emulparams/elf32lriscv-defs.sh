@@ -1,7 +1,7 @@
 # This is an ELF platform.
 SCRIPT_NAME=elf
 
-# Handle both big- and little-ended 32-bit RISC-V objects.
+# Handle both little-ended 32-bit RISC-V objects.
 ARCH=riscv
 OUTPUT_FORMAT="elf32-littleriscv"
 

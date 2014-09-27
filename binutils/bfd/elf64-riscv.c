@@ -22,7 +22,7 @@
    MA 02110-1301, USA.  */
 
 
-/* This file supports the 64-bit RISC-V ELF ABI. */
+/* This file supports the 64-bit RISC-V ELF ABI.  */
 
 #include "sysdep.h"
 #include "bfd.h"
@@ -33,8 +33,6 @@
 #include "elf-bfd.h"
 #include "elfxx-riscv.h"
 #include "elf/riscv.h"
-#include "opcode/riscv.h"
-
 #include "opcode/riscv.h"
 
 static bfd_boolean riscv_elf64_object_p
@@ -68,7 +66,7 @@ elf64_riscv_grok_prstatus (bfd *abfd, Elf_Internal_Note *note)
       default:
 	return FALSE;
 
-      case 480:		/* Linux/RISC-V - N64 kernel */
+      case 480:		/* Linux/RISC-V - RV64 kernel */
 	/* pr_cursig */
 	elf_tdata (abfd)->core->signal = bfd_get_16 (abfd, note->descdata + 12);
 

@@ -22,7 +22,7 @@
    MA 02110-1301, USA.  */
 
 
-/* This file handles RISC-V ELF targets. */
+/* This file handles RISC-V ELF targets.  */
 
 #include "sysdep.h"
 #include "bfd.h"
@@ -36,7 +36,7 @@
 
 #include "opcode/riscv.h"
 
-static bfd_boolean riscv_elf_n32_object_p
+static bfd_boolean riscv_elf32_object_p
   (bfd *);
 static bfd_boolean elf32_riscv_grok_prstatus
   (bfd *, Elf_Internal_Note *);
@@ -49,7 +49,7 @@ static bfd_boolean elf32_riscv_grok_psinfo
 /* Set the right machine number for a RISC-V ELF file.  */
 
 static bfd_boolean
-riscv_elf_n32_object_p (bfd *abfd)
+riscv_elf32_object_p (bfd *abfd)
 {
   bfd_default_set_arch_mach (abfd, bfd_arch_riscv, bfd_mach_riscv32);
   return TRUE;
@@ -124,7 +124,7 @@ elf32_riscv_grok_psinfo (bfd *abfd, Elf_Internal_Note *note)
 #define elf_backend_type_change_ok	TRUE
 #define elf_backend_can_gc_sections	TRUE
 #define elf_info_to_howto		riscv_elf_info_to_howto_rela
-#define elf_backend_object_p		riscv_elf_n32_object_p
+#define elf_backend_object_p		riscv_elf32_object_p
 #define elf_backend_symbol_processing	_bfd_riscv_elf_symbol_processing
 #define elf_backend_create_dynamic_sections \
 					_bfd_riscv_elf_create_dynamic_sections
@@ -184,8 +184,8 @@ elf32_riscv_grok_psinfo (bfd *abfd, Elf_Internal_Note *note)
 #define bfd_elf32_bfd_reloc_name_lookup \
 			riscv_elf_bfd_reloc_name_lookup
 
-#define TARGET_LITTLE_SYM               bfd_elf32_riscv_vec
-#define TARGET_LITTLE_NAME              "elf32-littleriscv"
+#define TARGET_LITTLE_SYM		bfd_elf32_riscv_vec
+#define TARGET_LITTLE_NAME		"elf32-littleriscv"
 
 #define ELF_MAXPAGESIZE			0x1000
 #define ELF_COMMONPAGESIZE		0x1000
