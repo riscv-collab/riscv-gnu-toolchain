@@ -25,11 +25,6 @@ fragment <<EOF
 #include "elf/riscv.h"
 #include "elfxx-riscv.h"
 
-#define is_riscv_elf(bfd)				\
-  (bfd_get_flavour (bfd) == bfd_target_elf_flavour	\
-   && elf_tdata (bfd) != NULL				\
-   && elf_object_id (bfd) == RISCV_ELF_DATA)
-
 static void
 riscv_after_parse (void)
 {
