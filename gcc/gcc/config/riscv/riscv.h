@@ -519,7 +519,6 @@ struct riscv_cpu_info {
 #define HARD_FRAME_POINTER_REGNUM 2
 #define STACK_POINTER_REGNUM 14
 #define THREAD_POINTER_REGNUM 15
-#define GP_REGNUM 31
 
 /* These two registers don't really exist: they get eliminated to either
    the stack or hard frame pointer.  */

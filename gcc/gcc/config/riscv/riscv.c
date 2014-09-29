@@ -798,20 +798,6 @@ mips_classify_address (struct mips_address_info *info, rtx x,
       info->type = ADDRESS_CONST_INT;
       return SMALL_INT (x);
 
-    case CONST:
-    case LABEL_REF:
-    case SYMBOL_REF:
-      if (mips_symbolic_constant_p (x, &info->symbol_type)
-	  && riscv_symbol_insns (info->symbol_type) > 0
-	  && !riscv_hi_relocs[info->symbol_type]
-	  && riscv_lo_relocs[info->symbol_type])
-	{
-	  info->type = ADDRESS_LO_SUM;
-	  info->reg = gen_rtx_REG (Pmode, GP_REGNUM);
-	  info->offset = x;
-	  return true;
-	}
-
     default:
       return false;
     }
@@ -4150,159 +4136,6 @@ riscv_expand_builtin (tree exp, rtx target, rtx subtarget ATTRIBUTE_UNUSED,
   gcc_unreachable ();
 }
 
-/* This structure records that the current function has a LO_SUM
-   involving SYMBOL_REF or LABEL_REF BASE and that MAX_OFFSET is
-   the largest offset applied to BASE by all such LO_SUMs.  */
-struct mips_lo_sum_offset {
-  rtx base;
-  HOST_WIDE_INT offset;
-};
-
-/* Return a hash value for SYMBOL_REF or LABEL_REF BASE.  */
-
-static hashval_t
-mips_hash_base (rtx base)
-{
-  int do_not_record_p;
-
-  return hash_rtx (base, GET_MODE (base), &do_not_record_p, NULL, false);
-}
-
-/* Hash-table callbacks for mips_lo_sum_offsets.  */
-
-static hashval_t
-mips_lo_sum_offset_hash (const void *entry)
-{
-  return mips_hash_base (((const struct mips_lo_sum_offset *) entry)->base);
-}
-
-static int
-mips_lo_sum_offset_eq (const void *entry, const void *value)
-{
-  return rtx_equal_p (((const struct mips_lo_sum_offset *) entry)->base,
-		      (const_rtx) value);
-}
-
-/* Look up symbolic constant X in HTAB, which is a hash table of
-   mips_lo_sum_offsets.  If OPTION is NO_INSERT, return true if X can be
-   paired with a recorded LO_SUM, otherwise record X in the table.  */
-
-static bool
-mips_lo_sum_offset_lookup (htab_t htab, rtx x, enum insert_option option)
-{
-  rtx base, offset;
-  void **slot;
-  struct mips_lo_sum_offset *entry;
-
-  /* Split X into a base and offset.  */
-  split_const (x, &base, &offset);
-  if (UNSPEC_ADDRESS_P (base))
-    base = UNSPEC_ADDRESS (base);
-
-  /* Look up the base in the hash table.  */
-  slot = htab_find_slot_with_hash (htab, base, mips_hash_base (base), option);
-  if (slot == NULL)
-    return false;
-
-  entry = (struct mips_lo_sum_offset *) *slot;
-  if (option == INSERT)
-    {
-      if (entry == NULL)
-	{
-	  entry = XNEW (struct mips_lo_sum_offset);
-	  entry->base = base;
-	  entry->offset = INTVAL (offset);
-	  *slot = entry;
-	}
-      else
-	{
-	  if (INTVAL (offset) > entry->offset)
-	    entry->offset = INTVAL (offset);
-	}
-    }
-  return INTVAL (offset) <= entry->offset;
-}
-
-/* A for_each_rtx callback for which DATA is a mips_lo_sum_offset hash table.
-   Record every LO_SUM in *LOC.  */
-
-static int
-mips_record_lo_sum (rtx *loc, void *data)
-{
-  if (GET_CODE (*loc) == LO_SUM)
-    mips_lo_sum_offset_lookup ((htab_t) data, XEXP (*loc, 1), INSERT);
-  return 0;
-}
-
-/* Return true if INSN is a SET of an orphaned high-part relocation.
-   HTAB is a hash table of mips_lo_sum_offsets that describes all the
-   LO_SUMs in the current function.  */
-
-static bool
-mips_orphaned_high_part_p (htab_t htab, rtx insn)
-{
-  rtx x, set;
-
-  set = single_set (insn);
-  if (set)
-    {
-      /* Check for %his.  */
-      x = SET_SRC (set);
-      if (GET_CODE (x) == HIGH
-	  && absolute_symbolic_operand (XEXP (x, 0), VOIDmode))
-	return !mips_lo_sum_offset_lookup (htab, XEXP (x, 0), NO_INSERT);
-    }
-  return false;
-}
-
-/* Delete any high-part relocations whose partnering low parts are dead. */
-
-static void
-mips_reorg_process_insns (void)
-{
-  rtx insn, next_insn;
-  htab_t htab;
-
-  /* Force all instructions to be split into their final form.  */
-  split_all_insns_noflow ();
-
-  /* Recalculate instruction lengths without taking nops into account.  */
-  shorten_branches (get_insns ());
-
-  htab = htab_create (37, mips_lo_sum_offset_hash,
-		      mips_lo_sum_offset_eq, free);
-
-  /* Make a first pass over the instructions, recording all the LO_SUMs.  */
-  for (insn = get_insns (); insn != 0; insn = NEXT_INSN (insn))
-    if (USEFUL_INSN_P (insn))
-      for_each_rtx (&PATTERN (insn), mips_record_lo_sum, htab);
-
-  /* Make a second pass over the instructions.  Delete orphaned
-     high-part relocations or turn them into NOPs.  Avoid hazards
-     by inserting NOPs.  */
-  for (insn = get_insns (); insn != 0; insn = next_insn)
-    {
-      next_insn = NEXT_INSN (insn);
-      if (USEFUL_INSN_P (insn))
-	{
-	  /* INSN is a single instruction.  Delete it if it's an
-	     orphaned high-part relocation.  */
-	  if (mips_orphaned_high_part_p (htab, insn))
-	    delete_insn (insn);
-	}
-    }
-
-  htab_delete (htab);
-}
-
-/* Implement TARGET_MACHINE_DEPENDENT_REORG.  */
-
-static void
-mips_reorg (void)
-{
-  mips_reorg_process_insns ();
-}
-
 /* Implement TARGET_ASM_OUTPUT_MI_THUNK.  Generate rtl rather than asm text
    in order to avoid duplicating too much logic from elsewhere.  */
 
@@ -4577,9 +4410,6 @@ mips_trampoline_init (rtx m_tramp, tree fndecl, rtx chain_value)
 #define TARGET_RTX_COSTS riscv_rtx_costs
 #undef TARGET_ADDRESS_COST
 #define TARGET_ADDRESS_COST riscv_address_cost
-
-#undef TARGET_MACHINE_DEPENDENT_REORG
-#define TARGET_MACHINE_DEPENDENT_REORG mips_reorg
 
 #undef  TARGET_PREFERRED_RELOAD_CLASS
 #define TARGET_PREFERRED_RELOAD_CLASS mips_preferred_reload_class
