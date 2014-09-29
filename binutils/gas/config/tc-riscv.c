@@ -1465,20 +1465,38 @@ normalize_address_expr (expressionS *ex)
 			- 0x80000000);
 }
 
+static symbolS *
+make_internal_label (void)
+{
+  static uint32_t count;
+  char name[16];
+
+  sprintf (name, ".LX%d", count);
+  gas_assert (++count != 0);
+
+  return (symbolS *) local_symbol_make (name, now_seg, (valueT) frag_now_fix(),
+					frag_now);
+}
+
 /* Load an entry from the GOT. */
 static void
 pcrel_access (int destreg, int tempreg, expressionS *ep,
 	      const char* lo_insn, const char* lo_pattern,
-              bfd_reloc_code_real_type hi_reloc,
+	      bfd_reloc_code_real_type hi_reloc,
 	      bfd_reloc_code_real_type lo_reloc)
 {
+  expressionS ep2;
+  ep2.X_op = O_symbol;
+  ep2.X_add_symbol = make_internal_label ();
+  ep2.X_add_number = 0;
+
   macro_build (ep, "auipc", "d,u", tempreg, hi_reloc);
-  macro_build (ep, lo_insn, lo_pattern, destreg, tempreg, lo_reloc);
+  macro_build (&ep2, lo_insn, lo_pattern, destreg, tempreg, lo_reloc);
 }
 
 static void
 pcrel_load (int destreg, int tempreg, expressionS *ep, const char* lo_insn,
-            bfd_reloc_code_real_type hi_reloc,
+	    bfd_reloc_code_real_type hi_reloc,
 	    bfd_reloc_code_real_type lo_reloc)
 {
   pcrel_access (destreg, tempreg, ep, lo_insn, "d,s,j", hi_reloc, lo_reloc);
@@ -1486,19 +1504,10 @@ pcrel_load (int destreg, int tempreg, expressionS *ep, const char* lo_insn,
 
 static void
 pcrel_store (int srcreg, int tempreg, expressionS *ep, const char* lo_insn,
-             bfd_reloc_code_real_type hi_reloc,
+	     bfd_reloc_code_real_type hi_reloc,
 	     bfd_reloc_code_real_type lo_reloc)
 {
   pcrel_access (srcreg, tempreg, ep, lo_insn, "t,s,q", hi_reloc, lo_reloc);
-}
-
-static void
-pcrel_vf (int tempreg, expressionS *ep, 
-             bfd_reloc_code_real_type hi_reloc,
-	     bfd_reloc_code_real_type lo_reloc)
-{
-  macro_build (ep, "auipc", "d,u", tempreg, hi_reloc);
-  macro_build (ep, "vf", "s,q", tempreg, lo_reloc);
 }
 
 /* PC-relative function call using AUIPC/JALR, relaxed to JAL. */
@@ -1683,8 +1692,8 @@ macro (struct riscv_cl_insn *ip)
       break;
 
     case M_VF:
-      pcrel_vf (rs1, &offset_expr,
-                   BFD_RELOC_RISCV_PCREL_HI20, BFD_RELOC_RISCV_PCREL_LO12_S);
+      pcrel_access (0, rs1, &offset_expr, "vf", "s,s,q",
+		    BFD_RELOC_RISCV_PCREL_HI20, BFD_RELOC_RISCV_PCREL_LO12_S);
       break;
 
     case M_JUMP:
@@ -1811,6 +1820,7 @@ static const struct percent_op_match percent_op_utype[] =
 {
   {"%tprel_hi", BFD_RELOC_RISCV_TPREL_HI20},
   {"%tls_ie_hi", BFD_RELOC_RISCV_TLS_IE_HI20},
+  {"%pcrel_hi", BFD_RELOC_RISCV_PCREL_HI20},
   {"%hi", BFD_RELOC_RISCV_HI20},
   {0, 0}
 };
@@ -1821,6 +1831,7 @@ static const struct percent_op_match percent_op_itype[] =
   {"%tprel_lo", BFD_RELOC_RISCV_TPREL_LO12_I},
   {"%tls_ie_lo", BFD_RELOC_RISCV_TLS_IE_LO12},
   {"%tls_ie_off", BFD_RELOC_RISCV_TLS_IE_LO12_I},
+  {"%pcrel_lo", BFD_RELOC_RISCV_PCREL_LO12_I},
   {0, 0}
 };
 
@@ -1829,6 +1840,7 @@ static const struct percent_op_match percent_op_stype[] =
   {"%lo", BFD_RELOC_RISCV_LO12_S},
   {"%tprel_lo", BFD_RELOC_RISCV_TPREL_LO12_S},
   {"%tls_ie_off", BFD_RELOC_RISCV_TLS_IE_LO12_S},
+  {"%pcrel_lo", BFD_RELOC_RISCV_PCREL_LO12_S},
   {0, 0}
 };
 
@@ -2503,7 +2515,6 @@ void
 md_apply_fix (fixS *fixP, valueT *valP, segT seg ATTRIBUTE_UNUSED)
 {
   bfd_byte *buf = (bfd_byte *) (fixP->fx_frag->fr_literal + fixP->fx_where);
-  bfd_reloc_code_real_type pcrel_r_type;
 
   /* We ignore generic BFD relocations we don't know about.  */
   if (! bfd_reloc_type_lookup (stdoutput, fixP->fx_r_type))
@@ -2514,6 +2525,8 @@ md_apply_fix (fixS *fixP, valueT *valP, segT seg ATTRIBUTE_UNUSED)
 
   switch (fixP->fx_r_type)
     {
+    case BFD_RELOC_RISCV_TLS_GOT_HI20:
+    case BFD_RELOC_RISCV_TLS_GD_HI20:
     case BFD_RELOC_RISCV_TLS_DTPREL32:
     case BFD_RELOC_RISCV_TLS_DTPREL64:
     case BFD_RELOC_RISCV_TPREL_HI20:
@@ -2528,20 +2541,21 @@ md_apply_fix (fixS *fixP, valueT *valP, segT seg ATTRIBUTE_UNUSED)
       S_SET_THREAD_LOCAL (fixP->fx_addsy);
       /* fall through */
 
-    case BFD_RELOC_RISCV_TLS_GOT_HI20:
-    case BFD_RELOC_RISCV_TLS_GD_HI20:
     case BFD_RELOC_RISCV_GOT_HI20:
     case BFD_RELOC_RISCV_PCREL_HI20:
     case BFD_RELOC_RISCV_HI20:
     case BFD_RELOC_RISCV_LO12_I:
     case BFD_RELOC_RISCV_LO12_S:
+    case BFD_RELOC_RISCV_TLS_GOT_LO12:
+    case BFD_RELOC_RISCV_TLS_GD_LO12:
     case BFD_RELOC_RISCV_ADD32:
     case BFD_RELOC_RISCV_ADD64:
     case BFD_RELOC_RISCV_SUB32:
     case BFD_RELOC_RISCV_SUB64:
+    case BFD_RELOC_RISCV_GOT_LO12:
       gas_assert (fixP->fx_addsy != NULL);
       /* Nothing needed to do.  The value comes from the reloc entry.  */
-      return;
+      break;
 
     case BFD_RELOC_64:
     case BFD_RELOC_32:
@@ -2572,58 +2586,20 @@ md_apply_fix (fixS *fixP, valueT *valP, segT seg ATTRIBUTE_UNUSED)
 	  md_number_to_chars ((char *) buf, *valP, fixP->fx_size);
 	  fixP->fx_done = 1;
 	}
-      return;
-
-    case BFD_RELOC_RISCV_TLS_GOT_LO12:
-    case BFD_RELOC_RISCV_TLS_GD_LO12:
-      gas_assert (fixP->fx_addsy != NULL);
-      S_SET_THREAD_LOCAL (fixP->fx_addsy);
-      pcrel_r_type = BFD_RELOC_RISCV_TLS_PCREL_LO12;
-      break;
-
-    case BFD_RELOC_RISCV_GOT_LO12:
-      gas_assert (fixP->fx_addsy != NULL);
-      pcrel_r_type = BFD_RELOC_RISCV_PCREL_LO12_I;
       break;
 
     case BFD_RELOC_RISCV_PCREL_LO12_S:
-      if (fixP->fx_addsy != NULL)
-	{
-	  fixP->fx_r_type = BFD_RELOC_RISCV_LO12_S;
-	  pcrel_r_type = BFD_RELOC_RISCV_PCREL_LO12_S;
-	  break;
-	}
-      return;
-
     case BFD_RELOC_RISCV_PCREL_LO12_I:
-      if (fixP->fx_addsy != NULL)
-	{
-	  fixP->fx_r_type = BFD_RELOC_RISCV_LO12_I;
-	  pcrel_r_type = BFD_RELOC_RISCV_PCREL_LO12_I;
-	  break;
-	}
-      return;
-
     case BFD_RELOC_RISCV_TLS_PCREL_LO12:
     case BFD_RELOC_RISCV_CALL:
     case BFD_RELOC_RISCV_CALL_PLT:
     case BFD_RELOC_RISCV_JMP:
     case BFD_RELOC_12_PCREL:
-      return;
+      break;
 
     default:
       internalError ();
     }
-
-  /* We only get here for the low part of split PC-relative relocs.
-     Record the distance between the high and low parts.  For now,
-     we assume the high part (AUIPC) is immediately before us, and
-     so this distance is -4. */
-  gas_assert (fixP->fx_subsy == NULL);
-  fixP->fx_next = xmemdup (fixP, sizeof (*fixP), sizeof (*fixP));
-  fixP->fx_next->fx_addsy = NULL;
-  fixP->fx_next->fx_offset = -4;
-  fixP->fx_next->fx_r_type = pcrel_r_type;
 }
 
 /* Align the current frag to a given power of two.  If a particular

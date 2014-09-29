@@ -1769,7 +1769,7 @@ riscv_tls_got_index (bfd *abfd, bfd_vma got_index, unsigned char *tls_type,
 
   riscv_elf_initialize_tls_slots (abfd, got_index, tls_type, info, h, symbol);
 
-  if (TLS_GOTTPREL_RELOC_P(r_type))
+  if (TLS_GOTTPREL_RELOC_P (r_type))
     {
       BFD_ASSERT (*tls_type & GOT_TLS_IE);
       if (*tls_type & GOT_TLS_GD)
@@ -2514,6 +2514,180 @@ _bfd_riscv_elf_plt_sym_val (bfd_vma i, const asection *s,
   return s->vma + PLT_HEADER_SIZE + i * PLT_ENTRY_SIZE;
 }
 
+/* Obtain the field relocated by RELOCATION.  */
+
+static bfd_vma
+riscv_elf_obtain_contents (reloc_howto_type *howto,
+			  const Elf_Internal_Rela *relocation,
+			  bfd *input_bfd, bfd_byte *contents)
+{
+  bfd_vma x;
+  bfd_byte *location = contents + relocation->r_offset;
+
+  /* Obtain the bytes.  */
+  x = bfd_get ((8 * bfd_get_reloc_size (howto)), input_bfd, location);
+
+  return x;
+}
+
+/* It has been determined that the result of the RELOCATION is the
+   VALUE.  Use HOWTO to place VALUE into the output file at the
+   appropriate position.  The SECTION is the section to which the
+   relocation applies.  
+
+   Returns FALSE if anything goes wrong.  */
+
+static bfd_boolean
+riscv_elf_perform_relocation (reloc_howto_type *howto,
+			     const Elf_Internal_Rela *relocation,
+			     bfd_vma value,
+			     bfd *input_bfd,
+			     bfd_byte *contents)
+{
+  bfd_vma x;
+  bfd_byte *location;
+  bfd_vma dst_mask = howto->dst_mask;
+
+  /* Figure out where the relocation is occurring.  */
+  location = contents + relocation->r_offset;
+
+  /* Obtain the current value.  */
+  x = riscv_elf_obtain_contents (howto, relocation, input_bfd, contents);
+
+  /* Update the field. */
+  x = (x &~ dst_mask) | (value & dst_mask);
+
+  /* Put the value into the output.  */
+  bfd_put (8 * bfd_get_reloc_size (howto), input_bfd, x, location);
+
+  return TRUE;
+}
+
+/* Remember all PC-relative high-part relocs we've encountered to help us
+   later resolve the corresponding low-part relocs.  */
+
+typedef struct {
+  bfd_vma address;
+  bfd_vma value;
+} riscv_pcrel_hi_reloc;
+
+typedef struct riscv_pcrel_lo_reloc {
+  asection *input_section;
+  struct bfd_link_info *info;
+  reloc_howto_type *howto;
+  const Elf_Internal_Rela *reloc;
+  bfd_vma addr;
+  const char *name;
+  bfd_byte *contents;
+  struct riscv_pcrel_lo_reloc *next;
+} riscv_pcrel_lo_reloc;
+
+typedef struct {
+  htab_t hi_relocs;
+  riscv_pcrel_lo_reloc *lo_relocs;
+} riscv_pcrel_relocs;
+
+static bfd_boolean
+riscv_init_pcrel_relocs (riscv_pcrel_relocs *p)
+{
+  hashval_t hash (const void *entry)
+  {
+    const riscv_pcrel_hi_reloc *e = entry;
+    return (hashval_t)(e->address >> 2);
+  }
+
+  bfd_boolean eq (const void *entry1, const void *entry2)
+  {
+    const riscv_pcrel_hi_reloc *e1 = entry1, *e2 = entry2;
+    return e1->address == e2->address;
+  }
+
+  p->lo_relocs = NULL;
+  p->hi_relocs = htab_create (1024, hash, eq, free);
+  return p->hi_relocs != NULL;
+}
+
+static void
+riscv_free_pcrel_relocs (riscv_pcrel_relocs *p)
+{
+  riscv_pcrel_lo_reloc *cur = p->lo_relocs;
+  while (cur != NULL)
+    {
+      riscv_pcrel_lo_reloc *next = cur->next;
+      free (cur);
+      cur = next;
+    }
+
+  htab_delete (p->hi_relocs);
+}
+
+static bfd_boolean
+riscv_record_pcrel_hi_reloc (riscv_pcrel_relocs *p, bfd_vma addr, bfd_vma value)
+{
+  riscv_pcrel_hi_reloc entry = {addr, value};
+  riscv_pcrel_hi_reloc **slot =
+    (riscv_pcrel_hi_reloc **) htab_find_slot (p->hi_relocs, &entry, INSERT);
+  BFD_ASSERT (*slot == NULL);
+  *slot = (riscv_pcrel_hi_reloc *) bfd_malloc (sizeof (riscv_pcrel_hi_reloc));
+  if (*slot == NULL)
+    return FALSE;
+  **slot = entry;
+  return TRUE;
+}
+
+static bfd_boolean
+riscv_record_pcrel_lo_reloc (riscv_pcrel_relocs *p,
+			     asection *input_section,
+			     struct bfd_link_info *info,
+			     reloc_howto_type *howto,
+			     const Elf_Internal_Rela *reloc,
+			     bfd_vma addr,
+			     const char *name,
+			     bfd_byte *contents)
+{
+  riscv_pcrel_lo_reloc *entry;
+  entry = (riscv_pcrel_lo_reloc *) bfd_malloc (sizeof (riscv_pcrel_lo_reloc));
+  if (entry == NULL)
+    return FALSE;
+  *entry = (riscv_pcrel_lo_reloc) {input_section, info, howto, reloc, addr,
+				   name, contents, p->lo_relocs};
+  p->lo_relocs = entry;
+  return TRUE;
+}
+
+static bfd_boolean
+riscv_resolve_pcrel_lo_relocs (riscv_pcrel_relocs *p)
+{
+  riscv_pcrel_lo_reloc *r;
+  for (r = p->lo_relocs; r != NULL; r = r->next)
+    {
+      bfd *input_bfd = r->input_section->owner;
+      riscv_pcrel_hi_reloc search = {r->addr, 0};
+      riscv_pcrel_hi_reloc *entry = htab_find (p->hi_relocs, &search);
+      if (entry == NULL)
+	return ((*r->info->callbacks->reloc_overflow)
+		 (r->info, NULL, r->name, r->howto->name, (bfd_vma) 0,
+		  input_bfd, r->input_section, r->reloc->r_offset));
+
+      bfd_vma value = entry->value + r->reloc->r_addend;
+      switch (ELF_R_TYPE (input_bfd, r->reloc->r_info))
+	{
+	case R_RISCV_PCREL_LO12_S:
+	  value = ENCODE_STYPE_IMM (value);
+	  break;
+	default:
+	  value = ENCODE_ITYPE_IMM (value);
+	  break;
+	}
+
+      if (! riscv_elf_perform_relocation (r->howto, r->reloc, value,
+					  input_bfd, r->contents))
+	return FALSE;
+    }
+
+  return TRUE;
+}
+
 /* Calculate the value produced by the RELOCATION (which comes from
    the INPUT_BFD).  The ADDEND is the addend to use for this
    RELOCATION; RELOCATION->R_ADDEND is ignored.
@@ -2525,14 +2699,15 @@ _bfd_riscv_elf_plt_sym_val (bfd_vma i, const asection *s,
    overflow occurs, and bfd_reloc_ok to indicate success.  */
 
 static bfd_reloc_status_type
-riscv_elf_calculate_relocation (bfd *abfd, bfd *input_bfd,
-			       asection *input_section,
-			       struct bfd_link_info *info,
-			       const Elf_Internal_Rela *relocation,
-			       bfd_vma addend, reloc_howto_type *howto,
-			       Elf_Internal_Sym *local_syms,
-			       asection **local_sections, bfd_vma *valuep,
-			       const char **namep, bfd_byte *contents)
+riscv_elf_calculate_relocation (bfd *abfd,
+				asection *input_section,
+				struct bfd_link_info *info,
+				riscv_pcrel_relocs *pcrel_relocs,
+				const Elf_Internal_Rela *relocation,
+				bfd_vma addend, reloc_howto_type *howto,
+				Elf_Internal_Sym *local_syms,
+				asection **local_sections, bfd_vma *valuep,
+				const char **namep, bfd_byte *contents)
 {
   /* The eventual value we will return.  */
   bfd_vma value;
@@ -2550,9 +2725,6 @@ riscv_elf_calculate_relocation (bfd *abfd, bfd *input_bfd,
      located.  */
   asection *sec = NULL;
   struct riscv_elf_link_hash_entry *h = NULL;
-  /* TRUE if the symbol referred to by this relocation is a local
-     symbol.  */
-  bfd_boolean local_p;
   Elf_Internal_Shdr *symtab_hdr;
   size_t extsymoff;
   unsigned long r_symndx;
@@ -2563,6 +2735,7 @@ riscv_elf_calculate_relocation (bfd *abfd, bfd *input_bfd,
   struct riscv_elf_link_hash_table *htab;
   bfd *dynobj;
   bfd_vma gp = _bfd_get_gp_value (abfd);
+  bfd *input_bfd = input_section->owner;
 
   dynobj = elf_hash_table (info)->dynobj;
   htab = riscv_elf_hash_table (info);
@@ -2579,8 +2752,6 @@ riscv_elf_calculate_relocation (bfd *abfd, bfd *input_bfd,
   /* Figure out whether or not the symbol is local, and get the offset
      used in the array of hash table entries.  */
   symtab_hdr = &elf_tdata (input_bfd)->symtab_hdr;
-  local_p = riscv_elf_local_relocation_p (input_bfd, relocation,
-					 local_sections);
   if (! elf_bad_symtab (input_bfd))
     extsymoff = symtab_hdr->sh_info;
   else
@@ -2591,7 +2762,7 @@ riscv_elf_calculate_relocation (bfd *abfd, bfd *input_bfd,
     }
 
   /* Figure out the value of the symbol.  */
-  if (local_p)
+  if (riscv_elf_local_relocation_p (input_bfd, relocation, local_sections))
     {
       Elf_Internal_Sym *sym;
 
@@ -2678,28 +2849,23 @@ riscv_elf_calculate_relocation (bfd *abfd, bfd *input_bfd,
 	}
     }
 
-  local_p = h == NULL || SYMBOL_REFERENCES_LOCAL (info, &h->root);
-
   /* If we haven't already determined the GOT offset, and we're going
      to need it, get it now.  */
   switch (r_type)
     {
     case R_RISCV_GOT_HI20:
-    case R_RISCV_GOT_LO12:
     case R_RISCV_TLS_GD_HI20:
-    case R_RISCV_TLS_GD_LO12:
     case R_RISCV_TLS_GOT_HI20:
-    case R_RISCV_TLS_GOT_LO12:
     case R_RISCV_TLS_IE_HI20:
     case R_RISCV_TLS_IE_LO12:
-      if (!local_p)
+      if (h != NULL && !SYMBOL_REFERENCES_LOCAL (info, &h->root))
 	{
-	      BFD_ASSERT (addend == 0);
-	      g = riscv_elf_global_got_index (dynobj, &h->root, r_type, info);
-	      if (h->tls_type == GOT_NORMAL
-		  && !elf_hash_table (info)->dynamic_sections_created)
-		/* This is a static link.  We must initialize the GOT entry.  */
-		RISCV_ELF_PUT_WORD (dynobj, symbol, htab->sgot->contents + g);
+	  BFD_ASSERT (addend == 0);
+	  g = riscv_elf_global_got_index (dynobj, &h->root, r_type, info);
+	  if (h->tls_type == GOT_NORMAL
+	      && !elf_hash_table (info)->dynamic_sections_created)
+	    /* This is a static link.  We must initialize the GOT entry.  */
+	    RISCV_ELF_PUT_WORD (dynobj, symbol, htab->sgot->contents + g);
 	}
       else
 	{
@@ -2710,7 +2876,7 @@ riscv_elf_calculate_relocation (bfd *abfd, bfd *input_bfd,
 	}
 
       /* Convert GOT indices to actual offsets.  */
-      g = sec_addr(riscv_elf_hash_table (info)->sgot) + g;
+      g += sec_addr (riscv_elf_hash_table (info)->sgot);
       break;
     }
 
@@ -2742,14 +2908,9 @@ riscv_elf_calculate_relocation (bfd *abfd, bfd *input_bfd,
 	     shared library symbols, unless we've decided to use copy
 	     relocs or PLTs instead.  */
 	  value = addend;
-	  if (!riscv_elf_create_dynamic_relocation (abfd,
-						   info,
-						   relocation,
-						   h,
-						   sec,
-						   symbol,
-						   &value,
-						   input_section))
+	  if (!riscv_elf_create_dynamic_relocation (abfd, info, relocation,
+						    h, sec, symbol, &value,
+						    input_section))
 	    return bfd_reloc_undefined;
 	}
       else
@@ -2854,10 +3015,6 @@ riscv_elf_calculate_relocation (bfd *abfd, bfd *input_bfd,
 	break;
       }
 
-    case R_RISCV_PCREL_HI20:
-      value = ENCODE_UTYPE_IMM (RISCV_PCREL_HIGH_PART (addend + symbol, p));
-      break;
-
     case R_RISCV_TLS_IE_HI20:
       value = ENCODE_UTYPE_IMM (RISCV_LUI_HIGH_PART (g));
       break;
@@ -2869,24 +3026,6 @@ riscv_elf_calculate_relocation (bfd *abfd, bfd *input_bfd,
     case R_RISCV_HI20:
       value = ENCODE_UTYPE_IMM (RISCV_LUI_HIGH_PART (addend + symbol));
       break;
-
-    case R_RISCV_TLS_PCREL_LO12:
-    case R_RISCV_PCREL_LO12_I:
-    case R_RISCV_PCREL_LO12_S:
-      {
-	bfd_vma insn = bfd_get (32, input_bfd, contents + relocation->r_offset);
-	bfd_vma rd = (insn >> OP_SH_RD) & OP_MASK_RD;
-	bfd_vma rs1 = (insn >> OP_SH_RS1) & OP_MASK_RS1;
-	value = -(p + addend);
-
-	if (r_type == R_RISCV_PCREL_LO12_S)
-	  value = ENCODE_STYPE_IMM (EXTRACT_STYPE_IMM (insn) + value);
-	else if (rs1 == GP_REG && rd != GP_REG)
-	  value = insn; /* This has been relaxed.  Ignore it. */
-	else
-	  value = ENCODE_ITYPE_IMM (EXTRACT_ITYPE_IMM (insn) + value);
-      	break;
-      }
 
     case R_RISCV_LO12_I:
     case R_RISCV_LO12_S:
@@ -2911,16 +3050,34 @@ riscv_elf_calculate_relocation (bfd *abfd, bfd *input_bfd,
       }
       break;
 
+    case R_RISCV_PCREL_HI20:
+      value = addend + symbol - p;
+      if (!riscv_record_pcrel_hi_reloc (pcrel_relocs, p, value))
+	overflowed_p = TRUE;
+      value = ENCODE_UTYPE_IMM (RISCV_LUI_HIGH_PART (value));
+      break;
+
     case R_RISCV_TLS_GOT_HI20:
     case R_RISCV_TLS_GD_HI20:
     case R_RISCV_GOT_HI20:
-      value = ENCODE_UTYPE_IMM (RISCV_PCREL_HIGH_PART (g, p));
+      value = g - p;
+      if (!riscv_record_pcrel_hi_reloc (pcrel_relocs, p, value))
+	overflowed_p = TRUE;
+      value = ENCODE_UTYPE_IMM (RISCV_LUI_HIGH_PART (value));
       break;
 
+    case R_RISCV_TLS_PCREL_LO12:
+    case R_RISCV_PCREL_LO12_I:
+    case R_RISCV_PCREL_LO12_S:
     case R_RISCV_TLS_GOT_LO12:
     case R_RISCV_TLS_GD_LO12:
     case R_RISCV_GOT_LO12:
-      value = ENCODE_ITYPE_IMM (g);
+      if (riscv_record_pcrel_lo_reloc (pcrel_relocs, input_section, info, howto,
+				       relocation, symbol, *namep, contents))
+	return bfd_reloc_continue;
+
+      value = 0;
+      overflowed_p = TRUE;
       break;
 
     default:
@@ -2933,55 +3090,6 @@ riscv_elf_calculate_relocation (bfd *abfd, bfd *input_bfd,
   return overflowed_p ? bfd_reloc_overflow : bfd_reloc_ok;
 }
 
-/* Obtain the field relocated by RELOCATION.  */
-
-static bfd_vma
-riscv_elf_obtain_contents (reloc_howto_type *howto,
-			  const Elf_Internal_Rela *relocation,
-			  bfd *input_bfd, bfd_byte *contents)
-{
-  bfd_vma x;
-  bfd_byte *location = contents + relocation->r_offset;
-
-  /* Obtain the bytes.  */
-  x = bfd_get ((8 * bfd_get_reloc_size (howto)), input_bfd, location);
-
-  return x;
-}
-
-/* It has been determined that the result of the RELOCATION is the
-   VALUE.  Use HOWTO to place VALUE into the output file at the
-   appropriate position.  The SECTION is the section to which the
-   relocation applies.  
-
-   Returns FALSE if anything goes wrong.  */
-
-static bfd_boolean
-riscv_elf_perform_relocation (struct bfd_link_info *info ATTRIBUTE_UNUSED,
-			     reloc_howto_type *howto,
-			     const Elf_Internal_Rela *relocation,
-			     bfd_vma value, bfd *input_bfd,
-			     asection *input_section ATTRIBUTE_UNUSED, bfd_byte *contents)
-{
-  bfd_vma x;
-  bfd_byte *location;
-  bfd_vma dst_mask = howto->dst_mask;
-
-  /* Figure out where the relocation is occurring.  */
-  location = contents + relocation->r_offset;
-
-  /* Obtain the current value.  */
-  x = riscv_elf_obtain_contents (howto, relocation, input_bfd, contents);
-
-  /* Update the field. */
-  x = (x &~ dst_mask) | (value & dst_mask);
-
-  /* Put the value into the output.  */
-  bfd_put (8 * bfd_get_reloc_size (howto), input_bfd, x, location);
-
-  return TRUE;
-}
-
 /* Create a rel.dyn relocation for the dynamic linker to resolve.  REL
    is the original relocation, which is now being transformed into a
    dynamic relocation.  The ADDENDP is adjusted if necessary; the
@@ -4084,6 +4192,11 @@ _bfd_riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
   const Elf_Internal_Rela *relend;
   bfd_vma addend = 0;
   const struct elf_backend_data *bed;
+  bfd_boolean ret = FALSE;
+  riscv_pcrel_relocs pcrel_relocs;
+
+  if (!riscv_init_pcrel_relocs (&pcrel_relocs))
+    return FALSE;
 
   bed = get_elf_backend_data (output_bfd);
   relend = relocs + input_section->reloc_count * bed->s->int_rels_per_ext_rel;
@@ -4143,11 +4256,10 @@ _bfd_riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 	continue;
 
       /* Figure out what value we are supposed to relocate.  */
-      switch (riscv_elf_calculate_relocation (output_bfd, input_bfd,
-					     input_section, info, rel,
-					     addend, howto, local_syms,
-					     local_sections, &value, &name,
-					     contents))
+      switch (riscv_elf_calculate_relocation (output_bfd, input_section, info,
+					      &pcrel_relocs, rel, addend, howto,
+					      local_syms, local_sections,
+					      &value, &name, contents))
 	{
 	case bfd_reloc_continue:
 	  /* There's nothing to do.  */
@@ -4164,14 +4276,14 @@ _bfd_riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 	  msg = _("internal error: unsupported relocation error");
 	  info->callbacks->warning
 	    (info, msg, name, input_bfd, input_section, rel->r_offset);
-	  return FALSE;
+	  goto out;
 
 	case bfd_reloc_overflow:
 	  BFD_ASSERT (name != NULL);
 	  if (! ((*info->callbacks->reloc_overflow)
 		  (info, NULL, name, howto->name, (bfd_vma) 0,
 		  input_bfd, input_section, rel->r_offset)))
-	    return FALSE;
+	    goto out;
 	  break;
 
 	case bfd_reloc_ok:
@@ -4183,13 +4295,15 @@ _bfd_riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 	}
 
       /* Actually perform the relocation.  */
-      if (! riscv_elf_perform_relocation (info, howto, rel, value,
-					 input_bfd, input_section,
-					 contents))
-	return FALSE;
+      if (! riscv_elf_perform_relocation (howto, rel, value, input_bfd,
+					  contents))
+	goto out;
     }
 
-  return TRUE;
+  ret = riscv_resolve_pcrel_lo_relocs (&pcrel_relocs);
+out:
+  riscv_free_pcrel_relocs (&pcrel_relocs);
+  return ret;
 }
 
 /* Finish up dynamic symbol handling.  We set the contents of various
@@ -5327,7 +5441,7 @@ _bfd_riscv_relax_section (bfd *abfd, asection *sec,
       bfd_vma symval;
       int type = ELF_R_TYPE (abfd, irel->r_info);
       bfd_boolean call = type == R_RISCV_CALL || type == R_RISCV_CALL_PLT;
-      bfd_boolean lui = type == R_RISCV_HI20 || type == R_RISCV_PCREL_HI20;
+      bfd_boolean lui = type == R_RISCV_HI20;
       bfd_boolean tls_le = type == R_RISCV_TPREL_HI20 || type == R_RISCV_TPREL_ADD;
       bfd_boolean tls_ie = type == R_RISCV_TLS_IE_HI20 || type == R_RISCV_TLS_IE_LO12 || type == R_RISCV_TLS_IE_ADD || type == R_RISCV_TLS_IE_LO12_I || type == R_RISCV_TLS_IE_LO12_S;
 
