@@ -1009,21 +1009,7 @@ static reloc_howto_type howto_table[] =
 
   EMPTY_HOWTO (55),
   EMPTY_HOWTO (56),
-
-  /* 32 bit relocation with no addend.  */
-  HOWTO (R_RISCV_GLOB_DAT,	/* type */
-	 0,			/* rightshift */
-	 2,			/* size (0 = byte, 1 = short, 2 = long) */
-	 32,			/* bitsize */
-	 FALSE,			/* pc_relative */
-	 0,			/* bitpos */
-	 complain_overflow_dont, /* complain_on_overflow */
-	 _bfd_riscv_elf_generic_reloc, /* special_function */
-	 "R_RISCV_GLOB_DAT",	/* name */
-	 FALSE,			/* partial_inplace */
-	 0x0,			/* src_mask */
-	 0xffffffff,		/* dst_mask */
-	 FALSE),		/* pcrel_offset */
+  EMPTY_HOWTO (57),
 
   /* 32 bit in-place addition, for local label subtraction.  */
   HOWTO (R_RISCV_ADD32,		/* type */

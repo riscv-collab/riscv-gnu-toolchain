@@ -230,6 +230,8 @@ elf_machine_rel (struct link_map *map, const ElfW(Rel) *reloc,
   ElfW(Addr) r_info = reloc->r_info;
   const unsigned long int r_type = ELFW(R_TYPE) (r_info);
   ElfW(Addr) *addr_field = (ElfW(Addr) *) reloc_addr;
+  const ElfW(Sym) *const refsym = sym;
+  struct link_map *sym_map = RESOLVE_MAP (&sym, version, r_type);
 
 #if !defined RTLD_BOOTSTRAP && !defined SHARED
   /* This is defined in rtld.c, but nowhere in the static libc.a;
@@ -244,44 +246,23 @@ elf_machine_rel (struct link_map *map, const ElfW(Rel) *reloc,
   switch (r_type)
     {
 #if defined (USE_TLS) && !defined (RTLD_BOOTSTRAP)
-# if _RISCV_SIM == _ABI64
-    case R_MIPS_TLS_DTPMOD64:
-    case R_MIPS_TLS_DTPREL64:
-    case R_MIPS_TLS_TPREL64:
-# else
-    case R_MIPS_TLS_DTPMOD32:
-    case R_MIPS_TLS_DTPREL32:
-    case R_MIPS_TLS_TPREL32:
-# endif
-      {
-	struct link_map *sym_map = RESOLVE_MAP (&sym, version, r_type);
+    case _RISCV_SIM == _ABI64 ? R_MIPS_TLS_DTPMOD64 : R_MIPS_TLS_DTPMOD32:
+      if (sym_map)
+	*addr_field = sym_map->l_tls_modid;
+      break;
 
-	switch (r_type)
-	  {
-	  case R_MIPS_TLS_DTPMOD64:
-	  case R_MIPS_TLS_DTPMOD32:
-	    if (sym_map)
-	      *addr_field = sym_map->l_tls_modid;
-	    break;
+    case _RISCV_SIM == _ABI64 ? R_MIPS_TLS_DTPREL64 : R_MIPS_TLS_DTPREL32:
+      if (sym)
+	*addr_field += TLS_DTPREL_VALUE (sym);
+      break;
 
-	  case R_MIPS_TLS_DTPREL64:
-	  case R_MIPS_TLS_DTPREL32:
-	    if (sym)
-	      *addr_field += TLS_DTPREL_VALUE (sym);
-	    break;
-
-	  case R_MIPS_TLS_TPREL32:
-	  case R_MIPS_TLS_TPREL64:
-	    if (sym)
-	      {
-		CHECK_STATIC_TLS (map, sym_map);
-		*addr_field += TLS_TPREL_VALUE (sym_map, sym);
-	      }
-	    break;
-	  }
-
-	break;
-      }
+    case _RISCV_SIM == _ABI64 ? R_MIPS_TLS_TPREL64 : R_MIPS_TLS_TPREL32:
+      if (sym)
+	{
+	  CHECK_STATIC_TLS (map, sym_map);
+	  *addr_field += TLS_TPREL_VALUE (sym_map, sym);
+	}
+      break;
 #endif
 
     case R_MIPS_REL32:
@@ -337,72 +318,41 @@ elf_machine_rel (struct link_map *map, const ElfW(Rel) *reloc,
 	      *addr_field += map->l_addr;
       }
       break;
-#ifndef RTLD_BOOTSTRAP
-    case R_MIPS_GLOB_DAT:
-      {
-	int symidx = ELFW(R_SYM) (r_info);
-	const ElfW(Word) gotsym
-	  = (const ElfW(Word)) map->l_info[DT_RISCV (GOTSYM)]->d_un.d_val;
-
-	if (__builtin_expect ((ElfW(Word)) symidx >= gotsym, 1))
-	  {
-	    const ElfW(Addr) *got
-	      = (const ElfW(Addr) *) D_PTR (map, l_info[DT_PLTGOT]);
-	    const ElfW(Word) local_gotno
-	      = ((const ElfW(Word))
-		 map->l_info[DT_RISCV (LOCAL_GOTNO)]->d_un.d_val);
-
-	    ElfW(Addr) reloc_value = got[symidx + local_gotno - gotsym];
-	    __builtin_memcpy (reloc_addr, &reloc_value, sizeof (reloc_value));
-	  }
-      }
-      break;
-#endif
-    case R_MIPS_NONE:		/* Alright, Wilbur.  */
-      break;
 
     case R_RISCV_JUMP_SLOT:
       {
-	struct link_map *sym_map;
-	ElfW(Addr) value;
-
-	sym_map = RESOLVE_MAP (&sym, version, r_type);
-	value = sym_map == NULL ? 0 : sym_map->l_addr + sym->st_value;
-	*addr_field = value;
-
+	*addr_field = sym_map == NULL ? 0 : sym_map->l_addr + sym->st_value;
 	break;
       }
 
     case R_RISCV_COPY:
       {
-	const ElfW(Sym) *const refsym = sym;
-	struct link_map *sym_map;
-	ElfW(Addr) value;
-
-	/* Calculate the address of the symbol.  */
-	sym_map = RESOLVE_MAP (&sym, version, r_type);
-	value = sym_map == NULL ? 0 : sym_map->l_addr + sym->st_value;
-
 	if (__builtin_expect (sym == NULL, 0))
 	  /* This can happen in trace mode if an object could not be
 	     found.  */
 	  break;
-	if (__builtin_expect (sym->st_size > refsym->st_size, 0)
-	    || (__builtin_expect (sym->st_size < refsym->st_size, 0)
-		&& GLRO(dl_verbose)))
-	  {
-	    const char *strtab;
 
-	    strtab = (const void *) D_PTR (map, l_info[DT_STRTAB]);
-	    _dl_error_printf ("\
+	size_t size = sym->st_size;
+	void *value = (void *)(sym_map ? sym_map->l_addr + sym->st_value : 0);
+
+	if (__builtin_expect (sym->st_size != refsym->st_size, 0))
+	  {
+	    const char *strtab = (const void *) D_PTR (map, l_info[DT_STRTAB]);
+	    if (sym->st_size > refsym->st_size)
+	      size = refsym->st_size;
+	    if (sym->st_size > refsym->st_size || GLRO(dl_verbose))
+	      _dl_error_printf ("\
   %s: Symbol `%s' has different size in shared object, consider re-linking\n",
-			      rtld_progname ?: "<program name unknown>",
-			      strtab + refsym->st_name);
+				rtld_progname ?: "<program name unknown>",
+				strtab + refsym->st_name);
 	  }
-	memcpy (reloc_addr, (void *) value,
-	        MIN (sym->st_size, refsym->st_size));
+
+	memcpy (reloc_addr, value, size);
 	break;
       }
+
+    case R_MIPS_NONE:
+      break;
 
     default:
       _dl_reloc_bad_type (map, r_type, 0);
