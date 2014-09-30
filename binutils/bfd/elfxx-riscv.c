@@ -3704,7 +3704,7 @@ _bfd_riscv_elf_adjust_dynamic_symbol (struct bfd_link_info *info,
   hriscv = (struct riscv_elf_link_hash_entry *) h;
 
   /* Establish PLT entries for functions that don't bind locally. */
-  if ((h->type == STT_FUNC || h->type == STT_GNU_IFUNC)
+  if ((h->needs_plt || h->type == STT_FUNC || h->type == STT_GNU_IFUNC)
       && hriscv->has_static_relocs
       && !SYMBOL_CALLS_LOCAL (info, h)
       && !(ELF_ST_VISIBILITY (h->other) != STV_DEFAULT
