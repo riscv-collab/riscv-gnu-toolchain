@@ -109,54 +109,6 @@ elf_machine_load_address (void)
   return (ElfW(Addr))((char*)&_DYNAMIC - elf_machine_dynamic ());
 }
 
-/* We can't rely on elf_machine_got_rel because _dl_object_relocation_scope
-   fiddles with global data.  */
-#define ELF_MACHINE_BEFORE_RTLD_RELOC(dynamic_info)			\
-do {									\
-  struct link_map *map = &bootstrap_map;				\
-  ElfW(Sym) *sym;							\
-  ElfW(Addr) *got;							\
-  int i, n;								\
-									\
-  got = (ElfW(Addr) *) D_PTR (map, l_info[DT_PLTGOT]);			\
-									\
-  if (__builtin_expect (map->l_addr == 0, 1))				\
-    break;								\
-									\
-  i = 2; /* got[0] and got[1] are reserved. */				\
-  n = map->l_info[DT_RISCV (LOCAL_GOTNO)]->d_un.d_val;			\
-									\
-  /* Add the run-time displacement to all local got entries. */		\
-  while (i < n)								\
-    got[i++] += map->l_addr;						\
-									\
-  /* Handle global got entries. */					\
-  got += n;								\
-  sym = (ElfW(Sym) *) D_PTR(map, l_info[DT_SYMTAB])			\
-       + map->l_info[DT_RISCV (GOTSYM)]->d_un.d_val;			\
-  i = (map->l_info[DT_RISCV (SYMTABNO)]->d_un.d_val			\
-       - map->l_info[DT_RISCV (GOTSYM)]->d_un.d_val);			\
-									\
-  while (i--)								\
-    {									\
-      if (sym->st_shndx == SHN_UNDEF || sym->st_shndx == SHN_COMMON)	\
-	*got = map->l_addr + sym->st_value;				\
-      else if (ELFW(ST_TYPE) (sym->st_info) == STT_FUNC			\
-	       && *got != sym->st_value)				\
-	*got += map->l_addr;						\
-      else if (ELFW(ST_TYPE) (sym->st_info) == STT_SECTION)		\
-	{								\
-	  if (sym->st_other == 0)					\
-	    *got += map->l_addr;					\
-	}								\
-      else								\
-	*got = map->l_addr + sym->st_value;				\
-									\
-      got++;								\
-      sym++;								\
-    }									\
-} while(0)
-
 /* Initial entry point code for the dynamic linker.
    The C function `_dl_start' is the real entry point;
    its return value is the user program's entry point. */
@@ -390,7 +342,6 @@ elf_machine_lazy_rel (struct link_map *map, ElfW(Addr) l_addr,
     _dl_reloc_bad_type (map, r_type, 1);
 }
 
-#ifndef RTLD_BOOTSTRAP
 /* Relocate GOT. */
 auto inline void
 __attribute__((always_inline))
@@ -401,7 +352,11 @@ elf_machine_got_rel (struct link_map *map, int lazy)
   const ElfW(Half) *vernum;
   int i, n, symidx;
 
-#define RESOLVE_GOTSYM(sym,vernum,sym_index,reloc)			  \
+#ifdef RTLD_BOOTSTRAP
+# define RESOLVE_GOTSYM(sym,vernum,sym_index,reloc)			  \
+    (bootstrap_map.l_addr + sym->st_value)
+#else
+# define RESOLVE_GOTSYM(sym,vernum,sym_index,reloc)			  \
     ({									  \
       const ElfW(Sym) *ref = sym;					  \
       const struct r_found_version *version				  \
@@ -410,6 +365,7 @@ elf_machine_got_rel (struct link_map *map, int lazy)
       sym_map = RESOLVE_MAP (&ref, version, reloc);			  \
       ref ? sym_map->l_addr + ref->st_value : 0;			  \
     })
+#endif
 
   if (map->l_info[VERSYMIDX (DT_VERSYM)] != NULL)
     vernum = (const void *) D_PTR (map, l_info[VERSYMIDX (DT_VERSYM)]);
@@ -420,7 +376,9 @@ elf_machine_got_rel (struct link_map *map, int lazy)
 
   n = map->l_info[DT_RISCV (LOCAL_GOTNO)]->d_un.d_val;
   /* The dynamic linker's local got entries have already been relocated.  */
+#ifndef RTLD_BOOTSTRAP
   if (map != &GL(dl_rtld_map))
+#endif
     {
       /* got[0] and got[1] are reserved. */
       i = 2;
@@ -439,8 +397,7 @@ elf_machine_got_rel (struct link_map *map, int lazy)
   /* Keep track of the symbol index.  */
   symidx = map->l_info[DT_RISCV (GOTSYM)]->d_un.d_val;
   sym = (ElfW(Sym) *) D_PTR (map, l_info[DT_SYMTAB]) + symidx;
-  i = (map->l_info[DT_RISCV (SYMTABNO)]->d_un.d_val
-       - map->l_info[DT_RISCV (GOTSYM)]->d_un.d_val);
+  i = map->l_info[DT_RISCV (SYMTABNO)]->d_un.d_val - symidx;
 
   /* This loop doesn't handle Quickstart.  */
   while (i--)
@@ -472,7 +429,6 @@ elf_machine_got_rel (struct link_map *map, int lazy)
 
 #undef RESOLVE_GOTSYM
 }
-#endif
 
 /* Set up the loaded object described by L so its stub function
    will jump to the on-demand fixup code __dl_runtime_resolve.  */
@@ -481,10 +437,10 @@ auto inline int
 __attribute__((always_inline))
 elf_machine_runtime_setup (struct link_map *l, int lazy, int profile)
 {
-# ifndef RTLD_BOOTSTRAP
   /* Relocate global offset table.  */
   elf_machine_got_rel (l, lazy);
 
+#ifndef RTLD_BOOTSTRAP
   /* If using PLTs, fill in the first two entries of .got.plt.  */
   if (l->l_info[DT_JMPREL])
     {
@@ -502,8 +458,8 @@ elf_machine_runtime_setup (struct link_map *l, int lazy, int profile)
 	for (gotplt += 2; *gotplt; gotplt++)
 	  *gotplt += l->l_addr;
     }
+#endif
 
-# endif
   return lazy;
 }
 
