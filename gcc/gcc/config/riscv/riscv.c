@@ -660,6 +660,10 @@ riscv_cannot_force_const_mem (enum machine_mode mode, rtx x)
       /* The same optimization as for CONST_INT.  */
       if (SMALL_INT (offset) && riscv_symbol_insns (type) > 0)
 	return true;
+
+      /* It's not worth creating additional dynamic relocations.  */
+      if (flag_pic)
+	return true;
     }
 
   /* TLS symbols must be computed by mips_legitimize_move.  */
@@ -1927,12 +1931,12 @@ mips_output_move (rtx dest, rtx src)
 	return "lui\t%0,%h1";
 
       if (symbolic_operand (src, VOIDmode))
-	{
-	  if (SYMBOL_REF_LOCAL_P (src)
-	      || (src_code == LABEL_REF && !LABEL_REF_NONLOCAL_P (src)))
-	    return "lla\t%0,%1";
-	  return "la\t%0,%1";
-	}
+	switch (mips_classify_symbolic_expression (src))
+	  {
+	  case SYMBOL_GOT_DISP: return "la\t%0,%1";
+	  case SYMBOL_ABSOLUTE: return "lla\t%0,%1";
+	  default: gcc_unreachable();
+	  }
     }
   if (src_code == REG && FP_REG_P (REGNO (src)))
     {
