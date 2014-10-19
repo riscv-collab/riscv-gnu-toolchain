@@ -36,8 +36,6 @@ struct expressionS;
 #define WORKING_DOT_WORD	1
 #define OLD_FLOAT_READS
 #define REPEAT_CONS_EXPRESSIONS
-#define RELOC_EXPANSION_POSSIBLE
-#define MAX_RELOC_EXPANSION 3
 #define LOCAL_LABELS_FB 1
 
 #define md_relax_frag(segment, fragp, stretch) \
@@ -55,12 +53,6 @@ extern void riscv_handle_align (struct frag *);
 
 #define MAX_MEM_FOR_RS_ALIGN_CODE  (1 + 2)
 
-struct insn_label_list;
-struct riscv_segment_info {
-  struct insn_label_list *labels;
-};
-#define TC_SEGMENT_INFO_TYPE struct riscv_segment_info
-
 #define TC_SYMFIELD_TYPE int
 
 /* The ISA of the target may change based on command-line arguments.  */
@@ -75,9 +67,6 @@ extern void riscv_init_after_args (void);
 
 #define md_parse_long_option(arg) riscv_parse_long_option (arg)
 extern int riscv_parse_long_option (const char *);
-
-#define tc_frob_label(sym) riscv_define_label (sym)
-extern void riscv_define_label (symbolS *);
 
 /* Let the linker resolve all the relocs due to relaxation. */
 #define tc_fix_adjustable(fixp) 0
@@ -98,20 +87,6 @@ extern void riscv_define_label (symbolS *);
 
 extern void riscv_pop_insert (void);
 #define md_pop_insert()		riscv_pop_insert()
-
-extern void riscv_clear_insn_labels (void);
-#define md_flush_pending_output riscv_clear_insn_labels
-
-extern void riscv_enable_auto_align (void);
-#define md_elf_section_change_hook()	riscv_enable_auto_align()
-
-enum dwarf2_format;
-extern enum dwarf2_format riscv_dwarf2_format (asection *);
-#define DWARF2_FORMAT(SEC) riscv_dwarf2_format (SEC)
-
-extern int riscv_dwarf2_addr_size (void);
-#define DWARF2_ADDR_SIZE(bfd) riscv_dwarf2_addr_size ()
-#define DWARF2_FDE_RELOC_SIZE riscv_dwarf2_addr_size ()
 
 #define TARGET_USE_CFIPOP 1
 
