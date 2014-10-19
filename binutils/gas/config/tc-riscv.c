@@ -1126,44 +1126,46 @@ check_absolute_expr (struct riscv_cl_insn *ip, expressionS *ex)
   normalize_constant_expr (ex);
 }
 
-/* load_const generates an unoptimized instruction sequence to load
- * an absolute expression into a register. */
+/* Load an integer constant into a register.  */
+
 static void
 load_const (int reg, expressionS *ep)
 {
+  int shift = RISCV_IMM_BITS;
+  expressionS upper = *ep, lower = *ep;
+  lower.X_add_number = (int32_t) ep->X_add_number << (32-shift) >> (32-shift);
+  upper.X_add_number -= lower.X_add_number;
+
   gas_assert (ep->X_op == O_constant);
-  gas_assert (reg != ZERO);
 
-  // this is an awful way to generate arbitrary 64-bit constants.
-  // fortunately, this is just used for hand-coded assembly programs.
   if (rv64 && !IS_SEXT_32BIT_NUM(ep->X_add_number))
-  {
-    expressionS upper = *ep, lower = *ep;
-    upper.X_add_number = (int64_t)ep->X_add_number >> (RISCV_IMM_BITS-1);
-    load_const(reg, &upper);
-
-    macro_build (NULL, "slli", "d,s,>", reg, reg, RISCV_IMM_BITS-1);
-
-    lower.X_add_number = ep->X_add_number & (RISCV_IMM_REACH/2-1);
-    if (lower.X_add_number != 0)
-      macro_build (&lower, "addi", "d,s,j", reg, reg, BFD_RELOC_RISCV_LO12_I);
-  }
-  else // load a sign-extended 32-bit constant
-  {
-    int hi_reg = ZERO;
-
-    int32_t hi = ep->X_add_number & (RISCV_IMM_REACH-1);
-    hi = hi << (32-RISCV_IMM_BITS) >> (32-RISCV_IMM_BITS);
-    hi = (int32_t)ep->X_add_number - hi;
-    if(hi)
     {
-      macro_build (ep, "lui", "d,u", reg, BFD_RELOC_RISCV_HI20);
-      hi_reg = reg;
-    }
+      /* Reduce to a signed 32-bit constant using SLLI and ADDI, which
+	 is not optimal but also not so bad.  */
+      while (((upper.X_add_number >> shift) & 1) == 0)
+	shift++;
 
-    if((ep->X_add_number & (RISCV_IMM_REACH-1)) || hi_reg == ZERO)
-      macro_build (ep, ADD32_INSN, "d,s,j", reg, hi_reg, BFD_RELOC_RISCV_LO12_I);
-  }
+      upper.X_add_number = (int64_t) upper.X_add_number >> shift;
+      load_const(reg, &upper);
+
+      macro_build (NULL, "slli", "d,s,>", reg, reg, shift);
+      if (lower.X_add_number != 0)
+	macro_build (&lower, "addi", "d,s,j", reg, reg, BFD_RELOC_RISCV_LO12_I);
+    }
+  else
+    {
+      int hi_reg = ZERO;
+
+      if (upper.X_add_number != 0)
+	{
+	  macro_build (ep, "lui", "d,u", reg, BFD_RELOC_RISCV_HI20);
+	  hi_reg = reg;
+	}
+
+      if (lower.X_add_number != 0 || hi_reg == ZERO)
+        macro_build (ep, ADD32_INSN, "d,s,j", reg, hi_reg,
+		     BFD_RELOC_RISCV_LO12_I);
+    }
 }
 
 /* Expand RISC-V assembly macros into one or more instructions. */
