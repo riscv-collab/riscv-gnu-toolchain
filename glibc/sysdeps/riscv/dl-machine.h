@@ -24,8 +24,13 @@
 #define dl_machine_h
 
 #define ELF_MACHINE_NAME "RISC-V"
+#define EM_RISCV 243
 
 /* Relocs. */
+#define R_RISCV_NONE          0
+#define R_RISCV_32            2
+#define R_RISCV_RELATIVE      3
+#define R_RISCV_64           18
 #define R_RISCV_COPY         24
 #define R_RISCV_JUMP_SLOT    25
 #define R_RISCV_TLS_DTPMOD32 38
@@ -70,12 +75,8 @@
      || (_RISCV_SZPTR == 64 && (type) == R_RISCV_TLS_TPREL64)))	\
    | (ELF_RTYPE_CLASS_COPY * ((type) == R_RISCV_COPY)))
 
-#define ELF_MACHINE_NO_REL 0
-#define ELF_MACHINE_NO_RELA 1
-
-/* Translate a processor specific dynamic tag to the index
-   in l_info array.  */
-#define DT_RISCV(x) (DT_RISCV_##x - DT_LOPROC + DT_NUM)
+#define ELF_MACHINE_NO_REL 1
+#define ELF_MACHINE_NO_RELA 0
 
 #define ELF_MACHINE_DEBUG_SETUP(l,r)
 
@@ -83,17 +84,17 @@
 static inline int __attribute_used__
 elf_machine_matches_host (const ElfW(Ehdr) *ehdr)
 {
-  return 1;
+  return ehdr->e_machine == EM_RISCV;
 }
 
-/* Return the link-time address of _DYNAMIC.  Conveniently, this is the
-   first element of the GOT.  This must be inlined in a function which
-   uses global data.  */
+/* Return the link-time address of _DYNAMIC.  */
 static inline ElfW(Addr)
 elf_machine_dynamic (void)
 {
-  extern ElfW(Addr) _GLOBAL_OFFSET_TABLE_ __attribute__ ((visibility("hidden")));
-  return _GLOBAL_OFFSET_TABLE_;
+  ElfW(Addr) link_addr;
+  asm ("lui %0, %%hi(_DYNAMIC)" : "=r"(link_addr));
+  asm ("addi %0, %0, %%lo(_DYNAMIC)" : "+r"(link_addr));
+  return link_addr;
 }
 
 #define STRINGXP(X) __STRING(X)
@@ -104,9 +105,9 @@ elf_machine_dynamic (void)
 static inline ElfW(Addr)
 elf_machine_load_address (void)
 {
-  /* Subtract the link-time address of _DYNAMIC from its runtime address. */
-  extern ElfW(Dyn) _DYNAMIC[] __attribute__ ((visibility("hidden")));
-  return (ElfW(Addr))((char*)&_DYNAMIC - elf_machine_dynamic ());
+  ElfW(Addr) load_addr;
+  asm ("lla %0, _DYNAMIC" : "=r"(load_addr));
+  return load_addr - elf_machine_dynamic ();
 }
 
 /* Initial entry point code for the dynamic linker.
@@ -116,9 +117,6 @@ elf_machine_load_address (void)
 #define RTLD_START asm (\
 	".text\n\
 	" _RTLD_PROLOGUE(ENTRY_POINT) "\
-	# Store &_DYNAMIC in the first entry of the GOT.\n\
-	la a0, _DYNAMIC\n\
-	" STRINGXP(REG_S) " a0, _GLOBAL_OFFSET_TABLE_, a1\n\
 	move a0, sp\n\
 	jal _dl_start\n\
 	# Stash user entry point in s0.\n\
@@ -175,107 +173,59 @@ elf_machine_load_address (void)
 
 auto inline void
 __attribute__ ((always_inline))
-elf_machine_rel (struct link_map *map, const ElfW(Rel) *reloc,
-		 const ElfW(Sym) *sym, const struct r_found_version *version,
-		 void *const reloc_addr, int skip_ifunc)
+elf_machine_rela (struct link_map *map, const ElfW(Rela) *reloc,
+		  const ElfW(Sym) *sym, const struct r_found_version *version,
+		  void *const reloc_addr, int skip_ifunc)
 {
   ElfW(Addr) r_info = reloc->r_info;
   const unsigned long int r_type = ELFW(R_TYPE) (r_info);
   ElfW(Addr) *addr_field = (ElfW(Addr) *) reloc_addr;
   const ElfW(Sym) *const refsym = sym;
   struct link_map *sym_map = RESOLVE_MAP (&sym, version, r_type);
+  ElfW(Addr) value = 0;
+  if (sym_map != NULL)
+    value = sym_map->l_addr + sym->st_value + reloc->r_addend;
 
-#if !defined RTLD_BOOTSTRAP && !defined SHARED
-  /* This is defined in rtld.c, but nowhere in the static libc.a;
-     make the reference weak so static programs can still link.  This
-     declaration cannot be done when compiling rtld.c (i.e.  #ifdef
-     RTLD_BOOTSTRAP) because rtld.c contains the common defn for
-     _dl_rtld_map, which is incompatible with a weak decl in the same
-     file.  */
-  weak_extern (GL(dl_rtld_map));
+#if !defined RTLD_BOOTSTRAP || !defined HAVE_Z_COMBRELOC
+  if (__builtin_expect (r_type == R_RISCV_RELATIVE, 0))
+    {
+# if !defined RTLD_BOOTSTRAP && !defined HAVE_Z_COMBRELOC
+      /* This is defined in rtld.c, but nowhere in the static libc.a;
+         make the reference weak so static programs can still link.
+         This declaration cannot be done when compiling rtld.c
+         (i.e. #ifdef RTLD_BOOTSTRAP) because rtld.c contains the
+         common defn for _dl_rtld_map, which is incompatible with a
+         weak decl in the same file.  */
+#  ifndef SHARED
+      weak_extern (GL(dl_rtld_map));
+#  endif
+      if (map != &GL(dl_rtld_map)) /* Already done in rtld itself.  */
+# endif
+        *addr_field = map->l_addr + reloc->r_addend;
+      return;
+    }
 #endif
 
   switch (r_type)
     {
-#if defined (USE_TLS) && !defined (RTLD_BOOTSTRAP)
-    case _RISCV_SIM == _ABI64 ? R_MIPS_TLS_DTPMOD64 : R_MIPS_TLS_DTPMOD32:
+#ifndef RTLD_BOOTSTRAP
+    case _RISCV_SIM == _ABI64 ? R_RISCV_TLS_DTPMOD64 : R_RISCV_TLS_DTPMOD32:
       if (sym_map)
 	*addr_field = sym_map->l_tls_modid;
       break;
 
-    case _RISCV_SIM == _ABI64 ? R_MIPS_TLS_DTPREL64 : R_MIPS_TLS_DTPREL32:
-      if (sym)
-	*addr_field += TLS_DTPREL_VALUE (sym);
+    case _RISCV_SIM == _ABI64 ? R_RISCV_TLS_DTPREL64 : R_RISCV_TLS_DTPREL32:
+      if (sym != NULL)
+	*addr_field = TLS_DTPREL_VALUE (sym) + reloc->r_addend;
       break;
 
-    case _RISCV_SIM == _ABI64 ? R_MIPS_TLS_TPREL64 : R_MIPS_TLS_TPREL32:
-      if (sym)
+    case _RISCV_SIM == _ABI64 ? R_RISCV_TLS_TPREL64 : R_RISCV_TLS_TPREL32:
+      if (sym != NULL)
 	{
 	  CHECK_STATIC_TLS (map, sym_map);
-	  *addr_field += TLS_TPREL_VALUE (sym_map, sym);
+	  *addr_field = TLS_TPREL_VALUE (sym_map, sym) + reloc->r_addend;
 	}
       break;
-#endif
-
-    case R_MIPS_REL32:
-      {
-	int symidx = ELFW(R_SYM) (r_info);
-
-	if (symidx)
-	  {
-	    const ElfW(Word) gotsym
-	      = (const ElfW(Word)) map->l_info[DT_RISCV (GOTSYM)]->d_un.d_val;
-
-	    if ((ElfW(Word))symidx < gotsym)
-	      {
-		/* This wouldn't work for a symbol imported from other
-		   libraries for which there's no GOT entry, but MIPS
-		   requires every symbol referenced in a dynamic
-		   relocation to have a GOT entry in the primary GOT,
-		   so we only get here for locally-defined symbols.
-		   For section symbols, we should *NOT* be adding
-		   sym->st_value (per the definition of the meaning of
-		   S in reloc expressions in the ELF64 MIPS ABI),
-		   since it should have already been added to
-		   reloc_value by the linker, but older versions of
-		   GNU ld didn't add it, and newer versions don't emit
-		   useless relocations to section symbols any more, so
-		   it is safe to keep on adding sym->st_value, even
-		   though it's not ABI compliant.  Some day we should
-		   bite the bullet and stop doing this.  */
-#ifndef RTLD_BOOTSTRAP
-		if (map != &GL(dl_rtld_map))
-#endif
-		  if (sym->st_value + map->l_addr)
-		    *addr_field += sym->st_value + map->l_addr;
-	      }
-	    else
-	      {
-#ifndef RTLD_BOOTSTRAP
-		const ElfW(Addr) *got
-		  = (const ElfW(Addr) *) D_PTR (map, l_info[DT_PLTGOT]);
-		const ElfW(Word) local_gotno
-		  = (const ElfW(Word))
-		    map->l_info[DT_RISCV (LOCAL_GOTNO)]->d_un.d_val;
-
-		*addr_field += got[symidx + local_gotno - gotsym];
-#endif
-	      }
-	  }
-	else
-#ifndef RTLD_BOOTSTRAP
-	  if (map != &GL(dl_rtld_map))
-#endif
-	    if (map->l_addr)
-	      *addr_field += map->l_addr;
-      }
-      break;
-
-    case R_RISCV_JUMP_SLOT:
-      {
-	*addr_field = sym_map == NULL ? 0 : sym_map->l_addr + sym->st_value;
-	break;
-      }
 
     case R_RISCV_COPY:
       {
@@ -285,8 +235,6 @@ elf_machine_rel (struct link_map *map, const ElfW(Rel) *reloc,
 	  break;
 
 	size_t size = sym->st_size;
-	void *value = (void *)(sym_map ? sym_map->l_addr + sym->st_value : 0);
-
 	if (__builtin_expect (sym->st_size != refsym->st_size, 0))
 	  {
 	    const char *strtab = (const void *) D_PTR (map, l_info[DT_STRTAB]);
@@ -299,11 +247,17 @@ elf_machine_rel (struct link_map *map, const ElfW(Rel) *reloc,
 				strtab + refsym->st_name);
 	  }
 
-	memcpy (reloc_addr, value, size);
+	memcpy (reloc_addr, (void *)value, size);
 	break;
       }
+#endif
 
-    case R_MIPS_NONE:
+    case R_RISCV_JUMP_SLOT:
+    case _RISCV_SIM == _ABI64 ? R_RISCV_64 : R_RISCV_32:
+      *addr_field = value + reloc->r_addend;
+      break;
+
+    case R_RISCV_NONE:
       break;
 
     default:
@@ -314,120 +268,33 @@ elf_machine_rel (struct link_map *map, const ElfW(Rel) *reloc,
 
 auto inline void
 __attribute__((always_inline))
-elf_machine_rel_relative (ElfW(Addr) l_addr, const ElfW(Rel) *reloc,
+elf_machine_rela_relative (ElfW(Addr) l_addr, const ElfW(Rela) *reloc,
 			  void *const reloc_addr)
 {
-  /* XXX Nothing to do.  There is no relative relocation, right?  */
+  *(ElfW(Addr) *)reloc_addr = l_addr + reloc->r_addend;
 }
 
 auto inline void
 __attribute__((always_inline))
 elf_machine_lazy_rel (struct link_map *map, ElfW(Addr) l_addr,
-		      const ElfW(Rel) *reloc, int skip_ifunc)
+		      const ElfW(Rela) *reloc, int skip_ifunc)
 {
   ElfW(Addr) *const reloc_addr = (void *) (l_addr + reloc->r_offset);
   const unsigned int r_type = ELFW(R_TYPE) (reloc->r_info);
+
   /* Check for unexpected PLT reloc type.  */
   if (__builtin_expect (r_type == R_RISCV_JUMP_SLOT, 1))
     {
       if (__builtin_expect (map->l_mach.plt, 0) == 0)
 	{
-	  /* Nothing is required here since we only support lazy
-	     relocation in executables.  */
+	  if (l_addr)
+	    *reloc_addr += l_addr;
 	}
       else
 	*reloc_addr = map->l_mach.plt;
     }
   else
     _dl_reloc_bad_type (map, r_type, 1);
-}
-
-/* Relocate GOT. */
-auto inline void
-__attribute__((always_inline))
-elf_machine_got_rel (struct link_map *map, int lazy)
-{
-  ElfW(Addr) *got;
-  ElfW(Sym) *sym;
-  const ElfW(Half) *vernum;
-  int i, n, symidx;
-
-#ifdef RTLD_BOOTSTRAP
-# define RESOLVE_GOTSYM(sym,vernum,sym_index,reloc)			  \
-    (bootstrap_map.l_addr + sym->st_value)
-#else
-# define RESOLVE_GOTSYM(sym,vernum,sym_index,reloc)			  \
-    ({									  \
-      const ElfW(Sym) *ref = sym;					  \
-      const struct r_found_version *version				  \
-        = vernum ? &map->l_versions[vernum[sym_index] & 0x7fff] : NULL;	  \
-      struct link_map *sym_map;						  \
-      sym_map = RESOLVE_MAP (&ref, version, reloc);			  \
-      ref ? sym_map->l_addr + ref->st_value : 0;			  \
-    })
-#endif
-
-  if (map->l_info[VERSYMIDX (DT_VERSYM)] != NULL)
-    vernum = (const void *) D_PTR (map, l_info[VERSYMIDX (DT_VERSYM)]);
-  else
-    vernum = NULL;
-
-  got = (ElfW(Addr) *) D_PTR (map, l_info[DT_PLTGOT]);
-
-  n = map->l_info[DT_RISCV (LOCAL_GOTNO)]->d_un.d_val;
-  /* The dynamic linker's local got entries have already been relocated.  */
-#ifndef RTLD_BOOTSTRAP
-  if (map != &GL(dl_rtld_map))
-#endif
-    {
-      /* got[0] and got[1] are reserved. */
-      i = 2;
-
-      /* Add the run-time displacement to all local got entries if
-         needed.  */
-      if (__builtin_expect (map->l_addr != 0, 0))
-	{
-	  while (i < n)
-	    got[i++] += map->l_addr;
-	}
-    }
-
-  /* Handle global got entries. */
-  got += n;
-  /* Keep track of the symbol index.  */
-  symidx = map->l_info[DT_RISCV (GOTSYM)]->d_un.d_val;
-  sym = (ElfW(Sym) *) D_PTR (map, l_info[DT_SYMTAB]) + symidx;
-  i = map->l_info[DT_RISCV (SYMTABNO)]->d_un.d_val - symidx;
-
-  /* This loop doesn't handle Quickstart.  */
-  while (i--)
-    {
-      if (sym->st_shndx == SHN_UNDEF || sym->st_shndx == SHN_COMMON)
-	*got = RESOLVE_GOTSYM (sym, vernum, symidx, R_MIPS_32);
-      else if (ELFW(ST_TYPE) (sym->st_info) == STT_FUNC
-	       && *got != sym->st_value)
-	{
-	  if (lazy)
-	    *got += map->l_addr;
-	  else
-	    /* This is a lazy-binding stub, so we don't need the
-	       canonical address.  */
-	    *got = RESOLVE_GOTSYM (sym, vernum, symidx, R_RISCV_JUMP_SLOT);
-	}
-      else if (ELFW(ST_TYPE) (sym->st_info) == STT_SECTION)
-	{
-	  if (sym->st_other == 0)
-	    *got += map->l_addr;
-	}
-      else
-	*got = RESOLVE_GOTSYM (sym, vernum, symidx, R_MIPS_32);
-
-      ++got;
-      ++sym;
-      ++symidx;
-    }
-
-#undef RESOLVE_GOTSYM
 }
 
 /* Set up the loaded object described by L so its stub function
@@ -437,15 +304,12 @@ auto inline int
 __attribute__((always_inline))
 elf_machine_runtime_setup (struct link_map *l, int lazy, int profile)
 {
-  /* Relocate global offset table.  */
-  elf_machine_got_rel (l, lazy);
-
 #ifndef RTLD_BOOTSTRAP
   /* If using PLTs, fill in the first two entries of .got.plt.  */
   if (l->l_info[DT_JMPREL])
     {
-      extern void _dl_runtime_resolve (void);
-      ElfW(Addr) *gotplt = (ElfW(Addr) *) D_PTR (l, l_info[DT_RISCV (PLTGOT)]);
+      extern void _dl_runtime_resolve (void) __attribute__((visibility("hidden")));
+      ElfW(Addr) *gotplt = (ElfW(Addr) *) D_PTR (l, l_info[DT_PLTGOT]);
       /* If a library is prelinked but we have to relocate anyway,
 	 we have to be able to undo the prelinking of .got.plt.
 	 The prelinker saved the address of .plt for us here.  */
@@ -453,10 +317,6 @@ elf_machine_runtime_setup (struct link_map *l, int lazy, int profile)
 	l->l_mach.plt = gotplt[1] + l->l_addr;
       gotplt[0] = (ElfW(Addr)) &_dl_runtime_resolve;
       gotplt[1] = (ElfW(Addr)) l;
-      /* Relocate subsequent .got.plt entries. */
-      if (l->l_addr)
-	for (gotplt += 2; *gotplt; gotplt++)
-	  *gotplt += l->l_addr;
     }
 #endif
 

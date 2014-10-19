@@ -33,7 +33,7 @@
 START_RELOC_NUMBERS (elf_riscv_reloc_type)
   RELOC_NUMBER (R_RISCV_NONE, 0)
   RELOC_NUMBER (R_RISCV_32, 2)
-  RELOC_NUMBER (R_RISCV_REL32, 3)
+  RELOC_NUMBER (R_RISCV_RELATIVE, 3)
   RELOC_NUMBER (R_RISCV_JAL, 4)
   RELOC_NUMBER (R_RISCV_HI20, 5)
   RELOC_NUMBER (R_RISCV_LO12_I, 6)
@@ -74,7 +74,9 @@ START_RELOC_NUMBERS (elf_riscv_reloc_type)
   RELOC_NUMBER (R_RISCV_ADD64, 59)
   RELOC_NUMBER (R_RISCV_SUB32, 60)
   RELOC_NUMBER (R_RISCV_SUB64, 61)
-  FAKE_RELOC (R_RISCV_max, 62)
+  RELOC_NUMBER (R_RISCV_GNU_VTINHERIT, 62)
+  RELOC_NUMBER (R_RISCV_GNU_VTENTRY, 63)
+  FAKE_RELOC (R_RISCV_max, 64)
 END_RELOC_NUMBERS (R_RISCV_maxext)
 
 /* Processor specific flags for the ELF header e_flags field.  */
@@ -157,17 +159,5 @@ static inline unsigned int riscv_elf_name_to_flag(const char* name)
 
 /* Small undefined symbol.  */
 #define SHN_RISCV_SUNDEFINED	(SHN_LORESERVE + 4)
-
-/* Number of local global offset table entries.  */
-#define DT_RISCV_LOCAL_GOTNO	0x70000000
-
-/* Number of entries in the .dynsym section.  */
-#define DT_RISCV_SYMTABNO	0x70000001
-
-/* Index of first dynamic symbol in global offset table.  */
-#define DT_RISCV_GOTSYM		0x70000002
-
-/* Address of the base of the PLTGOT.  */
-#define DT_RISCV_PLTGOT         0x70000003
 
 #endif /* _ELF_RISCV_H */

@@ -26,21 +26,6 @@ fragment <<EOF
 #include "elfxx-riscv.h"
 
 static void
-riscv_after_parse (void)
-{
-  /* .gnu.hash and the RISC-V ABI require .dynsym to be sorted in different
-     ways.  .gnu.hash needs symbols to be grouped by hash code whereas the
-     RISC-V ABI requires a mapping between the GOT and the symbol table.  */
-  if (link_info.emit_gnu_hash)
-    {
-      einfo ("%X%P: .gnu.hash is incompatible with the RISC-V ABI\n");
-      link_info.emit_hash = TRUE;
-      link_info.emit_gnu_hash = FALSE;
-    }
-  after_parse_default ();
-}
-
-static void
 riscv_before_allocation (void)
 {
   gld${EMULATION_NAME}_before_allocation ();
@@ -54,5 +39,4 @@ riscv_before_allocation (void)
 
 EOF
 
-LDEMUL_AFTER_PARSE=riscv_after_parse
 LDEMUL_BEFORE_ALLOCATION=riscv_before_allocation

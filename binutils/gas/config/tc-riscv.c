@@ -1306,7 +1306,7 @@ append_insn (struct riscv_cl_insn *ip, expressionS *address_expr,
 
 	    case BFD_RELOC_RISCV_HI20:
 	      ip->insn_opcode |= ENCODE_UTYPE_IMM (
-		RISCV_LUI_HIGH_PART (address_expr->X_add_number));
+		RISCV_CONST_HIGH_PART (address_expr->X_add_number));
 	      break;
 
 	    case BFD_RELOC_RISCV_LO12_S:

@@ -3114,7 +3114,7 @@ mips_output_dwarf_dtprel (FILE *file, int size, rtx x)
       gcc_unreachable ();
     }
   output_addr_const (file, x);
-  fputs ("+0x8000", file);
+  fputs ("+0x800", file);
 }
 
 /* Make the last instruction frame-related and note that it performs

@@ -18,8 +18,9 @@ ENTRY(_dl_runtime_resolve)
   REG_S a7, 8*SZREG(sp)
 
   # Update .got.plt and obtain runtime address of callee.
+  slli a1, t1, 1
   mv a0, t0       # link map
-  slli a1, t1, 1  # reloc offset (== twice the .got.plt offset)
+  add a1, a1, t1  # reloc offset (== thrice the .got.plt offset)
   jal _dl_fixup
 
   # Restore arguments from stack.

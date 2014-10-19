@@ -28,7 +28,7 @@ typedef struct
 /* The thread pointer points to the first static TLS block.  */
 #define TLS_TP_OFFSET		0
 
-/* Dynamic thread vector pointers point 0x8000 past the start of each
+/* Dynamic thread vector pointers point 0x800 past the start of each
    TLS block.  */
 #define TLS_DTV_OFFSET		0x800
 

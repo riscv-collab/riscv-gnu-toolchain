@@ -32,7 +32,7 @@ Software Foundation, 51 Franklin Street - Fifth Floor, Boston, MA 02110-1301, US
 #define EXTRACT_SBTYPE_IMM(x) \
   ((RV_X(x, 8, 4) << 1) | (RV_X(x, 25, 6) << 5) | (RV_X(x, 7, 1) << 11) | (RV_IMM_SIGN(x) << 12))
 #define EXTRACT_UTYPE_IMM(x) \
-  (RV_X(x, 12, 20) | (RV_IMM_SIGN(x) << 20))
+  ((RV_X(x, 12, 20) << 20) | (RV_IMM_SIGN(x) << 32))
 #define EXTRACT_UJTYPE_IMM(x) \
   ((RV_X(x, 21, 10) << 1) | (RV_X(x, 20, 1) << 11) | (RV_X(x, 12, 8) << 12) | (RV_IMM_SIGN(x) << 20))
 
@@ -43,7 +43,7 @@ Software Foundation, 51 Franklin Street - Fifth Floor, Boston, MA 02110-1301, US
 #define ENCODE_SBTYPE_IMM(x) \
   ((RV_X(x, 1, 4) << 8) | (RV_X(x, 5, 6) << 25) | (RV_X(x, 11, 1) << 7) | (RV_X(x, 12, 1) << 31))
 #define ENCODE_UTYPE_IMM(x) \
-  (RV_X(x, 0, 20) << 12)
+  (RV_X(x, 12, 20) << 12)
 #define ENCODE_UJTYPE_IMM(x) \
   ((RV_X(x, 1, 10) << 21) | (RV_X(x, 11, 1) << 20) | (RV_X(x, 12, 8) << 12) | (RV_X(x, 20, 1) << 31))
 
@@ -71,7 +71,6 @@ Software Foundation, 51 Franklin Street - Fifth Floor, Boston, MA 02110-1301, US
 #define RISCV_CONST_HIGH_PART(VALUE) \
   (((VALUE) + (RISCV_IMM_REACH/2)) & ~(RISCV_IMM_REACH-1))
 #define RISCV_CONST_LOW_PART(VALUE) ((VALUE) - RISCV_CONST_HIGH_PART (VALUE))
-#define RISCV_LUI_HIGH_PART(VALUE) (RISCV_CONST_HIGH_PART(VALUE) >> RISCV_IMM_BITS)
 
 /* RV fields */
 

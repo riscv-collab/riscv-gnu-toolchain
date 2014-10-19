@@ -377,7 +377,7 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
 	  break;
 
 	case 'u':
-	  (*info->fprintf_func) (info->stream, "0x%x", (unsigned)EXTRACT_UTYPE_IMM (l) << RISCV_IMM_BITS >> RISCV_IMM_BITS);
+	  (*info->fprintf_func) (info->stream, "0x%x", (unsigned)EXTRACT_UTYPE_IMM (l) >> RISCV_IMM_BITS);
 	  break;
 
 	case 'm':
@@ -420,9 +420,9 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
 
 	case 'd':
 	  if ((l & MASK_AUIPC) == MATCH_AUIPC)
-	    pd->hi_addr[rd] = pc + (EXTRACT_UTYPE_IMM (l) << RISCV_IMM_BITS);
+	    pd->hi_addr[rd] = pc + EXTRACT_UTYPE_IMM (l);
 	  else if ((l & MASK_LUI) == MATCH_LUI)
-	    pd->hi_addr[rd] = EXTRACT_UTYPE_IMM (l) << RISCV_IMM_BITS;
+	    pd->hi_addr[rd] = EXTRACT_UTYPE_IMM (l);
 	  (*info->fprintf_func) (info->stream, "%s", riscv_gpr_names[rd]);
 	  break;
 

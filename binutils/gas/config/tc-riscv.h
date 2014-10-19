@@ -93,6 +93,7 @@ extern void riscv_define_label (symbolS *);
 #define TC_FORCE_RELOCATION_SUB_SAME(FIX, SEG) ((SEG)->flags & SEC_CODE)
 #define TC_FORCE_RELOCATION_SUB_LOCAL(FIX, SEG) 1
 #define TC_VALIDATE_FIX_SUB(FIX, SEG) TC_FORCE_RELOCATION_SUB_SAME(FIX, SEG)
+#define TC_FORCE_RELOCATION_LOCAL(FIX) 1
 #define DIFF_EXPR_OK 1
 
 extern void riscv_pop_insert (void);
