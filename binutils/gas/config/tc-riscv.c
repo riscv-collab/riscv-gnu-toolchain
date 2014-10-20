@@ -1196,7 +1196,7 @@ macro (struct riscv_cl_insn *ip)
 	load_const (rd, &offset_expr);
       else if (riscv_opts.pic && mask == M_LA) /* Global PIC symbol */
 	pcrel_load (rd, rd, &offset_expr, LOAD_ADDRESS_INSN,
-		    BFD_RELOC_RISCV_GOT_HI20, BFD_RELOC_RISCV_GOT_LO12);
+		    BFD_RELOC_RISCV_GOT_HI20, BFD_RELOC_RISCV_PCREL_LO12_I);
       else /* Local PIC symbol, or any non-PIC symbol */
 	pcrel_load (rd, rd, &offset_expr, "addi",
 		    BFD_RELOC_RISCV_PCREL_HI20, BFD_RELOC_RISCV_PCREL_LO12_I);
@@ -1204,12 +1204,12 @@ macro (struct riscv_cl_insn *ip)
 
     case M_LA_TLS_GD: 
       pcrel_load (rd, rd, &offset_expr, "addi",
-		  BFD_RELOC_RISCV_TLS_GD_HI20, BFD_RELOC_RISCV_TLS_GD_LO12);
+		  BFD_RELOC_RISCV_TLS_GD_HI20, BFD_RELOC_RISCV_PCREL_LO12_I);
       break;
 
     case M_LA_TLS_IE: 
       pcrel_load (rd, rd, &offset_expr, LOAD_ADDRESS_INSN,
-		  BFD_RELOC_RISCV_TLS_GOT_HI20, BFD_RELOC_RISCV_TLS_GOT_LO12);
+		  BFD_RELOC_RISCV_TLS_GOT_HI20, BFD_RELOC_RISCV_PCREL_LO12_I);
       break;
 
     case M_LB:
@@ -1313,6 +1313,8 @@ static const struct percent_op_match percent_op_utype[] =
   {"%tprel_hi", BFD_RELOC_RISCV_TPREL_HI20},
   {"%tls_ie_hi", BFD_RELOC_RISCV_TLS_IE_HI20},
   {"%pcrel_hi", BFD_RELOC_RISCV_PCREL_HI20},
+  {"%tls_ie_pcrel_hi", BFD_RELOC_RISCV_TLS_GOT_HI20},
+  {"%tls_gd_pcrel_hi", BFD_RELOC_RISCV_TLS_GD_HI20},
   {"%hi", BFD_RELOC_RISCV_HI20},
   {0, 0}
 };
@@ -2061,13 +2063,10 @@ md_apply_fix (fixS *fixP, valueT *valP, segT seg ATTRIBUTE_UNUSED)
     case BFD_RELOC_RISCV_HI20:
     case BFD_RELOC_RISCV_LO12_I:
     case BFD_RELOC_RISCV_LO12_S:
-    case BFD_RELOC_RISCV_TLS_GOT_LO12:
-    case BFD_RELOC_RISCV_TLS_GD_LO12:
     case BFD_RELOC_RISCV_ADD32:
     case BFD_RELOC_RISCV_ADD64:
     case BFD_RELOC_RISCV_SUB32:
     case BFD_RELOC_RISCV_SUB64:
-    case BFD_RELOC_RISCV_GOT_LO12:
       gas_assert (fixP->fx_addsy != NULL);
       /* Nothing needed to do.  The value comes from the reloc entry.  */
       break;
@@ -2105,7 +2104,6 @@ md_apply_fix (fixS *fixP, valueT *valP, segT seg ATTRIBUTE_UNUSED)
 
     case BFD_RELOC_RISCV_PCREL_LO12_S:
     case BFD_RELOC_RISCV_PCREL_LO12_I:
-    case BFD_RELOC_RISCV_TLS_PCREL_LO12:
     case BFD_RELOC_RISCV_CALL:
     case BFD_RELOC_RISCV_CALL_PLT:
     case BFD_RELOC_RISCV_JMP:

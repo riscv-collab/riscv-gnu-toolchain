@@ -272,20 +272,7 @@ static reloc_howto_type howto_table[] =
 	 ENCODE_UTYPE_IMM(-1U),	/* dst_mask */
 	 FALSE),		/* pcrel_offset */
 
-  /* Low 16 bits of displacement in global offset table.  */
-  HOWTO (R_RISCV_GOT_LO12,	/* type */
-	 0,			/* rightshift */
-	 2,			/* size (0 = byte, 1 = short, 2 = long) */
-	 32,			/* bitsize */
-	 FALSE,			/* pc_relative */
-	 0,			/* bitpos */
-	 complain_overflow_dont, /* complain_on_overflow */
-	 bfd_elf_generic_reloc,	/* special_function */
-	 "R_RISCV_GOT_LO12",	/* name */
-	 FALSE,			/* partial_inplace */
-	 0,			/* src_mask */
-	 ENCODE_ITYPE_IMM(-1U),	/* dst_mask */
-	 FALSE),		/* pcrel_offset */
+  EMPTY_HOWTO (23),
 
   HOWTO (R_RISCV_COPY,		/* type */
 	 0,			/* rightshift */
@@ -563,20 +550,7 @@ static reloc_howto_type howto_table[] =
 	 ENCODE_UTYPE_IMM(-1U),	/* dst_mask */
 	 FALSE),		/* pcrel_offset */
 
-  /* Low 16 bits of displacement in global offset table.  */
-  HOWTO (R_RISCV_TLS_GOT_LO12,	/* type */
-	 0,			/* rightshift */
-	 2,			/* size (0 = byte, 1 = short, 2 = long) */
-	 32,			/* bitsize */
-	 FALSE,			/* pc_relative */
-	 0,			/* bitpos */
-	 complain_overflow_dont, /* complain_on_overflow */
-	 bfd_elf_generic_reloc,	/* special_function */
-	 "R_RISCV_TLS_GOT_LO12",	/* name */
-	 FALSE,			/* partial_inplace */
-	 0,			/* src_mask */
-	 ENCODE_ITYPE_IMM(-1U),	/* dst_mask */
-	 FALSE),		/* pcrel_offset */
+  EMPTY_HOWTO (52),
 
   /* High 16 bits of displacement in global offset table.  */
   HOWTO (R_RISCV_TLS_GD_HI20,	/* type */
@@ -593,21 +567,7 @@ static reloc_howto_type howto_table[] =
 	 ENCODE_UTYPE_IMM(-1U),	/* dst_mask */
 	 FALSE),		/* pcrel_offset */
 
-  /* Low 16 bits of displacement in global offset table.  */
-  HOWTO (R_RISCV_TLS_GD_LO12,	/* type */
-	 0,			/* rightshift */
-	 2,			/* size (0 = byte, 1 = short, 2 = long) */
-	 32,			/* bitsize */
-	 FALSE,			/* pc_relative */
-	 0,			/* bitpos */
-	 complain_overflow_dont, /* complain_on_overflow */
-	 bfd_elf_generic_reloc,	/* special_function */
-	 "R_RISCV_TLS_GD_LO12",	/* name */
-	 FALSE,			/* partial_inplace */
-	 0,			/* src_mask */
-	 ENCODE_ITYPE_IMM(-1U),	/* dst_mask */
-	 FALSE),		/* pcrel_offset */
-
+  EMPTY_HOWTO (54),
   EMPTY_HOWTO (55),
   EMPTY_HOWTO (56),
   EMPTY_HOWTO (57),
@@ -731,7 +691,6 @@ static const struct elf_reloc_map riscv_reloc_map[] =
   { BFD_RELOC_RISCV_PCREL_HI20, R_RISCV_PCREL_HI20 },
   { BFD_RELOC_RISCV_JMP, R_RISCV_JAL },
   { BFD_RELOC_RISCV_GOT_HI20, R_RISCV_GOT_HI20 },
-  { BFD_RELOC_RISCV_GOT_LO12, R_RISCV_GOT_LO12 },
   { BFD_RELOC_RISCV_TLS_DTPMOD32, R_RISCV_TLS_DTPMOD32 },
   { BFD_RELOC_RISCV_TLS_DTPREL32, R_RISCV_TLS_DTPREL32 },
   { BFD_RELOC_RISCV_TLS_DTPMOD64, R_RISCV_TLS_DTPMOD64 },
@@ -748,9 +707,7 @@ static const struct elf_reloc_map riscv_reloc_map[] =
   { BFD_RELOC_RISCV_TLS_IE_LO12_S, R_RISCV_TLS_IE_LO12_S },
   { BFD_RELOC_RISCV_TLS_IE_LO12_I, R_RISCV_TLS_IE_LO12_I },
   { BFD_RELOC_RISCV_TLS_GOT_HI20, R_RISCV_TLS_GOT_HI20 },
-  { BFD_RELOC_RISCV_TLS_GOT_LO12, R_RISCV_TLS_GOT_LO12 },
   { BFD_RELOC_RISCV_TLS_GD_HI20, R_RISCV_TLS_GD_HI20 },
-  { BFD_RELOC_RISCV_TLS_GD_LO12, R_RISCV_TLS_GD_LO12 },
 };
 
 #define ABI_64_P(abfd) \
@@ -2240,11 +2197,7 @@ perform_relocation (const reloc_howto_type *howto,
     case R_RISCV_LO12_I:
     case R_RISCV_TPREL_LO12_I:
     case R_RISCV_PCREL_LO12_I:
-    case R_RISCV_GOT_LO12:
-    case R_RISCV_TLS_GOT_LO12:
     case R_RISCV_TLS_IE_LO12:
-    case R_RISCV_TLS_GD_LO12:
-    case R_RISCV_TLS_PCREL_LO12:
       value = ENCODE_ITYPE_IMM (value);
       break;
 
@@ -2695,12 +2648,8 @@ riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 	    r = bfd_reloc_overflow;
 	  break;
 
-	case R_RISCV_TLS_PCREL_LO12:
 	case R_RISCV_PCREL_LO12_I:
 	case R_RISCV_PCREL_LO12_S:
-	case R_RISCV_TLS_GOT_LO12:
-	case R_RISCV_TLS_GD_LO12:
-	case R_RISCV_GOT_LO12:
 	  if (riscv_record_pcrel_lo_reloc (&pcrel_relocs, input_section, info,
 					   howto, rel, relocation, name,
 					   contents))
