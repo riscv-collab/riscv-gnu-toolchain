@@ -81,34 +81,6 @@ static const char * const riscv_vfp_reg_names_riscv[32] =
   "vf24", "vf25", "vf26", "vf27", "vf28", "vf29", "vf30", "vf31"
 };
 
-struct riscv_abi_choice
-{
-  const char * name;
-  const char * const *gpr_names;
-  const char * const *fpr_names;
-};
-
-struct riscv_abi_choice riscv_abi_choices[] =
-{
-  { "numeric", riscv_gpr_names_numeric, riscv_fpr_names_numeric },
-  { "32", riscv_gpr_names_abi, riscv_fpr_names_abi },
-  { "64", riscv_gpr_names_abi, riscv_fpr_names_abi },
-};
-
-struct riscv_arch_choice
-{
-  const char *name;
-  int bfd_mach_valid;
-  unsigned long bfd_mach;
-};
-
-const struct riscv_arch_choice riscv_arch_choices[] =
-{
-  { "numeric",	0, 0 },
-  { "rv32",	1, bfd_mach_riscv32 },
-  { "rv64",	1, bfd_mach_riscv64 },
-};
-
 struct riscv_private_data
 {
   bfd_vma gp;
@@ -116,31 +88,14 @@ struct riscv_private_data
   bfd_vma hi_addr[OP_MASK_RD + 1];
 };
 
-/* ISA and processor type to disassemble for, and register names to use.
-   set_default_riscv_dis_options and parse_riscv_dis_options fill in these
-   values.  */
 static const char * const *riscv_gpr_names;
 static const char * const *riscv_fpr_names;
 
 /* Other options */
 static int no_aliases;	/* If set disassemble as most general inst.  */
-
-static const struct riscv_abi_choice *
-choose_abi_by_name (const char *name, unsigned int namelen)
-{
-  const struct riscv_abi_choice *c;
-  unsigned int i;
-
-  for (i = 0, c = NULL; i < ARRAY_SIZE (riscv_abi_choices) && c == NULL; i++)
-    if (strncmp (riscv_abi_choices[i].name, name, namelen) == 0
-	&& strlen (riscv_abi_choices[i].name) == namelen)
-      c = &riscv_abi_choices[i];
-
-  return c;
-}
 
 static void
-set_default_riscv_dis_options (struct disassemble_info *info ATTRIBUTE_UNUSED)
+set_default_riscv_dis_options (void)
 {
   riscv_gpr_names = riscv_gpr_names_abi;
   riscv_fpr_names = riscv_fpr_names_abi;
@@ -148,84 +103,35 @@ set_default_riscv_dis_options (struct disassemble_info *info ATTRIBUTE_UNUSED)
 }
 
 static void
-parse_riscv_dis_option (const char *option, unsigned int len)
+parse_riscv_dis_option (const char *option)
 {
-  unsigned int i, optionlen, vallen;
-  const char *val;
-  const struct riscv_abi_choice *chosen_abi;
-
-  /* Try to match options that are simple flags */
   if (CONST_STRNEQ (option, "no-aliases"))
+    no_aliases = 1;
+  else if (CONST_STRNEQ (option, "numeric"))
     {
-      no_aliases = 1;
-      return;
-    }
-  
-  /* Look for the = that delimits the end of the option name.  */
-  for (i = 0; i < len; i++)
-    if (option[i] == '=')
-      break;
-
-  if (i == 0)		/* Invalid option: no name before '='.  */
-    return;
-  if (i == len)		/* Invalid option: no '='.  */
-    return;
-  if (i == (len - 1))	/* Invalid option: no value after '='.  */
-    return;
-
-  optionlen = i;
-  val = option + (optionlen + 1);
-  vallen = len - (optionlen + 1);
-
-  if (strncmp ("gpr-names", option, optionlen) == 0
-      && strlen ("gpr-names") == optionlen)
-    {
-      chosen_abi = choose_abi_by_name (val, vallen);
-      if (chosen_abi != NULL)
-	riscv_gpr_names = chosen_abi->gpr_names;
-      return;
-    }
-
-  if (strncmp ("fpr-names", option, optionlen) == 0
-      && strlen ("fpr-names") == optionlen)
-    {
-      chosen_abi = choose_abi_by_name (val, vallen);
-      if (chosen_abi != NULL)
-	riscv_fpr_names = chosen_abi->fpr_names;
-      return;
+      riscv_gpr_names = riscv_gpr_names_numeric;
+      riscv_fpr_names = riscv_fpr_names_numeric;
     }
 
   /* Invalid option.  */
+  fprintf (stderr, _("Unrecognized disassembler option: %s\n"), option);
 }
 
 static void
-parse_riscv_dis_options (const char *options)
+parse_riscv_dis_options (const char *opts_in)
 {
-  const char *option_end;
+  char *opts = xstrdup (opts_in), *opt = opts, *opt_end = opts;
 
-  if (options == NULL)
-    return;
+  set_default_riscv_dis_options ();
 
-  while (*options != '\0')
+  for ( ; opt_end != NULL; opt = opt_end + 1)
     {
-      /* Skip empty options.  */
-      if (*options == ',')
-	{
-	  options++;
-	  continue;
-	}
-
-      /* We know that *options is neither NUL or a comma.  */
-      option_end = options + 1;
-      while (*option_end != ',' && *option_end != '\0')
-	option_end++;
-
-      parse_riscv_dis_option (options, option_end - options);
-
-      /* Go on to the next one.  If option_end points to a comma, it
-	 will be skipped above.  */
-      options = option_end;
+      if ((opt_end = strchr (opt, ',')) != NULL)
+	*opt_end = 0;
+      parse_riscv_dis_option (opt);
     }
+
+  free (opts);
 }
 
 /* Print one argument from an array. */
@@ -486,127 +392,6 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
     }
 }
 
-#if 0
-static unsigned long
-riscv_rvc_uncompress(unsigned long rvc_insn)
-{
-  #define IS_INSN(x, op) (((x) & MASK_##op) == MATCH_##op)
-  #define EXTRACT_OPERAND(x, op) (((x) >> OP_SH_##op) & OP_MASK_##op)
-
-  int crd = EXTRACT_OPERAND(rvc_insn, CRD);
-  int crs1 = EXTRACT_OPERAND(rvc_insn, CRS1);
-  int crs2 = EXTRACT_OPERAND(rvc_insn, CRS2);
-  int crds = EXTRACT_OPERAND(rvc_insn, CRDS);
-  int crs1s = EXTRACT_OPERAND(rvc_insn, CRS1S);
-  int crs2s = EXTRACT_OPERAND(rvc_insn, CRS2S);
-  int crs2bs = EXTRACT_OPERAND(rvc_insn, CRS2BS);
-
-  int cimm6 = EXTRACT_OPERAND(rvc_insn, CIMM6);
-  int imm6 = ((int32_t)cimm6 << 26 >> 26) & (RISCV_IMM_REACH-1);
-  int imm6x4 = (((int32_t)cimm6 << 26 >> 26)*4) & (RISCV_IMM_REACH-1);
-  int imm6x4lo = imm6x4 & ((1<<RISCV_IMMLO_BITS)-1);
-  int imm6x4hi = (imm6x4 >> RISCV_IMMLO_BITS) & ((1<<RISCV_IMMHI_BITS)-1);
-  int imm6x8 = (((int32_t)cimm6 << 26 >> 26)*8) & (RISCV_IMM_REACH-1);
-  int imm6x8lo = imm6x8 & ((1<<RISCV_IMMLO_BITS)-1);
-  int imm6x8hi = (imm6x8 >> RISCV_IMMLO_BITS) & ((1<<RISCV_IMMHI_BITS)-1);
-
-  int cimm5 = EXTRACT_OPERAND(rvc_insn, CIMM5);
-  int imm5 = ((int32_t)cimm5 << 27 >> 27) & (RISCV_IMM_REACH-1);
-  int imm5lo = imm5 & ((1<<RISCV_IMMLO_BITS)-1);
-  int imm5hi = (imm5 >> RISCV_IMMLO_BITS) & ((1<<RISCV_IMMHI_BITS)-1);
-  int imm5x4 = (((int32_t)cimm5 << 27 >> 27)*4) & (RISCV_IMM_REACH-1);
-  int imm5x4lo = imm5x4 & ((1<<RISCV_IMMLO_BITS)-1);
-  int imm5x4hi = (imm5x4 >> RISCV_IMMLO_BITS) & ((1<<RISCV_IMMHI_BITS)-1);
-  int imm5x8 = (((int32_t)cimm5 << 27 >> 27)*8) & (RISCV_IMM_REACH-1);
-  int imm5x8lo = imm5x8 & ((1<<RISCV_IMMLO_BITS)-1);
-  int imm5x8hi = (imm5x8 >> RISCV_IMMLO_BITS) & ((1<<RISCV_IMMHI_BITS)-1);
-
-  int cimm10 = EXTRACT_OPERAND(rvc_insn, CIMM10);
-  int jt10 = ((int32_t)cimm10 << 22 >> 22) & ((1<<RISCV_JUMP_BITS)-1);
-
-  if(IS_INSN(rvc_insn, C_ADDI))
-  {
-    if(crd == 0)
-    {
-      if(imm6 & 0x20)
-        return MATCH_JALR | (LINK_REG << OP_SH_RD) | (crs1 << OP_SH_RS1);
-      else
-        return MATCH_JALR | (crs1 << OP_SH_RS1);
-    }
-    return MATCH_ADDI | (crd << OP_SH_RD) | (crd << OP_SH_RS1) |
-           (imm6 << OP_SH_IMMEDIATE);
-  }
-  if(IS_INSN(rvc_insn, C_ADDIW))
-    return MATCH_ADDIW | (crd << OP_SH_RD) | (crd << OP_SH_RS1) | (imm6 << OP_SH_IMMEDIATE);
-  if(IS_INSN(rvc_insn, C_LI))
-    return MATCH_ADDI | (crd << OP_SH_RD) | (imm6 << OP_SH_IMMEDIATE);
-  if(IS_INSN(rvc_insn, C_MOVE))
-    return MATCH_ADDI | (crd << OP_SH_RD) | (crs1 << OP_SH_RS1);
-  if(IS_INSN(rvc_insn, C_SLLI))
-    return MATCH_SLLI | (cimm5 << OP_SH_SHAMT) | (rvc_rd_regmap[crds] << OP_SH_RD) | (rvc_rd_regmap[crds] << OP_SH_RS1);
-  if(IS_INSN(rvc_insn, C_SLLI32))
-    return MATCH_SLLI | ((cimm5+32) << OP_SH_SHAMT) | (rvc_rd_regmap[crds] << OP_SH_RD) | (rvc_rd_regmap[crds] << OP_SH_RS1);
-  if(IS_INSN(rvc_insn, C_SRLI))
-    return MATCH_SRLI | (cimm5 << OP_SH_SHAMT) | (rvc_rd_regmap[crds] << OP_SH_RD) | (rvc_rd_regmap[crds] << OP_SH_RS1);
-  if(IS_INSN(rvc_insn, C_SRLI32))
-    return MATCH_SRLI | ((cimm5+32) << OP_SH_SHAMT) | (rvc_rd_regmap[crds] << OP_SH_RD) | (rvc_rd_regmap[crds] << OP_SH_RS1);
-  if(IS_INSN(rvc_insn, C_SRAI))
-    return MATCH_SRAI | (cimm5 << OP_SH_SHAMT) | (rvc_rd_regmap[crds] << OP_SH_RD) | (rvc_rd_regmap[crds] << OP_SH_RS1);
-  if(IS_INSN(rvc_insn, C_SRAI32))
-    return MATCH_SRAI | ((cimm5+32) << OP_SH_SHAMT) | (rvc_rd_regmap[crds] << OP_SH_RD) | (rvc_rd_regmap[crds] << OP_SH_RS1);
-  if(IS_INSN(rvc_insn, C_SLLIW))
-    return MATCH_SLLIW | (cimm5 << OP_SH_SHAMT) | (rvc_rd_regmap[crds] << OP_SH_RD) | (rvc_rd_regmap[crds] << OP_SH_RS1);
-  if(IS_INSN(rvc_insn, C_ADD))
-    return MATCH_ADD | (crd << OP_SH_RD) | (crs1 << OP_SH_RS1) | (crd << OP_SH_RS2);
-  if(IS_INSN(rvc_insn, C_SUB))
-    return MATCH_SUB | (crd << OP_SH_RD) | (crs1 << OP_SH_RS1) | (crd << OP_SH_RS2);
-  if(IS_INSN(rvc_insn, C_ADD3))
-    return MATCH_ADD | (rvc_rd_regmap[crds] << OP_SH_RD) | (rvc_rs1_regmap[crs1s] << OP_SH_RS1) | (rvc_rs2b_regmap[crs2bs] << OP_SH_RS2);
-  if(IS_INSN(rvc_insn, C_SUB3))
-    return MATCH_SUB | (rvc_rd_regmap[crds] << OP_SH_RD) | (rvc_rs1_regmap[crs1s] << OP_SH_RS1) | (rvc_rs2b_regmap[crs2bs] << OP_SH_RS2);
-  if(IS_INSN(rvc_insn, C_AND3))
-    return MATCH_AND | (rvc_rd_regmap[crds] << OP_SH_RD) | (rvc_rs1_regmap[crs1s] << OP_SH_RS1) | (rvc_rs2b_regmap[crs2bs] << OP_SH_RS2);
-  if(IS_INSN(rvc_insn, C_OR3))
-    return MATCH_OR | (rvc_rd_regmap[crds] << OP_SH_RD) | (rvc_rs1_regmap[crs1s] << OP_SH_RS1) | (rvc_rs2b_regmap[crs2bs] << OP_SH_RS2);
-  if(IS_INSN(rvc_insn, C_J))
-    return MATCH_JAL | (jt10 << OP_SH_TARGET);
-  if(IS_INSN(rvc_insn, C_BEQ))
-    return MATCH_BEQ | (rvc_rs1_regmap[crs1s] << OP_SH_RS1) | (rvc_rs2_regmap[crs2s] << OP_SH_RS2) | (imm5lo << OP_SH_IMMLO) | (imm5hi << OP_SH_IMMHI);
-  if(IS_INSN(rvc_insn, C_BNE))
-    return MATCH_BNE | (rvc_rs1_regmap[crs1s] << OP_SH_RS1) | (rvc_rs2_regmap[crs2s] << OP_SH_RS2) | (imm5lo << OP_SH_IMMLO) | (imm5hi << OP_SH_IMMHI);
-  if(IS_INSN(rvc_insn, C_LDSP))
-    return MATCH_LD | (30 << OP_SH_RS1) | (crd << OP_SH_RD) | (imm6x8 << OP_SH_IMMEDIATE);
-  if(IS_INSN(rvc_insn, C_LWSP))
-    return MATCH_LW | (30 << OP_SH_RS1) | (crd << OP_SH_RD) | (imm6x4 << OP_SH_IMMEDIATE);
-  if(IS_INSN(rvc_insn, C_SDSP))
-    return MATCH_SD | (30 << OP_SH_RS1) | (crs2 << OP_SH_RS2) | (imm6x8lo << OP_SH_IMMLO) | (imm6x8hi << OP_SH_IMMHI);
-  if(IS_INSN(rvc_insn, C_SWSP))
-    return MATCH_SW | (30 << OP_SH_RS1) | (crs2 << OP_SH_RS2) | (imm6x4lo << OP_SH_IMMLO) | (imm6x4hi << OP_SH_IMMHI);
-  if(IS_INSN(rvc_insn, C_LD))
-    return MATCH_LD | (rvc_rs1_regmap[crs1s] << OP_SH_RS1) | (rvc_rd_regmap[crds] << OP_SH_RD) | (imm5x8 << OP_SH_IMMEDIATE);
-  if(IS_INSN(rvc_insn, C_LW))
-    return MATCH_LW | (rvc_rs1_regmap[crs1s] << OP_SH_RS1) | (rvc_rd_regmap[crds] << OP_SH_RD) | (imm5x4 << OP_SH_IMMEDIATE);
-  if(IS_INSN(rvc_insn, C_SD))
-    return MATCH_SD | (rvc_rs1_regmap[crs1s] << OP_SH_RS1) | (rvc_rs2_regmap[crs2s] << OP_SH_RS2) | (imm5x8lo << OP_SH_IMMLO) | (imm5x8hi << OP_SH_IMMHI);
-  if(IS_INSN(rvc_insn, C_SW))
-    return MATCH_SW | (rvc_rs1_regmap[crs1s] << OP_SH_RS1) | (rvc_rs2_regmap[crs2s] << OP_SH_RS2) | (imm5x4lo << OP_SH_IMMLO) | (imm5x4hi << OP_SH_IMMHI);
-  if(IS_INSN(rvc_insn, C_LD0))
-    return MATCH_LD | (crs1 << OP_SH_RS1) | (crd << OP_SH_RD);
-  if(IS_INSN(rvc_insn, C_LW0))
-    return MATCH_LW | (crs1 << OP_SH_RS1) | (crd << OP_SH_RD);
-  if(IS_INSN(rvc_insn, C_FLD))
-    return MATCH_FLD | (rvc_rs1_regmap[crs1s] << OP_SH_RS1) | (rvc_rd_regmap[crds] << OP_SH_RD) | (imm5x8 << OP_SH_IMMEDIATE);
-  if(IS_INSN(rvc_insn, C_FLW))
-    return MATCH_FLW | (rvc_rs1_regmap[crs1s] << OP_SH_RS1) | (rvc_rd_regmap[crds] << OP_SH_RD) | (imm5x4 << OP_SH_IMMEDIATE);
-  if(IS_INSN(rvc_insn, C_FSD))
-    return MATCH_FSD | (rvc_rs1_regmap[crs1s] << OP_SH_RS1) | (rvc_rs2_regmap[crs2s] << OP_SH_RS2) | (imm5x8lo << OP_SH_IMMLO) | (imm5x8hi << OP_SH_IMMHI);
-  if(IS_INSN(rvc_insn, C_FSW))
-    return MATCH_FSW | (rvc_rs1_regmap[crs1s] << OP_SH_RS1) | (rvc_rs2_regmap[crs2s] << OP_SH_RS2) | (imm5x4lo << OP_SH_IMMLO) | (imm5x4hi << OP_SH_IMMHI);
-
-  return rvc_insn;
-}
-#endif
-
 /* Print the RISC-V instruction at address MEMADDR in debugged memory,
    on using INFO.  Returns length of the instruction, in bytes.
    BIGENDIAN must be 1 if this is big-endian code, 0 if
@@ -659,11 +444,6 @@ riscv_disassemble_insn (bfd_vma memaddr, insn_t word, disassemble_info *info)
 
   insnlen = riscv_insn_length (word);
 
-#if 0
-  if (insnlen == 2)
-    word = riscv_rvc_uncompress(word);
-#endif
-
   info->bytes_per_chunk = insnlen % 4 == 0 ? 4 : 2;
   info->bytes_per_line = 8;
   info->display_endian = info->endian;
@@ -711,8 +491,14 @@ print_insn_riscv (bfd_vma memaddr, struct disassemble_info *info)
   bfd_vma n;
   int status;
 
-  set_default_riscv_dis_options (info);
-  parse_riscv_dis_options (info->disassembler_options);
+  if (info->disassembler_options != NULL)
+    {
+      parse_riscv_dis_options (info->disassembler_options);
+      /* Avoid repeatedly parsing the options.  */
+      info->disassembler_options = NULL;
+    }
+  else if (riscv_gpr_names == NULL)
+    set_default_riscv_dis_options ();
 
   /* Instructions are a sequence of 2-byte packets in little-endian order.  */
   for (n = 0; n < sizeof(insn) && n < riscv_insn_length (insn); n += 2)
@@ -736,26 +522,16 @@ print_insn_riscv (bfd_vma memaddr, struct disassemble_info *info)
 void
 print_riscv_disassembler_options (FILE *stream)
 {
-  unsigned int i;
-
   fprintf (stream, _("\n\
 The following RISC-V-specific disassembler options are supported for use\n\
 with the -M switch (multiple options should be separated by commas):\n"));
 
   fprintf (stream, _("\n\
-  gpr-names=ABI            Print GPR names according to  specified ABI.\n\
-                           Default: based on binary being disassembled.\n"));
+  numeric       Print numeric reigster names, rather than ABI names.\n"));
 
   fprintf (stream, _("\n\
-  fpr-names=ABI            Print FPR names according to specified ABI.\n\
-                           Default: numeric.\n"));
-
-  fprintf (stream, _("\n\
-  For the options above, the following values are supported for \"ABI\":\n\
-   "));
-  for (i = 0; i < ARRAY_SIZE (riscv_abi_choices); i++)
-    fprintf (stream, " %s", riscv_abi_choices[i].name);
-  fprintf (stream, _("\n"));
+  no-aliases    Disassemble only into canonical instructions, rather\n\
+                than into pseudoinstructions.\n"));
 
   fprintf (stream, _("\n"));
 }
