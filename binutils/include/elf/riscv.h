@@ -31,24 +31,34 @@
 
 /* Relocation types.  */
 START_RELOC_NUMBERS (elf_riscv_reloc_type)
+  /* Relocation types used by the dynamic linker.  */
   RELOC_NUMBER (R_RISCV_NONE, 0)
-  RELOC_NUMBER (R_RISCV_32, 2)
+  RELOC_NUMBER (R_RISCV_32, 1)
+  RELOC_NUMBER (R_RISCV_64, 2)
   RELOC_NUMBER (R_RISCV_RELATIVE, 3)
-  RELOC_NUMBER (R_RISCV_JAL, 4)
-  RELOC_NUMBER (R_RISCV_HI20, 5)
-  RELOC_NUMBER (R_RISCV_LO12_I, 6)
-  RELOC_NUMBER (R_RISCV_LO12_S, 7)
-  RELOC_NUMBER (R_RISCV_PCREL_LO12_I, 8)
-  RELOC_NUMBER (R_RISCV_PCREL_LO12_S, 9)
-  RELOC_NUMBER (R_RISCV_BRANCH, 10)
-  RELOC_NUMBER (R_RISCV_CALL, 11)
-  RELOC_NUMBER (R_RISCV_PCREL_HI20, 12)
-  RELOC_NUMBER (R_RISCV_CALL_PLT, 13)
-  RELOC_NUMBER (R_RISCV_64, 18)
-  RELOC_NUMBER (R_RISCV_GOT_HI20, 22)
-  RELOC_NUMBER (R_RISCV_COPY, 24)
-  RELOC_NUMBER (R_RISCV_JUMP_SLOT, 25)
-  /* TLS relocations.  */
+  RELOC_NUMBER (R_RISCV_COPY, 4)
+  RELOC_NUMBER (R_RISCV_JUMP_SLOT, 5)
+  RELOC_NUMBER (R_RISCV_TLS_DTPMOD32, 6)
+  RELOC_NUMBER (R_RISCV_TLS_DTPMOD64, 7)
+  RELOC_NUMBER (R_RISCV_TLS_DTPREL32, 8)
+  RELOC_NUMBER (R_RISCV_TLS_DTPREL64, 9)
+  RELOC_NUMBER (R_RISCV_TLS_TPREL32, 10)
+  RELOC_NUMBER (R_RISCV_TLS_TPREL64, 11)
+
+  /* Relocation types not used by the dynamic linker.  */
+  RELOC_NUMBER (R_RISCV_BRANCH, 16)
+  RELOC_NUMBER (R_RISCV_JAL, 17)
+  RELOC_NUMBER (R_RISCV_CALL, 18)
+  RELOC_NUMBER (R_RISCV_CALL_PLT, 19)
+  RELOC_NUMBER (R_RISCV_GOT_HI20, 20)
+  RELOC_NUMBER (R_RISCV_TLS_GOT_HI20, 21)
+  RELOC_NUMBER (R_RISCV_TLS_GD_HI20, 22)
+  RELOC_NUMBER (R_RISCV_PCREL_HI20, 23)
+  RELOC_NUMBER (R_RISCV_PCREL_LO12_I, 24)
+  RELOC_NUMBER (R_RISCV_PCREL_LO12_S, 25)
+  RELOC_NUMBER (R_RISCV_HI20, 26)
+  RELOC_NUMBER (R_RISCV_LO12_I, 27)
+  RELOC_NUMBER (R_RISCV_LO12_S, 28)
   RELOC_NUMBER (R_RISCV_TLS_IE_HI20, 29)
   RELOC_NUMBER (R_RISCV_TLS_IE_LO12, 30)
   RELOC_NUMBER (R_RISCV_TLS_IE_ADD, 31)
@@ -58,22 +68,13 @@ START_RELOC_NUMBERS (elf_riscv_reloc_type)
   RELOC_NUMBER (R_RISCV_TPREL_LO12_I, 35)
   RELOC_NUMBER (R_RISCV_TPREL_LO12_S, 36)
   RELOC_NUMBER (R_RISCV_TPREL_ADD, 37)
-  RELOC_NUMBER (R_RISCV_TLS_DTPMOD32, 38)
-  RELOC_NUMBER (R_RISCV_TLS_DTPREL32, 39)
-  RELOC_NUMBER (R_RISCV_TLS_DTPMOD64, 40)
-  RELOC_NUMBER (R_RISCV_TLS_DTPREL64, 41)
-  RELOC_NUMBER (R_RISCV_TLS_TPREL32, 47)
-  RELOC_NUMBER (R_RISCV_TLS_TPREL64, 48)
-  RELOC_NUMBER (R_RISCV_TLS_GOT_HI20, 51)
-  RELOC_NUMBER (R_RISCV_TLS_GD_HI20, 53)
-  RELOC_NUMBER (R_RISCV_ADD32, 58)
-  RELOC_NUMBER (R_RISCV_ADD64, 59)
-  RELOC_NUMBER (R_RISCV_SUB32, 60)
-  RELOC_NUMBER (R_RISCV_SUB64, 61)
-  RELOC_NUMBER (R_RISCV_GNU_VTINHERIT, 62)
-  RELOC_NUMBER (R_RISCV_GNU_VTENTRY, 63)
-  FAKE_RELOC (R_RISCV_max, 64)
-END_RELOC_NUMBERS (R_RISCV_maxext)
+  RELOC_NUMBER (R_RISCV_ADD32, 38)
+  RELOC_NUMBER (R_RISCV_ADD64, 39)
+  RELOC_NUMBER (R_RISCV_SUB32, 40)
+  RELOC_NUMBER (R_RISCV_SUB64, 41)
+  RELOC_NUMBER (R_RISCV_GNU_VTINHERIT, 42)
+  RELOC_NUMBER (R_RISCV_GNU_VTENTRY, 43)
+END_RELOC_NUMBERS (R_RISCV_max)
 
 /* Processor specific flags for the ELF header e_flags field.  */
 
@@ -133,27 +134,5 @@ static inline unsigned int riscv_elf_name_to_flag(const char* name)
 
   return E_RISCV_EXT_Xcustom;
 }
-
-/* Processor specific section indices.  These sections do not actually
-   exist.  Symbols with a st_shndx field corresponding to one of these
-   values have a special meaning.  */
-
-/* Defined and allocated common symbol.  Value is virtual address.  If
-   relocated, alignment must be preserved.  */
-#define SHN_RISCV_ACOMMON	SHN_LORESERVE
-
-/* Defined and allocated text symbol.  Value is virtual address.
-   Occur in the dynamic symbol table of Alpha OSF/1 and Irix 5 executables.  */
-#define SHN_RISCV_TEXT		(SHN_LORESERVE + 1)
-
-/* Defined and allocated data symbol.  Value is virtual address.
-   Occur in the dynamic symbol table of Alpha OSF/1 and Irix 5 executables.  */
-#define SHN_RISCV_DATA		(SHN_LORESERVE + 2)
-
-/* Small common symbol.  */
-#define SHN_RISCV_SCOMMON	(SHN_LORESERVE + 3)
-
-/* Small undefined symbol.  */
-#define SHN_RISCV_SUNDEFINED	(SHN_LORESERVE + 4)
 
 #endif /* _ELF_RISCV_H */
