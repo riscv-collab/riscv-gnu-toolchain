@@ -815,7 +815,7 @@ struct riscv_elf_link_hash_entry
 #define GOT_NORMAL      1
 #define GOT_TLS_GD      2
 #define GOT_TLS_IE      4
-  unsigned char tls_type;
+  char tls_type;
 };
 
 #define riscv_elf_hash_entry(ent) \
@@ -834,6 +834,10 @@ struct _bfd_riscv_elf_obj_tdata
 
 #define _bfd_riscv_elf_local_got_tls_type(abfd) \
   (_bfd_riscv_elf_tdata (abfd)->local_got_tls_type)
+
+#define _bfd_riscv_elf_tls_type(abfd, h, symndx)		\
+  (*((h) != NULL ? &riscv_elf_hash_entry(h)->tls_type		\
+     : &_bfd_riscv_elf_local_got_tls_type (abfd) [symndx]))
 
 #define is_riscv_elf(bfd)				\
   (bfd_get_flavour (bfd) == bfd_target_elf_flavour	\
@@ -1197,6 +1201,55 @@ riscv_elf_copy_indirect_symbol (struct bfd_link_info *info,
   _bfd_elf_link_hash_copy_indirect (info, dir, ind);
 }
 
+static bfd_boolean
+riscv_elf_record_tls_type (bfd *abfd, struct elf_link_hash_entry *h,
+			   unsigned long symndx, char tls_type)
+{
+  char *new_tls_type = &_bfd_riscv_elf_tls_type (abfd, h, symndx);
+  *new_tls_type |= tls_type;
+  if ((*new_tls_type & GOT_NORMAL) && (*new_tls_type & ~GOT_NORMAL))
+    {
+      (*_bfd_error_handler)
+	(_("%B: `%s' accessed both as normal and thread local symbol"),
+	 abfd, h ? h->root.root.string : "<local>");
+      return FALSE;
+    }
+  return TRUE;
+}
+
+static bfd_boolean
+riscv_elf_record_got_reference (bfd *abfd, struct bfd_link_info *info,
+				struct elf_link_hash_entry *h, long symndx)
+{
+  struct riscv_elf_link_hash_table *htab = riscv_elf_hash_table (info);
+  Elf_Internal_Shdr *symtab_hdr = &elf_tdata (abfd)->symtab_hdr;
+
+  if (htab->elf.sgot == NULL)
+    {
+      if (!riscv_elf_create_got_section (htab->elf.dynobj, info))
+        return FALSE;
+    }
+
+  if (h != NULL)
+    {
+      h->got.refcount += 1;
+      return TRUE;
+    }
+
+  /* This is a global offset table entry for a local symbol.  */
+  if (elf_local_got_refcounts (abfd) == NULL)
+    {
+      bfd_size_type size = symtab_hdr->sh_info * (sizeof (bfd_vma) + 1);
+      if (!(elf_local_got_refcounts (abfd) = bfd_zalloc (abfd, size)))
+	return FALSE;
+      _bfd_riscv_elf_local_got_tls_type (abfd)
+	= (char *) (elf_local_got_refcounts (abfd) + symtab_hdr->sh_info);
+    }
+  elf_local_got_refcounts (abfd) [symndx] += 1;
+
+  return TRUE;
+}
+
 /* Look through the relocs for a section during the first phase, and
    allocate space in the global offset table or procedure linkage
    table.  */
@@ -1226,7 +1279,6 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
       unsigned int r_type;
       unsigned long r_symndx;
       struct elf_link_hash_entry *h;
-      int tls_type, old_tls_type;
 
       r_symndx = ELF_R_SYM (abfd, rel->r_info);
       r_type = ELF_R_TYPE (rel->r_info);
@@ -1255,72 +1307,31 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
       switch (r_type)
 	{
 	case R_RISCV_TLS_GD_HI20:
-	  tls_type = GOT_TLS_GD;
-	  goto have_got_reference;
+	  if (!riscv_elf_record_got_reference (abfd, info, h, r_symndx)
+	      || !riscv_elf_record_tls_type (abfd, h, r_symndx, GOT_TLS_GD))
+	    return FALSE;
+	  break;
 
 	case R_RISCV_TLS_IE_HI20:
 	  if (info->shared)
 	    goto illegal_static_reloc;
-	  tls_type = GOT_TLS_IE;
-	  goto have_got_reference;
+	  if (!riscv_elf_record_got_reference (abfd, info, h, r_symndx)
+	      || !riscv_elf_record_tls_type (abfd, h, r_symndx, GOT_TLS_IE))
+	    return FALSE;
+	  break;
 
 	case R_RISCV_TLS_GOT_HI20:
 	  if (info->shared)
 	    info->flags |= DF_STATIC_TLS;
-	  tls_type = GOT_TLS_IE;
-	  goto have_got_reference;
+	  if (!riscv_elf_record_got_reference (abfd, info, h, r_symndx)
+	      || !riscv_elf_record_tls_type (abfd, h, r_symndx, GOT_TLS_IE))
+	    return FALSE;
+	  break;
 
 	case R_RISCV_GOT_HI20:
-	  tls_type = GOT_NORMAL;
-	  /* Fall through.  */
-
-	have_got_reference:
-	  /* This symbol requires a global offset table entry.  */
-	  if (h != NULL)
-	    {
-	      h->got.refcount += 1;
-	      old_tls_type = riscv_elf_hash_entry(h)->tls_type;
-	      riscv_elf_hash_entry(h)->tls_type |= tls_type;
-	    }
-	  else
-	    {
-	      bfd_signed_vma *local_got_refcounts;
-
-	      /* This is a global offset table entry for a local symbol.  */
-	      local_got_refcounts = elf_local_got_refcounts (abfd);
-	      if (local_got_refcounts == NULL)
-		{
-		  bfd_size_type size;
-
-		  size = symtab_hdr->sh_info;
-		  size *= (sizeof (bfd_signed_vma) + sizeof(char));
-		  local_got_refcounts = ((bfd_signed_vma *)
-					 bfd_zalloc (abfd, size));
-		  if (local_got_refcounts == NULL)
-		    return FALSE;
-		  elf_local_got_refcounts (abfd) = local_got_refcounts;
-		  _bfd_riscv_elf_local_got_tls_type (abfd)
-		    = (char *) (local_got_refcounts + symtab_hdr->sh_info);
-		}
-	      local_got_refcounts[r_symndx] += 1;
-	      old_tls_type = _bfd_riscv_elf_local_got_tls_type (abfd) [r_symndx];
-	      _bfd_riscv_elf_local_got_tls_type (abfd) [r_symndx] |= tls_type;
-	    }
-
-	  if (((old_tls_type | tls_type) & GOT_NORMAL)
-	      && ((old_tls_type | tls_type) & (GOT_TLS_IE | GOT_TLS_GD)))
-	    {
-	      (*_bfd_error_handler)
-		(_("%B: `%s' accessed both as normal and thread local symbol"),
-		 abfd, h ? h->root.root.string : "<local>");
-	      return FALSE;
-	    }
-
-	  if (htab->elf.sgot == NULL)
-	    {
-	      if (!riscv_elf_create_got_section (htab->elf.dynobj, info))
-		return FALSE;
-	    }
+	  if (!riscv_elf_record_got_reference (abfd, info, h, r_symndx)
+	      || !riscv_elf_record_tls_type (abfd, h, r_symndx, GOT_NORMAL))
+	    return FALSE;
 	  break;
 
 	case R_RISCV_CALL_PLT:
@@ -2773,19 +2784,16 @@ riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 	case R_RISCV_TLS_GD_HI20:
 	  if (h != NULL)
 	    {
-	      tls_type = riscv_elf_hash_entry(h)->tls_type;
 	      off = h->got.offset;
 	      h->got.offset |= 1;
 	    }
 	  else
 	    {
-	      BFD_ASSERT (local_got_offsets != NULL);
-	      tls_type =
-		_bfd_riscv_elf_local_got_tls_type (input_bfd) [r_symndx];
 	      off = local_got_offsets[r_symndx];
 	      local_got_offsets[r_symndx] |= 1;
 	    }
 
+	  tls_type = _bfd_riscv_elf_tls_type (input_bfd, h, r_symndx);
 	  BFD_ASSERT (tls_type & (GOT_TLS_IE | GOT_TLS_GD));
 	  /* If this symbol is referenced by both GD and IE TLS, the IE
 	     reference's GOT slot follows the GD reference's slots.  */
