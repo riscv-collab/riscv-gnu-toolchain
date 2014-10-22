@@ -166,7 +166,7 @@
   rtx result = operands[0];
   rtx mem = operands[1];
   rtx model = operands[2];
-  rtx addr = XEXP (mem, 0);
+  rtx addr = force_reg (Pmode, XEXP (mem, 0));
 
   rtx aligned_addr = gen_reg_rtx (Pmode);
   emit_move_insn (aligned_addr, gen_rtx_AND (Pmode, addr, GEN_INT (-4)));
