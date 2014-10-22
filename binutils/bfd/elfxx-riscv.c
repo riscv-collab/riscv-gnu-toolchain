@@ -548,7 +548,37 @@ static reloc_howto_type howto_table[] =
 	 0,			/* dst_mask */
 	 FALSE),		/* pcrel_offset */
 
-  /* 32 bit in-place addition, for local label subtraction.  */
+  /* 8-bit in-place addition, for local label subtraction.  */
+  HOWTO (R_RISCV_ADD8,		/* type */
+	 0,			/* rightshift */
+	 0,			/* size (0 = byte, 1 = short, 2 = long) */
+	 32,			/* bitsize */
+	 FALSE,			/* pc_relative */
+	 0,			/* bitpos */
+	 complain_overflow_dont, /* complain_on_overflow */
+	 bfd_elf_generic_reloc,	/* special_function */
+	 "R_RISCV_ADD8",	/* name */
+	 FALSE,			/* partial_inplace */
+	 0,			/* src_mask */
+	 MINUS_ONE,		/* dst_mask */
+	 FALSE),		/* pcrel_offset */
+
+  /* 16-bit in-place addition, for local label subtraction.  */
+  HOWTO (R_RISCV_ADD16,		/* type */
+	 0,			/* rightshift */
+	 1,			/* size (0 = byte, 1 = short, 2 = long) */
+	 16,			/* bitsize */
+	 FALSE,			/* pc_relative */
+	 0,			/* bitpos */
+	 complain_overflow_dont, /* complain_on_overflow */
+	 bfd_elf_generic_reloc,	/* special_function */
+	 "R_RISCV_ADD16",	/* name */
+	 FALSE,			/* partial_inplace */
+	 0,			/* src_mask */
+	 MINUS_ONE,		/* dst_mask */
+	 FALSE),		/* pcrel_offset */
+
+  /* 32-bit in-place addition, for local label subtraction.  */
   HOWTO (R_RISCV_ADD32,		/* type */
 	 0,			/* rightshift */
 	 2,			/* size (0 = byte, 1 = short, 2 = long) */
@@ -563,7 +593,7 @@ static reloc_howto_type howto_table[] =
 	 MINUS_ONE,		/* dst_mask */
 	 FALSE),		/* pcrel_offset */
 
-  /* 64 bit in-place addition, for local label subtraction.  */
+  /* 64-bit in-place addition, for local label subtraction.  */
   HOWTO (R_RISCV_ADD64,		/* type */
 	 0,			/* rightshift */
 	 4,			/* size (0 = byte, 1 = short, 2 = long) */
@@ -578,7 +608,37 @@ static reloc_howto_type howto_table[] =
 	 MINUS_ONE,		/* dst_mask */
 	 FALSE),		/* pcrel_offset */
 
-  /* 32 bit in-place addition, for local label subtraction.  */
+  /* 8-bit in-place addition, for local label subtraction.  */
+  HOWTO (R_RISCV_SUB8,		/* type */
+	 0,			/* rightshift */
+	 0,			/* size (0 = byte, 1 = short, 2 = long) */
+	 8,			/* bitsize */
+	 FALSE,			/* pc_relative */
+	 0,			/* bitpos */
+	 complain_overflow_dont, /* complain_on_overflow */
+	 bfd_elf_generic_reloc,	/* special_function */
+	 "R_RISCV_SUB8",	/* name */
+	 FALSE,			/* partial_inplace */
+	 0,			/* src_mask */
+	 MINUS_ONE,		/* dst_mask */
+	 FALSE),		/* pcrel_offset */
+
+  /* 16-bit in-place addition, for local label subtraction.  */
+  HOWTO (R_RISCV_SUB16,		/* type */
+	 0,			/* rightshift */
+	 1,			/* size (0 = byte, 1 = short, 2 = long) */
+	 16,			/* bitsize */
+	 FALSE,			/* pc_relative */
+	 0,			/* bitpos */
+	 complain_overflow_dont, /* complain_on_overflow */
+	 bfd_elf_generic_reloc,	/* special_function */
+	 "R_RISCV_SUB16",	/* name */
+	 FALSE,			/* partial_inplace */
+	 0,			/* src_mask */
+	 MINUS_ONE,		/* dst_mask */
+	 FALSE),		/* pcrel_offset */
+
+  /* 32-bit in-place addition, for local label subtraction.  */
   HOWTO (R_RISCV_SUB32,		/* type */
 	 0,			/* rightshift */
 	 2,			/* size (0 = byte, 1 = short, 2 = long) */
@@ -593,7 +653,7 @@ static reloc_howto_type howto_table[] =
 	 MINUS_ONE,		/* dst_mask */
 	 FALSE),		/* pcrel_offset */
 
-  /* 64 bit in-place addition, for local label subtraction.  */
+  /* 64-bit in-place addition, for local label subtraction.  */
   HOWTO (R_RISCV_SUB64,		/* type */
 	 0,			/* rightshift */
 	 4,			/* size (0 = byte, 1 = short, 2 = long) */
@@ -651,8 +711,12 @@ static const struct elf_reloc_map riscv_reloc_map[] =
   { BFD_RELOC_NONE, R_RISCV_NONE },
   { BFD_RELOC_32, R_RISCV_32 },
   { BFD_RELOC_64, R_RISCV_64 },
+  { BFD_RELOC_RISCV_ADD8, R_RISCV_ADD8 },
+  { BFD_RELOC_RISCV_ADD16, R_RISCV_ADD16 },
   { BFD_RELOC_RISCV_ADD32, R_RISCV_ADD32 },
   { BFD_RELOC_RISCV_ADD64, R_RISCV_ADD64 },
+  { BFD_RELOC_RISCV_SUB8, R_RISCV_SUB8 },
+  { BFD_RELOC_RISCV_SUB16, R_RISCV_SUB16 },
   { BFD_RELOC_RISCV_SUB32, R_RISCV_SUB32 },
   { BFD_RELOC_RISCV_SUB64, R_RISCV_SUB64 },
   { BFD_RELOC_CTOR, R_RISCV_64 },
@@ -2205,8 +2269,12 @@ perform_relocation (const reloc_howto_type *howto,
 
     case R_RISCV_32:
     case R_RISCV_64:
+    case R_RISCV_ADD8:
+    case R_RISCV_ADD16:
     case R_RISCV_ADD32:
     case R_RISCV_ADD64:
+    case R_RISCV_SUB8:
+    case R_RISCV_SUB16:
     case R_RISCV_SUB32:
     case R_RISCV_SUB64:
     case R_RISCV_TLS_DTPREL32:
@@ -2555,6 +2623,8 @@ riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 	    r = bfd_reloc_overflow;
 	  break;
 
+	case R_RISCV_ADD8:
+	case R_RISCV_ADD16:
 	case R_RISCV_ADD32:
 	case R_RISCV_ADD64:
 	  {
@@ -2564,6 +2634,8 @@ riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 	  }
 	  break;
 
+	case R_RISCV_SUB8:
+	case R_RISCV_SUB16:
 	case R_RISCV_SUB32:
 	case R_RISCV_SUB64:
 	  {

@@ -2033,10 +2033,6 @@ md_apply_fix (fixS *fixP, valueT *valP, segT seg ATTRIBUTE_UNUSED)
 {
   bfd_byte *buf = (bfd_byte *) (fixP->fx_frag->fr_literal + fixP->fx_where);
 
-  /* We ignore generic BFD relocations we don't know about.  */
-  if (! bfd_reloc_type_lookup (stdoutput, fixP->fx_r_type))
-    return;
-
   /* Remember value for tc_gen_reloc.  */
   fixP->fx_addnumber = *valP;
 
@@ -2063,8 +2059,12 @@ md_apply_fix (fixS *fixP, valueT *valP, segT seg ATTRIBUTE_UNUSED)
     case BFD_RELOC_RISCV_HI20:
     case BFD_RELOC_RISCV_LO12_I:
     case BFD_RELOC_RISCV_LO12_S:
+    case BFD_RELOC_RISCV_ADD8:
+    case BFD_RELOC_RISCV_ADD16:
     case BFD_RELOC_RISCV_ADD32:
     case BFD_RELOC_RISCV_ADD64:
+    case BFD_RELOC_RISCV_SUB8:
+    case BFD_RELOC_RISCV_SUB16:
     case BFD_RELOC_RISCV_SUB32:
     case BFD_RELOC_RISCV_SUB64:
       gas_assert (fixP->fx_addsy != NULL);
@@ -2073,6 +2073,8 @@ md_apply_fix (fixS *fixP, valueT *valP, segT seg ATTRIBUTE_UNUSED)
 
     case BFD_RELOC_64:
     case BFD_RELOC_32:
+    case BFD_RELOC_16:
+    case BFD_RELOC_8:
       if (fixP->fx_addsy && fixP->fx_subsy)
 	{
 	  fixP->fx_next = xmemdup (fixP, sizeof (*fixP), sizeof (*fixP));
@@ -2084,9 +2086,15 @@ md_apply_fix (fixS *fixP, valueT *valP, segT seg ATTRIBUTE_UNUSED)
 	  if (fixP->fx_r_type == BFD_RELOC_64)
 	    fixP->fx_r_type = BFD_RELOC_RISCV_ADD64,
 	    fixP->fx_next->fx_r_type = BFD_RELOC_RISCV_SUB64;
-	  else
+	  else if (fixP->fx_r_type == BFD_RELOC_32)
 	    fixP->fx_r_type = BFD_RELOC_RISCV_ADD32,
 	    fixP->fx_next->fx_r_type = BFD_RELOC_RISCV_SUB32;
+	  else if (fixP->fx_r_type == BFD_RELOC_16)
+	    fixP->fx_r_type = BFD_RELOC_RISCV_ADD16,
+	    fixP->fx_next->fx_r_type = BFD_RELOC_RISCV_SUB16;
+	  else
+	    fixP->fx_r_type = BFD_RELOC_RISCV_ADD8,
+	    fixP->fx_next->fx_r_type = BFD_RELOC_RISCV_SUB8;
 	}
       /* fall through */
 
@@ -2111,7 +2119,9 @@ md_apply_fix (fixS *fixP, valueT *valP, segT seg ATTRIBUTE_UNUSED)
       break;
 
     default:
-      internalError ();
+      /* We ignore generic BFD relocations we don't know about.  */
+      if (bfd_reloc_type_lookup (stdoutput, fixP->fx_r_type) != NULL)
+	internalError ();
     }
 }
 
@@ -2239,6 +2249,14 @@ tc_gen_reloc (asection *section ATTRIBUTE_UNUSED, fixS *fixp)
   reloc->howto = bfd_reloc_type_lookup (stdoutput, fixp->fx_r_type);
   if (reloc->howto == NULL)
     {
+      if ((fixp->fx_r_type == BFD_RELOC_16 || fixp->fx_r_type == BFD_RELOC_8)
+          && fixp->fx_addsy != NULL && fixp->fx_subsy != NULL)
+	{
+          /* We don't have R_RISCV_8/16, but for this special case,
+	     we can use R_RISCV_ADD8/16 with R_RISCV_SUB8/16.  */
+	  return reloc;
+	}
+
       as_bad_where (fixp->fx_file, fixp->fx_line,
 		    _("cannot represent %s relocation in object file"),
 		    bfd_get_reloc_code_name (fixp->fx_r_type));
