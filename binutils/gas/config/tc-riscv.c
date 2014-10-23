@@ -1311,7 +1311,6 @@ do_call:
 static const struct percent_op_match percent_op_utype[] =
 {
   {"%tprel_hi", BFD_RELOC_RISCV_TPREL_HI20},
-  {"%tls_ie_hi", BFD_RELOC_RISCV_TLS_IE_HI20},
   {"%pcrel_hi", BFD_RELOC_RISCV_PCREL_HI20},
   {"%tls_ie_pcrel_hi", BFD_RELOC_RISCV_TLS_GOT_HI20},
   {"%tls_gd_pcrel_hi", BFD_RELOC_RISCV_TLS_GD_HI20},
@@ -1323,8 +1322,6 @@ static const struct percent_op_match percent_op_itype[] =
 {
   {"%lo", BFD_RELOC_RISCV_LO12_I},
   {"%tprel_lo", BFD_RELOC_RISCV_TPREL_LO12_I},
-  {"%tls_ie_lo", BFD_RELOC_RISCV_TLS_IE_LO12},
-  {"%tls_ie_off", BFD_RELOC_RISCV_TLS_IE_LO12_I},
   {"%pcrel_lo", BFD_RELOC_RISCV_PCREL_LO12_I},
   {0, 0}
 };
@@ -1333,7 +1330,6 @@ static const struct percent_op_match percent_op_stype[] =
 {
   {"%lo", BFD_RELOC_RISCV_LO12_S},
   {"%tprel_lo", BFD_RELOC_RISCV_TPREL_LO12_S},
-  {"%tls_ie_off", BFD_RELOC_RISCV_TLS_IE_LO12_S},
   {"%pcrel_lo", BFD_RELOC_RISCV_PCREL_LO12_S},
   {0, 0}
 };
@@ -1341,7 +1337,6 @@ static const struct percent_op_match percent_op_stype[] =
 static const struct percent_op_match percent_op_rtype[] =
 {
   {"%tprel_add", BFD_RELOC_RISCV_TPREL_ADD},
-  {"%tls_ie_add", BFD_RELOC_RISCV_TLS_IE_ADD},
   {0, 0}
 };
 
@@ -2046,11 +2041,6 @@ md_apply_fix (fixS *fixP, valueT *valP, segT seg ATTRIBUTE_UNUSED)
     case BFD_RELOC_RISCV_TPREL_LO12_I:
     case BFD_RELOC_RISCV_TPREL_LO12_S:
     case BFD_RELOC_RISCV_TPREL_ADD:
-    case BFD_RELOC_RISCV_TLS_IE_HI20:
-    case BFD_RELOC_RISCV_TLS_IE_LO12:
-    case BFD_RELOC_RISCV_TLS_IE_ADD:
-    case BFD_RELOC_RISCV_TLS_IE_LO12_I:
-    case BFD_RELOC_RISCV_TLS_IE_LO12_S:
       S_SET_THREAD_LOCAL (fixP->fx_addsy);
       /* fall through */
 

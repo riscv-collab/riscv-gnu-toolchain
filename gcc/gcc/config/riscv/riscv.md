@@ -35,11 +35,8 @@
   ;; Symbolic accesses.
   UNSPEC_LOAD_GOT
   UNSPEC_TLS_LE_ADD
-  UNSPEC_TLS_IE_ADD
   UNSPEC_TLS_GD
   UNSPEC_TLS_IE
-  UNSPEC_TLS_IE_HI
-  UNSPEC_TLS_IE_LO
 
   ;; Blockage and synchronisation.
   UNSPEC_BLOCKAGE
@@ -1450,17 +1447,6 @@
   [(set_attr "type" "arith")
    (set_attr "mode" "<MODE>")])
 
-(define_insn "tls_add_tp_ie<mode>"
-  [(set (match_operand:P 0 "register_operand" "=r")
-	(unspec:P [(match_operand:P 1 "register_operand" "r")
-		   (match_operand:P 2 "register_operand" "r")
-		   (match_operand:P 3 "symbolic_operand" "")]
-		  UNSPEC_TLS_IE_ADD))]
-  "!flag_pic"
-  "add\t%0,%1,%2,%%tls_ie_add(%3)"
-  [(set_attr "type" "arith")
-   (set_attr "mode" "<MODE>")])
-
 (define_insn "got_load_tls_gd<mode>"
   [(set (match_operand:P 0 "register_operand" "=r")
        (unspec:P [(match_operand:P 1 "symbolic_operand" "")]
@@ -1477,25 +1463,6 @@
   "flag_pic"
   "la.tls.ie\t%0,%1"
   [(set_attr "got" "load")
-   (set_attr "mode" "<MODE>")])
-
-(define_insn "got_load_tls_ie_hi<mode>"
-  [(set (match_operand:P 0 "register_operand" "=r")
-       (unspec:P [(match_operand:P 1 "symbolic_operand" "")]
-                 UNSPEC_TLS_IE_HI))]
-  "!flag_pic"
-  "lui\t%0,%%tls_ie_hi(%1)"
-  [(set_attr "type" "arith")
-   (set_attr "mode" "<MODE>")])
-
-(define_insn "got_load_tls_ie_lo<mode>"
-  [(set (match_operand:P 0 "register_operand" "=r")
-	(unspec:P [(match_operand:P 1 "register_operand" "r")
-		   (match_operand:P 2 "symbolic_operand" "")]
-		  UNSPEC_TLS_IE_LO))]
-  "!flag_pic"
-  "<load>\t%0,%%tls_ie_lo(%2)(%1)"
-  [(set_attr "type" "load")
    (set_attr "mode" "<MODE>")])
 
 ;; Instructions for adding the low 16 bits of an address to a register.

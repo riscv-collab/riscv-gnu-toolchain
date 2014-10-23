@@ -586,11 +586,10 @@ mips_symbolic_constant_p (rtx x, enum mips_symbol_type *symbol_type)
   switch (*symbol_type)
     {
     case SYMBOL_ABSOLUTE:
+    case SYMBOL_TLS_LE:
       return (int32_t) INTVAL (offset) == INTVAL (offset);
 
     case SYMBOL_TLS:
-    case SYMBOL_TLS_LE:
-    case SYMBOL_TLS_IE:
     case SYMBOL_GOT_DISP:
       return false;
     }
@@ -606,7 +605,6 @@ static int riscv_symbol_insns (enum mips_symbol_type type)
     case SYMBOL_TLS: return 0; /* Depends on the TLS model. */
     case SYMBOL_ABSOLUTE: return 2; /* LUI + the reference itself */
     case SYMBOL_TLS_LE: return 3; /* LUI + ADD TP + the reference itself */
-    case SYMBOL_TLS_IE: return 4; /* LUI + LD + ADD TP + the reference itself */
     case SYMBOL_GOT_DISP: return 3; /* AUIPC + LD GOT + the reference itself */
     default: gcc_unreachable();
   }
@@ -1065,22 +1063,6 @@ static rtx riscv_got_load_tls_ie(rtx dest, rtx sym)
   return (Pmode == DImode ? gen_got_load_tls_iedi(dest, sym) : gen_got_load_tls_iesi(dest, sym));
 }
 
-static rtx riscv_got_load_tls_ie_hi(rtx dest, rtx sym)
-{
-  return (Pmode == DImode ? gen_got_load_tls_ie_hidi(dest, sym) : gen_got_load_tls_ie_hisi(dest, sym));
-}
-
-static rtx riscv_got_load_tls_ie_lo(rtx dest, rtx base, rtx sym)
-{
-  return (Pmode == DImode ? gen_got_load_tls_ie_lodi(dest, base, sym) : gen_got_load_tls_ie_losi(dest, base, sym));
-}
-
-static rtx riscv_tls_add_tp_ie(rtx dest, rtx base, rtx sym)
-{
-  rtx tp = gen_rtx_REG (Pmode, THREAD_POINTER_REGNUM);
-  return (Pmode == DImode ? gen_tls_add_tp_iedi(dest, base, tp, sym) : gen_tls_add_tp_iesi(dest, base, tp, sym));
-}
-
 static rtx riscv_tls_add_tp_le(rtx dest, rtx base, rtx sym)
 {
   rtx tp = gen_rtx_REG (Pmode, THREAD_POINTER_REGNUM);
@@ -1191,8 +1173,13 @@ static rtx
 mips_legitimize_tls_address (rtx loc)
 {
   rtx dest, insn, v0, tp, tmp1;
+  enum tls_model model = SYMBOL_REF_TLS_MODEL (loc);
 
-  switch (SYMBOL_REF_TLS_MODEL (loc))
+  /* Since we support TLS copy relocs, non-PIC TLS accesses may all use LE.  */
+  if (!flag_pic)
+    model = TLS_MODEL_LOCAL_EXEC;
+
+  switch (model)
     {
     case TLS_MODEL_LOCAL_DYNAMIC:
       /* Rely on section anchors for the optimization that LDM TLS
@@ -1205,27 +1192,12 @@ mips_legitimize_tls_address (rtx loc)
       break;
 
     case TLS_MODEL_INITIAL_EXEC:
-      if (flag_pic)
-	{
-	  /* la.tls.ie; tp-relative add */
-	  tp = gen_rtx_REG (Pmode, THREAD_POINTER_REGNUM);
-	  tmp1 = gen_reg_rtx (Pmode);
-	  emit_insn (riscv_got_load_tls_ie (tmp1, loc));
-	  dest = gen_reg_rtx (Pmode);
-	  emit_insn (gen_add3_insn (dest, tmp1, tp));
-	}
-      else
-	{
-	  /* lui %tls_ie_hi; ld %tls_le_lo; tp-relative add */
-	  tmp1 = gen_reg_rtx (Pmode);
-	  emit_insn (riscv_got_load_tls_ie_hi (tmp1, loc));
-	  dest = gen_reg_rtx (Pmode);
-	  emit_insn (riscv_got_load_tls_ie_lo (dest, tmp1, loc));
-	  tmp1 = gen_reg_rtx (Pmode);
-	  emit_insn (riscv_tls_add_tp_ie (tmp1, dest, loc));
-	  dest = gen_rtx_LO_SUM (Pmode, tmp1,
-				 mips_unspec_address (loc, SYMBOL_TLS_IE));
-	}
+      /* la.tls.ie; tp-relative add */
+      tp = gen_rtx_REG (Pmode, THREAD_POINTER_REGNUM);
+      tmp1 = gen_reg_rtx (Pmode);
+      emit_insn (riscv_got_load_tls_ie (tmp1, loc));
+      dest = gen_reg_rtx (Pmode);
+      emit_insn (gen_add3_insn (dest, tmp1, tp));
       break;
 
     case TLS_MODEL_LOCAL_EXEC:
@@ -2904,8 +2876,6 @@ mips_init_relocs (void)
 
       riscv_hi_relocs[SYMBOL_TLS_LE] = "%tprel_hi(";
       riscv_lo_relocs[SYMBOL_TLS_LE] = "%tprel_lo(";
-
-      riscv_lo_relocs[SYMBOL_TLS_IE] = "%tls_ie_off(";
     }
 }
 

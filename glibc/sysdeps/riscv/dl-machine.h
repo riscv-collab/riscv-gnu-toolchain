@@ -186,26 +186,6 @@ elf_machine_rela (struct link_map *map, const ElfW(Rela) *reloc,
   if (sym_map != NULL)
     value = sym_map->l_addr + sym->st_value + reloc->r_addend;
 
-#if !defined RTLD_BOOTSTRAP || !defined HAVE_Z_COMBRELOC
-  if (__builtin_expect (r_type == R_RISCV_RELATIVE, 0))
-    {
-# if !defined RTLD_BOOTSTRAP && !defined HAVE_Z_COMBRELOC
-      /* This is defined in rtld.c, but nowhere in the static libc.a;
-         make the reference weak so static programs can still link.
-         This declaration cannot be done when compiling rtld.c
-         (i.e. #ifdef RTLD_BOOTSTRAP) because rtld.c contains the
-         common defn for _dl_rtld_map, which is incompatible with a
-         weak decl in the same file.  */
-#  ifndef SHARED
-      weak_extern (GL(dl_rtld_map));
-#  endif
-      if (map != &GL(dl_rtld_map)) /* Already done in rtld itself.  */
-# endif
-        *addr_field = map->l_addr + reloc->r_addend;
-      return;
-    }
-#endif
-
   switch (r_type)
     {
 #ifndef RTLD_BOOTSTRAP
@@ -234,6 +214,15 @@ elf_machine_rela (struct link_map *map, const ElfW(Rela) *reloc,
 	     found.  */
 	  break;
 
+	/* Handle TLS copy relocations.  */
+	if (__glibc_unlikely (ELFW(ST_TYPE) (sym->st_info) == STT_TLS))
+	  {
+	    /* There's nothing to do if the symbol is in .tbss.  */
+	    if (__glibc_likely (sym->st_value >= sym_map->l_tls_initimage_size))
+	      break;
+	    value += sym_map->l_tls_initimage - sym_map->l_addr;
+	  }
+
 	size_t size = sym->st_size;
 	if (__builtin_expect (sym->st_size != refsym->st_size, 0))
 	  {
@@ -250,6 +239,26 @@ elf_machine_rela (struct link_map *map, const ElfW(Rela) *reloc,
 	memcpy (reloc_addr, (void *)value, size);
 	break;
       }
+#endif
+
+#if !defined RTLD_BOOTSTRAP || !defined HAVE_Z_COMBRELOC
+    case R_RISCV_RELATIVE:
+      {
+# if !defined RTLD_BOOTSTRAP && !defined HAVE_Z_COMBRELOC
+	/* This is defined in rtld.c, but nowhere in the static libc.a;
+	   make the reference weak so static programs can still link.
+	   This declaration cannot be done when compiling rtld.c
+	   (i.e. #ifdef RTLD_BOOTSTRAP) because rtld.c contains the
+	   common defn for _dl_rtld_map, which is incompatible with a
+	   weak decl in the same file.  */
+#  ifndef SHARED
+	weak_extern (GL(dl_rtld_map));
+#  endif
+	if (map != &GL(dl_rtld_map)) /* Already done in rtld itself.  */
+# endif
+	  *addr_field = map->l_addr + reloc->r_addend;
+      break;
+    }
 #endif
 
     case R_RISCV_JUMP_SLOT:

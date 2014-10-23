@@ -26,10 +26,9 @@ enum mips_symbol_type {
   SYMBOL_ABSOLUTE,
   SYMBOL_GOT_DISP,
   SYMBOL_TLS,
-  SYMBOL_TLS_LE,
-  SYMBOL_TLS_IE
+  SYMBOL_TLS_LE
 };
-#define NUM_SYMBOL_TYPES (SYMBOL_TLS_IE + 1)
+#define NUM_SYMBOL_TYPES (SYMBOL_TLS_LE + 1)
 
 extern bool mips_symbolic_constant_p (rtx, enum mips_symbol_type *);
 extern int riscv_regno_mode_ok_for_base_p (int, enum machine_mode, bool);
