@@ -345,9 +345,6 @@
 ;; from the same template.
 (define_code_iterator any_mod [mod umod])
 
-;; Equality operators.
-(define_code_iterator equality_op [eq ne])
-
 ;; These code iterators allow the signed and unsigned scc operations to use
 ;; the same template.
 (define_code_iterator any_gt [gt gtu])
@@ -387,13 +384,6 @@
 			(and "and")
 			(plus "add")
 			(minus "sub")])
-
-;; The value of the bit when the branch is taken for branch_bit patterns.
-;; Comparison is always against zero so this depends on the operator.
-(define_code_attr bbv [(eq "0") (ne "1")])
-
-;; This is the inverse value of bbv.
-(define_code_attr bbinv [(eq "1") (ne "0")])
 
 ;; Pipeline descriptions.
 ;;
@@ -1968,6 +1958,37 @@
 {
   riscv_expand_conditional_branch (operands);
   DONE;
+})
+
+(define_insn_and_split "*bbs<GPR:mode>"
+  [(set (pc)
+	(if_then_else
+	 (match_operator 0 "equality_operator"
+	  [(zero_extract:GPR (match_operand:GPR 2 "register_operand" "r")
+		 (const_int 1)
+		 (match_operand 3 "const_int_operand"))
+		 (const_int 0)])
+	 (label_ref (match_operand 1))
+	 (pc)))
+   (clobber (match_scratch:GPR 4 "=&r"))]
+  ""
+  "#"
+  "reload_completed"
+  [(set (match_dup 4)
+        (ashift:GPR (match_dup 2) (match_dup 3)))
+   (set (pc)
+	(if_then_else
+	 (match_op_dup 0 [(match_dup 4) (const_int 0)])
+	 (label_ref (match_operand 1))
+	 (pc)))]
+{
+  int shift = GET_MODE_BITSIZE (<MODE>mode) - 1 - INTVAL (operands[3]);
+  operands[3] = GEN_INT (shift);
+
+  if (GET_CODE (operands[0]) == EQ)
+    operands[0] = gen_rtx_GE (<MODE>mode, operands[4], const0_rtx);
+  else
+    operands[0] = gen_rtx_LT (<MODE>mode, operands[4], const0_rtx);
 })
 
 ;;
