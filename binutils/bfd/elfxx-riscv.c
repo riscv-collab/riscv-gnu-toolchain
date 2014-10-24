@@ -1177,6 +1177,15 @@ riscv_elf_record_got_reference (bfd *abfd, struct bfd_link_info *info,
   return TRUE;
 }
 
+static void
+bad_static_reloc (bfd *abfd, unsigned r_type, struct elf_link_hash_entry *h)
+{
+  (*_bfd_error_handler)
+    (_("%B: relocation %s against `%s' can not be used when making a shared object; recompile with -fPIC"),
+      abfd, howto_table[r_type].name,
+      h != NULL ? h->root.root.string : "a local symbol");
+  bfd_set_error (bfd_error_bad_value);
+}
 /* Look through the relocs for a section during the first phase, and
    allocate space in the global offset table or procedure linkage
    table.  */
@@ -1268,9 +1277,14 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	  break;
 
 	case R_RISCV_TPREL_HI20:
+	  if (!info->executable)
+	    {
+	      bad_static_reloc (abfd, r_type, h);
+	      return FALSE;
+	    }
 	  if (h != NULL)
 	    riscv_elf_record_tls_type (abfd, h, r_symndx, GOT_TLS_LE);
-	  /* Fall through.  */
+	  goto static_reloc;
 
 	case R_RISCV_HI20:
 	  if (info->shared
@@ -1278,11 +1292,7 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	    {
 	      /* Absolute relocs don't ordinarily belong in shared libs, but
 		 we make an exception for _DYNAMIC for ld.so's purpose.  */
-	      (*_bfd_error_handler)
-		(_("%B: relocation %s against `%s' can not be used when making a shared object; recompile with -fPIC"),
-		  abfd, howto_table[r_type].name,
-		  h != NULL ? h->root.root.string : "a local symbol");
-	      bfd_set_error (bfd_error_bad_value);
+	      bad_static_reloc (abfd, r_type, h);
 	      return FALSE;
 	    }
 	  /* Fall through.  */
@@ -1296,6 +1306,9 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	case R_RISCV_BRANCH:
 	case R_RISCV_CALL:
 	case R_RISCV_JAL:
+	  /* Fall through.  */
+
+	static_reloc:
 	  if (h != NULL)
 	    h->non_got_ref = 1;
 

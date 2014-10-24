@@ -77,17 +77,17 @@
 	.globl ENTRY_POINT
 	.type ENTRY_POINT,@function
 ENTRY_POINT:
-	la    gp, _gp
-	la    a0, main
+	lla   gp, _gp
+	lla   a0, main
 	REG_L a1, 0(sp)      /* argc */
 	addi  a2, sp, SZREG  /* argv */
 	andi  sp, sp, ALMASK /* Align stack. */
-	la    a3, __libc_csu_init
-	la    a4, __libc_csu_fini
+	lla   a3, __libc_csu_init
+	lla   a4, __libc_csu_fini
 	move  a5, v0  /* rtld_fini */
 	move  a6, sp  /* stack_end */
 	
-	jump  __libc_start_main
+	jump  __libc_start_main@
 
 /* Define a symbol for the first piece of initialized data.  */
 	.data
