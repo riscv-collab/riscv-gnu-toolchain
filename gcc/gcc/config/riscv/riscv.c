@@ -589,8 +589,7 @@ mips_symbolic_constant_p (rtx x, enum mips_symbol_type *symbol_type)
     case SYMBOL_TLS_LE:
       return (int32_t) INTVAL (offset) == INTVAL (offset);
 
-    case SYMBOL_TLS:
-    case SYMBOL_GOT_DISP:
+    default:
       return false;
     }
   gcc_unreachable ();
@@ -2873,7 +2872,10 @@ mips_init_relocs (void)
     {
       riscv_hi_relocs[SYMBOL_ABSOLUTE] = "%hi(";
       riscv_lo_relocs[SYMBOL_ABSOLUTE] = "%lo(";
+    }
 
+  if (!flag_pic || flag_pie)
+    {
       riscv_hi_relocs[SYMBOL_TLS_LE] = "%tprel_hi(";
       riscv_lo_relocs[SYMBOL_TLS_LE] = "%tprel_lo(";
     }

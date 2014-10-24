@@ -33,10 +33,12 @@
   UNSPEC_EH_RETURN
 
   ;; Symbolic accesses.
+  UNSPEC_ADDRESS_FIRST
   UNSPEC_LOAD_GOT
-  UNSPEC_TLS_LE_ADD
-  UNSPEC_TLS_GD
+  UNSPEC_TLS
+  UNSPEC_TLS_LE
   UNSPEC_TLS_IE
+  UNSPEC_TLS_GD
 
   ;; Blockage and synchronisation.
   UNSPEC_BLOCKAGE
@@ -1441,8 +1443,8 @@
 	(unspec:P [(match_operand:P 1 "register_operand" "r")
 		   (match_operand:P 2 "register_operand" "r")
 		   (match_operand:P 3 "symbolic_operand" "")]
-		  UNSPEC_TLS_LE_ADD))]
-  "!flag_pic"
+		  UNSPEC_TLS_LE))]
+  "!flag_pic || flag_pie"
   "add\t%0,%1,%2,%%tprel_add(%3)"
   [(set_attr "type" "arith")
    (set_attr "mode" "<MODE>")])
@@ -2386,7 +2388,3 @@
 
 (include "sync.md")
 (include "peephole.md")
-
-(define_c_enum "unspec" [
-  UNSPEC_ADDRESS_FIRST
-])
