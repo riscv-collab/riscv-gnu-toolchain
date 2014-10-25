@@ -28,8 +28,6 @@ Software Foundation, 51 Franklin Street - Fifth Floor, Boston, MA 02110-1301, US
 
 /* RVC fields */
 
-#define OP_MASK_COP		0x1f
-#define OP_SH_COP		0
 #define OP_MASK_CRD		0x1f
 #define OP_SH_CRD		5
 #define OP_MASK_CRS2	0x1f
@@ -202,6 +200,11 @@ static const char* const riscv_pred_succ[16] = {
 #define TP_REG 15
 #define GP_REG 31
 
+#define NGPR 32
+#define NFPR 32
+#define NVGPR 32
+#define NVFPR 32
+
 #define RISCV_JUMP_BITS RISCV_BIGIMM_BITS
 #define RISCV_JUMP_ALIGN_BITS 1
 #define RISCV_JUMP_ALIGN (1 << RISCV_JUMP_ALIGN_BITS)
@@ -297,15 +300,12 @@ enum
 };
 
 
-/* The order of overloaded instructions matters.  Label arguments and
-   register arguments look the same. Instructions that can have either
-   for arguments must apear in the correct order in this table for the
-   assembler to pick the right one. In other words, entries with
-   immediate operands must apear after the same instruction with
-   registers.
-
-   Many instructions are short hand for other instructions (i.e., The
-   jal <register> instruction is short for jalr <register>).  */
+extern const char * const riscv_gpr_names_numeric[NGPR];
+extern const char * const riscv_gpr_names_abi[NGPR];
+extern const char * const riscv_fpr_names_numeric[NFPR];
+extern const char * const riscv_fpr_names_abi[NFPR];
+extern const char * const riscv_vec_gpr_names[NVGPR];
+extern const char * const riscv_vec_fpr_names[NVFPR];
 
 extern const struct riscv_opcode riscv_builtin_opcodes[];
 extern const int bfd_riscv_num_builtin_opcodes;

@@ -406,278 +406,42 @@ struct regname {
   unsigned int num;
 };
 
-#define RNUM_MASK	    0x000fff
-#define RTYPE_NUM	    0x001000
-#define RTYPE_FPU	    0x002000
-#define RTYPE_VEC	    0x004000
-#define RTYPE_GP	    0x008000
-#define RTYPE_CP0	    0x010000
-#define RTYPE_VGR_REG	0x020000
-#define RTYPE_VFP_REG	0x040000
-
-#define X_REGISTER_NUMBERS \
-    {"x0",	RTYPE_NUM | 0},  \
-    {"x1",	RTYPE_NUM | 1},  \
-    {"x2",	RTYPE_NUM | 2},  \
-    {"x3",	RTYPE_NUM | 3},  \
-    {"x4",	RTYPE_NUM | 4},  \
-    {"x5",	RTYPE_NUM | 5},  \
-    {"x6",	RTYPE_NUM | 6},  \
-    {"x7",	RTYPE_NUM | 7},  \
-    {"x8",	RTYPE_NUM | 8},  \
-    {"x9",	RTYPE_NUM | 9},  \
-    {"x10",	RTYPE_NUM | 10}, \
-    {"x11",	RTYPE_NUM | 11}, \
-    {"x12",	RTYPE_NUM | 12}, \
-    {"x13",	RTYPE_NUM | 13}, \
-    {"x14",	RTYPE_NUM | 14}, \
-    {"x15",	RTYPE_NUM | 15}, \
-    {"x16",	RTYPE_NUM | 16}, \
-    {"x17",	RTYPE_NUM | 17}, \
-    {"x18",	RTYPE_NUM | 18}, \
-    {"x19",	RTYPE_NUM | 19}, \
-    {"x20",	RTYPE_NUM | 20}, \
-    {"x21",	RTYPE_NUM | 21}, \
-    {"x22",	RTYPE_NUM | 22}, \
-    {"x23",	RTYPE_NUM | 23}, \
-    {"x24",	RTYPE_NUM | 24}, \
-    {"x25",	RTYPE_NUM | 25}, \
-    {"x26",	RTYPE_NUM | 26}, \
-    {"x27",	RTYPE_NUM | 27}, \
-    {"x28",	RTYPE_NUM | 28}, \
-    {"x29",	RTYPE_NUM | 29}, \
-    {"x30",	RTYPE_NUM | 30}, \
-    {"x31",	RTYPE_NUM | 31} 
-
-#define F_REGISTER_NUMBERS       \
-    {"f0",	RTYPE_FPU | 0},  \
-    {"f1",	RTYPE_FPU | 1},  \
-    {"f2",	RTYPE_FPU | 2},  \
-    {"f3",	RTYPE_FPU | 3},  \
-    {"f4",	RTYPE_FPU | 4},  \
-    {"f5",	RTYPE_FPU | 5},  \
-    {"f6",	RTYPE_FPU | 6},  \
-    {"f7",	RTYPE_FPU | 7},  \
-    {"f8",	RTYPE_FPU | 8},  \
-    {"f9",	RTYPE_FPU | 9},  \
-    {"f10",	RTYPE_FPU | 10}, \
-    {"f11",	RTYPE_FPU | 11}, \
-    {"f12",	RTYPE_FPU | 12}, \
-    {"f13",	RTYPE_FPU | 13}, \
-    {"f14",	RTYPE_FPU | 14}, \
-    {"f15",	RTYPE_FPU | 15}, \
-    {"f16",	RTYPE_FPU | 16}, \
-    {"f17",	RTYPE_FPU | 17}, \
-    {"f18",	RTYPE_FPU | 18}, \
-    {"f19",	RTYPE_FPU | 19}, \
-    {"f20",	RTYPE_FPU | 20}, \
-    {"f21",	RTYPE_FPU | 21}, \
-    {"f22",	RTYPE_FPU | 22}, \
-    {"f23",	RTYPE_FPU | 23}, \
-    {"f24",	RTYPE_FPU | 24}, \
-    {"f25",	RTYPE_FPU | 25}, \
-    {"f26",	RTYPE_FPU | 26}, \
-    {"f27",	RTYPE_FPU | 27}, \
-    {"f28",	RTYPE_FPU | 28}, \
-    {"f29",	RTYPE_FPU | 29}, \
-    {"f30",	RTYPE_FPU | 30}, \
-    {"f31",	RTYPE_FPU | 31}
-
-/* Remaining symbolic register names */
-#define X_REGISTER_NAMES \
-  { "zero",	 0 | RTYPE_GP }, \
-  { "ra",	 1 | RTYPE_GP }, \
-  { "s0",	 2 | RTYPE_GP }, \
-  { "s1",	 3 | RTYPE_GP }, \
-  { "s2",	 4 | RTYPE_GP }, \
-  { "s3",	 5 | RTYPE_GP }, \
-  { "s4",	 6 | RTYPE_GP }, \
-  { "s5",	 7 | RTYPE_GP }, \
-  { "s6",	 8 | RTYPE_GP }, \
-  { "s7",	 9 | RTYPE_GP }, \
-  { "s8",	10 | RTYPE_GP }, \
-  { "s9",	11 | RTYPE_GP }, \
-  { "s10",	12 | RTYPE_GP }, \
-  { "s11",	13 | RTYPE_GP }, \
-  { "sp",	14 | RTYPE_GP }, \
-  { "tp",	15 | RTYPE_GP }, \
-  { "v0",	16 | RTYPE_GP }, \
-  { "v1",	17 | RTYPE_GP }, \
-  { "a0",	18 | RTYPE_GP }, \
-  { "a1",	19 | RTYPE_GP }, \
-  { "a2",	20 | RTYPE_GP }, \
-  { "a3",	21 | RTYPE_GP }, \
-  { "a4",	22 | RTYPE_GP }, \
-  { "a5",	23 | RTYPE_GP }, \
-  { "a6",	24 | RTYPE_GP }, \
-  { "a7",	25 | RTYPE_GP }, \
-  { "t0",	26 | RTYPE_GP }, \
-  { "t1",	27 | RTYPE_GP }, \
-  { "t2",	28 | RTYPE_GP }, \
-  { "t3",	29 | RTYPE_GP }, \
-  { "t4",	30 | RTYPE_GP }, \
-  { "gp",	31 | RTYPE_GP }
-
-#define F_REGISTER_NAMES  \
-  { "fs0",	 0 | RTYPE_FPU }, \
-  { "fs1",	 1 | RTYPE_FPU }, \
-  { "fs2",	 2 | RTYPE_FPU }, \
-  { "fs3",	 3 | RTYPE_FPU }, \
-  { "fs4",	 4 | RTYPE_FPU }, \
-  { "fs5",	 5 | RTYPE_FPU }, \
-  { "fs6",	 6 | RTYPE_FPU }, \
-  { "fs7",	 7 | RTYPE_FPU }, \
-  { "fs8",	 8 | RTYPE_FPU }, \
-  { "fs9",	 9 | RTYPE_FPU }, \
-  { "fs10",	10 | RTYPE_FPU }, \
-  { "fs11",	11 | RTYPE_FPU }, \
-  { "fs12",	12 | RTYPE_FPU }, \
-  { "fs13",	13 | RTYPE_FPU }, \
-  { "fs14",	14 | RTYPE_FPU }, \
-  { "fs15",	15 | RTYPE_FPU }, \
-  { "fv0",	16 | RTYPE_FPU }, \
-  { "fv1",	17 | RTYPE_FPU }, \
-  { "fa0",	18 | RTYPE_FPU }, \
-  { "fa1",	19 | RTYPE_FPU }, \
-  { "fa2",	20 | RTYPE_FPU }, \
-  { "fa3",	21 | RTYPE_FPU }, \
-  { "fa4",	22 | RTYPE_FPU }, \
-  { "fa5",	23 | RTYPE_FPU }, \
-  { "fa6",	24 | RTYPE_FPU }, \
-  { "fa7",	25 | RTYPE_FPU }, \
-  { "ft0",	26 | RTYPE_FPU }, \
-  { "ft1",	27 | RTYPE_FPU }, \
-  { "ft2",	28 | RTYPE_FPU }, \
-  { "ft3",	29 | RTYPE_FPU }, \
-  { "ft4",	30 | RTYPE_FPU }, \
-  { "ft5",	31 | RTYPE_FPU }
-
-#define RISCV_VEC_GR_REGISTER_NAMES \
-    {"vx0",	RTYPE_VGR_REG | 0}, \
-    {"vx1",	RTYPE_VGR_REG | 1}, \
-    {"vx2",	RTYPE_VGR_REG | 2}, \
-    {"vx3",	RTYPE_VGR_REG | 3}, \
-    {"vx4",	RTYPE_VGR_REG | 4}, \
-    {"vx5",	RTYPE_VGR_REG | 5}, \
-    {"vx6",	RTYPE_VGR_REG | 6}, \
-    {"vx7",	RTYPE_VGR_REG | 7}, \
-    {"vx8",	RTYPE_VGR_REG | 8}, \
-    {"vx9",	RTYPE_VGR_REG | 9}, \
-    {"vx10",	RTYPE_VGR_REG | 10}, \
-    {"vx11",	RTYPE_VGR_REG | 11}, \
-    {"vx12",	RTYPE_VGR_REG | 12}, \
-    {"vx13",	RTYPE_VGR_REG | 13}, \
-    {"vx14",	RTYPE_VGR_REG | 14}, \
-    {"vx15",	RTYPE_VGR_REG | 15}, \
-    {"vx16",	RTYPE_VGR_REG | 16}, \
-    {"vx17",	RTYPE_VGR_REG | 17}, \
-    {"vx18",	RTYPE_VGR_REG | 18}, \
-    {"vx19",	RTYPE_VGR_REG | 19}, \
-    {"vx20",	RTYPE_VGR_REG | 20}, \
-    {"vx21",	RTYPE_VGR_REG | 21}, \
-    {"vx22",	RTYPE_VGR_REG | 22}, \
-    {"vx23",	RTYPE_VGR_REG | 23}, \
-    {"vx24",	RTYPE_VGR_REG | 24}, \
-    {"vx25",	RTYPE_VGR_REG | 25}, \
-    {"vx26",	RTYPE_VGR_REG | 26}, \
-    {"vx27",	RTYPE_VGR_REG | 27}, \
-    {"vx28",	RTYPE_VGR_REG | 28}, \
-    {"vx29",	RTYPE_VGR_REG | 29}, \
-    {"vx30",	RTYPE_VGR_REG | 30}, \
-    {"vx31",	RTYPE_VGR_REG | 31}
-
-#define RISCV_VEC_GR_SYMBOLIC_REGISTER_NAMES \
-    {"vzero",	RTYPE_VGR_REG | 0}, \
-    {"vra",	RTYPE_VGR_REG | 1}, \
-    {"vs0",	RTYPE_VGR_REG | 2}, \
-    {"vs1",	RTYPE_VGR_REG | 3}, \
-    {"vs2",	RTYPE_VGR_REG | 4}, \
-    {"vs3",	RTYPE_VGR_REG | 5}, \
-    {"vs4",	RTYPE_VGR_REG | 6}, \
-    {"vs5",	RTYPE_VGR_REG | 7}, \
-    {"vs6",	RTYPE_VGR_REG | 8}, \
-    {"vs7",	RTYPE_VGR_REG | 9}, \
-    {"vs8",	RTYPE_VGR_REG | 10}, \
-    {"vs9",	RTYPE_VGR_REG | 11}, \
-    {"vs10",	RTYPE_VGR_REG | 12}, \
-    {"vs11",	RTYPE_VGR_REG | 13}, \
-    {"vsp",	RTYPE_VGR_REG | 14}, \
-    {"vtp",	RTYPE_VGR_REG | 15}, \
-    {"vv0",	RTYPE_VGR_REG | 16}, \
-    {"vv1",	RTYPE_VGR_REG | 17}, \
-    {"va0",	RTYPE_VGR_REG | 18}, \
-    {"va1",	RTYPE_VGR_REG | 19}, \
-    {"va2",	RTYPE_VGR_REG | 20}, \
-    {"va3",	RTYPE_VGR_REG | 21}, \
-    {"va4",	RTYPE_VGR_REG | 22}, \
-    {"va5",	RTYPE_VGR_REG | 23}, \
-    {"va6",	RTYPE_VGR_REG | 24}, \
-    {"va7",	RTYPE_VGR_REG | 25}, \
-    {"vt0",	RTYPE_VGR_REG | 26}, \
-    {"vt1",	RTYPE_VGR_REG | 27}, \
-    {"vt2",	RTYPE_VGR_REG | 28}, \
-    {"vt3",	RTYPE_VGR_REG | 29}, \
-    {"vt4",	RTYPE_VGR_REG | 30}, \
-    {"vgp",	RTYPE_VGR_REG | 31}
-
-#define RISCV_VEC_FP_REGISTER_NAMES \
-    {"vf0",	RTYPE_VFP_REG | 0}, \
-    {"vf1",	RTYPE_VFP_REG | 1}, \
-    {"vf2",	RTYPE_VFP_REG | 2}, \
-    {"vf3",	RTYPE_VFP_REG | 3}, \
-    {"vf4",	RTYPE_VFP_REG | 4}, \
-    {"vf5",	RTYPE_VFP_REG | 5}, \
-    {"vf6",	RTYPE_VFP_REG | 6}, \
-    {"vf7",	RTYPE_VFP_REG | 7}, \
-    {"vf8",	RTYPE_VFP_REG | 8}, \
-    {"vf9",	RTYPE_VFP_REG | 9}, \
-    {"vf10",	RTYPE_VFP_REG | 10}, \
-    {"vf11",	RTYPE_VFP_REG | 11}, \
-    {"vf12",	RTYPE_VFP_REG | 12}, \
-    {"vf13",	RTYPE_VFP_REG | 13}, \
-    {"vf14",	RTYPE_VFP_REG | 14}, \
-    {"vf15",	RTYPE_VFP_REG | 15}, \
-    {"vf16",	RTYPE_VFP_REG | 16}, \
-    {"vf17",	RTYPE_VFP_REG | 17}, \
-    {"vf18",	RTYPE_VFP_REG | 18}, \
-    {"vf19",	RTYPE_VFP_REG | 19}, \
-    {"vf20",	RTYPE_VFP_REG | 20}, \
-    {"vf21",	RTYPE_VFP_REG | 21}, \
-    {"vf22",	RTYPE_VFP_REG | 22}, \
-    {"vf23",	RTYPE_VFP_REG | 23}, \
-    {"vf24",	RTYPE_VFP_REG | 24}, \
-    {"vf25",	RTYPE_VFP_REG | 25}, \
-    {"vf26",	RTYPE_VFP_REG | 26}, \
-    {"vf27",	RTYPE_VFP_REG | 27}, \
-    {"vf28",	RTYPE_VFP_REG | 28}, \
-    {"vf29",	RTYPE_VFP_REG | 29}, \
-    {"vf30",	RTYPE_VFP_REG | 30}, \
-    {"vf31",	RTYPE_VFP_REG | 31}
-
-static const struct regname reg_names[] = {
-  X_REGISTER_NUMBERS,
-  X_REGISTER_NAMES,
-
-  F_REGISTER_NUMBERS,
-  F_REGISTER_NAMES,
-
-#define DECLARE_CSR(name, num) {#name, RTYPE_CP0 | num},
-#include "opcode/riscv-opc.h"
-#undef DECLARE_CSR
-
-  RISCV_VEC_GR_REGISTER_NAMES,
-  RISCV_VEC_FP_REGISTER_NAMES,
-  RISCV_VEC_GR_SYMBOLIC_REGISTER_NAMES,
-
-  {0, 0}
+enum reg_class {
+  RCLASS_GPR,
+  RCLASS_FPR,
+  RCLASS_CSR,
+  RCLASS_VEC_GPR,
+  RCLASS_VEC_FPR,
+  RCLASS_MAX
 };
 
 static struct hash_control *reg_names_hash = NULL;
 
-static int
-reg_lookup (char **s, unsigned int types, unsigned int *regnop)
+#define ENCODE_REG_HASH(cls, n) (void*)(uintptr_t)((n)*RCLASS_MAX + (cls) + 1)
+#define DECODE_REG_CLASS(hash) (((uintptr_t)(hash) - 1) % RCLASS_MAX)
+#define DECODE_REG_NUM(hash) (((uintptr_t)(hash) - 1) / RCLASS_MAX)
+
+static void
+hash_reg_name (enum reg_class class, const char *name, unsigned n)
 {
-  struct regname *r;
+  void *hash = ENCODE_REG_HASH (class, n);
+  const char *retval = hash_insert (reg_names_hash, name, hash);
+  if (retval != NULL)
+    as_fatal (_("internal error: can't hash `%s': %s"), name, retval);
+}
+
+static void
+hash_reg_names (enum reg_class class, const char * const names[], unsigned n)
+{
+  unsigned i;
+  for (i = 0; i < n; i++)
+    hash_reg_name (class, names[i], i);
+}
+
+static int
+reg_lookup (char **s, enum reg_class class, unsigned int *regnop)
+{
+  void *r;
   char *e;
   char save_c;
   int reg = -1;
@@ -694,9 +458,9 @@ reg_lookup (char **s, unsigned int types, unsigned int *regnop)
   *e = '\0';
 
   /* Look for the register.  */
-  r = (struct regname *) hash_find (reg_names_hash, *s);
-  if (r != NULL && (r->num & types))
-    reg = r->num & RNUM_MASK;
+  r = hash_find (reg_names_hash, *s);
+  if (r != NULL && DECODE_REG_CLASS (r) == class)
+    reg = DECODE_REG_NUM (r);
 
   /* Advance to next token if a register was recognised.  */
   if (reg >= 0)
@@ -709,11 +473,12 @@ reg_lookup (char **s, unsigned int types, unsigned int *regnop)
 }
 
 static unsigned int
-reg_lookup_assert (const char *s, unsigned int types)
+reg_lookup_assert (const char *s, enum reg_class class)
 {
   struct regname *r = (struct regname *) hash_find (reg_names_hash, s);
-  gas_assert (r != NULL && (r->num & types));
-  return r->num & RNUM_MASK;
+  if (r == NULL || DECODE_REG_CLASS (r) != class)
+    as_bad (_("unknown register `%s'"), s);
+  return DECODE_REG_NUM (r);
 }
 
 static int
@@ -878,18 +643,16 @@ md_begin (void)
     }
 
   reg_names_hash = hash_new ();
-  for (i = 0; reg_names[i].name; i++)
-    {
-      retval = hash_insert (reg_names_hash, reg_names[i].name,
-			    (void*) &reg_names[i]);
-      if (retval != NULL)
-	{
-	  fprintf (stderr, _("internal error: can't hash `%s': %s\n"),
-		   reg_names[i].name, retval);
-	  /* Probably a memory allocation problem?  Give up now.  */
-	  as_fatal (_("Broken assembler.  No assembly attempted."));
-	}
-    }
+  hash_reg_names (RCLASS_GPR, riscv_gpr_names_numeric, NGPR);
+  hash_reg_names (RCLASS_GPR, riscv_gpr_names_abi, NGPR);
+  hash_reg_names (RCLASS_FPR, riscv_fpr_names_numeric, NFPR);
+  hash_reg_names (RCLASS_FPR, riscv_fpr_names_abi, NFPR);
+  hash_reg_names (RCLASS_VEC_GPR, riscv_vec_gpr_names, NVGPR);
+  hash_reg_names (RCLASS_VEC_FPR, riscv_vec_fpr_names, NVFPR);
+
+#define DECLARE_CSR(name, num) hash_reg_name (RCLASS_CSR, #name, num);
+#include "opcode/riscv-opc.h"
+#undef DECLARE_CSR
 
   /* set the default alignment for the text section (2**2) */
   record_alignment (text_section, 2);
@@ -1298,7 +1061,7 @@ macro (struct riscv_cl_insn *ip)
     case M_CALL:
       rd = LINK_REG;
 do_call:
-      rs1 = reg_lookup_assert ("t0", RTYPE_GP);
+      rs1 = reg_lookup_assert ("t0", RCLASS_GPR);
       riscv_call (rd, rs1, &offset_expr, offset_reloc);
       break;
 
@@ -1452,7 +1215,6 @@ riscv_ip (char *str, struct riscv_cl_insn *ip)
   unsigned int regno;
   char save_c = 0;
   int argnum;
-  unsigned int rtype;
   const struct percent_op_match *p;
 
   insn_error = NULL;
@@ -1588,49 +1350,49 @@ riscv_ip (char *str, struct riscv_cl_insn *ip)
                   s = expr_end;
                   continue;
                 case 'd':
-                  ok = reg_lookup( &s, RTYPE_NUM|RTYPE_VGR_REG, &regno );
+                  ok = reg_lookup( &s, RCLASS_VEC_GPR, &regno );
                   if ( !ok )
                     as_bad( _( "Invalid vector register" ) );
                   INSERT_OPERAND( VRD, *ip, regno );
                   continue;
                 case 's':
-                  ok = reg_lookup( &s, RTYPE_NUM|RTYPE_VGR_REG, &regno );
+                  ok = reg_lookup( &s, RCLASS_VEC_GPR, &regno );
                   if ( !ok )
                     as_bad( _( "Invalid vector register" ) );
                   INSERT_OPERAND( VRS, *ip, regno );
                   continue;
                 case 't':
-                  ok = reg_lookup( &s, RTYPE_NUM|RTYPE_VGR_REG, &regno );
+                  ok = reg_lookup( &s, RCLASS_VEC_GPR, &regno );
                   if ( !ok )
                     as_bad( _( "Invalid vector register" ) );
                   INSERT_OPERAND( VRT, *ip, regno );
                   continue;
                 case 'r':
-                  ok = reg_lookup( &s, RTYPE_NUM|RTYPE_VGR_REG, &regno );
+                  ok = reg_lookup( &s, RCLASS_VEC_GPR, &regno );
                   if ( !ok )
                     as_bad( _( "Invalid vector register" ) );
                   INSERT_OPERAND( VRR, *ip, regno );
                   continue;
                 case 'D':
-                  ok = reg_lookup( &s, RTYPE_NUM|RTYPE_VFP_REG, &regno );
+                  ok = reg_lookup( &s, RCLASS_VEC_FPR, &regno );
                   if ( !ok )
                     as_bad( _( "Invalid vector register" ) );
                   INSERT_OPERAND( VFD, *ip, regno );
                   continue;
                 case 'S':
-                  ok = reg_lookup( &s, RTYPE_NUM|RTYPE_VFP_REG, &regno );
+                  ok = reg_lookup( &s, RCLASS_VEC_FPR, &regno );
                   if ( !ok )
                     as_bad( _( "Invalid vector register" ) );
                   INSERT_OPERAND( VFS, *ip, regno );
                   continue;
                 case 'T':
-                  ok = reg_lookup( &s, RTYPE_NUM|RTYPE_VFP_REG, &regno );
+                  ok = reg_lookup( &s, RCLASS_VEC_FPR, &regno );
                   if ( !ok )
                     as_bad( _( "Invalid vector register" ) );
                   INSERT_OPERAND( VFT, *ip, regno );
                   continue;
                 case 'R':
-                  ok = reg_lookup( &s, RTYPE_NUM|RTYPE_VFP_REG, &regno );
+                  ok = reg_lookup( &s, RCLASS_VEC_FPR, &regno );
                   if ( !ok )
                     as_bad( _( "Invalid vector register" ) );
                   INSERT_OPERAND( VFR, *ip, regno );
@@ -1687,7 +1449,7 @@ riscv_ip (char *str, struct riscv_cl_insn *ip)
 	      continue;
 
 	    case 'E':		/* Control register.  */
-	      ok = reg_lookup (&s, RTYPE_NUM | RTYPE_CP0, &regno);
+	      ok = reg_lookup (&s, RCLASS_CSR, &regno);
 	      INSERT_OPERAND (CSR, *ip, regno);
 	      if (ok) 
 		continue;
@@ -1717,7 +1479,7 @@ riscv_ip (char *str, struct riscv_cl_insn *ip)
 	    case 'd':		/* destination register */
 	    case 's':		/* source register */
 	    case 't':		/* target register */
-	      ok = reg_lookup (&s, RTYPE_NUM | RTYPE_GP, &regno);
+	      ok = reg_lookup (&s, RCLASS_GPR, &regno);
 	      if (ok)
 		{
 		  c = *args;
@@ -1747,8 +1509,7 @@ riscv_ip (char *str, struct riscv_cl_insn *ip)
 	    case 'T':		/* floating point rs2 */
 	    case 'U':		/* floating point rs1 and rs2 */
 	    case 'R':		/* floating point rs3 */
-	      rtype = RTYPE_FPU;
-	      if (reg_lookup (&s, rtype, &regno))
+	      if (reg_lookup (&s, RCLASS_FPR, &regno))
 		{
 		  c = *args;
 		  if (*s == ' ')
@@ -2367,13 +2128,7 @@ riscv_cfi_frame_initial_instructions (void)
 int
 tc_riscv_regname_to_dw2regnum (char *regname)
 {
-  unsigned int regnum = -1;
-  unsigned int reg;
-
-  if (reg_lookup (&regname, RTYPE_GP | RTYPE_NUM, &reg))
-    regnum = reg;
-
-  return regnum;
+  return reg_lookup_assert (regname, RCLASS_GPR);
 }
 
 void
