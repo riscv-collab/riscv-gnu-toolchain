@@ -96,7 +96,7 @@ extern void riscv_cfi_frame_initial_instructions (void);
 #define tc_regname_to_dw2regnum tc_riscv_regname_to_dw2regnum
 extern int tc_riscv_regname_to_dw2regnum (char *regname);
 
-#define DWARF2_DEFAULT_RETURN_COLUMN LINK_REG
+#define DWARF2_DEFAULT_RETURN_COLUMN X_RA
 #define DWARF2_CIE_DATA_ALIGNMENT (-4)
 
 #define elf_tc_final_processing riscv_elf_final_processing

@@ -29,42 +29,38 @@
 LEAF (__getcontext)
 	REG_S	ra, MCONTEXT_PC(a0)
 	REG_S	ra, ( 1 * SZREG + MCONTEXT_GREGS)(a0)
-	REG_S	s0, ( 2 * SZREG + MCONTEXT_GREGS)(a0)
-	REG_S	s1, ( 3 * SZREG + MCONTEXT_GREGS)(a0)
-	REG_S	s2, ( 4 * SZREG + MCONTEXT_GREGS)(a0)
-	REG_S	s3, ( 5 * SZREG + MCONTEXT_GREGS)(a0)
-	REG_S	s4, ( 6 * SZREG + MCONTEXT_GREGS)(a0)
-	REG_S	s5, ( 7 * SZREG + MCONTEXT_GREGS)(a0)
-	REG_S	s6, ( 8 * SZREG + MCONTEXT_GREGS)(a0)
-	REG_S	s7, ( 9 * SZREG + MCONTEXT_GREGS)(a0)
-	REG_S	s8, (10 * SZREG + MCONTEXT_GREGS)(a0)
-	REG_S	s9, (11 * SZREG + MCONTEXT_GREGS)(a0)
-	REG_S	s10,(12 * SZREG + MCONTEXT_GREGS)(a0)
-	REG_S	s11,(13 * SZREG + MCONTEXT_GREGS)(a0)
-	REG_S	sp, (14 * SZREG + MCONTEXT_GREGS)(a0)
-	REG_S	tp, (15 * SZREG + MCONTEXT_GREGS)(a0)
+	REG_S	sp, ( 2 * SZREG + MCONTEXT_GREGS)(a0)
+	REG_S	tp, ( 4 * SZREG + MCONTEXT_GREGS)(a0)
+	REG_S	s0, ( 8 * SZREG + MCONTEXT_GREGS)(a0)
+	REG_S	s1, ( 9 * SZREG + MCONTEXT_GREGS)(a0)
+	REG_S	s2, (18 * SZREG + MCONTEXT_GREGS)(a0)
+	REG_S	s3, (19 * SZREG + MCONTEXT_GREGS)(a0)
+	REG_S	s4, (20 * SZREG + MCONTEXT_GREGS)(a0)
+	REG_S	s5, (21 * SZREG + MCONTEXT_GREGS)(a0)
+	REG_S	s6, (22 * SZREG + MCONTEXT_GREGS)(a0)
+	REG_S	s7, (23 * SZREG + MCONTEXT_GREGS)(a0)
+	REG_S	s8, (24 * SZREG + MCONTEXT_GREGS)(a0)
+	REG_S	s9, (25 * SZREG + MCONTEXT_GREGS)(a0)
+	REG_S	s10,(26 * SZREG + MCONTEXT_GREGS)(a0)
+	REG_S	s11,(27 * SZREG + MCONTEXT_GREGS)(a0)
 
 #ifdef __riscv_hard_float
-	frsr v1
+	frsr	a1
 
-	fsd	fs0, ( 0 * 8 + MCONTEXT_FPREGS)(a0)
-	fsd	fs1, ( 1 * 8 + MCONTEXT_FPREGS)(a0)
-	fsd	fs2, ( 2 * 8 + MCONTEXT_FPREGS)(a0)
-	fsd	fs3, ( 3 * 8 + MCONTEXT_FPREGS)(a0)
-	fsd	fs4, ( 4 * 8 + MCONTEXT_FPREGS)(a0)
-	fsd	fs5, ( 5 * 8 + MCONTEXT_FPREGS)(a0)
-	fsd	fs6, ( 6 * 8 + MCONTEXT_FPREGS)(a0)
-	fsd	fs7, ( 7 * 8 + MCONTEXT_FPREGS)(a0)
-	fsd	fs8, ( 8 * 8 + MCONTEXT_FPREGS)(a0)
-	fsd	fs9, ( 9 * 8 + MCONTEXT_FPREGS)(a0)
-	fsd	fs10,(10 * 8 + MCONTEXT_FPREGS)(a0)
-	fsd	fs11,(11 * 8 + MCONTEXT_FPREGS)(a0)
-	fsd	fs12,(12 * 8 + MCONTEXT_FPREGS)(a0)
-	fsd	fs13,(13 * 8 + MCONTEXT_FPREGS)(a0)
-	fsd	fs14,(14 * 8 + MCONTEXT_FPREGS)(a0)
-	fsd	fs15,(15 * 8 + MCONTEXT_FPREGS)(a0)
+	fsd	fs0, ( 8 * 8 + MCONTEXT_FPREGS)(a0)
+	fsd	fs1, ( 9 * 8 + MCONTEXT_FPREGS)(a0)
+	fsd	fs2, (18 * 8 + MCONTEXT_FPREGS)(a0)
+	fsd	fs3, (19 * 8 + MCONTEXT_FPREGS)(a0)
+	fsd	fs4, (20 * 8 + MCONTEXT_FPREGS)(a0)
+	fsd	fs5, (21 * 8 + MCONTEXT_FPREGS)(a0)
+	fsd	fs6, (22 * 8 + MCONTEXT_FPREGS)(a0)
+	fsd	fs7, (23 * 8 + MCONTEXT_FPREGS)(a0)
+	fsd	fs8, (24 * 8 + MCONTEXT_FPREGS)(a0)
+	fsd	fs9, (25 * 8 + MCONTEXT_FPREGS)(a0)
+	fsd	fs10,(26 * 8 + MCONTEXT_FPREGS)(a0)
+	fsd	fs11,(27 * 8 + MCONTEXT_FPREGS)(a0)
 
-	sw	v1, MCONTEXT_FSR(a0)
+	sw	a1, MCONTEXT_FSR(a0)
 #endif /* __mips_hard_float */
 
 /* rt_sigprocmask (SIG_BLOCK, NULL, &ucp->uc_sigmask, _NSIG8) */
@@ -73,9 +69,9 @@ LEAF (__getcontext)
 	move	a1, zero
 	li	a0, SIG_BLOCK
 
-	li	v0, SYS_ify (rt_sigprocmask)
+	li	a7, SYS_ify (rt_sigprocmask)
 	scall
-	bltz	v0, 99f
+	bltz	a0, 99f
 
 	ret
 

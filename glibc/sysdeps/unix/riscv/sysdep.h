@@ -38,7 +38,7 @@
 #define PSEUDO_NOERRNO(name, syscall_name, args)	\
   .align 2;						\
   ENTRY(name)						\
-  li v0, SYS_ify(syscall_name);				\
+  li a7, SYS_ify(syscall_name);				\
   scall
 
 #undef PSEUDO_END_NOERRNO
@@ -54,8 +54,8 @@
 
 #define ret_ERRVAL ret
 
-#define r0	v0
-#define r1	v1
+#define r0	a0
+#define r1	a1
 #define MOVE(x,y)	move y , x
 
 #define L(label) .L ## label
@@ -64,9 +64,9 @@
   .align 2;							\
   99: j __syscall_error;					\
   ENTRY(name)							\
-  li v0, SYS_ify(syscall_name);					\
+  li a7, SYS_ify(syscall_name);					\
   scall;							\
-  bltz v0, 99b;							\
+  bltz a0, 99b;							\
 L(syse1):
 
 #endif

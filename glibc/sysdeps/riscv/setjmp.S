@@ -60,17 +60,13 @@ ENTRY (__sigsetjmp)
 	fsd  fs9, 16*SZREG+ 9*8(a0)
 	fsd  fs10,16*SZREG+10*8(a0)
 	fsd  fs11,16*SZREG+11*8(a0)
-	fsd  fs12,16*SZREG+12*8(a0)
-	fsd  fs13,16*SZREG+13*8(a0)
-	fsd  fs14,16*SZREG+14*8(a0)
-	fsd  fs15,16*SZREG+15*8(a0)
 
 	REG_S a3, 15*SZREG(a0)
 #endif
 
 #if defined NOT_IN_libc && defined IS_IN_rtld
   /* In ld.so we never save the signal mask.  */
-  li v0, 0
+  li a0, 0
   ret
 #else
   /* Make a tail call to __sigjmp_save; it takes the same args.  */

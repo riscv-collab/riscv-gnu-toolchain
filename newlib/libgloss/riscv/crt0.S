@@ -28,9 +28,7 @@ _start:
   addi    a1, sp, _RISCV_SZPTR/8  # a1 = argv
   li      a2, 0                   # a2 = envp = NULL
   call    main
-
-  move    a0, v0                  # Call exit function with return value
-  jump    exit                    #  from main as exit code
+  jump    exit
 
   .global _init
   .global _fini

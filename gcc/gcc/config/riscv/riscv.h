@@ -435,8 +435,8 @@ struct riscv_cpu_info {
 
 #define FIXED_REGISTERS							\
 { /* General registers.  */                                             \
-  1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1,			\
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,			\
+  1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,			\
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,			\
   /* Floating-point registers.  */                                      \
   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,			\
   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,			\
@@ -445,27 +445,27 @@ struct riscv_cpu_info {
 }
 
 
-/* Function calls clobber x16-30 (v0-1, a0-7, t0-4) and f16-31
-   (fv0-1, fa0-7, ft0-5).  The call RTLs themselves clobber x1 (ra). */
+/* a0-a7, t0-a6, fa0-fa7, and ft0-ft11 are volatile across calls.
+   The call RTLs themselves clobber ra.  */
 
 #define CALL_USED_REGISTERS						\
 { /* General registers.  */                                             \
-  1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1,			\
-  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,			\
+  1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1,			\
+  1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1,			\
   /* Floating-point registers.  */                                      \
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,			\
-  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,			\
+  1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1,			\
+  1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1,			\
   /* Others.  */                                                        \
   1, 1 \
 }
 
 #define CALL_REALLY_USED_REGISTERS                                      \
 { /* General registers.  */                                             \
-  1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1,			\
-  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,			\
+  1, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1,			\
+  1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1,			\
   /* Floating-point registers.  */                                      \
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,			\
-  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,			\
+  1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1,			\
+  1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1,			\
   /* Others.  */                                                        \
   1, 1 \
 }
@@ -479,12 +479,6 @@ struct riscv_cpu_info {
 #define FP_REG_FIRST 32
 #define FP_REG_LAST  63
 #define FP_REG_NUM   (FP_REG_LAST - FP_REG_FIRST + 1)
-
-#define CALLEE_SAVED_GP_REG_FIRST (GP_REG_FIRST + 2)
-#define CALLEE_SAVED_GP_REG_LAST (CALLEE_SAVED_GP_REG_FIRST + 12 - 1)
-
-#define CALLEE_SAVED_FP_REG_FIRST (FP_REG_FIRST + 0)
-#define CALLEE_SAVED_FP_REG_LAST (CALLEE_SAVED_FP_REG_FIRST + 16 - 1)
 
 /* The DWARF 2 CFA column which tracks the return address from a
    signal handler context.  This means that to maintain backwards
@@ -516,9 +510,9 @@ struct riscv_cpu_info {
 			  && GET_MODE_CLASS (MODE2) == MODE_INT))
 
 /* Use s0 as the frame pointer if it is so requested. */
-#define HARD_FRAME_POINTER_REGNUM 2
-#define STACK_POINTER_REGNUM 14
-#define THREAD_POINTER_REGNUM 15
+#define HARD_FRAME_POINTER_REGNUM 8
+#define STACK_POINTER_REGNUM 2
+#define THREAD_POINTER_REGNUM 3
 
 /* These two registers don't really exist: they get eliminated to either
    the stack or hard frame pointer.  */
@@ -529,7 +523,7 @@ struct riscv_cpu_info {
 #define HARD_FRAME_POINTER_IS_ARG_POINTER 0
 
 /* Register in which static-chain is passed to a function.  */
-#define STATIC_CHAIN_REGNUM GP_RETURN
+#define STATIC_CHAIN_REGNUM GP_TEMP_FIRST
 
 /* Registers used as temporaries in prologue/epilogue code.
 
@@ -538,8 +532,8 @@ struct riscv_cpu_info {
    The epilogue temporary mustn't conflict with the return registers,
    the frame pointer, the EH stack adjustment, or the EH data registers. */
 
-#define RISCV_PROLOGUE_TEMP_REGNUM GP_TEMP_FIRST
-#define RISCV_EPILOGUE_TEMP_REGNUM GP_TEMP_FIRST
+#define RISCV_PROLOGUE_TEMP_REGNUM (GP_TEMP_FIRST + 1)
+#define RISCV_EPILOGUE_TEMP_REGNUM RISCV_PROLOGUE_TEMP_REGNUM
 
 #define RISCV_PROLOGUE_TEMP(MODE) gen_rtx_REG (MODE, RISCV_PROLOGUE_TEMP_REGNUM)
 #define RISCV_EPILOGUE_TEMP(MODE) gen_rtx_REG (MODE, RISCV_EPILOGUE_TEMP_REGNUM)
@@ -616,7 +610,7 @@ enum reg_class
 #define REG_CLASS_CONTENTS									\
 {												\
   { 0x00000000, 0x00000000, 0x00000000 },	/* NO_REGS */		\
-  { 0x7c000000, 0x00000000, 0x00000000 },	/* T_REGS */		\
+  { 0xf00000e0, 0x00000000, 0x00000000 },	/* T_REGS */		\
   { 0xffffffff, 0x00000000, 0x00000000 },	/* GR_REGS */		\
   { 0x00000000, 0xffffffff, 0x00000000 },	/* FP_REGS */		\
   { 0x00000000, 0x00000000, 0x00000003 },	/* FRAME_REGS */	\
@@ -650,15 +644,16 @@ enum reg_class
 #define REG_ALLOC_ORDER							\
 { \
   /* Call-clobbered GPRs.  */						\
-  16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 1,	\
+  15, 14, 13, 12, 11, 10, 16, 17, 5, 6, 7, 28, 29, 30, 31, 1,		\
   /* Call-saved GPRs.  */						\
-  2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,	       			\
+  8, 9, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,	       			\
   /* GPRs that can never be exposed to the register allocator.  */	\
-  0,  14, 15,								\
+  0, 2, 3, 4,								\
   /* Call-clobbered FPRs.  */						\
-  48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63,	\
+  32, 33, 34, 35, 36, 37, 38, 39, 42, 43, 44, 45, 46, 47, 48, 49,	\
+  60, 61, 62, 63,							\
   /* Call-saved FPRs.  */						\
-  32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,	\
+  40, 41, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59,			\
   /* None of the remaining classes have defined call-saved		\
      registers.  */							\
   64, 65								\
@@ -741,17 +736,17 @@ enum reg_class
 /* Symbolic macros for the registers used to return integer and floating
    point values.  */
 
-#define GP_RETURN (GP_REG_FIRST + 16)
-#define FP_RETURN ((TARGET_SOFT_FLOAT) ? GP_RETURN : (FP_REG_FIRST + 16))
+#define GP_RETURN GP_ARG_FIRST
+#define FP_RETURN ((TARGET_SOFT_FLOAT) ? GP_RETURN : FP_ARG_FIRST)
 
 #define MAX_ARGS_IN_REGISTERS 8
 
 /* Symbolic macros for the first/last argument registers.  */
 
-#define GP_ARG_FIRST (GP_REG_FIRST + 18)
+#define GP_ARG_FIRST (GP_REG_FIRST + 10)
 #define GP_ARG_LAST  (GP_ARG_FIRST + MAX_ARGS_IN_REGISTERS - 1)
 #define GP_TEMP_FIRST (GP_ARG_LAST + 1)
-#define FP_ARG_FIRST (FP_REG_FIRST + 18)
+#define FP_ARG_FIRST (FP_REG_FIRST + 10)
 #define FP_ARG_LAST  (FP_ARG_FIRST + MAX_ARGS_IN_REGISTERS - 1)
 
 #define LIBCALL_VALUE(MODE) \
@@ -759,8 +754,6 @@ enum reg_class
 
 #define FUNCTION_VALUE(VALTYPE, FUNC) \
   riscv_function_value (VALTYPE, FUNC, VOIDmode)
-
-/* Return scalar values in v0 or fv0. */
 
 #define FUNCTION_VALUE_REGNO_P(N) ((N) == GP_RETURN || (N) == FP_RETURN)
 
@@ -925,14 +918,14 @@ typedef struct {
 #endif
 
 #define REGISTER_NAMES						\
-{ "zero","ra",  "s0",  "s1",  "s2",  "s3",  "s4",  "s5",	\
-  "s6",  "s7",  "s8",  "s9",  "s10", "s11", "sp",  "tp",	\
-  "v0",  "v1",  "a0",  "a1",  "a2",  "a3",  "a4",  "a5",	\
-  "a6",  "a7",  "t0",  "t1",  "t2",  "t3",  "t4",  "gp",	\
-  "f0",  "f1",  "f2",  "f3",  "f4",  "f5",  "f6",  "f7",	\
-  "f8",  "f9",  "f10", "f11", "f12", "f13", "f14", "f15",	\
-  "f16", "f17", "f18", "f19", "f20", "f21", "f22", "f23",	\
-  "f24", "f25", "f26", "f27", "f28", "f29", "f30", "f31",	\
+{ "zero","ra",  "sp",  "tp",  "gp",  "t0",  "t1",  "t2",	\
+  "s0",  "s1",  "a0",  "a1",  "a2",  "a3",  "a4",  "a5",	\
+  "a6",  "a7",  "s2",  "s3",  "s4",  "s5",  "s6",  "s7",	\
+  "s8",  "s9",  "s10", "s11", "t3",  "t4",  "t5",  "t6",	\
+  "ft0", "ft1", "ft2", "ft3", "ft4", "ft5", "ft6", "ft7",	\
+  "fs0", "fs1", "fa0", "fa1", "fa2", "fa3", "fa4", "fa5",	\
+  "fa6", "fa7", "fs2", "fs3", "fs4", "fs5", "fs6", "fs7",	\
+  "fs8", "fs9", "fs10","fs11","ft8", "ft9", "ft10","ft11",	\
   "arg", "frame", }
 
 #define ADDITIONAL_REGISTER_NAMES					\
@@ -969,38 +962,38 @@ typedef struct {
   { "x29",	29 + GP_REG_FIRST },					\
   { "x30",	30 + GP_REG_FIRST },					\
   { "x31",	31 + GP_REG_FIRST },					\
-  { "fs0",	 0 + FP_REG_FIRST },					\
-  { "fs1",	 1 + FP_REG_FIRST },					\
-  { "fs2",	 2 + FP_REG_FIRST },					\
-  { "fs3",	 3 + FP_REG_FIRST },					\
-  { "fs4",	 4 + FP_REG_FIRST },					\
-  { "fs5",	 5 + FP_REG_FIRST },					\
-  { "fs6",	 6 + FP_REG_FIRST },					\
-  { "fs7",	 7 + FP_REG_FIRST },					\
-  { "fs8",	 8 + FP_REG_FIRST },					\
-  { "fs9",	 9 + FP_REG_FIRST },					\
-  { "fs10",	10 + FP_REG_FIRST },					\
-  { "fs11",	11 + FP_REG_FIRST },					\
-  { "fs12",	12 + FP_REG_FIRST },					\
-  { "fs13",	13 + FP_REG_FIRST },					\
-  { "fs14",	14 + FP_REG_FIRST },					\
-  { "fs15",	15 + FP_REG_FIRST },					\
-  { "fv0",	16 + FP_REG_FIRST },					\
-  { "fv1",	17 + FP_REG_FIRST },					\
-  { "fa0",	18 + FP_REG_FIRST },					\
-  { "fa1",	19 + FP_REG_FIRST },					\
-  { "fa2",	20 + FP_REG_FIRST },					\
-  { "fa3",	21 + FP_REG_FIRST },					\
-  { "fa4",	22 + FP_REG_FIRST },					\
-  { "fa5",	23 + FP_REG_FIRST },					\
-  { "fa6",	24 + FP_REG_FIRST },					\
-  { "fa7",	25 + FP_REG_FIRST },					\
-  { "ft0",	26 + FP_REG_FIRST },					\
-  { "ft1",	27 + FP_REG_FIRST },					\
-  { "ft2",	28 + FP_REG_FIRST },					\
-  { "ft3",	29 + FP_REG_FIRST },					\
-  { "ft4",	30 + FP_REG_FIRST },					\
-  { "ft5",	31 + FP_REG_FIRST },					\
+  { "f0",	 0 + FP_REG_FIRST },					\
+  { "f1",	 1 + FP_REG_FIRST },					\
+  { "f2",	 2 + FP_REG_FIRST },					\
+  { "f3",	 3 + FP_REG_FIRST },					\
+  { "f4",	 4 + FP_REG_FIRST },					\
+  { "f5",	 5 + FP_REG_FIRST },					\
+  { "f6",	 6 + FP_REG_FIRST },					\
+  { "f7",	 7 + FP_REG_FIRST },					\
+  { "f8",	 8 + FP_REG_FIRST },					\
+  { "f9",	 9 + FP_REG_FIRST },					\
+  { "f10",	10 + FP_REG_FIRST },					\
+  { "f11",	11 + FP_REG_FIRST },					\
+  { "f12",	12 + FP_REG_FIRST },					\
+  { "f13",	13 + FP_REG_FIRST },					\
+  { "f14",	14 + FP_REG_FIRST },					\
+  { "f15",	15 + FP_REG_FIRST },					\
+  { "f16",	16 + FP_REG_FIRST },					\
+  { "f17",	17 + FP_REG_FIRST },					\
+  { "f18",	18 + FP_REG_FIRST },					\
+  { "f19",	19 + FP_REG_FIRST },					\
+  { "f20",	20 + FP_REG_FIRST },					\
+  { "f21",	21 + FP_REG_FIRST },					\
+  { "f22",	22 + FP_REG_FIRST },					\
+  { "f23",	23 + FP_REG_FIRST },					\
+  { "f24",	24 + FP_REG_FIRST },					\
+  { "f25",	25 + FP_REG_FIRST },					\
+  { "f26",	26 + FP_REG_FIRST },					\
+  { "f27",	27 + FP_REG_FIRST },					\
+  { "f28",	28 + FP_REG_FIRST },					\
+  { "f29",	29 + FP_REG_FIRST },					\
+  { "f30",	30 + FP_REG_FIRST },					\
+  { "f31",	31 + FP_REG_FIRST },					\
 }
 
 /* Globalizing directive for a label.  */

@@ -39,35 +39,34 @@
 LEAF(__clone)
 
 	/* Sanity check arguments.  */
-	li		v0,EINVAL
-	beqz		a0,L(error)	/* No NULL function pointers.  */
-	beqz		a1,L(error)	/* No NULL stack pointers.  */
+	beqz		a0,L(invalid)	/* No NULL function pointers.  */
+	beqz		a1,L(invalid)	/* No NULL stack pointers.  */
 
-	addi		a1,a1,-32		/* Reserve argument save space.  */
+	addi		a1,a1,-32	/* Reserve argument save space.  */
 	REG_S		a0,0(a1)	/* Save function pointer.  */
 	REG_S		a3,SZREG(a1)	/* Save argument pointer.  */
 #ifdef RESET_PID
 	REG_S		a2,(SZREG*2)(a1)	/* Save clone flags.  */
 #endif
 
+	/* The syscall expects the args to be in different slots.  */
 	move		a0,a2
-
-	/* Shuffle in the last three arguments - arguments 5, 6, and 7 to
-	   this function, but arguments 3, 4, and 5 to the syscall.  */
 	move		a2,a4
 	move		a3,a5
 	move		a4,a6
 
 	/* Do the system call */
-	li		v0,__NR_clone
+	li		a7,__NR_clone
 	scall
 
-	bltz		v0,L(error)
-	beqz		v0,L(thread_start)
+	bltz		a0,L(error)
+	beqz		a0,L(thread_start)
 
 	/* Successful return from the parent */
 	ret
 
+L(invalid):
+	li		a0, 0
 	/* Something bad happened -- no child created */
 L(error):
 	j		__syscall_error
@@ -91,27 +90,26 @@ L(donepid):
 #endif
 
 	/* Restore the arg for user's function.  */
-	REG_L		v0,0(sp)	/* Function pointer.  */
+	REG_L		a1,0(sp)	/* Function pointer.  */
 	REG_L		a0,SZREG(sp)	/* Argument pointer.  */
 
 	/* Call the user's function.  */
-	jalr		v0
+	jalr		a1
 
-	/* Call _exit rather than doing it inline for breakpoint purposes.  */
-	move		a0,v0
+	/* Call _exit with the function's return value.  */
 	j		_exit
 
 #ifdef RESET_PID
 L(restore_pid):
 	and		a1,a0,CLONE_VM
-	li		v0,-1
+	li		a2,-1
 	bnez		a1,L(gotpid)
-	li		v0,__NR_getpid
+	li		a2,__NR_getpid
 	scall
 L(gotpid):
-	sw		v0,PID_OFFSET(tp)
-	sw		v0,TID_OFFSET(tp)
-	b		L(donepid)
+	sw		a2,PID_OFFSET(tp)
+	sw		a2,TID_OFFSET(tp)
+	j		L(donepid)
 #endif
 
 	END(__thread_start)

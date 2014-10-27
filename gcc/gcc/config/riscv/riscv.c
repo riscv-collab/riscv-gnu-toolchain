@@ -275,13 +275,13 @@ const char *riscv_hi_relocs[NUM_SYMBOL_TYPES];
 /* Index R is the smallest register class that contains register R.  */
 const enum reg_class riscv_regno_to_class[FIRST_PSEUDO_REGISTER] = {
   GR_REGS,	GR_REGS,	GR_REGS,	GR_REGS,
-  GR_REGS,	GR_REGS,	GR_REGS,	GR_REGS,
+  GR_REGS,	T_REGS,		T_REGS,		T_REGS,
   GR_REGS,	GR_REGS,	GR_REGS,	GR_REGS,
   GR_REGS,	GR_REGS,	GR_REGS,	GR_REGS,
   GR_REGS,	GR_REGS, 	GR_REGS,	GR_REGS,
   GR_REGS,	GR_REGS,	GR_REGS,	GR_REGS,
-  GR_REGS,	GR_REGS,	T_REGS,		T_REGS,
-  T_REGS,	T_REGS,		T_REGS,		GR_REGS,
+  GR_REGS,	GR_REGS,	GR_REGS,	GR_REGS,
+  T_REGS,	T_REGS,		T_REGS,		T_REGS,
   FP_REGS,	FP_REGS,	FP_REGS,	FP_REGS,
   FP_REGS,	FP_REGS,	FP_REGS,	FP_REGS,
   FP_REGS,	FP_REGS,	FP_REGS,	FP_REGS,
@@ -1138,23 +1138,21 @@ static GTY(()) rtx mips_tls_symbol;
 
 /* Return an instruction sequence that calls __tls_get_addr.  SYM is
    the TLS symbol we are referencing and TYPE is the symbol type to use
-   (either global dynamic or local dynamic).  V0 is an RTX for the
+   (either global dynamic or local dynamic).  RESULT is an RTX for the
    return value location.  */
 
 static rtx
-mips_call_tls_get_addr (rtx sym, rtx v0)
+mips_call_tls_get_addr (rtx sym, rtx result)
 {
-  rtx insn, a0;
-
-  a0 = gen_rtx_REG (Pmode, GP_ARG_FIRST);
+  rtx insn, a0 = gen_rtx_REG (Pmode, GP_ARG_FIRST);
 
   if (!mips_tls_symbol)
     mips_tls_symbol = init_one_libfunc ("__tls_get_addr");
 
   start_sequence ();
   
-  emit_insn (riscv_got_load_tls_gd(a0, sym));
-  insn = riscv_expand_call (false, v0, mips_tls_symbol, const0_rtx);
+  emit_insn (riscv_got_load_tls_gd (a0, sym));
+  insn = riscv_expand_call (false, result, mips_tls_symbol, const0_rtx);
   RTL_CONST_CALL_P (insn) = 1;
   use_reg (&CALL_INSN_FUNCTION_USAGE (insn), a0);
   insn = get_insns ();
@@ -1171,7 +1169,7 @@ mips_call_tls_get_addr (rtx sym, rtx v0)
 static rtx
 mips_legitimize_tls_address (rtx loc)
 {
-  rtx dest, insn, v0, tp, tmp1;
+  rtx dest, insn, tp, tmp1;
   enum tls_model model = SYMBOL_REF_TLS_MODEL (loc);
 
   /* Since we support TLS copy relocs, non-PIC TLS accesses may all use LE.  */
@@ -1184,10 +1182,10 @@ mips_legitimize_tls_address (rtx loc)
       /* Rely on section anchors for the optimization that LDM TLS
 	 provides.  The anchor's address is loaded with GD TLS. */
     case TLS_MODEL_GLOBAL_DYNAMIC:
-      v0 = gen_rtx_REG (Pmode, GP_RETURN);
-      insn = mips_call_tls_get_addr (loc, v0);
+      tmp1 = gen_rtx_REG (Pmode, GP_RETURN);
+      insn = mips_call_tls_get_addr (loc, tmp1);
       dest = gen_reg_rtx (Pmode);
-      emit_libcall_block (insn, dest, v0, loc);
+      emit_libcall_block (insn, dest, tmp1, loc);
       break;
 
     case TLS_MODEL_INITIAL_EXEC:
@@ -2597,7 +2595,7 @@ riscv_function_value (const_tree valtype, const_tree func, enum machine_mode mod
 }
 
 /* Implement TARGET_RETURN_IN_MEMORY.  Scalars and small structures
-   that fit in two registers are returned in v0/v1. */
+   that fit in two registers are returned in a0/a1. */
 
 static bool
 mips_return_in_memory (const_tree type, const_tree fndecl ATTRIBUTE_UNUSED)
@@ -4134,8 +4132,8 @@ mips_output_mi_thunk (FILE *file, tree thunk_fndecl ATTRIBUTE_UNUSED,
   use_sibcall_p = absolute_symbolic_operand (fnaddr, Pmode);
 
   /* We need two temporary registers in some cases.  */
-  temp1 = gen_rtx_REG (Pmode, GP_RETURN);
-  temp2 = gen_rtx_REG (Pmode, GP_RETURN + 1);
+  temp1 = gen_rtx_REG (Pmode, GP_TEMP_FIRST);
+  temp2 = gen_rtx_REG (Pmode, GP_TEMP_FIRST + 1);
 
   /* Find out which register contains the "this" pointer.  */
   if (aggregate_value_p (TREE_TYPE (TREE_TYPE (function)), function))
@@ -4320,10 +4318,10 @@ mips_trampoline_init (rtx m_tramp, tree fndecl, rtx chain_value)
 #define OP(X) gen_int_mode (X, SImode)
 #define MATCH_LREG ((Pmode) == DImode ? MATCH_LD : MATCH_LW)
 
-  /* auipc   v0, 0
-     l[wd]   v1, target_function_offset(v0)
-     l[wd]   $static_chain, static_chain_offset(v0)
-     jr      v1
+  /* auipc   t0, 0
+     l[wd]   t1, target_function_offset(t0)
+     l[wd]   $static_chain, static_chain_offset(t0)
+     jr      t1
   */
 
   trampoline[0] = OP (RISCV_UTYPE (AUIPC, STATIC_CHAIN_REGNUM, 0));

@@ -91,10 +91,9 @@
 #define syscall_errno(n, a, b, c, d) \
         __internal_syscall(n, (long)(a), (long)(b), (long)(c), (long)(d))
 
-int __syscall_error()
+long __syscall_error(long a0)
 {
-  register int v0 asm("v0");
-  errno = -v0;
+  errno = -a0;
   return -1;
 }
 

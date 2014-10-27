@@ -36,9 +36,6 @@
 #include <execinfo.h>
 #include <stdint.h>
 
-#define ZERO 0
-#define SP 14
-
 /* Information about an instruction, including its format, operands
    and fixups.  */
 struct riscv_cl_insn
@@ -917,7 +914,7 @@ load_const (int reg, expressionS *ep)
     }
   else
     {
-      int hi_reg = ZERO;
+      int hi_reg = 0;
 
       if (upper.X_add_number != 0)
 	{
@@ -925,7 +922,7 @@ load_const (int reg, expressionS *ep)
 	  hi_reg = reg;
 	}
 
-      if (lower.X_add_number != 0 || hi_reg == ZERO)
+      if (lower.X_add_number != 0 || hi_reg == 0)
         macro_build (ep, ADD32_INSN, "d,s,j", reg, hi_reg,
 		     BFD_RELOC_RISCV_LO12_I);
     }
@@ -1059,7 +1056,7 @@ macro (struct riscv_cl_insn *ip)
       rd = 0;
       goto do_call;
     case M_CALL:
-      rd = LINK_REG;
+      rd = X_RA;
 do_call:
       rs1 = reg_lookup_assert ("t0", RCLASS_GPR);
       riscv_call (rd, rs1, &offset_expr, offset_reloc);
@@ -2122,7 +2119,7 @@ RISC-V options:\n\
 void
 riscv_cfi_frame_initial_instructions (void)
 {
-  cfi_add_CFA_def_cfa_register (SP);
+  cfi_add_CFA_def_cfa_register (X_SP);
 }
 
 int

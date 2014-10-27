@@ -42,16 +42,12 @@ setjmp:
 	fsd   fs9, 16*SZREG+ 9*8(a0)
 	fsd   fs10,16*SZREG+10*8(a0)
 	fsd   fs11,16*SZREG+11*8(a0)
-	fsd   fs12,16*SZREG+12*8(a0)
-	fsd   fs13,16*SZREG+13*8(a0)
-	fsd   fs14,16*SZREG+14*8(a0)
-	fsd   fs15,16*SZREG+15*8(a0)
 
 	REG_S a3, 15*SZREG(a0)
 #endif
 
-  li v0, 0
-  ret
+	li    a0, 0
+	ret
 
 /* volatile void longjmp (jmp_buf, int);  */
   .globl  longjmp
@@ -75,26 +71,21 @@ longjmp:
 #ifdef __riscv_hard_float
 	REG_L a3, 15*SZREG(a0)
 
-	fld   fs0, 16*SZREG+ 0*8(a0)
-	fld   fs1, 16*SZREG+ 1*8(a0)
-	fld   fs2, 16*SZREG+ 2*8(a0)
-	fld   fs3, 16*SZREG+ 3*8(a0)
-	fld   fs4, 16*SZREG+ 4*8(a0)
-	fld   fs5, 16*SZREG+ 5*8(a0)
-	fld   fs6, 16*SZREG+ 6*8(a0)
-	fld   fs7, 16*SZREG+ 7*8(a0)
-	fld   fs8, 16*SZREG+ 8*8(a0)
-	fld   fs9, 16*SZREG+ 9*8(a0)
-	fld   fs10,16*SZREG+10*8(a0)
-	fld   fs11,16*SZREG+11*8(a0)
-	fld   fs12,16*SZREG+12*8(a0)
-	fld   fs13,16*SZREG+13*8(a0)
-	fld   fs14,16*SZREG+14*8(a0)
-	fld   fs15,16*SZREG+15*8(a0)
+	fld  fs0, 16*SZREG+ 0*8(a0)
+	fld  fs1, 16*SZREG+ 1*8(a0)
+	fld  fs2, 16*SZREG+ 2*8(a0)
+	fld  fs3, 16*SZREG+ 3*8(a0)
+	fld  fs4, 16*SZREG+ 4*8(a0)
+	fld  fs5, 16*SZREG+ 5*8(a0)
+	fld  fs6, 16*SZREG+ 6*8(a0)
+	fld  fs7, 16*SZREG+ 7*8(a0)
+	fld  fs8, 16*SZREG+ 8*8(a0)
+	fld  fs9, 16*SZREG+ 9*8(a0)
+	fld  fs10,16*SZREG+10*8(a0)
 
 	fssr a3
 #endif
 
-  sltiu v0, a1, 1    # v0 = (a1 == 0)
-  add   v0, v0, a1   # v0 = (a1 == 0) ? 1 : a1
-  ret
+	seqz a0, a1
+	add  a0, a0, a1   # a0 = (a1 == 0) ? 1 : a1
+	ret

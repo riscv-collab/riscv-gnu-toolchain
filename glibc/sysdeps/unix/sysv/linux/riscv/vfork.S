@@ -20,8 +20,9 @@
 
 #include <sys/asm.h>
 #include <sysdep.h>
-#include <asm/unistd.h>
-#include <sgidefs.h>
+#define __ASSEMBLY__
+#include <linux/sched.h>
+#include <asm/signal.h>
 
 #ifndef SAVE_PID
 #define SAVE_PID
@@ -39,17 +40,20 @@ LEAF(__vfork)
 
 	SAVE_PID
 
-	li		a0, 0x4111	/* CLONE_VM | CLONE_VFORK | SIGCHLD */
+#if (CLONE_VFORK | CLONE_VM | SIGCHLD) != 0x4111
+# error
+#endif
+	li		a0, (CLONE_VFORK | CLONE_VM | SIGCHLD)
 	move		a1, sp
 	li		a2, 0
 	li		a3, 0
 	li		a4, 0
 
 	/* Do the system call */
-	li		v0,__NR_clone
+	li		a7,__NR_clone
 	scall
 
-	bltz		v0,L(error)
+	bltz		a0,L(error)
 
 	RESTORE_PID
 

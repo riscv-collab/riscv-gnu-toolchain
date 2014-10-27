@@ -36,10 +36,10 @@ const char * const riscv_gpr_names_numeric[32] =
 };
 
 const char * const riscv_gpr_names_abi[32] = {
-  "zero", "ra", "s0", "s1",  "s2",  "s3",  "s4",  "s5",
-  "s6",   "s7", "s8", "s9", "s10", "s11",  "sp",  "tp",
-  "v0",   "v1", "a0", "a1",  "a2",  "a3",  "a4",  "a5",
-  "a6",   "a7", "t0", "t1",  "t2",  "t3",  "t4",  "gp"
+  "zero", "ra", "sp",  "gp",  "tp", "t0",  "t1",  "t2",
+  "s0",   "s1", "a0",  "a1",  "a2", "a3",  "a4",  "a5",
+  "a6",   "a7", "s2",  "s3",  "s4", "s5",  "s6",  "s7",
+  "s8",   "s9", "s10", "s11", "t3", "t4",  "t5",  "t6"
 };
 
 const char * const riscv_fpr_names_numeric[32] =
@@ -51,10 +51,10 @@ const char * const riscv_fpr_names_numeric[32] =
 };
 
 const char * const riscv_fpr_names_abi[32] = {
-  "fs0", "fs1",  "fs2",  "fs3",  "fs4",  "fs5",  "fs6",  "fs7",
-  "fs8", "fs9", "fs10", "fs11", "fs12", "fs13", "fs14", "fs15",
-  "fv0", "fv1", "fa0",   "fa1",  "fa2",  "fa3",  "fa4",  "fa5",
-  "fa6", "fa7", "ft0",   "ft1",  "ft2",  "ft3",  "ft4",  "ft5"
+  "ft0", "ft1", "ft2",  "ft3",  "ft4", "ft5", "ft6",  "ft7",
+  "fs0", "fs1", "fa0",  "fa1",  "fa2", "fa3", "fa4",  "fa5",
+  "fa6", "fa7", "fs2",  "fs3",  "fs4", "fs5", "fs6",  "fs7",
+  "fs8", "fs9", "fs10", "fs11", "ft8", "ft9", "ft10", "ft11"
 };
 
 const char * const riscv_vec_gpr_names[32] =
@@ -171,16 +171,16 @@ const struct riscv_opcode riscv_builtin_opcodes[] =
 {"sra",       "I",   "d,s,t",   MATCH_SRA, MASK_SRA, match_opcode,   WR_xd|RD_xs1|RD_xs2 },
 {"sra",       "I",   "d,s,>",   MATCH_SRAI, MASK_SRAI, match_opcode,   INSN_ALIAS|WR_xd|RD_xs1 },
 {"sub",       "I",   "d,s,t",  MATCH_SUB, MASK_SUB, match_opcode,   WR_xd|RD_xs1|RD_xs2 },
-{"ret",       "I",   "",  MATCH_JALR | (LINK_REG << OP_SH_RS1), MASK_JALR | MASK_RD | MASK_RS1 | MASK_IMM, match_opcode,   INSN_ALIAS|WR_xd|RD_xs1 },
+{"ret",       "I",   "",  MATCH_JALR | (X_RA << OP_SH_RS1), MASK_JALR | MASK_RD | MASK_RS1 | MASK_IMM, match_opcode,   INSN_ALIAS|WR_xd|RD_xs1 },
 {"j",         "I",   "a",  MATCH_JAL, MASK_JAL | MASK_RD, match_opcode,   INSN_ALIAS },
-{"jal",       "I",   "a",  MATCH_JAL | (LINK_REG << OP_SH_RD), MASK_JAL | MASK_RD, match_opcode,   INSN_ALIAS|WR_xd },
+{"jal",       "I",   "a",  MATCH_JAL | (X_RA << OP_SH_RD), MASK_JAL | MASK_RD, match_opcode,   INSN_ALIAS|WR_xd },
 {"jal",       "I",   "d,a",  MATCH_JAL, MASK_JAL, match_opcode,   WR_xd },
 {"call",      "I",   "c",  0,    (int) M_CALL,  match_never, INSN_MACRO },
 {"jump",      "I",   "c",  0,    (int) M_JUMP,  match_never, INSN_MACRO },
 {"jr",        "I",   "s",  MATCH_JALR, MASK_JALR | MASK_RD | MASK_IMM, match_opcode,   INSN_ALIAS|WR_xd|RD_xs1 },
 {"jr",        "I",   "s,j",  MATCH_JALR, MASK_JALR | MASK_RD, match_opcode,   INSN_ALIAS|WR_xd|RD_xs1 },
-{"jalr",      "I",   "s",  MATCH_JALR | (LINK_REG << OP_SH_RD), MASK_JALR | MASK_RD | MASK_IMM, match_opcode,   INSN_ALIAS|WR_xd|RD_xs1 },
-{"jalr",      "I",   "s,j",  MATCH_JALR | (LINK_REG << OP_SH_RD), MASK_JALR | MASK_RD, match_opcode,   INSN_ALIAS|WR_xd|RD_xs1 },
+{"jalr",      "I",   "s",  MATCH_JALR | (X_RA << OP_SH_RD), MASK_JALR | MASK_RD | MASK_IMM, match_opcode,   INSN_ALIAS|WR_xd|RD_xs1 },
+{"jalr",      "I",   "s,j",  MATCH_JALR | (X_RA << OP_SH_RD), MASK_JALR | MASK_RD, match_opcode,   INSN_ALIAS|WR_xd|RD_xs1 },
 {"jalr",      "I",   "d,s",  MATCH_JALR, MASK_JALR | MASK_IMM, match_opcode,   INSN_ALIAS|WR_xd|RD_xs1 },
 {"jalr",      "I",   "d,s,j",  MATCH_JALR, MASK_JALR, match_opcode,   WR_xd|RD_xs1 },
 {"lb",        "I",   "d,o(s)",  MATCH_LB, MASK_LB, match_opcode,   WR_xd|RD_xs1 },

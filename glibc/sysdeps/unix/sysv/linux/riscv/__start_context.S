@@ -31,8 +31,6 @@ LEAF (__start_context)
 	/* setcontext (ucp) */
 	move	a0, s0
 	jal	__setcontext
-	move	a0, v0
-
 1:	jal	HIDDEN_JUMPTARGET (exit)
 
 PSEUDO_END (__start_context)

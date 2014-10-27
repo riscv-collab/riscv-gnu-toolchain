@@ -37,7 +37,7 @@ typedef struct __jmp_buf_internal_tag
     /* Callee-saved floating point registers.
        Note that there are an even number of preceding words in this struct,
        so no padding will be inserted before __fpregs, even for RV32. */
-    double __fpregs[16];
+    double __fpregs[12];
   } __jmp_buf[1];
 
 #endif /* _RISCV_BITS_SETJMP_H */

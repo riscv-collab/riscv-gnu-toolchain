@@ -29,7 +29,7 @@
 
 /* Restore the old PID value in the parent.  */
 #define RESTORE_PID \
-	beqz	v0, 1f;				/* If we are the parent... */	\
+	beqz	a0, 1f;				/* If we are the parent... */	\
 	lw	t0, PID_OFFSET(tp);		/* Load the saved PID.  */	\
 	neg	t0, t0;			 	/* Re-negate it.  */		\
 	li	t1, 0x80000000;			/* Load 0x80000000... */	\

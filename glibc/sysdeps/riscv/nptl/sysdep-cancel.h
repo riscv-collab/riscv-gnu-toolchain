@@ -37,14 +37,14 @@
       cfi_startproc;							\
   99: j __syscall_error;						\
   ENTRY (name)								\
-    SINGLE_THREAD_P(v1);						\
-    bnez v1, L(pseudo_cancel);  					\
+    SINGLE_THREAD_P(t0);						\
+    bnez t0, L(pseudo_cancel);  					\
   .type __##syscall_name##_nocancel, @function;				\
   .globl __##syscall_name##_nocancel;					\
   __##syscall_name##_nocancel:						\
-    li v0, SYS_ify(syscall_name);					\
+    li a7, SYS_ify(syscall_name);					\
     scall;								\
-    bltz v0, 99b;							\
+    bltz a0, 99b;							\
     ret;								\
   .size __##syscall_name##_nocancel,.-__##syscall_name##_nocancel;	\
   L(pseudo_cancel):							\
@@ -54,16 +54,16 @@
       PUSHARGS_##args;			/* save syscall args */		\
       CENABLE;								\
       POPARGS_##args;			/* restore syscall args */	\
-      REG_S v0, STKOFF_SVMSK(sp);	/* save mask */			\
-      li v0, SYS_ify (syscall_name);					\
+      REG_S a0, STKOFF_SVMSK(sp);	/* save mask */			\
+      li a7, SYS_ify (syscall_name);					\
       scall;								\
-      REG_S v0, STKOFF_SC_V0(sp);	/* save syscall result */	\
+      REG_S a0, STKOFF_A0(sp);		/* save syscall result */	\
       REG_L a0, STKOFF_SVMSK(sp);	/* pass mask as arg1 */		\
       CDISABLE;								\
-      REG_L v0, STKOFF_SC_V0(sp);	/* restore syscall result */	\
+      REG_L a0, STKOFF_A0(sp);		/* restore syscall result */	\
       REG_L ra, STKOFF_RA(sp);		/* restore return address */	\
       RESTORESTK;							\
-      bltz v0, 99b;							\
+      bltz a0, 99b;							\
     L(pseudo_end):
 
 
@@ -100,7 +100,6 @@
 # define STKOFF_A1	(STKOFF_A2 + SZREG)	/* MT and 2 args.  */
 # define STKOFF_SVMSK	STKOFF_A1		/* Used if MT.  */
 # define STKOFF_A0	(STKOFF_A1 + SZREG)	/* MT and 1 arg.  */
-# define STKOFF_SC_V0	STKOFF_A0		/* Used if MT.  */
 # define STKOFF_RA	(STKOFF_A0 + SZREG)	/* Used if MT.  */
 
 # define STKSPACE	(STKOFF_RA + SZREG)

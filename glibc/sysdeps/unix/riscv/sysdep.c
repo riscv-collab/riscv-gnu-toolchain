@@ -21,12 +21,10 @@
 #include <sysdep.h>
 #include <errno.h>
 
-long __syscall_error()
+long __syscall_error(long a0)
 {
-  register long v0 asm("v0");
-
-  /* Referencing errno may call a function, clobbering v0. */
-  long errno_val = -v0;
+  /* Referencing errno may call a function, clobbering a0. */
+  long errno_val = -a0;
 
 #if defined (EWOULDBLOCK_sys) && EWOULDBLOCK_sys != EAGAIN
 	/* We translate the system's EWOULDBLOCK error into EAGAIN.

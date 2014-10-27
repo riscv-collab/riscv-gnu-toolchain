@@ -868,12 +868,6 @@ riscv_elf_got_plt_val (bfd_vma plt_index, struct bfd_link_info *info)
 	 + (plt_index * GOT_ENTRY_SIZE (info));
 }
 
-#define X_V0 16
-#define X_V1 17
-#define X_T0 26
-#define X_T1 27
-#define X_T2 28
-
 #define MATCH_LREG(abfd) (ABI_64_P (abfd) ? MATCH_LD : MATCH_LW)
 #define MATCH_SREG(abfd) (ABI_64_P (abfd) ? MATCH_SD : MATCH_SW)
 
@@ -886,22 +880,22 @@ riscv_make_plt0_entry(bfd* abfd, bfd_vma gotplt_addr, bfd_vma addr,
   int regbytes = ABI_64_P(abfd) ? 8 : 4;
 
   /* auipc  t2, %hi(.got.plt)
-     sub    v0, v0, v1               # shifted .got.plt offset + hdr size + 12
-     l[w|d] v1, %lo(.got.plt)(t2)    # _dl_runtime_resolve
-     addi   v0, v0, -(hdr size + 12) # shifted .got.plt offset
+     sub    t1, t1, t0               # shifted .got.plt offset + hdr size + 12
+     l[w|d] t3, %lo(.got.plt)(t2)    # _dl_runtime_resolve
+     addi   t1, t1, -(hdr size + 12) # shifted .got.plt offset
      addi   t0, t2, %lo(.got.plt)    # &.got.plt
-     srli   t1, v0, log2(16/PTRSIZE) # .got.plt offset
+     srli   t1, t1, log2(16/PTRSIZE) # .got.plt offset
      l[w|d] t0, PTRSIZE(t0)          # link map
-     jr     v1 */
+     jr     t3 */
 
   entry[0] = RISCV_UTYPE(AUIPC, X_T2, RISCV_PCREL_HIGH_PART(gotplt_addr, addr));
-  entry[1] = RISCV_RTYPE(SUB, X_V0, X_V0, X_V1);
-  entry[2] = RISCV_ITYPE(LREG(abfd), X_V1, X_T2, RISCV_PCREL_LOW_PART(gotplt_addr, addr));
-  entry[3] = RISCV_ITYPE(ADDI, X_V0, X_V0, -(PLT_HEADER_SIZE + 12));
+  entry[1] = RISCV_RTYPE(SUB, X_T1, X_T1, X_T0);
+  entry[2] = RISCV_ITYPE(LREG(abfd), X_T3, X_T2, RISCV_PCREL_LOW_PART(gotplt_addr, addr));
+  entry[3] = RISCV_ITYPE(ADDI, X_T1, X_T1, -(PLT_HEADER_SIZE + 12));
   entry[4] = RISCV_ITYPE(ADDI, X_T0, X_T2, RISCV_PCREL_LOW_PART(gotplt_addr, addr));
-  entry[5] = RISCV_ITYPE(SRLI, X_T1, X_V0, regbytes == 4 ? 2 : 1);
+  entry[5] = RISCV_ITYPE(SRLI, X_T1, X_T1, regbytes == 4 ? 2 : 1);
   entry[6] = RISCV_ITYPE(LREG(abfd), X_T0, X_T0, regbytes);
-  entry[7] = RISCV_ITYPE(JALR, 0, X_V1, 0);
+  entry[7] = RISCV_ITYPE(JALR, 0, X_T3, 0);
 }
 
 /* The format of subsequent PLT entries.  */
@@ -910,14 +904,14 @@ static void
 riscv_make_plt_entry(bfd* abfd, bfd_vma got_address, bfd_vma addr,
 		     uint32_t *entry)
 {
-  /* auipc  v0, %hi(.got.plt entry)
-     l[w|d] v1, %lo(.got.plt entry)(v0)
-     jalr   v0, v1
+  /* auipc  t1, %hi(.got.plt entry)
+     l[w|d] t0, %lo(.got.plt entry)(t1)
+     jalr   t1, t0
      nop */
 
-  entry[0] = RISCV_UTYPE(AUIPC, X_V0, RISCV_PCREL_HIGH_PART(got_address, addr));
-  entry[1] = RISCV_ITYPE(LREG(abfd),  X_V1, X_V0, RISCV_PCREL_LOW_PART(got_address, addr));
-  entry[2] = RISCV_ITYPE(JALR, X_V0, X_V1, 0);
+  entry[0] = RISCV_UTYPE (AUIPC, X_T1, RISCV_PCREL_HIGH_PART (got_address, addr));
+  entry[1] = RISCV_ITYPE(LREG(abfd),  X_T0, X_T1, RISCV_PCREL_LOW_PART(got_address, addr));
+  entry[2] = RISCV_ITYPE(JALR, X_T1, X_T0, 0);
   entry[3] = RISCV_NOP;
 }
 
@@ -2612,7 +2606,7 @@ riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 	      /* We can use tp as the base register.  */
 	      bfd_vma insn = bfd_get_32 (input_bfd, contents + rel->r_offset);
 	      insn &= ~(OP_MASK_RS1 << OP_SH_RS1);
-	      insn |= TP_REG << OP_SH_RS1;
+	      insn |= X_TP << OP_SH_RS1;
 	      bfd_put_32 (input_bfd, insn, contents + rel->r_offset);
 	    }
 	  break;
@@ -2628,7 +2622,7 @@ riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 		bfd_vma insn = bfd_get_32 (input_bfd, contents + rel->r_offset);
 		insn &= ~(OP_MASK_RS1 << OP_SH_RS1);
 		if (gp != 0)
-		  insn |= GP_REG << OP_SH_RS1;
+		  insn |= X_GP << OP_SH_RS1;
 		bfd_put_32 (input_bfd, insn, contents + rel->r_offset);
 	      }
 	    break;

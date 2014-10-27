@@ -22,6 +22,7 @@ ENTRY(_dl_runtime_resolve)
   mv a0, t0       # link map
   add a1, a1, t1  # reloc offset (== thrice the .got.plt offset)
   jal _dl_fixup
+  move t0, a0
 
   # Restore arguments from stack.
   REG_L ra, 9*SZREG(sp)
@@ -36,5 +37,5 @@ ENTRY(_dl_runtime_resolve)
   addi sp, sp, 10*SZREG
 
   # Invoke the callee.
-  jr v0
+  jr t0
 END(_dl_runtime_resolve)

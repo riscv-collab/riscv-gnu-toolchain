@@ -37,62 +37,30 @@
 
 #define __ASSEMBLY__ 1
 #include <entry.h>
-#include <sgidefs.h>
+#include <sysdep.h>
 #include <sys/asm.h>
 
-#ifndef ENTRY_POINT
-#error ENTRY_POINT needs to be defined for start.S on MIPS/ELF.
-#endif
+/* The entry point's job is to call __libc_start_main.  Per the ABI,
+   a0 contains the address of a function to be passed to atexit.
+   __libc_start_main wants this in a5.  */
 
-/* This is the canonical entry point, usually the first thing in the text
-   segment.  The SVR4/Mips ABI (pages 3-31, 3-32) says that when the entry
-   point runs, most registers' values are unspecified, except for:
-
-   v0 ($2)	Contains a function pointer to be registered with `atexit'.
-		This is how the dynamic linker arranges to have DT_FINI
-		functions called for shared libraries that have been loaded
-		before this code runs.
-
-   sp ($29)	The stack contains the arguments and environment:
-		0(%esp)			argc
-		4(%esp)			argv[0]
-		...
-		(4*argc)(%esp)		NULL
-		(4*(argc+1))(%esp)	envp[0]
-		...
-					NULL
-   ra ($31)	The return address register is set to zero so that programs
-		that search backword through stack frames recognize the last
-		stack frame.
-*/
-
-
-/* We need to call:
-   __libc_start_main (int (*main) (int, char **, char **), int argc,
-		      char **argv, void (*init) (void), void (*fini) (void),
-		      void (*rtld_fini) (void), void *stack_end)
-*/
-	
-	.text
-	.globl ENTRY_POINT
-	.type ENTRY_POINT,@function
-ENTRY_POINT:
+ENTRY(ENTRY_POINT)
 	lla   gp, _gp
+	move  a5, a0  /* rtld_fini */
 	lla   a0, main
 	REG_L a1, 0(sp)      /* argc */
 	addi  a2, sp, SZREG  /* argv */
 	andi  sp, sp, ALMASK /* Align stack. */
 	lla   a3, __libc_csu_init
 	lla   a4, __libc_csu_fini
-	move  a5, v0  /* rtld_fini */
 	move  a6, sp  /* stack_end */
 	
 	jump  __libc_start_main@
+END(ENTRY_POINT)
 
 /* Define a symbol for the first piece of initialized data.  */
 	.data
 	.globl __data_start
 __data_start:
-	.long 0
 	.weak data_start
 	data_start = __data_start

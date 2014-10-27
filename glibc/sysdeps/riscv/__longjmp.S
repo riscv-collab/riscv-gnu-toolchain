@@ -52,16 +52,12 @@ ENTRY (__longjmp)
 	fld  fs9, 16*SZREG+ 9*8(a0)
 	fld  fs10,16*SZREG+10*8(a0)
 	fld  fs11,16*SZREG+11*8(a0)
-	fld  fs12,16*SZREG+12*8(a0)
-	fld  fs13,16*SZREG+13*8(a0)
-	fld  fs14,16*SZREG+14*8(a0)
-	fld  fs15,16*SZREG+15*8(a0)
 
 	fssr a3
 #endif
 
-	sltu a3, a1, 1    # a3 = (a1 == 0)
-	add  v0, a3, a1   # v0 = (a1 == 0 ? 1 : a1)
+	seqz a0, a1
+	add  a0, a0, a1   # a0 = (a1 == 0) ? 1 : a1
 	ret
 
 END(__longjmp)

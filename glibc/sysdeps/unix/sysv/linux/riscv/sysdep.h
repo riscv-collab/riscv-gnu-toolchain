@@ -73,13 +73,14 @@
 	long _sys_result;						\
 									\
 	{								\
-	register long __v0 asm("v0") = number;				\
+	register long __a7 asm("a7") = number;				\
+	register long __a0 asm("a0");					\
 	__asm__ volatile ( 						\
 	"scall\n\t" 							\
-	: "+r" (__v0)							\
-	: "r" (__v0)							\
+	: "=r" (__a0)							\
+	: "r" (__a7)							\
 	: __SYSCALL_CLOBBERS); 						\
-	_sys_result = __v0;						\
+	_sys_result = __a0;						\
 	}								\
 	_sys_result;							\
 })
@@ -89,14 +90,14 @@
 	long _sys_result;						\
 									\
 	{								\
-	register long __v0 asm("v0") = number;				\
-	register long __a0 asm("a0") = (long) (arg0); 			\
+	register long __a7 asm("a7") = number;				\
+	register long __a0 asm("a0") = (long) (arg0);			\
 	__asm__ volatile ( 						\
 	"scall\n\t" 							\
-	: "+r" (__v0)							\
-	: "r" (__v0), "r"(__a0)						\
+	: "+r" (__a0)							\
+	: "r" (__a7)							\
 	: __SYSCALL_CLOBBERS); 						\
-	_sys_result = __v0;						\
+	_sys_result = __a0;						\
 	}								\
 	_sys_result;							\
 })
@@ -106,15 +107,15 @@
 	long _sys_result;						\
 									\
 	{								\
-	register long __v0 asm("v0") = number;				\
-	register long __a0 asm("a0") = (long) (arg0); 			\
-	register long __a1 asm("a1") = (long) (arg1); 			\
+	register long __a7 asm("a7") = number;				\
+	register long __a0 asm("a0") = (long) (arg0);			\
+	register long __a1 asm("a1") = (long) (arg1);			\
 	__asm__ volatile ( 						\
 	"scall\n\t" 							\
-	: "+r" (__v0)							\
-	: "r" (__v0), "r"(__a0), "r"(__a1)				\
+	: "+r" (__a0)							\
+	: "r" (__a7), "r"(__a1)						\
 	: __SYSCALL_CLOBBERS); 						\
-	_sys_result = __v0;						\
+	_sys_result = __a0;						\
 	}								\
 	_sys_result;							\
 })
@@ -124,16 +125,16 @@
 	long _sys_result;						\
 									\
 	{								\
-	register long __v0 asm("v0") = number;				\
-	register long __a0 asm("a0") = (long) (arg0); 			\
-	register long __a1 asm("a1") = (long) (arg1); 			\
-	register long __a2 asm("a2") = (long) (arg2); 			\
+	register long __a7 asm("a7") = number;				\
+	register long __a0 asm("a0") = (long) (arg0);			\
+	register long __a1 asm("a1") = (long) (arg1);			\
+	register long __a2 asm("a2") = (long) (arg2);			\
 	__asm__ volatile ( 						\
 	"scall\n\t" 							\
-	: "+r" (__v0)							\
-	: "r" (__v0), "r"(__a0), "r"(__a1), "r"(__a2)			\
+	: "+r" (__a0)							\
+	: "r" (__a7), "r"(__a1), "r"(__a2)				\
 	: __SYSCALL_CLOBBERS); 						\
-	_sys_result = __v0;						\
+	_sys_result = __a0;						\
 	}								\
 	_sys_result;							\
 })
@@ -143,17 +144,17 @@
 	long _sys_result;						\
 									\
 	{								\
-	register long __v0 asm("v0") = number;				\
-	register long __a0 asm("a0") = (long) (arg0); 			\
-	register long __a1 asm("a1") = (long) (arg1); 			\
-	register long __a2 asm("a2") = (long) (arg2); 			\
-	register long __a3 asm("a3") = (long) (arg3);   		\
+	register long __a7 asm("a7") = number;				\
+	register long __a0 asm("a0") = (long) (arg0);			\
+	register long __a1 asm("a1") = (long) (arg1);			\
+	register long __a2 asm("a2") = (long) (arg2);			\
+	register long __a3 asm("a3") = (long) (arg3);			\
 	__asm__ volatile ( 						\
 	"scall\n\t" 							\
-	: "+r" (__v0)							\
-	: "r" (__v0), "r"(__a0), "r"(__a1), "r"(__a2), "r"(__a3)	\
+	: "+r" (__a0)							\
+	: "r" (__a7), "r"(__a1), "r"(__a2), "r"(__a3)			\
 	: __SYSCALL_CLOBBERS); 						\
-	_sys_result = __v0;						\
+	_sys_result = __a0;						\
 	}								\
 	_sys_result;							\
 })
@@ -163,18 +164,18 @@
 	long _sys_result;						\
 									\
 	{								\
-	register long __v0 asm("v0") = number;				\
-	register long __a0 asm("a0") = (long) (arg0); 			\
-	register long __a1 asm("a1") = (long) (arg1); 			\
-	register long __a2 asm("a2") = (long) (arg2); 			\
-	register long __a3 asm("a3") = (long) (arg3);   		\
-	register long __a4 asm("a4") = (long) (arg4);   		\
+	register long __a7 asm("a7") = number;				\
+	register long __a0 asm("a0") = (long) (arg0);			\
+	register long __a1 asm("a1") = (long) (arg1);			\
+	register long __a2 asm("a2") = (long) (arg2);			\
+	register long __a3 asm("a3") = (long) (arg3);			\
+	register long __a4 asm("a4") = (long) (arg4);			\
 	__asm__ volatile ( 						\
 	"scall\n\t" 							\
-	: "+r" (__v0)							\
-	: "r" (__v0), "r"(__a0), "r"(__a1), "r"(__a2), "r"(__a3), "r"(__a4)     \
+	: "+r" (__a0)							\
+	: "r" (__a7), "r"(__a1), "r"(__a2), "r"(__a3), "r"(__a4)	\
 	: __SYSCALL_CLOBBERS); 						\
-	_sys_result = __v0;						\
+	_sys_result = __a0;						\
 	}								\
 	_sys_result;							\
 })
@@ -184,19 +185,19 @@
 	long _sys_result;						\
 									\
 	{								\
-	register long __v0 asm("v0") = number;				\
-	register long __a0 asm("a0") = (long) (arg0); 			\
-	register long __a1 asm("a1") = (long) (arg1); 			\
-	register long __a2 asm("a2") = (long) (arg2); 			\
-	register long __a3 asm("a3") = (long) (arg3);   		\
-	register long __a4 asm("a4") = (long) (arg4);   		\
-	register long __a5 asm("a5") = (long) (arg5);   		\
+	register long __a7 asm("a7") = number;				\
+	register long __a0 asm("a0") = (long) (arg0);			\
+	register long __a1 asm("a1") = (long) (arg1);			\
+	register long __a2 asm("a2") = (long) (arg2);			\
+	register long __a3 asm("a3") = (long) (arg3);			\
+	register long __a4 asm("a4") = (long) (arg4);			\
+	register long __a5 asm("a5") = (long) (arg5);			\
 	__asm__ volatile ( 						\
 	"scall\n\t" 							\
-	: "+r" (__v0)							\
-	: "r" (__v0), "r"(__a0), "r"(__a1), "r"(__a2), "r"(__a3), "r"(__a4), "r"(__a5)     \
+	: "+r" (__a0)							\
+	: "r" (__a7), "r"(__a1), "r"(__a2), "r"(__a3), "r"(__a4), "r"(__a5)	\
 	: __SYSCALL_CLOBBERS); 						\
-	_sys_result = __v0;						\
+	_sys_result = __a0;						\
 	}								\
 	_sys_result;							\
 })
@@ -206,25 +207,25 @@
 	long _sys_result;						\
 									\
 	{								\
-	register long __v0 asm("v0") = number;				\
-	register long __a0 asm("a0") = (long) (arg0); 			\
-	register long __a1 asm("a1") = (long) (arg1); 			\
-	register long __a2 asm("a2") = (long) (arg2); 			\
-	register long __a3 asm("a3") = (long) (arg3);   		\
-	register long __a4 asm("a4") = (long) (arg4);   		\
-	register long __a5 asm("a5") = (long) (arg5);   		\
-	register long __a6 asm("a6") = (long) (arg6);   		\
+	register long __a7 asm("a7") = number;				\
+	register long __a0 asm("a0") = (long) (arg0);			\
+	register long __a1 asm("a1") = (long) (arg1);			\
+	register long __a2 asm("a2") = (long) (arg2);			\
+	register long __a3 asm("a3") = (long) (arg3);			\
+	register long __a4 asm("a4") = (long) (arg4);			\
+	register long __a5 asm("a5") = (long) (arg5);			\
+	register long __a6 asm("a6") = (long) (arg6);			\
 	__asm__ volatile ( 						\
 	"scall\n\t" 							\
-	: "+r" (__v0)							\
-	: "r" (__v0), "r"(__a0), "r"(__a1), "r"(__a2), "r"(__a3), "r"(__a4), "r"(__a5), "r"(__a6)     \
+	: "+r" (__a0)							\
+	: "r" (__a7), "r"(__a1), "r"(__a2), "r"(__a3), "r"(__a4), "r"(__a5), "r"(__a6)	\
 	: __SYSCALL_CLOBBERS); 						\
-	_sys_result = __v0;						\
+	_sys_result = __a0;						\
 	}								\
 	_sys_result;							\
 })
 
-#define __SYSCALL_CLOBBERS "v1", "memory"
+#define __SYSCALL_CLOBBERS "memory"
 #endif /* ! __ASSEMBLER__ */
 
 /* Pointer mangling is not supported.  */

@@ -9,11 +9,10 @@
 .text
 .globl strcmp
 strcmp:
-  or    v1, a0, a1
+  or    a4, a0, a1
   li    t2, -1
-  and   v1, v1, SZREG-1
-  li    v0, 0
-  bnez  v1, .Lmisaligned
+  and   a4, a4, SZREG-1
+  bnez  a4, .Lmisaligned
 
 #if SZREG == 4
   li t3, 0x7f7f7f7f
@@ -50,16 +49,16 @@ strcmp:
         .Lnull0:
       .endif
       bne   a2, a3, .Lmisaligned
+      li    a0, 0
       ret
     .endif
   .endm
 
 .Lloop:
   # examine full words
-  check_one_word 0 4
-  check_one_word 1 4
-  check_one_word 2 4
-  check_one_word 3 4
+  check_one_word 0 3
+  check_one_word 1 3
+  check_one_word 2 3
   # backwards branch to .Lloop contained above
 
 .Lmismatch:
@@ -78,42 +77,41 @@ strcmp:
 
   srl   a0, a2, 8*SZREG-16
   srl   a1, a3, 8*SZREG-16
-  sub   v0, a0, a1
-  and   v1, v0, 0xff
-  bnez  v1, 1f
+  sub   a0, a0, a1
+  and   a4, a0, 0xff
+  bnez  a4, 1f
   ret
 
 .Lmismatch_upper:
   srl   a0, a0, 8*SZREG-16
   srl   a1, a1, 8*SZREG-16
-  sub   v0, a0, a1
-  and   v1, v0, 0xff
-  bnez  v1, 1f
+  sub   a2, a0, a1
+  and   a3, a2, 0xff
+  bnez  a3, 1f
   ret
 
 1:and   a0, a0, 0xff
   and   a1, a1, 0xff
-  sub   v0, a0, a1
+  sub   a0, a0, a1
   ret
 
 .Lmisaligned:
   # misaligned
-  lbu   v0, 0(a0)
-  lbu   v1, 0(a1)
+  lbu   a2, 0(a0)
+  lbu   a3, 0(a1)
   add   a0, a0, 1
   add   a1, a1, 1
-  bne   v0, v1, 1f
-  bnez  v0, .Lmisaligned
+  bne   a2, a3, 1f
+  bnez  a2, .Lmisaligned
 
 1:
-  sub   v0, v0, v1
+  sub   a0, a2, a3
   ret
 
   # cases in which a null byte was detected
-  foundnull 0, 4
-  foundnull 1, 4
-  foundnull 2, 4
-  foundnull 3, 4
+  foundnull 0, 3
+  foundnull 1, 3
+  foundnull 2, 3
 
 #if SZREG == 8
 .section .srodata.cst8,"aM",@progbits,8

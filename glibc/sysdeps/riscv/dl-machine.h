@@ -120,17 +120,17 @@ elf_machine_load_address (void)
 	move a0, sp\n\
 	jal _dl_start\n\
 	# Stash user entry point in s0.\n\
-	move s0, v0\n\
+	move s0, a0\n\
 	# See if we were run as a command with the executable file\n\
 	# name as an extra leading argument.\n\
-	lw v0, _dl_skip_args\n\
+	lw a0, _dl_skip_args\n\
 	# Load the original argument count.\n\
 	" STRINGXP(REG_L) " a1, 0(sp)\n\
 	# Subtract _dl_skip_args from it.\n\
-	sub a1, a1, v0\n\
+	sub a1, a1, a0\n\
 	# Adjust the stack pointer to skip _dl_skip_args words.\n\
-	sll v0, v0, " STRINGXP (PTRLOG) "\n\
-	add sp, sp, v0\n\
+	sll a0, a0, " STRINGXP (PTRLOG) "\n\
+	add sp, sp, a0\n\
 	# Save back the modified argument count.\n\
 	" STRINGXP(REG_S) " a1, 0(sp)\n\
 	# Call _dl_init (struct link_map *main_map, int argc, char **argv, char **env) \n\
@@ -141,8 +141,8 @@ elf_machine_load_address (void)
 	add a3, a3, " STRINGXP (SZREG) "\n\
 	# Call the function to run the initializers.\n\
 	jal _dl_init_internal\n\
-	# Pass our finalizer function to the user in v0 as per ELF ABI.\n\
-	lla v0, _dl_fini\n\
+	# Pass our finalizer function to _start.\n\
+	lla a0, _dl_fini\n\
 	# Jump to the user entry point.\n\
 	jr s0\n\
 	" _RTLD_EPILOGUE(ENTRY_POINT) "\

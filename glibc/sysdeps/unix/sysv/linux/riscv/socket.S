@@ -70,13 +70,13 @@ LEAF (__socket)
 	SINGLE_THREAD_P(a0)
 	bnez  a0, 1f
 #endif
-	li    a0, P(SOCKOP_,socket)   /* arg 1: socket subfunction */
+	li    a0, P(SOCKOP_,socket)	/* arg 1: socket subfunction */
 	move  a1, sp			/* arg 2: parameter block */
-	li    v0, SYS_ify (rt_sigprocmask)
+	li    a7, SYS_ify (rt_sigprocmask)
 	scall
 
 	addi  sp, sp, SZREG*NARGS
-	bltz	v0, 99f
+	bltz  a0, 99f
 
 #if defined NEED_CANCELLATION && defined CENABLE
 1:sbreak
