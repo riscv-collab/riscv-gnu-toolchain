@@ -3481,7 +3481,7 @@ riscv_expand_epilogue (bool sibcall_p)
   const struct riscv_frame_info *frame;
   HOST_WIDE_INT step1, step2;
 
-  if (!sibcall_p && mips_can_use_return_insn ())
+  if (!sibcall_p && riscv_can_use_return_insn ())
     {
       emit_jump_insn (gen_return ());
       return;
@@ -3546,7 +3546,10 @@ riscv_expand_epilogue (bool sibcall_p)
 			      EH_RETURN_STACKADJ_RTX));
 
   if (!sibcall_p)
-    emit_jump_insn (gen_return_internal (gen_rtx_REG (Pmode, RETURN_ADDR_REGNUM)));
+    {
+      rtx ra = gen_rtx_REG (Pmode, RETURN_ADDR_REGNUM);
+      emit_jump_insn (gen_simple_return_internal (ra));
+    }
 }
 
 /* Return nonzero if this function is known to have a null epilogue.
@@ -3554,7 +3557,7 @@ riscv_expand_epilogue (bool sibcall_p)
    was created.  */
 
 bool
-mips_can_use_return_insn (void)
+riscv_can_use_return_insn (void)
 {
   return reload_completed && cfun->machine->frame.total_size == 0;
 }

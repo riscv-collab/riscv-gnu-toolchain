@@ -2185,17 +2185,22 @@
 ;; Trivial return.  Make it look like a normal return insn as that
 ;; allows jump optimizations to work better.
 
-(define_insn "return"
-  [(return)]
-  "mips_can_use_return_insn ()"
+(define_expand "return"
+  [(simple_return)]
+  "riscv_can_use_return_insn ()"
+  "")
+
+(define_insn "simple_return"
+  [(simple_return)]
+  ""
   "ret"
   [(set_attr "type"	"jump")
    (set_attr "mode"	"none")])
 
 ;; Normal return.
 
-(define_insn "return_internal"
-  [(return)
+(define_insn "simple_return_internal"
+  [(simple_return)
    (use (match_operand 0 "pmode_register_operand" ""))]
   ""
   "jr\t%0"

@@ -70,7 +70,7 @@ extern rtx riscv_return_addr (int, rtx);
 extern HOST_WIDE_INT riscv_initial_elimination_offset (int, int);
 extern void riscv_expand_prologue (void);
 extern void riscv_expand_epilogue (bool);
-extern bool mips_can_use_return_insn (void);
+extern bool riscv_can_use_return_insn (void);
 extern rtx riscv_function_value (const_tree, const_tree, enum machine_mode);
 
 extern enum reg_class riscv_secondary_reload_class (enum reg_class,
