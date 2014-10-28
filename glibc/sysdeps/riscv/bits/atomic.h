@@ -1,5 +1,8 @@
-/* Low-level functions for atomic operations. Mips version.
-   Copyright (C) 2005 Free Software Foundation, Inc.
+/* Low-level functions for atomic operations. RISC-V version.
+   Copyright (C) 2011-2014 Free Software Foundation, Inc.
+
+   Contributed by Andrew Waterman (waterman@cs.berkeley.edu) at UC Berkeley.
+
    This file is part of the GNU C Library.
 
    The GNU C Library is free software; you can redistribute it and/or
@@ -17,11 +20,10 @@
    Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
    02111-1307 USA.  */
 
-#ifndef _MIPS_BITS_ATOMIC_H
-#define _MIPS_BITS_ATOMIC_H 1
+#ifndef _RISCV_BITS_ATOMIC_H
+#define _RISCV_BITS_ATOMIC_H 1
 
 #include <inttypes.h>
-#include <sgidefs.h>
 
 typedef int32_t atomic32_t;
 typedef uint32_t uatomic32_t;

@@ -16,7 +16,5 @@
    Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
    02111-1307 USA.  */
 
-#define __WORDSIZE	_RISCV_SZPTR
-#if _RISCV_SIM == _ABI64
-# define __WORDSIZE_COMPAT32	1
-#endif
+#define __WORDSIZE 64
+#define __WORDSIZE_TIME64_COMPAT32 1

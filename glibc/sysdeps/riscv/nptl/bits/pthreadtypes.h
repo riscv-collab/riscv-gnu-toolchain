@@ -22,7 +22,7 @@
 
 #include <endian.h>
 
-#if _RISCV_SIM == _ABI64
+#ifdef __riscv64
 # define __SIZEOF_PTHREAD_ATTR_T 56
 # define __SIZEOF_PTHREAD_MUTEX_T 40
 # define __SIZEOF_PTHREAD_MUTEXATTR_T 4
@@ -60,7 +60,7 @@ typedef union pthread_attr_t pthread_attr_t;
 # define __have_pthread_attr_t  1
 #endif
 
-#if _RISCV_SIM == _ABI64
+#ifdef __riscv64
 typedef struct __pthread_internal_list
 {
   struct __pthread_internal_list *__prev;
@@ -83,13 +83,13 @@ typedef union
     int __lock;
     unsigned int __count;
     int __owner;
-#if _RISCV_SIM == _ABI64
+#ifdef __riscv64
     unsigned int __nusers;
 #endif
     /* KIND must stay at this position in the structure to maintain
        binary compatibility.  */
     int __kind;
-#if _RISCV_SIM == _ABI64
+#ifdef __riscv64
     int __spins;
     __pthread_list_t __list;
 # define __PTHREAD_MUTEX_HAVE_PREV	1
@@ -155,7 +155,7 @@ typedef int pthread_once_t;
    structure of the attribute type is deliberately not exposed.  */
 typedef union
 {
-# if _RISCV_SIM == _ABI64
+# ifdef __riscv64
   struct
   {
     int __lock;

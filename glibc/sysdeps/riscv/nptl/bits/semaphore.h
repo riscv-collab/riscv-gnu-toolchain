@@ -20,7 +20,7 @@
 # error "Never use <bits/semaphore.h> directly; include <semaphore.h> instead."
 #endif
 
-#if _RISCV_SIM == _ABI64
+#ifdef __riscv64
 # define __SIZEOF_SEM_T	32
 #else
 # define __SIZEOF_SEM_T	16

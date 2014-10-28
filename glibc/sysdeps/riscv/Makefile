@@ -39,7 +39,7 @@ CFLAGS-exit.c += -mno-plt
 CFLAGS-cxa_atexit.c += -mno-plt
 
 ifeq ($(subdir),misc)
-sysdep_headers += sys/asm.h sgidefs.h
+sysdep_headers += sys/asm.h
 endif
 
 ifeq ($(subdir),rt)

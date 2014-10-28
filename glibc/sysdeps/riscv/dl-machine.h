@@ -189,17 +189,17 @@ elf_machine_rela (struct link_map *map, const ElfW(Rela) *reloc,
   switch (r_type)
     {
 #ifndef RTLD_BOOTSTRAP
-    case _RISCV_SIM == _ABI64 ? R_RISCV_TLS_DTPMOD64 : R_RISCV_TLS_DTPMOD32:
+    case __WORDSIZE == 64 ? R_RISCV_TLS_DTPMOD64 : R_RISCV_TLS_DTPMOD32:
       if (sym_map)
 	*addr_field = sym_map->l_tls_modid;
       break;
 
-    case _RISCV_SIM == _ABI64 ? R_RISCV_TLS_DTPREL64 : R_RISCV_TLS_DTPREL32:
+    case __WORDSIZE == 64 ? R_RISCV_TLS_DTPREL64 : R_RISCV_TLS_DTPREL32:
       if (sym != NULL)
 	*addr_field = TLS_DTPREL_VALUE (sym) + reloc->r_addend;
       break;
 
-    case _RISCV_SIM == _ABI64 ? R_RISCV_TLS_TPREL64 : R_RISCV_TLS_TPREL32:
+    case __WORDSIZE == 64 ? R_RISCV_TLS_TPREL64 : R_RISCV_TLS_TPREL32:
       if (sym != NULL)
 	{
 	  CHECK_STATIC_TLS (map, sym_map);
@@ -262,7 +262,7 @@ elf_machine_rela (struct link_map *map, const ElfW(Rela) *reloc,
 #endif
 
     case R_RISCV_JUMP_SLOT:
-    case _RISCV_SIM == _ABI64 ? R_RISCV_64 : R_RISCV_32:
+    case __WORDSIZE == 64 ? R_RISCV_64 : R_RISCV_32:
       *addr_field = value + reloc->r_addend;
       break;
 

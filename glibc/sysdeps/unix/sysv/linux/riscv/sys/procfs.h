@@ -25,25 +25,19 @@
    used on Linux.  */
 
 #include <features.h>
-#include <sgidefs.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/user.h>
-#include <sgidefs.h>
+#include <sys/ucontext.h>
 
 /* ELF register definitions */
-#define ELF_NGREG	45
-#define ELF_NFPREG	33
+#define ELF_NGREG	NGREG
+#define ELF_NFPREG	NFPREG
 
-#if _RISCV_SIM == _ABIN32
-__extension__ typedef unsigned long long elf_greg_t;
-#else
-typedef unsigned long elf_greg_t;
-#endif
-typedef elf_greg_t elf_gregset_t[ELF_NGREG];
-
-typedef double elf_fpreg_t;
-typedef elf_fpreg_t elf_fpregset_t[ELF_NFPREG];
+typedef greg_t elf_greg_t;
+typedef gregset_t elf_gregset_t;
+typedef fpreg_t elf_fpreg_t;
+typedef fpregset_t elf_fpregset_t;
 
 __BEGIN_DECLS
 
@@ -66,13 +60,8 @@ struct elf_prstatus
   {
     struct elf_siginfo pr_info;		/* Info associated with signal.  */
     short int pr_cursig;		/* Current signal.  */
-#if _RISCV_SIM == _ABIN32
-    __extension__ unsigned long long int pr_sigpend;
-    __extension__ unsigned long long int pr_sighold;
-#else
     unsigned long int pr_sigpend;	/* Set of pending signals.  */
     unsigned long int pr_sighold;	/* Set of held signals.  */
-#endif
     __pid_t pr_pid;
     __pid_t pr_ppid;
     __pid_t pr_pgrp;
@@ -94,11 +83,7 @@ struct elf_prpsinfo
     char pr_sname;			/* Char for pr_state.  */
     char pr_zomb;			/* Zombie.  */
     char pr_nice;			/* Nice val.  */
-#if _RISCV_SIM == _ABIN32
-    __extension__ unsigned long long int pr_flag;
-#else
     unsigned long int pr_flag;		/* Flags.  */
-#endif
     long pr_uid;
     long pr_gid;
     int pr_pid, pr_ppid, pr_pgrp, pr_sid;

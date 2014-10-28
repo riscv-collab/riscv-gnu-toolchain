@@ -19,15 +19,8 @@
    Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
    02111-1307 USA.  */
 
-#include <sgidefs.h>
-
-#if _RISCV_SIM == _ABI32
-#define pltenter la_mips_n32_gnu_pltenter
-#define pltexit la_mips_n32_gnu_pltexit
-#else
-#define pltenter la_mips_n64_gnu_pltenter
-#define pltexit la_mips_n64_gnu_pltexit
-#endif
-#define La_regs La_mips_64_regs
-#define La_retval La_mips_64_retval
-#define int_retval lrv_v0
+#define pltenter la_riscv_gnu_pltenter
+#define pltexit la_riscv_gnu_pltexit
+#define La_regs La_riscv_regs
+#define La_retval La_riscv_retval
+#define int_retval lrv_a0

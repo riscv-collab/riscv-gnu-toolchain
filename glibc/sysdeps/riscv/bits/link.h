@@ -20,57 +20,37 @@
 # error "Never include <bits/link.h> directly; use <link.h> instead."
 #endif
 
-typedef struct La_mips_64_regs
+typedef struct La_riscv_regs
 {
-  unsigned long lr_reg[8]; /* $a0 through $a7 */
-  double lr_fpreg[8]; /* $f4 throgh $f11 */
+  unsigned long lr_reg[8]; /* a0 - a7 */
+  double lr_fpreg[8]; /* fa0 - fa7 */
   unsigned long lr_ra;
   unsigned long lr_sp;
-} La_mips_64_regs;
+} La_riscv_regs;
 
 /* Return values for calls from PLT on MIPS.  */
-typedef struct La_mips_64_retval
+typedef struct La_riscv_retval
 {
-  unsigned long lrv_v0;
-  unsigned long lrv_v1;
-  double lrv_fv0;
-  double lrv_fv1;
-} La_mips_64_retval;
+  unsigned long lrv_a0;
+  unsigned long lrv_a1;
+  double lrv_fa0;
+  double lrv_fa1;
+} La_riscv_retval;
 
 __BEGIN_DECLS
 
-#if _RISCV_SIM == _ABI32
-
-extern Elf32_Addr la_mips_n32_gnu_pltenter (Elf32_Sym *__sym, unsigned int __ndx,
-					    uintptr_t *__refcook,
-					    uintptr_t *__defcook,
-					    La_mips_64_regs *__regs,
-					    unsigned int *__flags,
-					    const char *__symname,
-					    long int *__framesizep);
-extern unsigned int la_mips_n32_gnu_pltexit (Elf32_Sym *__sym, unsigned int __ndx,
-					     uintptr_t *__refcook,
-					     uintptr_t *__defcook,
-					     const La_mips_64_regs *__inregs,
-					     La_mips_64_retval *__outregs,
-					     const char *__symname);
-
-#else
-
-extern Elf64_Addr la_mips_n64_gnu_pltenter (Elf64_Sym *__sym, unsigned int __ndx,
-					    uintptr_t *__refcook,
-					    uintptr_t *__defcook,
-					    La_mips_64_regs *__regs,
-					    unsigned int *__flags,
-					    const char *__symname,
-					    long int *__framesizep);
-extern unsigned int la_mips_n64_gnu_pltexit (Elf64_Sym *__sym, unsigned int __ndx,
-					     uintptr_t *__refcook,
-					     uintptr_t *__defcook,
-					     const La_mips_64_regs *__inregs,
-					     La_mips_64_retval *__outregs,
-					     const char *__symname);
-
-#endif
+extern ElfW(Addr) la_riscv_gnu_pltenter (ElfW(Sym) *__sym, unsigned int __ndx,
+					 uintptr_t *__refcook,
+					 uintptr_t *__defcook,
+					 La_riscv_regs *__regs,
+					 unsigned int *__flags,
+					 const char *__symname,
+					 long int *__framesizep);
+extern unsigned int la_riscv_gnu_pltexit (ElfW(Sym) *__sym, unsigned int __ndx,
+					  uintptr_t *__refcook,
+					  uintptr_t *__defcook,
+					  const La_riscv_regs *__inregs,
+					  La_riscv_retval *__outregs,
+					  const char *__symname);
 
 __END_DECLS

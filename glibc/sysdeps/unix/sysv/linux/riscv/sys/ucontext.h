@@ -31,6 +31,7 @@
 /* Type for general register.  Even in o32 we assume 64-bit registers,
    like the kernel.  */
 __extension__ typedef unsigned long long int greg_t;
+typedef double fpreg_t;
 
 /* Number of general registers.  */
 #define NGREG	32
@@ -48,7 +49,7 @@ __extension__ typedef unsigned long long int greg_t;
 typedef greg_t gregset_t[NGREG];
 
 /* Container for all FPU registers.  */
-typedef double fpregset_t[NFPREG];
+typedef fpreg_t fpregset_t[NFPREG];
 
 /* Context to describe whole processor state.  */
 typedef struct sigcontext mcontext_t;
