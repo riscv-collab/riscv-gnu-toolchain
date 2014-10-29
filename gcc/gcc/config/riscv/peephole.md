@@ -10,7 +10,8 @@
 	   (match_operand:DI 2 "arith_operand")]))
    (set (match_operand:SI 3 "register_operand")
         (truncate:SI (match_dup 0)))]
-  "TARGET_64BIT && (REGNO (operands[0]) == REGNO (operands[3]) || peep2_reg_dead_p (2, operands[0]))"
+  "TARGET_64BIT && (REGNO (operands[0]) == REGNO (operands[3]) || peep2_reg_dead_p (2, operands[0]))
+   && (GET_CODE (operands[4]) != ASHIFT || (CONST_INT_P (operands[2]) && INTVAL (operands[2]) < 32))"
   [(set (match_dup 3)
           (truncate:SI
 	     (match_op_dup:DI 4 

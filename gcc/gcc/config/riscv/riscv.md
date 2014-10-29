@@ -1860,8 +1860,8 @@
   [(set (match_operand:SI 0 "register_operand" "=r")
           (truncate:SI
 	     (ashift:DI (match_operand:DI 1 "register_operand" "r")
-		      (match_operand:DI 2 "arith_operand" "rI"))))]
-  "TARGET_64BIT && (GET_CODE (operands[2]) == CONST_INT ? INTVAL (operands[2]) < 32 : 1)"
+		      (match_operand:DI 2 "const_arith_operand" "I"))))]
+  "TARGET_64BIT && INTVAL (operands[2]) < 32"
   "sllw\t%0,%1,%2"
   [(set_attr "type" "shift")
    (set_attr "mode" "SI")])
