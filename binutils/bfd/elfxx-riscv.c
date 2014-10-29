@@ -2615,14 +2615,17 @@ riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 	case R_RISCV_LO12_S:
 	  {
 	    bfd_vma gp = riscv_global_pointer_value (info);
-	    if (VALID_ITYPE_IMM (relocation + rel->r_addend - gp))
+	    bfd_boolean x0_base = VALID_ITYPE_IMM (relocation + rel->r_addend);
+	    if (x0_base || VALID_ITYPE_IMM (relocation + rel->r_addend - gp))
 	      {
-		/* We can use gp or x0 as the base register.  */
-		rel->r_addend -= gp;
+		/* We can use x0 or gp as the base register.  */
 		bfd_vma insn = bfd_get_32 (input_bfd, contents + rel->r_offset);
 		insn &= ~(OP_MASK_RS1 << OP_SH_RS1);
-		if (gp != 0)
-		  insn |= X_GP << OP_SH_RS1;
+		if (!x0_base)
+		  {
+		    rel->r_addend -= gp;
+		    insn |= X_GP << OP_SH_RS1;
+		  }
 		bfd_put_32 (input_bfd, insn, contents + rel->r_offset);
 	      }
 	    break;
@@ -3487,8 +3490,8 @@ _bfd_riscv_relax_lui (bfd *abfd, asection *sec,
 {
   bfd_vma gp = riscv_global_pointer_value (link_info);
 
-  /* See if this symbol is in range of gp.  */
-  if (RISCV_CONST_HIGH_PART (symval - gp) != 0)
+  /* Bail out if this symbol isn't in range of either gp or x0.  */
+  if (!VALID_ITYPE_IMM (symval - gp) && !(symval < RISCV_IMM_REACH/2))
     return TRUE;
 
   /* We can delete the unnecessary AUIPC. The corresponding LO12 reloc
@@ -3613,6 +3616,8 @@ _bfd_riscv_relax_section (bfd *abfd, asection *sec,
 	      asection *isec;
 	      BFD_ASSERT (isym->st_shndx < elf_numsections (abfd));
 	      isec = elf_elfsections (abfd)[isym->st_shndx]->bfd_section;
+	      if (sec_addr (isec) == 0)
+		continue;
 	      symval = sec_addr (isec) + isym->st_value;
 	    }
 	}
@@ -3630,6 +3635,8 @@ _bfd_riscv_relax_section (bfd *abfd, asection *sec,
 
 	  if (h->plt.offset != MINUS_ONE)
 	    symval = sec_addr (htab->elf.splt) + h->plt.offset;
+	  else if (h->root.type == bfd_link_hash_undefweak)
+	    symval = 0;
 	  else if (h->root.u.def.section->output_section == NULL
 		   || (h->root.type != bfd_link_hash_defined
 		       && h->root.type != bfd_link_hash_defweak))
