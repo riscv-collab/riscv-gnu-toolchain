@@ -2091,17 +2091,47 @@ mips_emit_compare (enum rtx_code *code, rtx *op0, rtx *op1)
 
   if (GET_MODE_CLASS (GET_MODE (*op0)) == MODE_INT)
     {
-      if (*op1 == const0_rtx)
-	;
-      else if ((*code == EQ || *code == NE) && CONST_INT_P (cmp_op1)
-	       && SMALL_OPERAND (-INTVAL (cmp_op1)))
+      if (splittable_const_int_operand (cmp_op1, VOIDmode))
 	{
-	  *op0 = gen_reg_rtx (GET_MODE (cmp_op0));
-	  mips_emit_binary (PLUS, *op0, cmp_op0, GEN_INT (-INTVAL (cmp_op1)));
-	  *op1 = const0_rtx;
+	  HOST_WIDE_INT rhs = INTVAL (cmp_op1), new_rhs;
+	  enum rtx_code new_code;
+
+	  switch (*code)
+	    {
+	    case LTU: new_rhs = rhs - 1; new_code = LEU; goto try_new_rhs;
+	    case LEU: new_rhs = rhs + 1; new_code = LTU; goto try_new_rhs;
+	    case GTU: new_rhs = rhs + 1; new_code = GEU; goto try_new_rhs;
+	    case GEU: new_rhs = rhs - 1; new_code = GTU; goto try_new_rhs;
+	    case LT: new_rhs = rhs - 1; new_code = LE; goto try_new_rhs;
+	    case LE: new_rhs = rhs + 1; new_code = LT; goto try_new_rhs;
+	    case GT: new_rhs = rhs + 1; new_code = GE; goto try_new_rhs;
+	    case GE: new_rhs = rhs - 1; new_code = GT;
+	    try_new_rhs:
+	      /* Convert e.g. OP0 > 4095 into OP0 >= 4096.  */
+	      if ((rhs < 0) == (new_rhs < 0)
+		  && riscv_integer_cost (new_rhs) < riscv_integer_cost (rhs))
+		{
+		  *op1 = GEN_INT (new_rhs);
+		  *code = new_code;
+		}
+	      break;
+
+	    case EQ:
+	    case NE:
+	      /* Convert e.g. OP0 == 2048 into OP0 - 2048 == 0.  */
+	      if (SMALL_OPERAND (-rhs))
+		{
+		  *op0 = gen_reg_rtx (GET_MODE (cmp_op0));
+		  mips_emit_binary (PLUS, *op0, cmp_op0, GEN_INT (-rhs));
+		  *op1 = const0_rtx;
+		}
+	    default:
+	      break;
+	    }
 	}
-      else if (*op1 != const0_rtx)
-	*op1 = force_reg (GET_MODE (cmp_op0), cmp_op1);
+
+      if (*op1 != const0_rtx)
+	*op1 = force_reg (GET_MODE (cmp_op0), *op1);
     }
   else
     {
