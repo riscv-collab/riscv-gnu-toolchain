@@ -1414,16 +1414,16 @@ mips_immediate_operand_p (int code, HOST_WIDE_INT x)
 }
 
 /* Return the cost of binary operation X, given that the instruction
-   sequence for a word-sized or smaller operation has cost SINGLE_COST
-   and that the sequence of a double-word operation has cost DOUBLE_COST.
-   If SPEED is true, optimize for speed otherwise optimize for size.  */
+   sequence for a word-sized or smaller operation takes SIGNLE_INSNS
+   instructions and that the sequence of a double-word operation takes
+   DOUBLE_INSNS instructions.  */
 
 static int
-mips_binary_cost (rtx x, int single_cost, int double_cost, bool speed)
+riscv_binary_cost (rtx x, int single_insns, int double_insns, bool speed)
 {
-  int cost = single_cost;
+  int cost = COSTS_N_INSNS (single_insns);
   if (GET_MODE_SIZE (GET_MODE (x)) == UNITS_PER_WORD * 2)
-    cost = double_cost;
+    cost = COSTS_N_INSNS (double_insns);
 
   return (cost
 	  + set_src_cost (XEXP (x, 0), speed)
@@ -1494,39 +1494,31 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
   int cost;
   rtx addr;
 
-  /* The cost of a COMPARE is hard to define for MIPS.  COMPAREs don't
-     appear in the instruction stream, and the cost of a comparison is
-     really the cost of the branch or scc condition.  At the time of
-     writing, GCC only uses an explicit outer COMPARE code when optabs
-     is testing whether a constant is expensive enough to force into a
-     register.  We want optabs to pass such constants through the MIPS
-     expanders instead, so make all constants very cheap here.  */
-  if (outer_code == COMPARE)
-    {
-      gcc_assert (CONSTANT_P (x));
-      *total = 0;
-      return true;
-    }
-
   switch (code)
     {
     case CONST_INT:
+      if (mips_immediate_operand_p (outer_code, INTVAL (x)))
+	{
+	  *total = 0;
+	  return true;
+	}
+      /* Fall through.  */
+
+    case SYMBOL_REF:
+    case LABEL_REF:
+    case CONST_DOUBLE:
+    case CONST:
       /* When not optimizing for size, we care more about the cost
          of hot code, and hot code is often in a loop.  If a constant
          operand needs to be forced into a register, we will often be
          able to hoist the constant load out of the loop, so the load
          should not contribute to the cost.  */
-      if (!optimize_size || mips_immediate_operand_p (outer_code, INTVAL (x)))
-        {
-          *total = 0;
-          return true;
-        }
-      /* Fall through.  */
+      if (speed)
+	{
+	  *total = 0;
+	  return true;
+	}
 
-    case CONST:
-    case SYMBOL_REF:
-    case LABEL_REF:
-    case CONST_DOUBLE:
       cost = riscv_const_insns (x);
       if (cost > 0)
 	{
@@ -1555,10 +1547,6 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
       /* Otherwise use the default handling.  */
       return false;
 
-    case FFS:
-      *total = COSTS_N_INSNS (6);
-      return false;
-
     case NOT:
       *total = COSTS_N_INSNS (GET_MODE_SIZE (mode) > UNITS_PER_WORD ? 2 : 1);
       return false;
@@ -1567,30 +1555,21 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
     case IOR:
     case XOR:
       /* Double-word operations use two single-word operations.  */
-      *total = mips_binary_cost (x, 1, 2, speed);
+      *total = riscv_binary_cost (x, 1, 2, speed);
       return true;
 
     case ASHIFT:
     case ASHIFTRT:
     case LSHIFTRT:
-    case ROTATE:
-    case ROTATERT:
-      if (CONSTANT_P (XEXP (x, 1)))
-	*total = mips_binary_cost (x, 1, 4, speed);
-      else
-	*total = mips_binary_cost (x, 1, 12, speed);
+      *total = riscv_binary_cost (x, 1, CONSTANT_P (XEXP (x,1)) ? 4 : 9, speed);
       return true;
 
     case ABS:
-      if (float_mode_p)
-        *total = mips_cost->fp_add;
-      else
-        *total = COSTS_N_INSNS (4);
+      *total = float_mode_p ? mips_cost->fp_add : COSTS_N_INSNS (3);
       return false;
 
     case LO_SUM:
-      *total = (COSTS_N_INSNS (1)
-		+ set_src_cost (XEXP (x, 0), speed));
+      *total = set_src_cost (XEXP (x, 0), speed);
       return true;
 
     case LT:
@@ -1613,7 +1592,7 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
 	  *total = mips_cost->fp_add;
 	  return false;
 	}
-      *total = mips_binary_cost (x, 1, 4, speed);
+      *total = riscv_binary_cost (x, 1, 3, speed);
       return true;
 
     case MINUS:
@@ -1657,7 +1636,7 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
 	}
 
       /* Double-word operations require three ADDs and an SLTU. */
-      *total = mips_binary_cost (x, 1, 4, speed);
+      *total = riscv_binary_cost (x, 1, 4, speed);
       return true;
 
     case NEG:
@@ -1700,22 +1679,6 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
       return false;
 
     case DIV:
-      /* Check for a reciprocal.  */
-      if (float_mode_p
-	  && flag_unsafe_math_optimizations
-	  && XEXP (x, 0) == CONST1_RTX (mode))
-	{
-	  if (outer_code == SQRT || GET_CODE (XEXP (x, 1)) == SQRT)
-	    /* An rsqrt<mode>a or rsqrt<mode>b pattern.  Count the
-	       division as being free.  */
-	    *total = set_src_cost (XEXP (x, 1), speed);
-	  else
-	    *total = (mips_fp_div_cost (mode)
-		      + set_src_cost (XEXP (x, 1), speed));
-	  return true;
-	}
-      /* Fall through.  */
-
     case SQRT:
     case MOD:
       if (float_mode_p)
