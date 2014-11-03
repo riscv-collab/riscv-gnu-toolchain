@@ -1199,16 +1199,20 @@
 ;; the register alternative needs a reload.
 (define_insn_and_split "extendsidi2"
   [(set (match_operand:DI 0 "register_operand" "=r,r")
-        (sign_extend:DI (match_operand:SI 1 "nonimmediate_operand" "0,m")))]
+        (sign_extend:DI (match_operand:SI 1 "nonimmediate_operand" "r,m")))]
   "TARGET_64BIT"
   "@
    #
    lw\t%0,%1"
   "&& reload_completed && register_operand (operands[1], VOIDmode)"
-  [(const_int 0)]
+  [(set (match_dup 0) (match_dup 1))]
 {
-  emit_note (NOTE_INSN_DELETED);
-  DONE;
+  if (REGNO (operands[0]) == REGNO (operands[1]))
+    {
+      emit_note (NOTE_INSN_DELETED);
+      DONE;
+    }
+  operands[1] = gen_rtx_REG (DImode, REGNO (operands[1]));
 }
   [(set_attr "move_type" "move,load")
    (set_attr "mode" "DI")])
