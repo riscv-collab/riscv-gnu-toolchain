@@ -1964,7 +1964,7 @@
   DONE;
 })
 
-(define_insn_and_split "*bbs<GPR:mode>"
+(define_insn_and_split "*branch_on_bit<GPR:mode>"
   [(set (pc)
 	(if_then_else
 	 (match_operator 0 "equality_operator"
@@ -1993,6 +1993,31 @@
     operands[0] = gen_rtx_GE (<MODE>mode, operands[4], const0_rtx);
   else
     operands[0] = gen_rtx_LT (<MODE>mode, operands[4], const0_rtx);
+})
+
+(define_insn_and_split "*branch_on_bit_range<GPR:mode>"
+  [(set (pc)
+	(if_then_else
+	 (match_operator 0 "equality_operator"
+	  [(zero_extract:GPR (match_operand:GPR 2 "register_operand" "r")
+		 (match_operand 3 "const_int_operand")
+		 (const_int 0))
+		 (const_int 0)])
+	 (label_ref (match_operand 1))
+	 (pc)))
+   (clobber (match_scratch:GPR 4 "=&r"))]
+  ""
+  "#"
+  "reload_completed"
+  [(set (match_dup 4)
+        (ashift:GPR (match_dup 2) (match_dup 3)))
+   (set (pc)
+	(if_then_else
+	 (match_op_dup 0 [(match_dup 4) (const_int 0)])
+	 (label_ref (match_operand 1))
+	 (pc)))]
+{
+  operands[3] = GEN_INT (GET_MODE_BITSIZE (<MODE>mode) - INTVAL (operands[3]));
 })
 
 ;;
