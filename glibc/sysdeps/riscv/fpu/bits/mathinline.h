@@ -42,14 +42,20 @@
 # define islessgreater(x, y) (!!(isless(x, y) + isgreater(x, y)))
 # define isunordered(x, y) (((x) == (x)) + ((y) == (y)) < 2)
 
-extern inline int __attribute_used__ __signbit (double __x)
+# ifndef __extern_inline
+#  define __MATH_INLINE __inline
+# else
+#  define __MATH_INLINE __extern_inline
+# endif  /* __cplusplus */
+
+__MATH_INLINE int __attribute_used__ __signbit (double __x)
 {
   union { double __d; long __i[sizeof(double)/sizeof(long)]; } __u;
   __u.__d = __x;
   return __u.__i[sizeof(double)/sizeof(long)-1] < 0;
 }
 
-extern inline int __attribute_used__ __signbitf (float __x)
+__MATH_INLINE int __attribute_used__ __signbitf (float __x)
 {
   union { float __d; int __i; } __u;
   __u.__d = __x;
