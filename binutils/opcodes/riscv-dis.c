@@ -318,14 +318,18 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
 
 	case 'E':
 	  {
-	    const char* csr_name = "unknown";
-	    switch ((l >> OP_SH_CSR) & OP_MASK_CSR)
+	    const char* csr_name = NULL;
+	    unsigned int csr = (l >> OP_SH_CSR) & OP_MASK_CSR;
+	    switch (csr)
 	      {
 		#define DECLARE_CSR(name, num) case num: csr_name = #name; break;
 		#include "opcode/riscv-opc.h"
 		#undef DECLARE_CSR
 	      }
-	    (*info->fprintf_func) (info->stream, "%s", csr_name);
+	    if (csr_name)
+	      (*info->fprintf_func) (info->stream, "%s", csr_name);
+	    else
+	      (*info->fprintf_func) (info->stream, "0x%x", csr);
 	    break;
 	  }
 

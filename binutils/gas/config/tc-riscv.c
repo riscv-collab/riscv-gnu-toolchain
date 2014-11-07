@@ -1447,11 +1447,20 @@ riscv_ip (char *str, struct riscv_cl_insn *ip)
 
 	    case 'E':		/* Control register.  */
 	      ok = reg_lookup (&s, RCLASS_CSR, &regno);
-	      INSERT_OPERAND (CSR, *ip, regno);
-	      if (ok) 
-		continue;
+	      if (ok)
+	        INSERT_OPERAND (CSR, *ip, regno);
 	      else
-		break;
+		{
+	          my_getExpression (&imm_expr, s);
+	          check_absolute_expr (ip, &imm_expr);
+		  if ((unsigned long) imm_expr.X_add_number > 0xfff)
+	            as_warn(_("Improper CSR address (%lu)"),
+	                    (unsigned long) imm_expr.X_add_number);
+	          INSERT_OPERAND (CSR, *ip, imm_expr.X_add_number);
+		  imm_expr.X_op = O_absent;
+		  s = expr_end;
+	        }
+	      continue;
 
             case 'm':		/* rounding mode */
               if (arg_lookup (&s, riscv_rm, ARRAY_SIZE(riscv_rm), &regno))
