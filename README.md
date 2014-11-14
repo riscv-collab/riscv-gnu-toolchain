@@ -20,6 +20,17 @@ Contributors
 - Matt Thomas
 - ultraembedded (github id)
 
+### Prerequisites
+
+Several standard packages are needed to build the toolchain.  On Ubuntu,
+executing the following command should suffice:
+
+    $ sudo apt-get install autoconf automake autotools-dev libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo patchutils
+
+On Mac OS, the source and build directories must live in a case-sensitive file
+system.  The simplest approach is to create and mount a new disk image with
+that property.  Make sure that the mount point does not contain spaces.
+
 ### Installation (Newlib)
 
 To build the Newlib cross-compiler, pick an install path.  If you choose,
