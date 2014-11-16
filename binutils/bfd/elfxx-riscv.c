@@ -3543,14 +3543,13 @@ bfd_boolean
 _bfd_riscv_relax_section (bfd *abfd, asection *sec,
 			  struct bfd_link_info *link_info, bfd_boolean *again)
 {
-  Elf_Internal_Shdr *symtab_hdr;
+  Elf_Internal_Shdr *symtab_hdr = &elf_symtab_hdr (abfd);
   Elf_Internal_Rela *internal_relocs;
   Elf_Internal_Rela *irel, *irelend;
   bfd_byte *contents = NULL;
   Elf_Internal_Sym *isymbuf = NULL;
-  struct riscv_elf_link_hash_table *htab;
-
-  htab = riscv_elf_hash_table (link_info);
+  struct riscv_elf_link_hash_table *htab = riscv_elf_hash_table (link_info);
+  bfd_boolean success = TRUE;
 
   *again = FALSE;
 
@@ -3559,13 +3558,9 @@ _bfd_riscv_relax_section (bfd *abfd, asection *sec,
       || sec->reloc_count == 0)
     return TRUE;
 
-  symtab_hdr = &elf_symtab_hdr (abfd);
-
-  internal_relocs = (_bfd_elf_link_read_relocs
-		     (abfd, sec, NULL, (Elf_Internal_Rela *) NULL,
-		      link_info->keep_memory));
-  if (internal_relocs == NULL)
-    goto error_return;
+  if (!(internal_relocs = _bfd_elf_link_read_relocs (abfd, sec, NULL, NULL,
+						     link_info->keep_memory)))
+    return FALSE;
 
   irelend = internal_relocs + sec->reloc_count;
   for (irel = internal_relocs; irel < irelend; irel++)
@@ -3587,7 +3582,10 @@ _bfd_riscv_relax_section (bfd *abfd, asection *sec,
 	  else
 	    {
 	      if (!bfd_malloc_and_get_section (abfd, sec, &contents))
-		goto error_return;
+		{
+		  success = FALSE;
+		  break;
+		}
 	    }
 	}
 
@@ -3600,7 +3598,10 @@ _bfd_riscv_relax_section (bfd *abfd, asection *sec,
 					    symtab_hdr->sh_info, 0,
 					    NULL, NULL, NULL);
 	  if (isymbuf == NULL)
-	    goto error_return;
+	    {
+	      success = FALSE;
+	      break;
+	    }
 	}
 
       /* Get the value of the symbol referred to by the reloc.  */
@@ -3647,60 +3648,30 @@ _bfd_riscv_relax_section (bfd *abfd, asection *sec,
 
       symval += irel->r_addend;
 
-      if (call && !_bfd_riscv_relax_call (abfd, sec, link_info, contents,
-					  symtab_hdr, isymbuf, internal_relocs,
-					  irel, symval, again))
-	goto error_return;
-      if (lui && !_bfd_riscv_relax_lui (abfd, sec, link_info, contents,
-					symtab_hdr, isymbuf, internal_relocs,
-					irel, symval, again))
-	goto error_return;
-      if (tls_le && !_bfd_riscv_relax_tls_le (abfd, sec, link_info, contents,
-					      symtab_hdr, isymbuf, internal_relocs,
-					      irel, symval, again))
-	goto error_return;
+      typeof(&_bfd_riscv_relax_call) relax_func =
+	call ? _bfd_riscv_relax_call :
+	lui ? _bfd_riscv_relax_lui :
+	/* tls_le */ _bfd_riscv_relax_tls_le;
+
+      if (!relax_func (abfd, sec, link_info, contents, symtab_hdr, isymbuf,
+		       internal_relocs, irel, symval, again))
+	{
+	  success = FALSE;
+	  break;
+	}
     }
 
-  if (isymbuf != NULL
-      && symtab_hdr->contents != (unsigned char *) isymbuf)
+  if (! link_info->keep_memory)
     {
-      if (! link_info->keep_memory)
+      if (symtab_hdr->contents != (unsigned char *) isymbuf)
 	free (isymbuf);
-      else
-	{
-	  /* Cache the symbols for elf_link_input_bfd.  */
-	  symtab_hdr->contents = (unsigned char *) isymbuf;
-	}
-    }
 
-  if (contents != NULL
-      && elf_section_data (sec)->this_hdr.contents != contents)
-    {
-      if (! link_info->keep_memory)
+      if (elf_section_data (sec)->this_hdr.contents != contents)
 	free (contents);
-      else
-	{
-	  /* Cache the section contents for elf_link_input_bfd.  */
-	  elf_section_data (sec)->this_hdr.contents = contents;
-	}
     }
 
-  if (internal_relocs != NULL
-      && elf_section_data (sec)->relocs != internal_relocs)
+  if (elf_section_data (sec)->relocs != internal_relocs)
     free (internal_relocs);
 
-  return TRUE;
-
- error_return:
-  if (isymbuf != NULL
-      && symtab_hdr->contents != (unsigned char *) isymbuf)
-    free (isymbuf);
-  if (contents != NULL
-      && elf_section_data (sec)->this_hdr.contents != contents)
-    free (contents);
-  if (internal_relocs != NULL
-      && elf_section_data (sec)->relocs != internal_relocs)
-    free (internal_relocs);
-
-  return FALSE;
+  return success;
 }
