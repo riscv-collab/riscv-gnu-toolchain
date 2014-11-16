@@ -2629,22 +2629,12 @@ riscv_relax_delete_bytes (bfd *abfd, asection *sec, bfd_vma addr, size_t count)
   else
     sec->size -= count;
 
-  /* Adjust all the relocs.  */
+  /* Adjust the location of all of the relocs.  Note that we need not
+     adjust the addends, since all PC-relative references must be against
+     symbols, which we will adjust below.  */
   for (irel = elf_section_data (sec)->relocs; irel < irelend; irel++)
-    {
-      if (irel->r_offset <= addr)
-	{
-	  if (irel->r_offset + irel->r_addend > addr)
-	    irel->r_addend -= ELFNN_R_SYM (irel->r_info) ? 0 : count;
-	}
-      else
-	{
-	  if (irel->r_offset + irel->r_addend <= addr)
-	    irel->r_addend += ELFNN_R_SYM (irel->r_info) ? 0 : count;
-	  if (irel->r_offset < toaddr)
-	    irel->r_offset -= count;
-	}
-    }
+    if (irel->r_offset > addr && irel->r_offset < toaddr)
+      irel->r_offset -= count;
 
   /* Adjust the local symbols defined in this section.  */
   symtab_hdr = &elf_tdata (abfd)->symtab_hdr;
@@ -2653,21 +2643,21 @@ riscv_relax_delete_bytes (bfd *abfd, asection *sec, bfd_vma addr, size_t count)
 
   for (; isym < isymend; isym++)
     {
-      /* If the symbol is in the range of memory we just moved, we
-	 have to adjust its value.  */
-      if (isym->st_shndx == sec_shndx
-	  && isym->st_value > addr
-	  && isym->st_value <= toaddr)
-	isym->st_value -= count;
+      if (isym->st_shndx == sec_shndx)
+	{
+	  /* If the symbol is in the range of memory we just moved, we
+	     have to adjust its value.  */
+	  if (isym->st_value > addr && isym->st_value <= toaddr)
+	    isym->st_value -= count;
 
-      /* If the symbol *spans* the bytes we just deleted (i.e. its
-	 *end* is in the moved bytes but its *start* isn't), then we
-	 must adjust its size.  */
-      if (isym->st_shndx == sec_shndx
-	  && isym->st_value < addr
-	  && isym->st_value + isym->st_size > addr
-	  && isym->st_value + isym->st_size <= toaddr)
-	isym->st_size -= count;
+	  /* If the symbol *spans* the bytes we just deleted (i.e. its
+	     *end* is in the moved bytes but its *start* isn't), then we
+	     must adjust its size.  */
+	  if (isym->st_value < addr
+	      && isym->st_value + isym->st_size > addr
+	      && isym->st_value + isym->st_size <= toaddr)
+	    isym->st_size -= count;
+	}
     }
 
   /* Now adjust the global symbols defined in this section.  */
