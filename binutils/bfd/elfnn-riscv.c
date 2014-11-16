@@ -1,4 +1,4 @@
-/* RISC-V-specific support for 32-bit ELF.
+/* RISC-V-specific support for NN-bit ELF.
    Copyright 2011-2014 Free Software Foundation, Inc.
 
    Contributed by Andrew Waterman (waterman@cs.berkeley.edu) at UC Berkeley.
@@ -34,21 +34,23 @@
 #include "elf/riscv.h"
 #include "opcode/riscv.h"
 
+#define ARCH_SIZE			NN
+
 #define ELF_ARCH			bfd_arch_riscv
 #define ELF_TARGET_ID			RISCV_ELF_DATA
 #define ELF_MACHINE_CODE		EM_RISCV
 #define ELF_MAXPAGESIZE			0x2000
 #define ELF_COMMONPAGESIZE		0x2000
 
-#define TARGET_LITTLE_SYM		bfd_elf32_riscv_vec
-#define TARGET_LITTLE_NAME		"elf32-littleriscv"
+#define TARGET_LITTLE_SYM		bfd_elfNN_riscv_vec
+#define TARGET_LITTLE_NAME		"elfNN-littleriscv"
 
 #define elf_backend_reloc_type_class	     riscv_reloc_type_class
 
-#define bfd_elf32_bfd_reloc_name_lookup      riscv_reloc_name_lookup
-#define bfd_elf32_bfd_link_hash_table_create riscv_elf_link_hash_table_create
-#define bfd_elf32_bfd_reloc_type_lookup	     riscv_reloc_type_lookup
-#define bfd_elf32_bfd_merge_private_bfd_data \
+#define bfd_elfNN_bfd_reloc_name_lookup      riscv_reloc_name_lookup
+#define bfd_elfNN_bfd_link_hash_table_create riscv_elf_link_hash_table_create
+#define bfd_elfNN_bfd_reloc_type_lookup	     riscv_reloc_type_lookup
+#define bfd_elfNN_bfd_merge_private_bfd_data \
   _bfd_riscv_elf_merge_private_bfd_data
 
 #define elf_backend_copy_indirect_symbol     riscv_elf_copy_indirect_symbol
@@ -64,7 +66,7 @@
 #define elf_backend_plt_sym_val		     riscv_elf_plt_sym_val
 #define elf_info_to_howto_rel                NULL
 #define elf_info_to_howto                    riscv_info_to_howto_rela
-#define bfd_elf32_bfd_relax_section          _bfd_riscv_relax_section
+#define bfd_elfNN_bfd_relax_section          _bfd_riscv_relax_section
 
 #define elf_backend_init_index_section	_bfd_elf_init_1_index_section
 
@@ -74,8 +76,8 @@
 #define elf_backend_plt_readonly 1
 #define elf_backend_plt_alignment 4
 #define elf_backend_want_plt_sym 1
-#define elf_backend_got_header_size 4
+#define elf_backend_got_header_size (ARCH_SIZE / 8)
 #define elf_backend_rela_normal 1
 #define elf_backend_default_execstack 0
 
-#include "elf32-target.h"
+#include "elfNN-target.h"
