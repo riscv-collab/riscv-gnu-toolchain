@@ -1873,6 +1873,7 @@ md_apply_fix (fixS *fixP, valueT *valP, segT seg ATTRIBUTE_UNUSED)
     case BFD_RELOC_RISCV_CALL_PLT:
     case BFD_RELOC_RISCV_JMP:
     case BFD_RELOC_12_PCREL:
+    case BFD_RELOC_RISCV_ALIGN:
       break;
 
     default:
@@ -1975,6 +1976,50 @@ static void
 s_bss (int ignore ATTRIBUTE_UNUSED)
 {
   subseg_set (bss_section, 0);
+  demand_empty_rest_of_line ();
+}
+
+/* Align to a given power of two.  .align 0 turns off the automatic
+   alignment used by the data creating pseudo-ops.  */
+
+static void
+s_align (int x ATTRIBUTE_UNUSED)
+{
+  int alignment, fill_value = 0, fill_value_specified = 0;
+
+  alignment = get_absolute_expression ();
+  if (alignment < 0 || alignment > 31)
+    as_bad (_("unsatisfiable alignment: %d"), alignment);
+
+  if (*input_line_pointer == ',')
+    {
+      ++input_line_pointer;
+      fill_value = get_absolute_expression ();
+      fill_value_specified = 1;
+    }
+
+  if (!fill_value_specified && subseg_text_p (now_seg) && alignment > 2)
+    {
+      /* Emit the worst-case NOP string.  The linker will delete any
+         unnecessary NOPs.  This allows us to support code alignment
+         in spite of linker relaxations.  */
+      bfd_vma i, worst_case_nop_bytes = (1L << alignment) - 4;
+      char *nops = frag_more (worst_case_nop_bytes);
+      for (i = 0; i < worst_case_nop_bytes; i += 4)
+	md_number_to_chars (nops + i, RISCV_NOP, 4);
+
+      expressionS ex;
+      ex.X_op = O_constant;
+      ex.X_add_number = worst_case_nop_bytes;
+
+      fix_new_exp (frag_now, nops - frag_now->fr_literal, worst_case_nop_bytes,
+		   &ex, TRUE, BFD_RELOC_RISCV_ALIGN);
+    }
+  else if (alignment)
+    frag_align (alignment, fill_value, 0);
+
+  record_alignment (now_seg, alignment);
+
   demand_empty_rest_of_line ();
 }
 
@@ -2100,19 +2145,6 @@ md_convert_frag (bfd *abfd ATTRIBUTE_UNUSED, segT asec ATTRIBUTE_UNUSED,
 }
 
 void
-riscv_handle_align (fragS *fragp)
-{
-  char *p;
-
-  if (fragp->fr_type != rs_align_code)
-    return;
-
-  p = fragp->fr_literal + fragp->fr_fix;
-  md_number_to_chars (p, RISCV_NOP, 4);
-  fragp->fr_var = 4;
-}
-
-void
 md_show_usage (FILE *stream)
 {
   fprintf (stream, _("\
@@ -2169,6 +2201,7 @@ static const pseudo_typeS riscv_pseudo_table[] =
   {"dtprelword", s_dtprel, 4},
   {"dtpreldword", s_dtprel, 8},
   {"bss", s_bss, 0},
+  {"align", s_align, 0},
 
   /* leb128 doesn't work with relaxation; disallow it */
   {"uleb128", s_err, 0},

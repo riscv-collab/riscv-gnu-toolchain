@@ -46,11 +46,6 @@ extern int riscv_relax_frag (asection *, struct frag *, long);
 #define md_undefined_symbol(name)	(0)
 #define md_operand(x)
 
-#define NOP_OPCODE RISCV_NOP
-
-extern void riscv_handle_align (struct frag *);
-#define HANDLE_ALIGN(fragp)  riscv_handle_align (fragp)
-
 #define MAX_MEM_FOR_RS_ALIGN_CODE  (1 + 2)
 
 #define TC_SYMFIELD_TYPE int

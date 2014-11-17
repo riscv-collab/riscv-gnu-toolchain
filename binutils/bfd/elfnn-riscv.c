@@ -2586,90 +2586,53 @@ fail:
 static bfd_boolean
 riscv_relax_delete_bytes (bfd *abfd, asection *sec, bfd_vma addr, size_t count)
 {
-  Elf_Internal_Shdr * symtab_hdr;
-  unsigned int        sec_shndx;
-  bfd_byte *          contents;
-  Elf_Internal_Rela * irel;
-  Elf_Internal_Rela * irelend;
-  Elf_Internal_Sym *  isym;
-  Elf_Internal_Sym *  isymend;
-  bfd_vma             toaddr;
-  unsigned int        symcount;
-  struct elf_link_hash_entry ** sym_hashes;
-  struct elf_link_hash_entry ** end_hashes;
-
-  /* TODO: handle alignment */
-  Elf_Internal_Rela *alignment_rel = NULL;
-
-  sec_shndx = _bfd_elf_section_from_bfd_section (abfd, sec);
-
-  contents = elf_section_data (sec)->this_hdr.contents;
-
-  /* The deletion must stop at the next alignment boundary, if
-     ALIGNMENT_REL is non-NULL.  */
-  toaddr = sec->size;
-  if (alignment_rel)
-    toaddr = alignment_rel->r_offset;
-
-  irel = elf_section_data (sec)->relocs;
-  irelend = irel + sec->reloc_count;
+  unsigned int i, symcount;
+  bfd_vma toaddr = sec->size;
+  struct elf_link_hash_entry **sym_hashes = elf_sym_hashes (abfd);
+  Elf_Internal_Shdr *symtab_hdr = &elf_tdata (abfd)->symtab_hdr;
+  unsigned int sec_shndx = _bfd_elf_section_from_bfd_section (abfd, sec);
+  struct bfd_elf_section_data *data = elf_section_data (sec);
+  bfd_byte *contents = data->this_hdr.contents;
 
   /* Actually delete the bytes.  */
-  memmove (contents + addr, contents + addr + count,
-	   (size_t) (toaddr - addr - count));
-
-  if (alignment_rel)
-    {
-      size_t i;
-      BFD_ASSERT (count % 4 == 0);
-      for (i = 0; i < count; i += 4)
-	bfd_put_32 (abfd, RISCV_NOP, contents + toaddr - count + i);
-      /* TODO: RVC NOP if count % 4 == 2 */
-    }
-  else
-    sec->size -= count;
+  sec->size -= count;
+  memmove (contents + addr, contents + addr + count, toaddr - addr - count);
 
   /* Adjust the location of all of the relocs.  Note that we need not
      adjust the addends, since all PC-relative references must be against
      symbols, which we will adjust below.  */
-  for (irel = elf_section_data (sec)->relocs; irel < irelend; irel++)
-    if (irel->r_offset > addr && irel->r_offset < toaddr)
-      irel->r_offset -= count;
+  for (i = 0; i < sec->reloc_count; i++)
+    if (data->relocs[i].r_offset > addr && data->relocs[i].r_offset < toaddr)
+      data->relocs[i].r_offset -= count;
 
   /* Adjust the local symbols defined in this section.  */
-  symtab_hdr = &elf_tdata (abfd)->symtab_hdr;
-  isym = (Elf_Internal_Sym *) symtab_hdr->contents;
-  isymend = isym + symtab_hdr->sh_info;
-
-  for (; isym < isymend; isym++)
+  for (i = 0; i < symtab_hdr->sh_info; i++)
     {
-      if (isym->st_shndx == sec_shndx)
+      Elf_Internal_Sym *sym = (Elf_Internal_Sym *) symtab_hdr->contents + i;
+      if (sym->st_shndx == sec_shndx)
 	{
 	  /* If the symbol is in the range of memory we just moved, we
 	     have to adjust its value.  */
-	  if (isym->st_value > addr && isym->st_value < toaddr)
-	    isym->st_value -= count;
+	  if (sym->st_value > addr && sym->st_value < toaddr)
+	    sym->st_value -= count;
 
 	  /* If the symbol *spans* the bytes we just deleted (i.e. its
 	     *end* is in the moved bytes but its *start* isn't), then we
 	     must adjust its size.  */
-	  if (isym->st_value <= addr
-	      && isym->st_value + isym->st_size > addr
-	      && isym->st_value + isym->st_size <= toaddr)
-	    isym->st_size -= count;
+	  if (sym->st_value <= addr
+	      && sym->st_value + sym->st_size > addr
+	      && sym->st_value + sym->st_size <= toaddr)
+	    sym->st_size -= count;
 	}
     }
 
   /* Now adjust the global symbols defined in this section.  */
-  symcount = symtab_hdr->sh_size / sizeof(ElfNN_External_Sym);
-  symcount -= symtab_hdr->sh_info;
+  symcount = ((symtab_hdr->sh_size / sizeof(ElfNN_External_Sym))
+	      - symtab_hdr->sh_info);
 
-  sym_hashes = elf_sym_hashes (abfd);
-  end_hashes = sym_hashes + symcount;
-
-  for (; sym_hashes < end_hashes; sym_hashes++)
+  for (i = 0; i < symcount; i++)
     {
-      struct elf_link_hash_entry *sym_hash = *sym_hashes;
+      struct elf_link_hash_entry *sym_hash = sym_hashes[i];
 
       if ((sym_hash->root.type == bfd_link_hash_defined
 	   || sym_hash->root.type == bfd_link_hash_defweak)
@@ -2695,31 +2658,26 @@ riscv_relax_delete_bytes (bfd *abfd, asection *sec, bfd_vma addr, size_t count)
 
 static bfd_boolean
 _bfd_riscv_relax_call (bfd *abfd, asection *sec,
-		       struct bfd_link_info *link_info, bfd_byte *contents,
-		       Elf_Internal_Shdr *symtab_hdr,
-		       Elf_Internal_Sym *isymbuf,
-		       Elf_Internal_Rela *internal_relocs,
-		       Elf_Internal_Rela *irel, bfd_vma symval,
+		       struct bfd_link_info *link_info,
+		       Elf_Internal_Rela *rel,
+		       bfd_vma symval,
 		       bfd_boolean *again)
 {
-  /* See if this function call can be shortened.  */
-  bfd_signed_vma foff = symval - (sec_addr (sec) + irel->r_offset);
+  bfd_byte *contents = elf_section_data (sec)->this_hdr.contents;
+  bfd_signed_vma foff = symval - (sec_addr (sec) + rel->r_offset);
   bfd_boolean near_zero = !link_info->shared && symval < RISCV_IMM_REACH/2;
   bfd_vma auipc, jalr;
   int r_type;
 
+  /* See if this function call can be shortened.  */
   if (!VALID_UJTYPE_IMM (foff) && !near_zero)
     return TRUE;
 
   /* Shorten the function call.  */
-  elf_section_data (sec)->relocs = internal_relocs;
-  elf_section_data (sec)->this_hdr.contents = contents;
-  symtab_hdr->contents = (unsigned char *) isymbuf;
+  BFD_ASSERT (rel->r_offset + 8 <= sec->size);
 
-  BFD_ASSERT (irel->r_offset + 8 <= sec->size);
-
-  auipc = bfd_get_32 (abfd, contents + irel->r_offset);
-  jalr = bfd_get_32 (abfd, contents + irel->r_offset + 4);
+  auipc = bfd_get_32 (abfd, contents + rel->r_offset);
+  jalr = bfd_get_32 (abfd, contents + rel->r_offset + 4);
 
   if (VALID_UJTYPE_IMM (foff))
     {
@@ -2735,27 +2693,22 @@ _bfd_riscv_relax_call (bfd *abfd, asection *sec,
     }
 
   /* Replace the R_RISCV_CALL reloc.  */
-  irel->r_info = ELFNN_R_INFO (ELFNN_R_SYM (irel->r_info), r_type);
+  rel->r_info = ELFNN_R_INFO (ELFNN_R_SYM (rel->r_info), r_type);
   /* Replace the AUIPC.  */
-  bfd_put_32 (abfd, auipc, contents + irel->r_offset);
+  bfd_put_32 (abfd, auipc, contents + rel->r_offset);
 
   /* Delete unnecessary JALR.  */
-  if (! riscv_relax_delete_bytes (abfd, sec, irel->r_offset + 4, 4))
-    return FALSE;
-
   *again = TRUE;
-  return TRUE;
+  return riscv_relax_delete_bytes (abfd, sec, rel->r_offset + 4, 4);
 }
 
 /* Relax non-PIC global variable references.  */
 
 static bfd_boolean
 _bfd_riscv_relax_lui (bfd *abfd, asection *sec,
-		      struct bfd_link_info *link_info, bfd_byte *contents,
-		      Elf_Internal_Shdr *symtab_hdr,
-		      Elf_Internal_Sym *isymbuf,
-		      Elf_Internal_Rela *internal_relocs,
-		      Elf_Internal_Rela *irel, bfd_vma symval,
+		      struct bfd_link_info *link_info,
+		      Elf_Internal_Rela *rel,
+		      bfd_vma symval,
 		      bfd_boolean *again)
 {
   bfd_vma gp = riscv_global_pointer_value (link_info);
@@ -2766,28 +2719,20 @@ _bfd_riscv_relax_lui (bfd *abfd, asection *sec,
 
   /* We can delete the unnecessary AUIPC. The corresponding LO12 reloc
      will be converted to GPREL during relocation.  */
-  elf_section_data (sec)->relocs = internal_relocs;
-  elf_section_data (sec)->this_hdr.contents = contents;
-  symtab_hdr->contents = (unsigned char *) isymbuf;
-
-  BFD_ASSERT (irel->r_offset + 4 <= sec->size);
-  irel->r_info = ELFNN_R_INFO (ELFNN_R_SYM (irel->r_info), R_RISCV_NONE);
-  if (! riscv_relax_delete_bytes (abfd, sec, irel->r_offset, 4))
-    return FALSE;
+  BFD_ASSERT (rel->r_offset + 4 <= sec->size);
+  rel->r_info = ELFNN_R_INFO (0, R_RISCV_NONE);
 
   *again = TRUE;
-  return TRUE;
+  return riscv_relax_delete_bytes (abfd, sec, rel->r_offset, 4);
 }
 
 /* Relax non-PIC TLS references.  */
 
 static bfd_boolean
 _bfd_riscv_relax_tls_le (bfd *abfd, asection *sec,
-			 struct bfd_link_info *link_info, bfd_byte *contents,
-			 Elf_Internal_Shdr *symtab_hdr,
-			 Elf_Internal_Sym *isymbuf,
-			 Elf_Internal_Rela *internal_relocs,
-			 Elf_Internal_Rela *irel, bfd_vma symval,
+			 struct bfd_link_info *link_info,
+			 Elf_Internal_Rela *rel,
+			 bfd_vma symval,
 			 bfd_boolean *again)
 {
   /* See if this symbol is in range of tp.  */
@@ -2796,92 +2741,124 @@ _bfd_riscv_relax_tls_le (bfd *abfd, asection *sec,
 
   /* We can delete the unnecessary LUI and tp add.  The LO12 reloc will be
      made directly tp-relative.  */
-  elf_section_data (sec)->relocs = internal_relocs;
-  elf_section_data (sec)->this_hdr.contents = contents;
-  symtab_hdr->contents = (unsigned char *) isymbuf;
-
-  BFD_ASSERT (irel->r_offset + 4 <= sec->size);
-  irel->r_info = ELFNN_R_INFO (ELFNN_R_SYM (irel->r_info), R_RISCV_NONE);
-  if (! riscv_relax_delete_bytes (abfd, sec, irel->r_offset, 4))
-    return FALSE;
+  BFD_ASSERT (rel->r_offset + 4 <= sec->size);
+  rel->r_info = ELFNN_R_INFO (0, R_RISCV_NONE);
 
   *again = TRUE;
-  return TRUE;
+  return riscv_relax_delete_bytes (abfd, sec, rel->r_offset, 4);
 }
+
+/* Implement R_RISCV_ALIGN by deleting excess alignment NOPs.  */
+
+static bfd_boolean
+_bfd_riscv_relax_align (bfd *abfd, asection *sec,
+			struct bfd_link_info *link_info ATTRIBUTE_UNUSED,
+			Elf_Internal_Rela *rel,
+			bfd_vma symval,
+			bfd_boolean *again ATTRIBUTE_UNUSED)
+{
+  bfd_vma alignment = 1;
+  while (alignment <= rel->r_addend)
+    alignment *= 2;
+
+  symval -= rel->r_addend;
+  bfd_vma aligned_addr = ((symval - 1) & ~(alignment - 1)) + alignment;
+  bfd_vma nop_bytes_needed = aligned_addr - symval;
+
+  /* Make sure there are enough NOPs to actually achieve the alignment.  */
+  if (rel->r_addend < nop_bytes_needed)
+    return FALSE;
+
+  /* Delete the reloc.  */
+  rel->r_info = ELFNN_R_INFO (0, R_RISCV_NONE);
+
+  /* If the number of NOPs is already correct, there's nothing to do.  */
+  if (nop_bytes_needed == rel->r_addend)
+    return TRUE;
+
+  /* Delete the excess NOPs.  */
+  return riscv_relax_delete_bytes (abfd, sec, rel->r_offset,
+				   rel->r_addend - nop_bytes_needed);
+}
+
+/* Relax a section.  Pass 0 shortens code sequences unless disabled.
+   Pass 1, which cannot be disabled, handles code alignment directives.  */
 
 static bfd_boolean
 _bfd_riscv_relax_section (bfd *abfd, asection *sec,
-			  struct bfd_link_info *link_info, bfd_boolean *again)
+			  struct bfd_link_info *info, bfd_boolean *again)
 {
   Elf_Internal_Shdr *symtab_hdr = &elf_symtab_hdr (abfd);
-  Elf_Internal_Rela *internal_relocs;
-  Elf_Internal_Rela *irel, *irelend;
-  bfd_byte *contents = NULL;
-  Elf_Internal_Sym *isymbuf = NULL;
-  struct riscv_elf_link_hash_table *htab = riscv_elf_hash_table (link_info);
-  bfd_boolean success = TRUE;
+  struct riscv_elf_link_hash_table *htab = riscv_elf_hash_table (info);
+  struct bfd_elf_section_data *data = elf_section_data (sec);
+  Elf_Internal_Rela *relocs;
+  bfd_boolean ret = FALSE;
+  unsigned int i;
 
   *again = FALSE;
 
-  if (link_info->relocatable
+  if (info->relocatable
       || (sec->flags & SEC_RELOC) == 0
-      || sec->reloc_count == 0)
+      || sec->reloc_count == 0
+      || (info->disable_target_specific_optimizations
+	  && info->relax_pass == 0))
     return TRUE;
 
-  if (!(internal_relocs = _bfd_elf_link_read_relocs (abfd, sec, NULL, NULL,
-						     link_info->keep_memory)))
-    return FALSE;
+  /* Read this BFD's relocs if we haven't done so already.  */
+  if (data->relocs)
+    relocs = data->relocs;
+  else if (!(relocs = _bfd_elf_link_read_relocs (abfd, sec, NULL, NULL,
+						 info->keep_memory)))
+    goto fail;
 
-  irelend = internal_relocs + sec->reloc_count;
-  for (irel = internal_relocs; irel < irelend; irel++)
+  /* Examine and consider relaxing each reloc.  */
+  for (i = 0; i < sec->reloc_count; i++)
     {
+      Elf_Internal_Rela *rel = data->relocs + i;
+      typeof(&_bfd_riscv_relax_call) relax_func = NULL;
+      int type = ELFNN_R_TYPE (rel->r_info);
       bfd_vma symval;
-      int type = ELFNN_R_TYPE (irel->r_info);
-      bfd_boolean call = type == R_RISCV_CALL || type == R_RISCV_CALL_PLT;
-      bfd_boolean lui = type == R_RISCV_HI20;
-      bfd_boolean tls_le = type == R_RISCV_TPREL_HI20 || type == R_RISCV_TPREL_ADD;
 
-      if (!(call || lui || tls_le))
+      if (info->relax_pass == 0)
+	{
+	  if (type == R_RISCV_CALL || type == R_RISCV_CALL_PLT)
+	    relax_func = _bfd_riscv_relax_call;
+	  else if (type == R_RISCV_HI20)
+	    relax_func = _bfd_riscv_relax_lui;
+	  else if (type == R_RISCV_TPREL_HI20 || type == R_RISCV_TPREL_ADD)
+	    relax_func = _bfd_riscv_relax_tls_le;
+	}
+      else if (type == R_RISCV_ALIGN)
+	relax_func = _bfd_riscv_relax_align;
+
+      if (!relax_func)
 	continue;
 
-      /* Get the section contents.  */
-      if (contents == NULL)
-	{
-	  if (elf_section_data (sec)->this_hdr.contents != NULL)
-	    contents = elf_section_data (sec)->this_hdr.contents;
-	  else
-	    {
-	      if (!bfd_malloc_and_get_section (abfd, sec, &contents))
-		{
-		  success = FALSE;
-		  break;
-		}
-	    }
-	}
+      data->relocs = relocs;
+
+      /* Read this BFD's contents if we haven't done so already.  */
+      if (!data->this_hdr.contents
+	  && !bfd_malloc_and_get_section (abfd, sec, &data->this_hdr.contents))
+	goto fail;
 
       /* Read this BFD's symbols if we haven't done so already.  */
-      if (isymbuf == NULL && symtab_hdr->sh_info != 0)
-	{
-	  isymbuf = (Elf_Internal_Sym *) symtab_hdr->contents;
-	  if (isymbuf == NULL)
-	    isymbuf = bfd_elf_get_elf_syms (abfd, symtab_hdr,
-					    symtab_hdr->sh_info, 0,
-					    NULL, NULL, NULL);
-	  if (isymbuf == NULL)
-	    {
-	      success = FALSE;
-	      break;
-	    }
-	}
+      if (symtab_hdr->sh_info != 0
+	  && !symtab_hdr->contents
+	  && !(symtab_hdr->contents =
+	       (unsigned char *) bfd_elf_get_elf_syms (abfd, symtab_hdr,
+						       symtab_hdr->sh_info,
+						       0, NULL, NULL, NULL)))
+	goto fail;
 
       /* Get the value of the symbol referred to by the reloc.  */
-      if (ELFNN_R_SYM (irel->r_info) < symtab_hdr->sh_info)
+      if (ELFNN_R_SYM (rel->r_info) < symtab_hdr->sh_info)
 	{
 	  /* A local symbol.  */
-	  Elf_Internal_Sym *isym = isymbuf + ELFNN_R_SYM (irel->r_info);
+	  Elf_Internal_Sym *isym = ((Elf_Internal_Sym *) symtab_hdr->contents
+				    + ELFNN_R_SYM (rel->r_info));
 
 	  if (isym->st_shndx == SHN_UNDEF)
-	    symval = sec_addr (sec) + irel->r_offset;
+	    symval = sec_addr (sec) + rel->r_offset;
 	  else
 	    {
 	      asection *isec;
@@ -2897,7 +2874,7 @@ _bfd_riscv_relax_section (bfd *abfd, asection *sec,
 	  unsigned long indx;
 	  struct elf_link_hash_entry *h;
 
-	  indx = ELFNN_R_SYM (irel->r_info) - symtab_hdr->sh_info;
+	  indx = ELFNN_R_SYM (rel->r_info) - symtab_hdr->sh_info;
 	  h = elf_sym_hashes (abfd)[indx];
 
 	  while (h->root.type == bfd_link_hash_indirect
@@ -2916,34 +2893,19 @@ _bfd_riscv_relax_section (bfd *abfd, asection *sec,
 	    symval = sec_addr (h->root.u.def.section) + h->root.u.def.value;
 	}
 
-      symval += irel->r_addend;
+      symval += rel->r_addend;
 
-      typeof(&_bfd_riscv_relax_call) relax_func =
-	call ? _bfd_riscv_relax_call :
-	lui ? _bfd_riscv_relax_lui :
-	/* tls_le */ _bfd_riscv_relax_tls_le;
-
-      if (!relax_func (abfd, sec, link_info, contents, symtab_hdr, isymbuf,
-		       internal_relocs, irel, symval, again))
-	{
-	  success = FALSE;
-	  break;
-	}
+      if (!relax_func (abfd, sec, info, rel, symval, again))
+	goto fail;
     }
 
-  if (! link_info->keep_memory)
-    {
-      if (symtab_hdr->contents != (unsigned char *) isymbuf)
-	free (isymbuf);
+  ret = TRUE;
 
-      if (elf_section_data (sec)->this_hdr.contents != contents)
-	free (contents);
-    }
+fail:
+  if (relocs != data->relocs)
+    free (relocs);
 
-  if (elf_section_data (sec)->relocs != internal_relocs)
-    free (internal_relocs);
-
-  return success;
+  return ret;
 }
 
 #define ELF_ARCH			bfd_arch_riscv
