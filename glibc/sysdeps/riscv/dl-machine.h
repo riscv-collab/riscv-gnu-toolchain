@@ -263,7 +263,7 @@ elf_machine_rela (struct link_map *map, const ElfW(Rela) *reloc,
 
     case R_RISCV_JUMP_SLOT:
     case __WORDSIZE == 64 ? R_RISCV_64 : R_RISCV_32:
-      *addr_field = value + reloc->r_addend;
+      *addr_field = value;
       break;
 
     case R_RISCV_NONE:
