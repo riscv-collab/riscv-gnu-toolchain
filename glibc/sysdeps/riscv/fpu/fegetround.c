@@ -28,3 +28,4 @@ fegetround (void)
   _FPU_GETROUND (round);
   return round;
 }
+libm_hidden_def (fegetround)

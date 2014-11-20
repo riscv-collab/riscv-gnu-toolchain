@@ -27,3 +27,4 @@ feclearexcept (int excepts)
   asm volatile ("csrc fflags, %0" : : "r"(excepts));
   return 0;
 }
+libm_hidden_def (feclearexcept)
