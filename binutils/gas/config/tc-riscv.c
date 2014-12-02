@@ -1979,8 +1979,7 @@ s_bss (int ignore ATTRIBUTE_UNUSED)
   demand_empty_rest_of_line ();
 }
 
-/* Align to a given power of two.  .align 0 turns off the automatic
-   alignment used by the data creating pseudo-ops.  */
+/* Align to a given power of two.  */
 
 static void
 s_align (int x ATTRIBUTE_UNUSED)
@@ -2012,7 +2011,7 @@ s_align (int x ATTRIBUTE_UNUSED)
       ex.X_op = O_constant;
       ex.X_add_number = worst_case_nop_bytes;
 
-      fix_new_exp (frag_now, nops - frag_now->fr_literal, worst_case_nop_bytes,
+      fix_new_exp (frag_now, nops - frag_now->fr_literal, 0,
 		   &ex, TRUE, BFD_RELOC_RISCV_ALIGN);
     }
   else if (alignment)
