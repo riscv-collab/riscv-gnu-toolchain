@@ -37,6 +37,7 @@ struct expressionS;
 #define OLD_FLOAT_READS
 #define REPEAT_CONS_EXPRESSIONS
 #define LOCAL_LABELS_FB 1
+#define FAKE_LABEL_NAME ".L0\001"
 
 #define md_relax_frag(segment, fragp, stretch) \
   riscv_relax_frag(segment, fragp, stretch)
