@@ -53,11 +53,10 @@ small:
       *la++ = b7;
       *la++ = b8;
     }
-    if (la == lend)
-      goto maybe_done;
   }
 
-  do BODY(la, lb, long) while (la < lend);
+  while (la < lend)
+    BODY(la, lb, long);
 
 maybe_done:
   a = (char*)la;
