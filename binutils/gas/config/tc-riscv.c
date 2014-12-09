@@ -512,6 +512,9 @@ validate_riscv_insn (const struct riscv_opcode *opc)
       return 0;
     }
   required_bits = ((insn_t)1 << (8 * riscv_insn_length (opc->match))) - 1;
+  /* Work around for undefined behavior of uint64_t << 64 */
+  if(riscv_insn_length (opc->match) == 8)
+    required_bits = 0xffffffffffffffff;
 
 #define USE_BITS(mask,shift)	(used_bits |= ((insn_t)(mask) << (shift)))
   while (*p)
