@@ -231,14 +231,13 @@ struct mips_integer_op {
 };
 
 /* The largest number of operations needed to load an integer constant.
-   The worst accepted case for 64-bit constants is LUI,ORI,SLL,ORI,SLL,ORI.
-   When the lowest bit is clear, we can try, but reject a sequence with
-   an extra SLL at the end.  */
+   The worst case is LUI, ADDI, SLLI, ADDI, SLLI, ADDI, SLLI, ADDI,
+   but we may attempt and reject even worse sequences.  */
 #define RISCV_MAX_INTEGER_OPS 32
 
 /* Costs of various operations on the different architectures.  */
 
-struct mips_rtx_cost_data
+struct riscv_tune_info
 {
   unsigned short fp_add;
   unsigned short fp_mult_sf;
@@ -249,17 +248,27 @@ struct mips_rtx_cost_data
   unsigned short int_mult_di;
   unsigned short int_div_si;
   unsigned short int_div_di;
+  unsigned short issue_rate;
   unsigned short branch_cost;
   unsigned short memory_latency;
 };
 
+/* Information about one CPU we know about.  */
+struct riscv_cpu_info {
+  /* This CPU's canonical name.  */
+  const char *name;
+
+  /* The RISC-V ISA and extensions supported by this CPU.  */
+  const char *isa;
+
+  /* Tuning parameters for this CPU.  */
+  const struct riscv_tune_info *tune_info;
+};
+
 /* Global variables for machine-dependent things.  */
 
-/* The processor that we should tune the code for.  */
-enum processor riscv_tune;
-
-/* Which cost information to use.  */
-static const struct mips_rtx_cost_data *mips_cost;
+/* Which tuning parameters to use.  */
+static const struct riscv_tune_info *tune_info;
 
 /* Index [M][R] is true if register R is allowed to hold a value of mode M.  */
 bool riscv_hard_regno_mode_ok[(int) MAX_MACHINE_MODE][FIRST_PSEUDO_REGISTER];
@@ -293,43 +302,24 @@ const enum reg_class riscv_regno_to_class[FIRST_PSEUDO_REGISTER] = {
   FRAME_REGS,	FRAME_REGS,
 };
 
-/* A table describing all the processors GCC knows about.  Names are
-   matched in the order listed.  The first mention of an ISA level is
-   taken as the canonical name for that ISA.
-
-   To ease comparison, please keep this table in the same order
-   as GAS's riscv_cpu_info_table.  Please also make sure that
-   MIPS_ISA_LEVEL_SPEC and MIPS_ARCH_FLOAT_SPEC handle all -march
-   options correctly.  */
-static const struct riscv_cpu_info riscv_cpu_info_table[] = {
-  /* Entries for generic ISAs.  */
-  { "rocket", PROCESSOR_ROCKET, 0 },
+/* Costs to use when optimizing for size.  */
+static const struct riscv_tune_info rocket_tune_info = {
+  COSTS_N_INSNS (8),            /* fp_add */
+  COSTS_N_INSNS (8),            /* fp_mult_sf */
+  COSTS_N_INSNS (8),            /* fp_mult_df */
+  COSTS_N_INSNS (20),           /* fp_div_sf */
+  COSTS_N_INSNS (20),           /* fp_div_df */
+  COSTS_N_INSNS (4),            /* int_mult_si */
+  COSTS_N_INSNS (4),            /* int_mult_di */
+  COSTS_N_INSNS (6),            /* int_div_si */
+  COSTS_N_INSNS (6),            /* int_div_di */
+		   1,           /* issue_rate */
+		   2,           /* branch_cost */
+		   7            /* memory_latency */
 };
 
-/* Default costs.  If these are used for a processor we should look
-   up the actual costs.  */
-#define DEFAULT_COSTS COSTS_N_INSNS (8),  /* fp_add */       \
-                      COSTS_N_INSNS (8),  /* fp_mult_sf */   \
-                      COSTS_N_INSNS (8),  /* fp_mult_df */   \
-                      COSTS_N_INSNS (20), /* fp_div_sf */    \
-                      COSTS_N_INSNS (20), /* fp_div_df */    \
-                      COSTS_N_INSNS (4),  /* int_mult_si */  \
-                      COSTS_N_INSNS (4),  /* int_mult_di */  \
-                      COSTS_N_INSNS (6),  /* int_div_si */   \
-                      COSTS_N_INSNS (6),  /* int_div_di */   \
-                                       2, /* branch_cost */  \
-                                       7  /* memory_latency */
-
-/* Floating-point costs for processors without an FPU.  Just assume that
-   all floating-point libcalls are very expensive.  */
-#define SOFT_FP_COSTS COSTS_N_INSNS (256), /* fp_add */       \
-                      COSTS_N_INSNS (256), /* fp_mult_sf */   \
-                      COSTS_N_INSNS (256), /* fp_mult_df */   \
-                      COSTS_N_INSNS (256), /* fp_div_sf */    \
-                      COSTS_N_INSNS (256)  /* fp_div_df */
-
 /* Costs to use when optimizing for size.  */
-static const struct mips_rtx_cost_data mips_rtx_cost_optimize_size = {
+static const struct riscv_tune_info optimize_size_tune_info = {
   COSTS_N_INSNS (1),            /* fp_add */
   COSTS_N_INSNS (1),            /* fp_mult_sf */
   COSTS_N_INSNS (1),            /* fp_mult_df */
@@ -339,43 +329,30 @@ static const struct mips_rtx_cost_data mips_rtx_cost_optimize_size = {
   COSTS_N_INSNS (1),            /* int_mult_di */
   COSTS_N_INSNS (1),            /* int_div_si */
   COSTS_N_INSNS (1),            /* int_div_di */
+		   1,           /* issue_rate */
 		   1,           /* branch_cost */
 		   1            /* memory_latency */
 };
 
-/* Costs to use when optimizing for speed, indexed by processor.  */
-static const struct mips_rtx_cost_data
-  mips_rtx_cost_data[NUM_PROCESSOR_VALUES] = {
-  { /* Rocket */ DEFAULT_COSTS},
+/* A table describing all the processors GCC knows about.  */
+static const struct riscv_cpu_info riscv_cpu_info_table[] = {
+  /* Entries for generic ISAs.  */
+  { "rocket", "IMAFD", &rocket_tune_info },
 };
 
-/* Predicates to test for presence of "near" and "far"/"long_call"
-   attributes on the given TYPE.  */
+/* Return the riscv_cpu_info entry for the given name string.  */
 
-static bool
-mips_near_type_p (const_tree type)
+static const struct riscv_cpu_info *
+riscv_parse_cpu (const char *cpu_string)
 {
-  return lookup_attribute ("near", TYPE_ATTRIBUTES (type)) != NULL;
-}
+  unsigned int i;
 
-static bool
-mips_far_type_p (const_tree type)
-{
-  return (lookup_attribute ("long_call", TYPE_ATTRIBUTES (type)) != NULL
-	  || lookup_attribute ("far", TYPE_ATTRIBUTES (type)) != NULL);
-}
+  for (i = 0; i < ARRAY_SIZE (riscv_cpu_info_table); i++)
+    if (strcmp (riscv_cpu_info_table[i].name, cpu_string) == 0)
+      return riscv_cpu_info_table + i;
 
-/* Implement TARGET_COMP_TYPE_ATTRIBUTES.  */
-
-static int
-mips_comp_type_attributes (const_tree type1, const_tree type2)
-{
-  /* Disallow mixed near/far attributes.  */
-  if (mips_far_type_p (type1) && mips_near_type_p (type2))
-    return 0;
-  if (mips_near_type_p (type1) && mips_far_type_p (type2))
-    return 0;
-  return 1;
+  error ("unknown cpu `%s'", cpu_string);
+  return riscv_cpu_info_table;
 }
 
 /* Fill CODES with a sequence of rtl operations to load VALUE.
@@ -1435,7 +1412,7 @@ riscv_binary_cost (rtx x, int single_insns, int double_insns, bool speed)
 static int
 mips_fp_mult_cost (enum machine_mode mode)
 {
-  return mode == DFmode ? mips_cost->fp_mult_df : mips_cost->fp_mult_sf;
+  return mode == DFmode ? tune_info->fp_mult_df : tune_info->fp_mult_sf;
 }
 
 /* Return the cost of floating-point divisions of mode MODE.  */
@@ -1443,7 +1420,7 @@ mips_fp_mult_cost (enum machine_mode mode)
 static int
 mips_fp_div_cost (enum machine_mode mode)
 {
-  return mode == DFmode ? mips_cost->fp_div_df : mips_cost->fp_div_sf;
+  return mode == DFmode ? tune_info->fp_div_df : tune_info->fp_div_sf;
 }
 
 /* Return the cost of sign-extending OP to mode MODE, not including the
@@ -1541,7 +1518,7 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
       cost = riscv_address_insns (addr, mode, true);
       if (cost > 0)
 	{
-	  *total = COSTS_N_INSNS (cost + mips_cost->memory_latency);
+	  *total = COSTS_N_INSNS (cost + tune_info->memory_latency);
 	  return true;
 	}
       /* Otherwise use the default handling.  */
@@ -1565,7 +1542,7 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
       return true;
 
     case ABS:
-      *total = float_mode_p ? mips_cost->fp_add : COSTS_N_INSNS (3);
+      *total = float_mode_p ? tune_info->fp_add : COSTS_N_INSNS (3);
       return false;
 
     case LO_SUM:
@@ -1589,7 +1566,7 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
       mode = GET_MODE (XEXP (x, 0));
       if (FLOAT_MODE_P (mode))
 	{
-	  *total = mips_cost->fp_add;
+	  *total = tune_info->fp_add;
 	  return false;
 	}
       *total = riscv_binary_cost (x, 1, 3, speed);
@@ -1631,7 +1608,7 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
 	  if (GET_CODE (XEXP (x, 0)) == MULT)
 	    *total = 0;
 	  else
-	    *total = mips_cost->fp_add;
+	    *total = tune_info->fp_add;
 	  return false;
 	}
 
@@ -1659,7 +1636,7 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
 	}
 
       if (float_mode_p)
-	*total = mips_cost->fp_add;
+	*total = tune_info->fp_add;
       else
 	*total = COSTS_N_INSNS (GET_MODE_SIZE (mode) > UNITS_PER_WORD ? 4 : 1);
       return false;
@@ -1669,13 +1646,13 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
 	*total = mips_fp_mult_cost (mode);
       else if (mode == DImode && !TARGET_64BIT)
 	/* We use a MUL and a MULH[[S]U]. */
-	*total = mips_cost->int_mult_si * 2;
+	*total = tune_info->int_mult_si * 2;
       else if (!speed)
 	*total = 1;
       else if (mode == DImode)
-	*total = mips_cost->int_mult_di;
+	*total = tune_info->int_mult_di;
       else
-	*total = mips_cost->int_mult_si;
+	*total = tune_info->int_mult_si;
       return false;
 
     case DIV:
@@ -1693,9 +1670,9 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
       if (!speed)
 	*total = 1;
       else if (mode == DImode)
-        *total = mips_cost->int_div_di;
+        *total = tune_info->int_div_di;
       else
-	*total = mips_cost->int_div_si;
+	*total = tune_info->int_div_si;
       return false;
 
     case SIGN_EXTEND:
@@ -1711,7 +1688,7 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
     case FIX:
     case FLOAT_EXTEND:
     case FLOAT_TRUNCATE:
-      *total = mips_cost->fp_add;
+      *total = tune_info->fp_add;
       return false;
 
     default:
@@ -3728,7 +3705,7 @@ mips_register_move_cost (enum machine_mode mode ATTRIBUTE_UNUSED,
 static int
 mips_memory_move_cost (enum machine_mode mode, reg_class_t rclass, bool in)
 {
-  return (mips_cost->memory_latency
+  return (tune_info->memory_latency
 	  + memory_move_secondary_cost (mode, rclass, in));
 } 
 
@@ -3813,16 +3790,9 @@ mips_adjust_cost (rtx insn ATTRIBUTE_UNUSED, rtx link,
 /* Return the number of instructions that can be issued per cycle.  */
 
 static int
-mips_issue_rate (void)
+riscv_issue_rate (void)
 {
-  switch (riscv_tune)
-    {
-    case PROCESSOR_ROCKET:
-      return 1;
-
-    default:
-      return 1;
-    }
+  return tune_info->issue_rate;
 }
 
 /* This structure describes a single built-in function.  */
@@ -4200,60 +4170,21 @@ mips_init_machine_status (void)
   return ggc_alloc_cleared_machine_function ();
 }
 
-/* Return the riscv_cpu_info entry for the processor or ISA given
-   by CPU_STRING.  Return null if the string isn't recognized.
-
-   A similar function exists in GAS.  */
-
-static const struct riscv_cpu_info *
-mips_parse_cpu (const char *cpu_string)
-{
-  unsigned int i;
-
-  for (i = 0; i < ARRAY_SIZE (riscv_cpu_info_table); i++)
-    if (strcmp (riscv_cpu_info_table[i].name, cpu_string) == 0)
-      return riscv_cpu_info_table + i;
-
-  return NULL;
-}
-
 /* Implement TARGET_OPTION_OVERRIDE.  */
 
 static void
 mips_option_override (void)
 {
   int regno, mode;
-  const struct riscv_cpu_info *info;
+  const struct riscv_cpu_info *cpu;
 
 #ifdef SUBTARGET_OVERRIDE_OPTIONS
   SUBTARGET_OVERRIDE_OPTIONS;
 #endif
 
-  info = mips_parse_cpu (RISCV_CPU_STRING_DEFAULT);
-  gcc_assert (info);
-  riscv_tune = info->cpu;
-
-  if (riscv_tune_string != 0)
-    {
-      const struct riscv_cpu_info *tune = mips_parse_cpu (riscv_tune_string);
-      if (tune)
-	riscv_tune = tune->cpu;
-    }
-
   flag_pcc_struct_return = 0;
 
-  /* Decide which rtx_costs structure to use.  */
-  if (optimize_size)
-    mips_cost = &mips_rtx_cost_optimize_size;
-  else
-    mips_cost = &mips_rtx_cost_data[riscv_tune];
-
-  /* If the user hasn't specified a branch cost, use the processor's
-     default.  */
-  if (riscv_branch_cost == 0)
-    riscv_branch_cost = mips_cost->branch_cost;
-
-  if (!TARGET_USE_GP)
+  if (flag_pic)
     g_switch_value = 0;
 
   /* Prefer a call to memcpy over inline code when optimizing for size,
@@ -4261,9 +4192,15 @@ mips_option_override (void)
   if (optimize_size && (target_flags_explicit & MASK_MEMCPY) == 0)
     target_flags |= MASK_MEMCPY;
 
-  /* Use atomic instructions, if user did not specify a preference */
-  if ((target_flags_explicit & MASK_ATOMIC) == 0)
-    target_flags |= MASK_ATOMIC;
+  /* Handle -mtune.  */
+  cpu = riscv_parse_cpu (riscv_tune_string ? riscv_tune_string :
+			 RISCV_TUNE_STRING_DEFAULT);
+  tune_info = optimize_size ? &optimize_size_tune_info : cpu->tune_info;
+
+  /* If the user hasn't specified a branch cost, use the processor's
+     default.  */
+  if (riscv_branch_cost == 0)
+    riscv_branch_cost = tune_info->branch_cost;
 
   /* Set up riscv_hard_regno_mode_ok.  */
   for (mode = 0; mode < MAX_MACHINE_MODE; mode++)
@@ -4367,7 +4304,7 @@ mips_trampoline_init (rtx m_tramp, tree fndecl, rtx chain_value)
 #undef TARGET_SCHED_ADJUST_COST
 #define TARGET_SCHED_ADJUST_COST mips_adjust_cost
 #undef TARGET_SCHED_ISSUE_RATE
-#define TARGET_SCHED_ISSUE_RATE mips_issue_rate
+#define TARGET_SCHED_ISSUE_RATE riscv_issue_rate
 
 #undef TARGET_FUNCTION_OK_FOR_SIBCALL
 #define TARGET_FUNCTION_OK_FOR_SIBCALL hook_bool_tree_tree_true
@@ -4447,9 +4384,6 @@ mips_trampoline_init (rtx m_tramp, tree fndecl, rtx chain_value)
 
 #undef TARGET_USE_BLOCKS_FOR_CONSTANT_P
 #define TARGET_USE_BLOCKS_FOR_CONSTANT_P hook_bool_mode_const_rtx_true
-
-#undef  TARGET_COMP_TYPE_ATTRIBUTES
-#define TARGET_COMP_TYPE_ATTRIBUTES mips_comp_type_attributes
 
 #ifdef HAVE_AS_DTPRELWORD
 #undef TARGET_ASM_OUTPUT_DWARF_DTPREL

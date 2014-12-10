@@ -19,26 +19,6 @@ You should have received a copy of the GNU General Public License
 along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
-/* Information about one recognized processor.  Defined here for the
-   benefit of TARGET_CPU_CPP_BUILTINS.  */
-struct riscv_cpu_info {
-  /* The 'canonical' name of the processor as far as GCC is concerned.
-     It's typically a manufacturer's prefix followed by a numerical
-     designation.  It should be lowercase.  */
-  const char *name;
-
-  /* The internal processor number that most closely matches this
-     entry.  Several processors can have the same value, if there's no
-     difference between them from GCC's point of view.  */
-  enum processor cpu;
-
-  /* A mask of PTF_* values.  */
-  unsigned int tune_flags;
-};
-
-/* True if a global pointer can be used to access small data. */
-#define TARGET_USE_GP (!flag_pic)
-
 /* TARGET_HARD_FLOAT and TARGET_SOFT_FLOAT reflect whether the FPU is
    directly accessible, while the command-line options select
    TARGET_HARD_FLOAT_ABI and TARGET_SOFT_FLOAT_ABI to reflect the ABI
@@ -124,15 +104,15 @@ struct riscv_cpu_info {
 /* Default target_flags if no switches are specified  */
 
 #ifndef TARGET_DEFAULT
-#define TARGET_DEFAULT 0
+#define TARGET_DEFAULT (TARGET_ATOMIC | 
 #endif
 
-#ifndef TARGET_CPU_DEFAULT
-#define TARGET_CPU_DEFAULT 0
+#ifndef RISCV_ARCH_STRING_DEFAULT
+#define RISCV_ARCH_STRING_DEFAULT "IMAFD"
 #endif
 
-#ifndef RISCV_CPU_STRING_DEFAULT
-#define RISCV_CPU_STRING_DEFAULT "rocket"
+#ifndef RISCV_TUNE_STRING_DEFAULT
+#define RISCV_TUNE_STRING_DEFAULT "rocket"
 #endif
 
 #ifndef TARGET_64BIT_DEFAULT
@@ -898,7 +878,7 @@ typedef struct {
 /* A C expression for the cost of a branch instruction.  A value of
    1 is the default; other values are interpreted relative to that.  */
 
-#define BRANCH_COST(speed_p, predictable_p) riscv_branch_cost
+#define BRANCH_COST(speed_p, predictable_p) ((speed_p) ? riscv_branch_cost : 1)
 #define LOGICAL_OP_NON_SHORT_CIRCUIT 0
 
 /* Control the assembler format that we output.  */
@@ -1147,7 +1127,6 @@ while (0)
 extern const enum reg_class riscv_regno_to_class[];
 extern bool riscv_hard_regno_mode_ok[][FIRST_PSEUDO_REGISTER];
 extern const char* riscv_hi_relocs[];
-extern enum processor riscv_tune;        /* which cpu to schedule for */
 #endif
 
 #define ASM_PREFERRED_EH_DATA_FORMAT(CODE,GLOBAL) \

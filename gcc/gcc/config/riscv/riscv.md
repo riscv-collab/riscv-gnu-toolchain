@@ -19,10 +19,6 @@
 ;; along with GCC; see the file COPYING3.  If not see
 ;; <http://www.gnu.org/licenses/>.
 
-(define_enum "processor" [
-  rocket
-])
-
 (define_c_enum "unspec" [
   ;; Floating-point moves.
   UNSPEC_LOAD_LOW
@@ -239,10 +235,6 @@
 	  (eq_attr "move_type" "store,fpstore")
 	  (symbol_ref "mips_load_store_insns (operands[0], insn) * 4")
 	  ] (const_int 4)))
-
-;; Attribute describing the processor.
-(define_enum_attr "cpu" "processor"
-  (const (symbol_ref "riscv_tune")))
 
 ;; Describe a user's asm statement.
 (define_asm_attributes
@@ -596,13 +588,13 @@
   [(set (match_operand:GPR 0 "register_operand")
 	(mult:GPR (match_operand:GPR 1 "reg_or_0_operand")
 		   (match_operand:GPR 2 "register_operand")))]
-  "")
+  "TARGET_MULDIV")
 
 (define_insn "*mulsi3"
   [(set (match_operand:SI 0 "register_operand" "=r")
 	(mult:SI (match_operand:GPR 1 "register_operand" "r")
 		  (match_operand:GPR2 2 "register_operand" "r")))]
-  ""
+  "TARGET_MULDIV"
   { return TARGET_64BIT ? "mulw\t%0,%1,%2" : "mul\t%0,%1,%2"; }
   [(set_attr "type" "imul")
    (set_attr "mode" "SI")])
@@ -611,7 +603,7 @@
   [(set (match_operand:SI 0 "register_operand" "=r")
 	     (mult:SI (truncate:SI (match_operand:DI 1 "register_operand" "r"))
 		      (truncate:SI (match_operand:DI 2 "register_operand" "r"))))]
-  "TARGET_64BIT"
+  "TARGET_MULDIV && TARGET_64BIT"
   "mulw\t%0,%1,%2"
   [(set_attr "type" "imul")
    (set_attr "mode" "SI")])
@@ -621,7 +613,7 @@
           (truncate:SI
 	     (mult:DI (match_operand:DI 1 "register_operand" "r")
 		      (match_operand:DI 2 "register_operand" "r"))))]
-  "TARGET_64BIT"
+  "TARGET_MULDIV && TARGET_64BIT"
   "mulw\t%0,%1,%2"
   [(set_attr "type" "imul")
    (set_attr "mode" "SI")])
@@ -630,7 +622,7 @@
   [(set (match_operand:DI 0 "register_operand" "=r")
 	(mult:DI (match_operand:DI 1 "register_operand" "r")
 		  (match_operand:DI 2 "register_operand" "r")))]
-  "TARGET_64BIT"
+  "TARGET_MULDIV && TARGET_64BIT"
   "mul\t%0,%1,%2"
   [(set_attr "type" "imul")
    (set_attr "mode" "DI")])
@@ -652,7 +644,7 @@
 		 (any_extend:TI
 		   (match_operand:DI 2 "register_operand" "r"))))
   (clobber (match_scratch:DI 3 "=r"))]
-  "TARGET_64BIT"
+  "TARGET_MULDIV && TARGET_64BIT"
   "#"
   "reload_completed"
   [
@@ -679,7 +671,7 @@
 		     (any_extend:TI
 		       (match_operand:DI 2 "register_operand" "r")))
 	    (const_int 64))))]
-  "TARGET_64BIT"
+  "TARGET_MULDIV && TARGET_64BIT"
   "mulh<u>\t%0,%1,%2"
   [(set_attr "type" "imul")
    (set_attr "mode" "DI")])
@@ -692,7 +684,7 @@
 		 (sign_extend:TI
 		   (match_operand:DI 2 "register_operand" "r"))))
   (clobber (match_scratch:DI 3 "=r"))]
-  "TARGET_64BIT"
+  "TARGET_MULDIV && TARGET_64BIT"
   "#"
   "reload_completed"
   [
@@ -719,7 +711,7 @@
 		     (sign_extend:TI
 		       (match_operand:DI 2 "register_operand" "r")))
 	    (const_int 64))))]
-  "TARGET_64BIT"
+  "TARGET_MULDIV && TARGET_64BIT"
   "mulhsu\t%0,%2,%1"
   [(set_attr "type" "imul")
    (set_attr "mode" "DI")])
@@ -731,7 +723,7 @@
 		 (any_extend:DI
 		   (match_operand:SI 2 "register_operand" "r"))))
   (clobber (match_scratch:SI 3 "=r"))]
-  "!TARGET_64BIT"
+  "TARGET_MULDIV && !TARGET_64BIT"
   "#"
   "reload_completed"
   [
@@ -758,7 +750,7 @@
 		     (any_extend:DI
 		       (match_operand:SI 2 "register_operand" "r")))
 	    (const_int 32))))]
-  "!TARGET_64BIT"
+  "TARGET_MULDIV && !TARGET_64BIT"
   "mulh<u>\t%0,%1,%2"
   [(set_attr "type" "imul")
    (set_attr "mode" "SI")])
@@ -771,7 +763,7 @@
 		 (sign_extend:DI
 		   (match_operand:SI 2 "register_operand" "r"))))
   (clobber (match_scratch:SI 3 "=r"))]
-  "!TARGET_64BIT"
+  "TARGET_MULDIV && !TARGET_64BIT"
   "#"
   "reload_completed"
   [
@@ -798,7 +790,7 @@
 		     (sign_extend:DI
 		       (match_operand:SI 2 "register_operand" "r")))
 	    (const_int 32))))]
-  "!TARGET_64BIT"
+  "TARGET_MULDIV && !TARGET_64BIT"
   "mulhsu\t%0,%2,%1"
   [(set_attr "type" "imul")
    (set_attr "mode" "SI")])
@@ -815,7 +807,7 @@
   [(set (match_operand:SI 0 "register_operand" "=r")
 	(any_div:SI (match_operand:SI 1 "register_operand" "r")
 		  (match_operand:SI 2 "register_operand" "r")))]
-  ""
+  "TARGET_MULDIV"
   { return TARGET_64BIT ? "div<u>w\t%0,%1,%2" : "div<u>\t%0,%1,%2"; }
   [(set_attr "type" "idiv")
    (set_attr "mode" "SI")])
@@ -824,7 +816,7 @@
   [(set (match_operand:DI 0 "register_operand" "=r")
 	(any_div:DI (match_operand:DI 1 "register_operand" "r")
 		  (match_operand:DI 2 "register_operand" "r")))]
-  "TARGET_64BIT"
+  "TARGET_MULDIV && TARGET_64BIT"
   "div<u>\t%0,%1,%2"
   [(set_attr "type" "idiv")
    (set_attr "mode" "DI")])
@@ -833,7 +825,7 @@
   [(set (match_operand:SI 0 "register_operand" "=r")
 	(any_mod:SI (match_operand:SI 1 "register_operand" "r")
 		  (match_operand:SI 2 "register_operand" "r")))]
-  ""
+  "TARGET_MULDIV"
   { return TARGET_64BIT ? "rem<u>w\t%0,%1,%2" : "rem<u>\t%0,%1,%2"; }
   [(set_attr "type" "idiv")
    (set_attr "mode" "SI")])
@@ -842,7 +834,7 @@
   [(set (match_operand:DI 0 "register_operand" "=r")
 	(any_mod:DI (match_operand:DI 1 "register_operand" "r")
 		  (match_operand:DI 2 "register_operand" "r")))]
-  "TARGET_64BIT"
+  "TARGET_MULDIV && TARGET_64BIT"
   "rem<u>\t%0,%1,%2"
   [(set_attr "type" "idiv")
    (set_attr "mode" "DI")])
