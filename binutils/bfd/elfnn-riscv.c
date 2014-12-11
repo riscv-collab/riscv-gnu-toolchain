@@ -474,7 +474,7 @@ riscv_elf_record_got_reference (bfd *abfd, struct bfd_link_info *info,
   return TRUE;
 }
 
-static void
+static bfd_boolean
 bad_static_reloc (bfd *abfd, unsigned r_type, struct elf_link_hash_entry *h)
 {
   (*_bfd_error_handler)
@@ -482,6 +482,7 @@ bad_static_reloc (bfd *abfd, unsigned r_type, struct elf_link_hash_entry *h)
       abfd, riscv_elf_rtype_to_howto (r_type)->name,
       h != NULL ? h->root.root.string : "a local symbol");
   bfd_set_error (bfd_error_bad_value);
+  return FALSE;
 }
 /* Look through the relocs for a section during the first phase, and
    allocate space in the global offset table or procedure linkage
@@ -575,23 +576,14 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 
 	case R_RISCV_TPREL_HI20:
 	  if (!info->executable)
-	    {
-	      bad_static_reloc (abfd, r_type, h);
-	      return FALSE;
-	    }
+	    return bad_static_reloc (abfd, r_type, h);
 	  if (h != NULL)
 	    riscv_elf_record_tls_type (abfd, h, r_symndx, GOT_TLS_LE);
 	  goto static_reloc;
 
 	case R_RISCV_HI20:
-	  if (info->shared
-	      && (h == NULL || strcmp (h->root.root.string, "_DYNAMIC") != 0))
-	    {
-	      /* Absolute relocs don't ordinarily belong in shared libs, but
-		 we make an exception for _DYNAMIC for ld.so's purpose.  */
-	      bad_static_reloc (abfd, r_type, h);
-	      return FALSE;
-	    }
+	  if (info->shared)
+	    return bad_static_reloc (abfd, r_type, h);
 	  /* Fall through.  */
 
 	case R_RISCV_PCREL_HI20:

@@ -91,10 +91,8 @@ elf_machine_matches_host (const ElfW(Ehdr) *ehdr)
 static inline ElfW(Addr)
 elf_machine_dynamic (void)
 {
-  ElfW(Addr) link_addr;
-  asm ("lui %0, %%hi(_DYNAMIC)" : "=r"(link_addr));
-  asm ("addi %0, %0, %%lo(_DYNAMIC)" : "+r"(link_addr));
-  return link_addr;
+  extern ElfW(Addr) _GLOBAL_OFFSET_TABLE_ __attribute__((visibility("hidden")));
+  return _GLOBAL_OFFSET_TABLE_;
 }
 
 #define STRINGXP(X) __STRING(X)
