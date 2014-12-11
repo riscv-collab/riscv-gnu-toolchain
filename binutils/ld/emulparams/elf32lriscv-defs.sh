@@ -2,6 +2,7 @@
 SCRIPT_NAME=elf
 ARCH=riscv
 OUTPUT_FORMAT="elf32-littleriscv"
+NO_REL_RELOCS=yes
 
 TEMPLATE_NAME=elf32
 EXTRA_EM_FILE=riscvelf
@@ -26,7 +27,7 @@ GENERATE_PIE_SCRIPT=yes
 TEXT_START_ADDR=0x10000000
 SHLIB_TEXT_START_ADDR=0x1000000
 MAXPAGESIZE="CONSTANT (MAXPAGESIZE)"
-ENTRY=_start
+COMMONPAGESIZE="CONSTANT (COMMONPAGESIZE)"
 
 INITIAL_READONLY_SECTIONS=".interp       ${RELOCATING-0} : { *(.interp) }"
 SDATA_START_SYMBOLS="_gp = . + 0x800;
@@ -37,5 +38,3 @@ if test -n "${CREATE_SHLIB}"; then
   OTHER_READONLY_SECTIONS=".srodata      ${RELOCATING-0} : { *(.srodata.cst16) *(.srodata.cst8) *(.srodata.cst4) *(.srodata.cst2) *(.srodata*) }"
   unset GOT
 fi
-
-TEXT_DYNAMIC=
