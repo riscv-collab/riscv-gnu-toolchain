@@ -574,6 +574,15 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	    }
 	  break;
 
+	case R_RISCV_CALL:
+	case R_RISCV_JAL:
+	case R_RISCV_BRANCH:
+	case R_RISCV_PCREL_HI20:
+	  /* In shared libs, these relocs are known to bind locally.  */
+	  if (info->shared)
+	    break;
+	  goto static_reloc;
+
 	case R_RISCV_TPREL_HI20:
 	  if (!info->executable)
 	    return bad_static_reloc (abfd, r_type, h);
@@ -586,15 +595,11 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	    return bad_static_reloc (abfd, r_type, h);
 	  /* Fall through.  */
 
-	case R_RISCV_PCREL_HI20:
 	case R_RISCV_COPY:
 	case R_RISCV_JUMP_SLOT:
 	case R_RISCV_RELATIVE:
 	case R_RISCV_64:
 	case R_RISCV_32:
-	case R_RISCV_BRANCH:
-	case R_RISCV_CALL:
-	case R_RISCV_JAL:
 	  /* Fall through.  */
 
 	static_reloc:
