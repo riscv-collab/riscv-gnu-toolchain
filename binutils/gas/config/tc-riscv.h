@@ -77,7 +77,7 @@ extern int riscv_parse_long_option (const char *);
 
 #define TC_FORCE_RELOCATION_SUB_SAME(FIX, SEG) ((SEG)->flags & SEC_CODE)
 #define TC_FORCE_RELOCATION_SUB_LOCAL(FIX, SEG) 1
-#define TC_VALIDATE_FIX_SUB(FIX, SEG) TC_FORCE_RELOCATION_SUB_SAME(FIX, SEG)
+#define TC_VALIDATE_FIX_SUB(FIX, SEG) 1
 #define TC_FORCE_RELOCATION_LOCAL(FIX) 1
 #define DIFF_EXPR_OK 1
 

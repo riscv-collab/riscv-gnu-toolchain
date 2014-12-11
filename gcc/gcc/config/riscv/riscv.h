@@ -1130,4 +1130,4 @@ extern const char* riscv_hi_relocs[];
 #endif
 
 #define ASM_PREFERRED_EH_DATA_FORMAT(CODE,GLOBAL) \
-  (((GLOBAL) ? DW_EH_PE_indirect : 0) | DW_EH_PE_absptr)
+  (((GLOBAL) ? DW_EH_PE_indirect : 0) | DW_EH_PE_pcrel)
