@@ -811,8 +811,8 @@ riscv_address_insns (rtx x, enum machine_mode mode, bool might_split_p)
   if (mode != BLKmode && might_split_p)
     n += (GET_MODE_SIZE (mode) + UNITS_PER_WORD - 1) / UNITS_PER_WORD;
 
-  if (addr.type == ADDRESS_SYMBOLIC)
-    n *= riscv_symbol_insns (addr.symbol_type);
+  if (addr.type == ADDRESS_LO_SUM)
+    n += riscv_symbol_insns (addr.symbol_type) - 1;
 
   return n;
 }
@@ -1344,10 +1344,6 @@ mips_legitimize_move (enum machine_mode mode, rtx dest, rtx src)
   return false;
 }
 
-/* The cost of loading values from the constant pool.  It should be
-   larger than the cost of any constant we want to synthesize inline.  */
-#define CONSTANT_POOL_COST COSTS_N_INSNS (8)
-
 /* Return true if there is an instruction that implements CODE and accepts
    X as an immediate operand. */
 
@@ -1508,7 +1504,7 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
 	  return true;
 	}
       /* The value will need to be fetched from the constant pool.  */
-      *total = CONSTANT_POOL_COST;
+      *total = COSTS_N_INSNS (riscv_symbol_insns (SYMBOL_ABSOLUTE));
       return true;
 
     case MEM:
@@ -1518,7 +1514,7 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
       cost = riscv_address_insns (addr, mode, true);
       if (cost > 0)
 	{
-	  *total = COSTS_N_INSNS (cost + tune_info->memory_latency);
+	  *total = COSTS_N_INSNS (cost) + tune_info->memory_latency;
 	  return true;
 	}
       /* Otherwise use the default handling.  */
@@ -2987,7 +2983,7 @@ mips_print_operand_address (FILE *file, rtx x)
   gcc_unreachable ();
 }
 
-bool
+static bool
 riscv_size_ok_for_small_data_p (int size)
 {
   return g_switch_value && IN_RANGE (size, 1, g_switch_value);

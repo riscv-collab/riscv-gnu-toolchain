@@ -875,10 +875,12 @@ typedef struct {
 
 #define FUNCTION_MODE SImode
 
-/* A C expression for the cost of a branch instruction.  A value of
-   1 is the default; other values are interpreted relative to that.  */
+/* A C expression for the cost of a branch instruction.  A value of 2
+   seems to minimize code size.  */
 
-#define BRANCH_COST(speed_p, predictable_p) ((speed_p) ? riscv_branch_cost : 1)
+#define BRANCH_COST(speed_p, predictable_p) \
+  ((!(speed_p) || (predictable_p)) ? 2 : riscv_branch_cost)
+
 #define LOGICAL_OP_NON_SHORT_CIRCUIT 0
 
 /* Control the assembler format that we output.  */

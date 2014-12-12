@@ -86,6 +86,4 @@ extern unsigned int current_section_flags (void);
 
 extern void riscv_expand_vector_init (rtx, rtx);
 
-extern bool riscv_size_ok_for_small_data_p (int size);
-
 #endif /* ! GCC_RISCV_PROTOS_H */
