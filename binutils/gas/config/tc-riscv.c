@@ -251,8 +251,8 @@ static char *insn_error;
 /* Replace bits MASK << SHIFT of STRUCT with the equivalent bits in
    VALUE << SHIFT.  VALUE is evaluated exactly once.  */
 #define INSERT_BITS(STRUCT, VALUE, MASK, SHIFT) \
-  (STRUCT) = (((STRUCT) & ~((MASK) << (SHIFT))) \
-	      | (((VALUE) & (MASK)) << (SHIFT)))
+  (STRUCT) = (((STRUCT) & ~((insn_t)(MASK) << (SHIFT))) \
+	      | ((insn_t)((VALUE) & (MASK)) << (SHIFT)))
 
 /* Extract bits MASK << SHIFT from STRUCT and shift them right
    SHIFT places.  */
