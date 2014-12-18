@@ -716,7 +716,7 @@
   [(set_attr "type" "imul")
    (set_attr "mode" "DI")])
 
-(define_insn_and_split "<u>mulsidi3"
+(define_expand "<u>mulsidi3"
   [(set (match_operand:DI 0 "register_operand" "=r")
 	(mult:DI (any_extend:DI
 		   (match_operand:SI 1 "register_operand" "r"))
@@ -724,20 +724,13 @@
 		   (match_operand:SI 2 "register_operand" "r"))))
   (clobber (match_scratch:SI 3 "=r"))]
   "TARGET_MULDIV && !TARGET_64BIT"
-  "#"
-  "reload_completed"
-  [
-   (set (match_dup 3) (mult:SI (match_dup 1) (match_dup 2)))
-   (set (match_dup 4) (truncate:SI
-			(lshiftrt:DI
-			  (mult:DI (any_extend:DI (match_dup 1))
-				   (any_extend:DI (match_dup 2)))
-			  (const_int 32))))
-   (set (match_dup 5) (match_dup 3))
-  ]
 {
-  operands[4] = mips_subword (operands[0], true);
-  operands[5] = mips_subword (operands[0], false);
+  rtx temp = gen_reg_rtx (SImode);
+  emit_insn (gen_mulsi3 (temp, operands[1], operands[2]));
+  emit_insn (gen_<u>mulsi3_highpart (mips_subword (operands[0], true),
+				     operands[1], operands[2]));
+  emit_insn (gen_movsi (mips_subword (operands[0], false), temp));
+  DONE;
 }
   )
 
@@ -756,7 +749,7 @@
    (set_attr "mode" "SI")])
 
 
-(define_insn_and_split "usmulsidi3"
+(define_expand "usmulsidi3"
   [(set (match_operand:DI 0 "register_operand" "=r")
 	(mult:DI (zero_extend:DI
 		   (match_operand:SI 1 "register_operand" "r"))
@@ -764,20 +757,13 @@
 		   (match_operand:SI 2 "register_operand" "r"))))
   (clobber (match_scratch:SI 3 "=r"))]
   "TARGET_MULDIV && !TARGET_64BIT"
-  "#"
-  "reload_completed"
-  [
-   (set (match_dup 3) (mult:SI (match_dup 1) (match_dup 2)))
-   (set (match_dup 4) (truncate:SI
-			(lshiftrt:DI
-			  (mult:DI (zero_extend:DI (match_dup 1))
-				   (sign_extend:DI (match_dup 2)))
-			  (const_int 32))))
-   (set (match_dup 5) (match_dup 3))
-  ]
 {
-  operands[4] = mips_subword (operands[0], true);
-  operands[5] = mips_subword (operands[0], false);
+  rtx temp = gen_reg_rtx (SImode);
+  emit_insn (gen_mulsi3 (temp, operands[1], operands[2]));
+  emit_insn (gen_usmulsi3_highpart (mips_subword (operands[0], true),
+				     operands[1], operands[2]));
+  emit_insn (gen_movsi (mips_subword (operands[0], false), temp));
+  DONE;
 }
   )
 
