@@ -3534,29 +3534,25 @@ riscv_can_use_return_insn (void)
 static bool
 riscv_hard_regno_mode_ok_p (unsigned int regno, enum machine_mode mode)
 {
-  unsigned int size;
-  enum mode_class mclass;
+  unsigned int size = GET_MODE_SIZE (mode);
+  enum mode_class mclass = GET_MODE_CLASS (mode);
 
   /* This is hella bogus but ira_build segfaults on RV32 without it. */
   if (VECTOR_MODE_P (mode))
     return true;
 
-  if (mode == CCmode)
-    return GP_REG_P (regno);
-
-  size = GET_MODE_SIZE (mode);
-  mclass = GET_MODE_CLASS (mode);
-
   if (GP_REG_P (regno))
-    /* Double-word values must be even-register-aligned. */
-    return ((regno - GP_REG_FIRST) & 1) == 0 || size <= UNITS_PER_WORD;
+    {
+      if (size <= UNITS_PER_WORD)
+	return true;
+
+      /* Double-word values must be even-register-aligned.  */
+      if (size <= 2 * UNITS_PER_WORD)
+	return regno % 2 == 0;
+    }
 
   if (FP_REG_P (regno))
     {
-      /* Allow TFmode for CCmode reloads.  */
-      if (mode == TFmode)
-	return true;
-
       if (mclass == MODE_FLOAT
 	  || mclass == MODE_COMPLEX_FLOAT
 	  || mclass == MODE_VECTOR_FLOAT)
@@ -4283,6 +4279,12 @@ mips_trampoline_init (rtx m_tramp, tree fndecl, rtx chain_value)
   emit_insn (gen_clear_cache (addr, end_addr));
 }
 
+static bool
+riscv_lra_p (void)
+{
+  return riscv_lra_flag;
+}
+
 /* Initialize the GCC target structure.  */
 #undef TARGET_ASM_ALIGNED_HI_OP
 #define TARGET_ASM_ALIGNED_HI_OP "\t.half\t"
@@ -4409,6 +4411,9 @@ mips_trampoline_init (rtx m_tramp, tree fndecl, rtx chain_value)
 
 #undef TARGET_MAX_ANCHOR_OFFSET
 #define TARGET_MAX_ANCHOR_OFFSET (RISCV_IMM_REACH/2-1)
+
+#undef TARGET_LRA_P
+#define TARGET_LRA_P riscv_lra_p
 
 struct gcc_target targetm = TARGET_INITIALIZER;
 

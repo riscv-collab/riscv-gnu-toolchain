@@ -1556,12 +1556,12 @@
 })
 
 (define_insn "*movhi_internal"
-  [(set (match_operand:HI 0 "nonimmediate_operand" "=r,r,r,m")
-	(match_operand:HI 1 "move_operand"         "r,T,m,rJ"))]
+  [(set (match_operand:HI 0 "nonimmediate_operand" "=r,r,r,m,*f,*r")
+	(match_operand:HI 1 "move_operand"         "r,T,m,rJ,*r*J,*f"))]
   "(register_operand (operands[0], HImode)
     || reg_or_0_operand (operands[1], HImode))"
   { return mips_output_move (operands[0], operands[1]); }
-  [(set_attr "move_type" "move,const,load,store")
+  [(set_attr "move_type" "move,const,load,store,mtc,mfc")
    (set_attr "mode" "HI")])
 
 ;; HImode constant generation; see mips_move_integer for details.
@@ -1597,12 +1597,12 @@
 })
 
 (define_insn "*movqi_internal"
-  [(set (match_operand:QI 0 "nonimmediate_operand" "=r,r,r,m")
-	(match_operand:QI 1 "move_operand"         "r,I,m,rJ"))]
+  [(set (match_operand:QI 0 "nonimmediate_operand" "=r,r,r,m,*f,*r")
+	(match_operand:QI 1 "move_operand"         "r,I,m,rJ,*r*J,*f"))]
   "(register_operand (operands[0], QImode)
     || reg_or_0_operand (operands[1], QImode))"
   { return mips_output_move (operands[0], operands[1]); }
-  [(set_attr "move_type" "move,const,load,store")
+  [(set_attr "move_type" "move,const,load,store,mtc,mfc")
    (set_attr "mode" "QI")])
 
 ;; 32-bit floating point moves
