@@ -239,18 +239,14 @@ struct mips_integer_op {
 
 struct riscv_tune_info
 {
-  unsigned short fp_add;
-  unsigned short fp_mult_sf;
-  unsigned short fp_mult_df;
-  unsigned short fp_div_sf;
-  unsigned short fp_div_df;
-  unsigned short int_mult_si;
-  unsigned short int_mult_di;
-  unsigned short int_div_si;
-  unsigned short int_div_di;
+  unsigned short fp_add[2];
+  unsigned short fp_mul[2];
+  unsigned short fp_div[2];
+  unsigned short int_mul[2];
+  unsigned short int_div[2];
   unsigned short issue_rate;
   unsigned short branch_cost;
-  unsigned short memory_latency;
+  unsigned short memory_cost;
 };
 
 /* Information about one CPU we know about.  */
@@ -304,34 +300,26 @@ const enum reg_class riscv_regno_to_class[FIRST_PSEUDO_REGISTER] = {
 
 /* Costs to use when optimizing for size.  */
 static const struct riscv_tune_info rocket_tune_info = {
-  COSTS_N_INSNS (8),            /* fp_add */
-  COSTS_N_INSNS (8),            /* fp_mult_sf */
-  COSTS_N_INSNS (8),            /* fp_mult_df */
-  COSTS_N_INSNS (20),           /* fp_div_sf */
-  COSTS_N_INSNS (20),           /* fp_div_df */
-  COSTS_N_INSNS (4),            /* int_mult_si */
-  COSTS_N_INSNS (4),            /* int_mult_di */
-  COSTS_N_INSNS (6),            /* int_div_si */
-  COSTS_N_INSNS (6),            /* int_div_di */
-		   1,           /* issue_rate */
-		   2,           /* branch_cost */
-		   7            /* memory_latency */
+  {COSTS_N_INSNS (4), COSTS_N_INSNS (5)},	/* fp_add */
+  {COSTS_N_INSNS (4), COSTS_N_INSNS (5)},	/* fp_mul */
+  {COSTS_N_INSNS (20), COSTS_N_INSNS (20)},	/* fp_div */
+  {COSTS_N_INSNS (4), COSTS_N_INSNS (4)},	/* int_mul */
+  {COSTS_N_INSNS (6), COSTS_N_INSNS (6)},	/* int_div */
+  1,						/* issue_rate */
+  3,						/* branch_cost */
+  5						/* memory_cost */
 };
 
 /* Costs to use when optimizing for size.  */
 static const struct riscv_tune_info optimize_size_tune_info = {
-  COSTS_N_INSNS (1),            /* fp_add */
-  COSTS_N_INSNS (1),            /* fp_mult_sf */
-  COSTS_N_INSNS (1),            /* fp_mult_df */
-  COSTS_N_INSNS (1),            /* fp_div_sf */
-  COSTS_N_INSNS (1),            /* fp_div_df */
-  COSTS_N_INSNS (1),            /* int_mult_si */
-  COSTS_N_INSNS (1),            /* int_mult_di */
-  COSTS_N_INSNS (1),            /* int_div_si */
-  COSTS_N_INSNS (1),            /* int_div_di */
-		   1,           /* issue_rate */
-		   1,           /* branch_cost */
-		   1            /* memory_latency */
+  {COSTS_N_INSNS (1), COSTS_N_INSNS (1)},	/* fp_add */
+  {COSTS_N_INSNS (1), COSTS_N_INSNS (1)},	/* fp_mul */
+  {COSTS_N_INSNS (1), COSTS_N_INSNS (1)},	/* fp_div */
+  {COSTS_N_INSNS (1), COSTS_N_INSNS (1)},	/* int_mul */
+  {COSTS_N_INSNS (1), COSTS_N_INSNS (1)},	/* int_div */
+  1,						/* issue_rate */
+  1,						/* branch_cost */
+  1						/* memory_cost */
 };
 
 /* A table describing all the processors GCC knows about.  */
@@ -1403,22 +1391,6 @@ riscv_binary_cost (rtx x, int single_insns, int double_insns, bool speed)
 	  + rtx_cost (XEXP (x, 1), GET_CODE (x), 1, speed));
 }
 
-/* Return the cost of floating-point multiplications of mode MODE.  */
-
-static int
-mips_fp_mult_cost (enum machine_mode mode)
-{
-  return mode == DFmode ? tune_info->fp_mult_df : tune_info->fp_mult_sf;
-}
-
-/* Return the cost of floating-point divisions of mode MODE.  */
-
-static int
-mips_fp_div_cost (enum machine_mode mode)
-{
-  return mode == DFmode ? tune_info->fp_div_df : tune_info->fp_div_sf;
-}
-
 /* Return the cost of sign-extending OP to mode MODE, not including the
    cost of OP itself.  */
 
@@ -1514,7 +1486,7 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
       cost = riscv_address_insns (addr, mode, true);
       if (cost > 0)
 	{
-	  *total = COSTS_N_INSNS (cost) + tune_info->memory_latency;
+	  *total = COSTS_N_INSNS (cost + tune_info->memory_cost);
 	  return true;
 	}
       /* Otherwise use the default handling.  */
@@ -1538,7 +1510,7 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
       return true;
 
     case ABS:
-      *total = float_mode_p ? tune_info->fp_add : COSTS_N_INSNS (3);
+      *total = COSTS_N_INSNS (float_mode_p ? 1 : 3);
       return false;
 
     case LO_SUM:
@@ -1560,9 +1532,9 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
       /* Branch comparisons have VOIDmode, so use the first operand's
 	 mode instead.  */
       mode = GET_MODE (XEXP (x, 0));
-      if (FLOAT_MODE_P (mode))
+      if (float_mode_p)
 	{
-	  *total = tune_info->fp_add;
+	  *total = tune_info->fp_add[mode == DFmode];
 	  return false;
 	}
       *total = riscv_binary_cost (x, 1, 3, speed);
@@ -1579,7 +1551,7 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
 	  rtx op1 = XEXP (x, 1);
 	  if (GET_CODE (op0) == MULT && GET_CODE (XEXP (op0, 0)) == NEG)
 	    {
-	      *total = (mips_fp_mult_cost (mode)
+	      *total = (tune_info->fp_mul[mode == DFmode]
 			+ set_src_cost (XEXP (XEXP (op0, 0), 0), speed)
 			+ set_src_cost (XEXP (op0, 1), speed)
 			+ set_src_cost (op1, speed));
@@ -1587,7 +1559,7 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
 	    }
 	  if (GET_CODE (op1) == MULT)
 	    {
-	      *total = (mips_fp_mult_cost (mode)
+	      *total = (tune_info->fp_mul[mode == DFmode]
 			+ set_src_cost (op0, speed)
 			+ set_src_cost (XEXP (op1, 0), speed)
 			+ set_src_cost (XEXP (op1, 1), speed));
@@ -1599,12 +1571,7 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
     case PLUS:
       if (float_mode_p)
 	{
-	  /* If this is part of a MADD or MSUB, treat the PLUS as
-	     being free.  */
-	  if (GET_CODE (XEXP (x, 0)) == MULT)
-	    *total = 0;
-	  else
-	    *total = tune_info->fp_add;
+	  *total = tune_info->fp_add[mode == DFmode];
 	  return false;
 	}
 
@@ -1623,7 +1590,7 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
 	  if ((GET_CODE (op) == PLUS || GET_CODE (op) == MINUS)
 	      && GET_CODE (XEXP (op, 0)) == MULT)
 	    {
-	      *total = (mips_fp_mult_cost (mode)
+	      *total = (tune_info->fp_mul[mode == DFmode]
 			+ set_src_cost (XEXP (XEXP (op, 0), 0), speed)
 			+ set_src_cost (XEXP (XEXP (op, 0), 1), speed)
 			+ set_src_cost (XEXP (op, 1), speed));
@@ -1632,23 +1599,20 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
 	}
 
       if (float_mode_p)
-	*total = tune_info->fp_add;
+	*total = tune_info->fp_add[mode == DFmode];
       else
 	*total = COSTS_N_INSNS (GET_MODE_SIZE (mode) > UNITS_PER_WORD ? 4 : 1);
       return false;
 
     case MULT:
       if (float_mode_p)
-	*total = mips_fp_mult_cost (mode);
-      else if (mode == DImode && !TARGET_64BIT)
-	/* We use a MUL and a MULH[[S]U]. */
-	*total = tune_info->int_mult_si * 2;
+	*total = tune_info->fp_mul[mode == DFmode];
+      else if (GET_MODE_SIZE (mode) > UNITS_PER_WORD)
+	*total = 3 * tune_info->int_mul[0] + COSTS_N_INSNS (2);
       else if (!speed)
-	*total = 1;
-      else if (mode == DImode)
-	*total = tune_info->int_mult_di;
+	*total = COSTS_N_INSNS (1);
       else
-	*total = tune_info->int_mult_si;
+	*total = tune_info->int_mul[mode == DImode];
       return false;
 
     case DIV:
@@ -1656,19 +1620,17 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
     case MOD:
       if (float_mode_p)
 	{
-	  *total = mips_fp_div_cost (mode);
+	  *total = tune_info->fp_div[mode == DFmode];
 	  return false;
 	}
       /* Fall through.  */
 
     case UDIV:
     case UMOD:
-      if (!speed)
-	*total = 1;
-      else if (mode == DImode)
-        *total = tune_info->int_div_di;
+      if (speed)
+	*total = tune_info->int_div[mode == DImode];
       else
-	*total = tune_info->int_div_si;
+	*total = COSTS_N_INSNS (1);
       return false;
 
     case SIGN_EXTEND:
@@ -1684,7 +1646,7 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
     case FIX:
     case FLOAT_EXTEND:
     case FLOAT_TRUNCATE:
-      *total = tune_info->fp_add;
+      *total = tune_info->fp_add[mode == DFmode];
       return false;
 
     default:
@@ -3617,45 +3579,6 @@ mips_canonicalize_move_class (reg_class_t rclass)
   return rclass;
 }
 
-/* Return the cost of moving a value of mode MODE from a register of
-   class FROM to a GPR.  Return 0 for classes that are unions of other
-   classes handled by this function.  */
-
-static int
-mips_move_to_gpr_cost (reg_class_t from)
-{
-  switch (from)
-    {
-    case GENERAL_REGS:
-      return 1;
-
-    case FP_REGS:
-      /* FP->int moves can cause recoupling on decoupled implementations */
-      return 4;
-
-    default:
-      return 0;
-    }
-}
-
-/* Return the cost of moving a value of mode MODE from a GPR to a
-   register of class TO.  Return 0 for classes that are unions of
-   other classes handled by this function.  */
-
-static int
-mips_move_from_gpr_cost (reg_class_t to)
-{
-  switch (to)
-    {
-    case GENERAL_REGS:
-    case FP_REGS:
-      return 1;
-
-    default:
-      return 0;
-    }
-}
-
 /* Implement TARGET_REGISTER_MOVE_COST.  Return 0 for classes that are the
    maximum of the move costs for subclasses; regclass will work out
    the maximum for us.  */
@@ -3669,25 +3592,11 @@ mips_register_move_cost (enum machine_mode mode ATTRIBUTE_UNUSED,
   from = mips_canonicalize_move_class (from);
   to = mips_canonicalize_move_class (to);
 
-  /* Handle moves that can be done without using general-purpose registers.  */
-  if (from == FP_REGS && to == FP_REGS)
-      /* fmv.fmt.  */
-      return 1;
-
-  /* Handle cases in which only one class deviates from the ideal.  */
-  if (from == GENERAL_REGS)
-    return mips_move_from_gpr_cost (to);
-  if (to == GENERAL_REGS)
-    return mips_move_to_gpr_cost (from);
-
-  /* Handles cases that require a GPR temporary.  */
-  cost1 = mips_move_to_gpr_cost (from);
-  if (cost1 != 0)
-    {
-      cost2 = mips_move_from_gpr_cost (to);
-      if (cost2 != 0)
-	return cost1 + cost2;
-    }
+  if ((from == GENERAL_REGS && to == GENERAL_REGS)
+      || (from == GENERAL_REGS && to == FP_REGS)
+      || (from == FP_REGS && to == GENERAL_REGS)
+      || (from == FP_REGS && to == FP_REGS))
+    return COSTS_N_INSNS (1);
 
   return 0;
 }
@@ -3697,7 +3606,7 @@ mips_register_move_cost (enum machine_mode mode ATTRIBUTE_UNUSED,
 static int
 mips_memory_move_cost (enum machine_mode mode, reg_class_t rclass, bool in)
 {
-  return (tune_info->memory_latency
+  return (tune_info->memory_cost
 	  + memory_move_secondary_cost (mode, rclass, in));
 } 
 
