@@ -3067,21 +3067,16 @@ riscv_save_reg_p (unsigned int regno)
 	|                               |
 	|  incoming stack arguments     |
 	|                               |
-	+-------------------------------+
-	|                               |
-	|  caller-allocated save area   |
-      A |  for register arguments       |
-	|                               |
 	+-------------------------------+ <-- incoming stack pointer
 	|                               |
 	|  callee-allocated save area   |
-      B |  for arguments that are       |
+	|  for arguments that are       |
 	|  split between registers and  |
 	|  the stack                    |
 	|                               |
 	+-------------------------------+ <-- arg_pointer_rtx
 	|                               |
-      C |  callee-allocated save area   |
+	|  callee-allocated save area   |
 	|  for register varargs         |
 	|                               |
 	+-------------------------------+ <-- hard_frame_pointer_rtx;
@@ -3100,14 +3095,7 @@ riscv_save_reg_p (unsigned int regno)
 	|                               |
 	|  outgoing stack arguments     |
 	|                               |
-	+-------------------------------+
-	|                               |
-	|  caller-allocated save area   |
-	|  for register arguments       |
-	|                               |
 	+-------------------------------+ <-- stack_pointer_rtx
-
-   At least two of A, B and C will be empty.
 
    Dynamic stack allocations such as alloca insert data at point P.
    They decrease stack_pointer_rtx but leave frame_pointer_rtx and
