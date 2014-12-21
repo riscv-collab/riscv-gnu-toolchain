@@ -297,7 +297,6 @@ enum
   M_FSW,
   M_FSD,
   M_CALL,
-  M_JUMP,
   M_J,
   M_LI,
   M_VF,

@@ -55,7 +55,7 @@ ENTRY(ENTRY_POINT)
 	lla   a4, __libc_csu_fini
 	move  a6, sp  /* stack_end */
 	
-	jump  __libc_start_main@
+	tail  __libc_start_main@
 END(ENTRY_POINT)
 
 /* Define a symbol for the first piece of initialized data.  */

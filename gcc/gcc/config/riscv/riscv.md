@@ -2286,8 +2286,8 @@
 	 (match_operand 1 "" ""))]
   "SIBLING_CALL_P (insn)"
   { return REG_P (operands[0]) ? "jr\t%0"
-	   : absolute_symbolic_operand (operands[0], VOIDmode) ? "jump\t%0"
-	   : "jump\t%0@"; }
+	   : absolute_symbolic_operand (operands[0], VOIDmode) ? "tail\t%0"
+	   : "tail\t%0@"; }
   [(set_attr "type" "call")])
 
 (define_expand "sibcall_value"
@@ -2307,8 +2307,8 @@
               (match_operand 2 "" "")))]
   "SIBLING_CALL_P (insn)"
   { return REG_P (operands[1]) ? "jr\t%1"
-	   : absolute_symbolic_operand (operands[1], VOIDmode) ? "jump\t%1"
-	   : "jump\t%1@"; }
+	   : absolute_symbolic_operand (operands[1], VOIDmode) ? "tail\t%1"
+	   : "tail\t%1@"; }
   [(set_attr "type" "call")])
 
 (define_insn "sibcall_value_multiple_internal"
@@ -2321,8 +2321,8 @@
    (clobber (match_scratch:SI 4 "=j,j"))]
   "SIBLING_CALL_P (insn)"
   { return REG_P (operands[1]) ? "jr\t%1"
-	   : absolute_symbolic_operand (operands[1], VOIDmode) ? "jump\t%1"
-	   : "jump\t%1@"; }
+	   : absolute_symbolic_operand (operands[1], VOIDmode) ? "tail\t%1"
+	   : "tail\t%1@"; }
   [(set_attr "type" "call")])
 
 (define_expand "call"

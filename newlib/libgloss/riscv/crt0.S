@@ -28,7 +28,7 @@ _start:
   addi    a1, sp, _RISCV_SZPTR/8  # a1 = argv
   li      a2, 0                   # a2 = envp = NULL
   call    main
-  jump    exit
+  tail    exit
 
   .global _init
   .global _fini

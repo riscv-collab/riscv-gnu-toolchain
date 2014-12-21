@@ -935,13 +935,10 @@ load_const (int reg, expressionS *ep)
 static void
 macro (struct riscv_cl_insn *ip)
 {
-  unsigned int rd, rs1, rs2;
-  int mask;
-
-  rd = (ip->insn_opcode >> OP_SH_RD) & OP_MASK_RD;
-  rs1 = (ip->insn_opcode >> OP_SH_RS1) & OP_MASK_RS1;
-  rs2 = (ip->insn_opcode >> OP_SH_RS2) & OP_MASK_RS2;
-  mask = ip->insn_mo->mask;
+  int rd = (ip->insn_opcode >> OP_SH_RD) & OP_MASK_RD;
+  int rs1 = (ip->insn_opcode >> OP_SH_RS1) & OP_MASK_RS1;
+  int rs2 = (ip->insn_opcode >> OP_SH_RS2) & OP_MASK_RS2;
+  int mask = ip->insn_mo->mask;
 
   switch (mask)
     {
@@ -1055,13 +1052,7 @@ macro (struct riscv_cl_insn *ip)
 		    BFD_RELOC_RISCV_PCREL_HI20, BFD_RELOC_RISCV_PCREL_LO12_S);
       break;
 
-    case M_JUMP:
-      rd = 0;
-      goto do_call;
     case M_CALL:
-      rd = X_RA;
-do_call:
-      rs1 = reg_lookup_assert ("t0", RCLASS_GPR);
       riscv_call (rd, rs1, &offset_expr, offset_reloc);
       break;
 
