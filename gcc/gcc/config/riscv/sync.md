@@ -79,14 +79,15 @@
   "TARGET_ATOMIC"
   "amoswap.<amo>%A2 zero,%z1,%0")
 
-(define_insn "sync_<optab><mode>"
+(define_insn "atomic_<atomic_optab><mode>"
   [(set (match_operand:GPR 0 "memory_operand" "+A")
 	(unspec_volatile:GPR
 	  [(any_atomic:GPR (match_dup 0)
-	   (match_operand:GPR 1 "reg_or_0_operand" "rJ"))]
-	  UNSPEC_SYNC_OLD_OP))]
+		     (match_operand:GPR 1 "reg_or_0_operand" "rJ"))
+	   (match_operand:SI 2 "const_int_operand")] ;; model
+	 UNSPEC_SYNC_OLD_OP))]
   "TARGET_ATOMIC"
-  "amo<insn>.<amo>.sc zero,%z1,%0")
+  "amo<insn>.<amo>%A2 zero,%z1,%0")
 
 (define_insn "atomic_fetch_<atomic_optab><mode>"
   [(set (match_operand:GPR 0 "register_operand" "=&r")
