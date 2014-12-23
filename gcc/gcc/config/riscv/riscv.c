@@ -1380,15 +1380,11 @@ mips_immediate_operand_p (int code, HOST_WIDE_INT x)
    DOUBLE_INSNS instructions.  */
 
 static int
-riscv_binary_cost (rtx x, int single_insns, int double_insns, bool speed)
+riscv_binary_cost (rtx x, int single_insns, int double_insns)
 {
-  int cost = COSTS_N_INSNS (single_insns);
   if (GET_MODE_SIZE (GET_MODE (x)) == UNITS_PER_WORD * 2)
-    cost = COSTS_N_INSNS (double_insns);
-
-  return (cost
-	  + set_src_cost (XEXP (x, 0), speed)
-	  + rtx_cost (XEXP (x, 1), GET_CODE (x), 1, speed));
+    return COSTS_N_INSNS (double_insns);
+  return COSTS_N_INSNS (single_insns);
 }
 
 /* Return the cost of sign-extending OP to mode MODE, not including the
@@ -1437,7 +1433,6 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
   enum machine_mode mode = GET_MODE (x);
   bool float_mode_p = FLOAT_MODE_P (mode);
   int cost;
-  rtx addr;
 
   switch (code)
     {
@@ -1453,38 +1448,18 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
     case LABEL_REF:
     case CONST_DOUBLE:
     case CONST:
-      /* When not optimizing for size, we care more about the cost
-         of hot code, and hot code is often in a loop.  If a constant
-         operand needs to be forced into a register, we will often be
-         able to hoist the constant load out of the loop, so the load
-         should not contribute to the cost.  */
       if (speed)
-	{
-	  *total = 0;
-	  return true;
-	}
-
-      cost = riscv_const_insns (x);
-      if (cost > 0)
-	{
-	  /* If the constant is likely to be stored in a GPR, SETs of
-	     single-insn constants are as cheap as register sets; we
-	     never want to CSE them. */
-	  if (cost == 1 && outer_code == SET && code == CONST_INT)
-	    cost = 0;
-	  *total = COSTS_N_INSNS (cost);
-	  return true;
-	}
-      /* The value will need to be fetched from the constant pool.  */
-      *total = COSTS_N_INSNS (riscv_symbol_insns (SYMBOL_ABSOLUTE));
+	*total = 1;
+      else if ((cost = riscv_const_insns (x)) > 0)
+	*total = COSTS_N_INSNS (cost);
+      else /* The instruction will be fetched from the constant pool.  */
+	*total = COSTS_N_INSNS (riscv_symbol_insns (SYMBOL_ABSOLUTE));
       return true;
 
     case MEM:
       /* If the address is legitimate, return the number of
 	 instructions it needs.  */
-      addr = XEXP (x, 0);
-      cost = riscv_address_insns (addr, mode, true);
-      if (cost > 0)
+      if ((cost = riscv_address_insns (XEXP (x, 0), mode, true)) > 0)
 	{
 	  *total = COSTS_N_INSNS (cost + tune_info->memory_cost);
 	  return true;
@@ -1500,14 +1475,14 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
     case IOR:
     case XOR:
       /* Double-word operations use two single-word operations.  */
-      *total = riscv_binary_cost (x, 1, 2, speed);
-      return true;
+      *total = riscv_binary_cost (x, 1, 2);
+      return false;
 
     case ASHIFT:
     case ASHIFTRT:
     case LSHIFTRT:
-      *total = riscv_binary_cost (x, 1, CONSTANT_P (XEXP (x,1)) ? 4 : 9, speed);
-      return true;
+      *total = riscv_binary_cost (x, 1, CONSTANT_P (XEXP (x, 1)) ? 4 : 9);
+      return false;
 
     case ABS:
       *total = COSTS_N_INSNS (float_mode_p ? 1 : 3);
@@ -1533,12 +1508,10 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
 	 mode instead.  */
       mode = GET_MODE (XEXP (x, 0));
       if (float_mode_p)
-	{
-	  *total = tune_info->fp_add[mode == DFmode];
-	  return false;
-	}
-      *total = riscv_binary_cost (x, 1, 3, speed);
-      return true;
+	*total = tune_info->fp_add[mode == DFmode];
+      else
+	*total = riscv_binary_cost (x, 1, 3);
+      return false;
 
     case MINUS:
       if (float_mode_p
@@ -1570,14 +1543,10 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
 
     case PLUS:
       if (float_mode_p)
-	{
-	  *total = tune_info->fp_add[mode == DFmode];
-	  return false;
-	}
-
-      /* Double-word operations require three ADDs and an SLTU. */
-      *total = riscv_binary_cost (x, 1, 4, speed);
-      return true;
+	*total = tune_info->fp_add[mode == DFmode];
+      else
+	*total = riscv_binary_cost (x, 1, 4);
+      return false;
 
     case NEG:
       if (float_mode_p
@@ -3575,8 +3544,6 @@ static int
 mips_register_move_cost (enum machine_mode mode ATTRIBUTE_UNUSED,
 			 reg_class_t from, reg_class_t to)
 {
-  int cost1, cost2;
-
   from = mips_canonicalize_move_class (from);
   to = mips_canonicalize_move_class (to);
 
