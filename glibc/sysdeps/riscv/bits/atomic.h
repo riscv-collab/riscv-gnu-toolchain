@@ -45,85 +45,47 @@ typedef uintmax_t uatomic_max_t;
 #define asm_amo(which, ordering, mem, value) ({ 		\
   typeof(*mem) __tmp; 						\
   if (sizeof(__tmp) == 4)					\
-    asm volatile (which ".w" ordering "\t%0, %z1, (%2)" : "=r"(__tmp) : "rJ"(value), "r"(mem)); \
+    asm volatile (which ".w" ordering "\t%0, %z2, %1"		\
+		  : "=r"(__tmp), "+A"(*(mem))			\
+		  : "rJ"(value));				\
   else if (sizeof(__tmp) == 8)					\
-    asm volatile (which ".d" ordering "\t%0, %z1, (%2)" : "=r"(__tmp) : "rJ"(value), "r"(mem)); \
+    asm volatile (which ".d" ordering "\t%0, %z2, %1"		\
+		  : "=r"(__tmp), "+A"(*(mem))			\
+		  : "rJ"(value));				\
   else								\
     abort();							\
   __tmp; })
-
-#define asm_load_reserved(ordering, mem) ({ 			\
-  typeof(*mem) __tmp; 						\
-  if (sizeof(__tmp) == 4)					\
-    asm volatile ("lr.w" ordering "\t%0, (%1)" : "=r"(__tmp) : "r"(mem)); \
-  else if (sizeof(__tmp) == 8)					\
-    asm volatile ("lr.d" ordering "\t%0, (%1)" : "=r"(__tmp) : "r"(mem)); \
-  else								\
-    abort();							\
-  __tmp; })
-
-#define asm_store_conditional(ordering, mem, value) \
-  asm_amo("sc", ordering, mem, value)
 
 /* Atomic compare and exchange. */
 
-#define atomic_cas(ordering, mem, newval, oldval) ({ 	\
+#define atomic_cas(ordering, mem, newval, oldval) ({ 		\
   typeof(*mem) __tmp; 						\
   int __tmp2; 							\
   if (sizeof(__tmp) == 4)					\
-    asm volatile ("1: lr.w" ordering "\t%0, (%2)\n"		\
-                  "bne\t%0, %z4, 1f\n"				\
-		  "sc.w" ordering "\t%1, %z3, (%2)\n"		\
+    asm volatile ("1: lr.w" ordering "\t%0, %2\n"		\
+		  "bne\t%0, %z4, 1f\n"				\
+		  "sc.w" ordering "\t%1, %z3, %2\n"		\
 		  "bnez\t%1, 1b\n"				\
 		  "1:"						\
-		  : "=&r"(__tmp), "=&r"(__tmp2) : "r"(mem), "rJ"(newval), "rJ"(oldval)); \
+		  : "=&r"(__tmp), "=&r"(__tmp2), "+A"(*(mem))	\
+		  : "rJ"(newval), "rJ"(oldval));		\
   else if (sizeof(__tmp) == 8)					\
-    asm volatile ("1: lr.d" ordering "\t%0, (%2)\n"		\
-                  "bne\t%0, %z4, 1f\n"				\
-		  "sc.d" ordering "\t%1, %z3, (%2)\n"		\
+    asm volatile ("1: lr.d" ordering "\t%0, %2\n"		\
+		  "bne\t%0, %z4, 1f\n"				\
+		  "sc.d" ordering "\t%1, %z3, %2\n"		\
 		  "bnez\t%1, 1b\n"				\
 		  "1:"						\
-		  : "=&r"(__tmp), "=&r"(__tmp2) : "r"(mem), "rJ"(newval), "rJ"(oldval)); \
+		  : "=&r"(__tmp), "=&r"(__tmp2), "+A"(*(mem))	\
+		  : "rJ"(newval), "rJ"(oldval));		\
   else								\
     abort();							\
   __tmp; })
-
-#define atomic_cas_bool(ordering, mem, newval, oldval) ({ 	\
-  __label__ failure, success;					\
-  typeof(*mem) __tmp; 						\
-  int __res;							\
-  if (sizeof(__tmp) == 4)					\
-    asm goto ("1: lr.w" ordering "\tt3, (%0)\n"			\
-                  "bne\tt3, %z2, %l[failure]\n"			\
-		  "sc.w" ordering "\tt3, %z1, (%0)\n"		\
-		  "bnez\tt3, 1b"				\
-		  : : "r"(mem), "rJ"(newval), "rJ"(oldval) : "t3" : failure); \
-  else if (sizeof(__tmp) == 8)					\
-    asm goto ("1: lr.d" ordering "\tt3, (%0)\n"			\
-                  "bne\tt3, %z2, %l[failure]\n"			\
-		  "sc.d" ordering "\tt3, %z1, (%0)\n"		\
-		  "bnez\tt3, 1b"				\
-		  : : "r"(mem), "rJ"(newval), "rJ"(oldval) : "t3" : failure); \
-  else								\
-    abort();							\
-  __res = 0;							\
-  goto success;							\
-failure:							\
-  __res = 1;							\
-success:							\
-  __res; })
 
 #define atomic_compare_and_exchange_val_acq(mem, newval, oldval) \
   atomic_cas(".aq", mem, newval, oldval)
 
 #define atomic_compare_and_exchange_val_rel(mem, newval, oldval) \
   atomic_cas(".rl", mem, newval, oldval)
-
-#define atomic_compare_and_exchange_bool_acq(mem, newval, oldval) \
-  atomic_cas_bool(".aq", mem, newval, oldval)
-
-#define atomic_compare_and_exchange_bool_rel(mem, newval, oldval) \
-  atomic_cas_bool(".rl", mem, newval, oldval)
 
 /* Atomic exchange (without compare).  */
 
