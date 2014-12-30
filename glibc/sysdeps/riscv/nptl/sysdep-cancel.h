@@ -48,23 +48,23 @@
     ret;								\
   .size __##syscall_name##_nocancel,.-__##syscall_name##_nocancel;	\
   L(pseudo_cancel):							\
-    SAVESTK;								\
+    addi sp, sp, -STKSPACE;						\
     REG_S ra, STKOFF_RA(sp);						\
     cfi_rel_offset (ra, STKOFF_RA);					\
-      PUSHARGS_##args;			/* save syscall args */		\
-      CENABLE;								\
-      POPARGS_##args;			/* restore syscall args */	\
-      REG_S a0, STKOFF_SVMSK(sp);	/* save mask */			\
-      li a7, SYS_ify (syscall_name);					\
-      scall;								\
-      REG_S a0, STKOFF_A0(sp);		/* save syscall result */	\
-      REG_L a0, STKOFF_SVMSK(sp);	/* pass mask as arg1 */		\
-      CDISABLE;								\
-      REG_L a0, STKOFF_A0(sp);		/* restore syscall result */	\
-      REG_L ra, STKOFF_RA(sp);		/* restore return address */	\
-      RESTORESTK;							\
-      bltz a0, 99b;							\
-    L(pseudo_end):
+    PUSHARGS_##args;			/* save syscall args */		\
+    CENABLE;								\
+    REG_S a0, STKOFF_SVMSK(sp);		/* save mask */			\
+    POPARGS_##args;			/* restore syscall args */	\
+    li a7, SYS_ify (syscall_name);					\
+    scall;								\
+    REG_S a0, STKOFF_A0(sp);		/* save syscall result */	\
+    REG_L a0, STKOFF_SVMSK(sp);		/* pass mask as arg1 */		\
+    CDISABLE;								\
+    REG_L ra, STKOFF_RA(sp);		/* restore return address */	\
+    REG_L a0, STKOFF_A0(sp);		/* restore syscall result */	\
+    addi sp, sp, STKSPACE;						\
+    bltz a0, 99b;							\
+  L(pseudo_end):
 
 
 # undef PSEUDO_END
@@ -75,8 +75,8 @@
 # define PUSHARGS_2	PUSHARGS_1 REG_S a1, STKOFF_A1(sp); cfi_rel_offset (a1, STKOFF_A1);
 # define PUSHARGS_3	PUSHARGS_2 REG_S a2, STKOFF_A2(sp); cfi_rel_offset (a2, STKOFF_A2);
 # define PUSHARGS_4	PUSHARGS_3 REG_S a3, STKOFF_A3(sp); cfi_rel_offset (a3, STKOFF_A3);
-# define PUSHARGS_5	PUSHARGS_4 REG_S a4, STKOFF_A4(sp); cfi_rel_offset (a3, STKOFF_A4);
-# define PUSHARGS_6	PUSHARGS_5 REG_S a5, STKOFF_A5(sp); cfi_rel_offset (a3, STKOFF_A5);
+# define PUSHARGS_5	PUSHARGS_4 REG_S a4, STKOFF_A4(sp); cfi_rel_offset (a4, STKOFF_A4);
+# define PUSHARGS_6	PUSHARGS_5 REG_S a5, STKOFF_A5(sp); cfi_rel_offset (a5, STKOFF_A5);
 
 # define POPARGS_0	/* nothing to do */
 # define POPARGS_1	POPARGS_0 REG_L a0, STKOFF_A0(sp);
@@ -86,35 +86,26 @@
 # define POPARGS_5	POPARGS_4 REG_L a4, STKOFF_A4(sp);
 # define POPARGS_6	POPARGS_5 REG_L a5, STKOFF_A5(sp);
 
-/* Save an even number of slots.  Should be 0 if an even number of slots
-   are used below, or SZREG if an odd number are used.  */
-# define STK_PAD	0
-
-/* Place values that we are more likely to use later in this sequence, i.e.
-   closer to the SP at function entry.  If you do that, the are more
-   likely to already be in your d-cache.  */
-# define STKOFF_A5	(STK_PAD)
+/* Avoid D$ misses by keeping less-used arguments further down stack.  */
+# define STKOFF_A5	0
 # define STKOFF_A4	(STKOFF_A5 + SZREG)
 # define STKOFF_A3	(STKOFF_A4 + SZREG)
-# define STKOFF_A2	(STKOFF_A3 + SZREG)	/* MT and more args.  */
-# define STKOFF_A1	(STKOFF_A2 + SZREG)	/* MT and 2 args.  */
-# define STKOFF_SVMSK	STKOFF_A1		/* Used if MT.  */
-# define STKOFF_A0	(STKOFF_A1 + SZREG)	/* MT and 1 arg.  */
-# define STKOFF_RA	(STKOFF_A0 + SZREG)	/* Used if MT.  */
-
+# define STKOFF_A2	(STKOFF_A3 + SZREG)
+# define STKOFF_A1	(STKOFF_A2 + SZREG)
+# define STKOFF_A0	(STKOFF_A1 + SZREG)
+# define STKOFF_SVMSK	(STKOFF_A0 + SZREG)
+# define STKOFF_RA	(STKOFF_SVMSK + SZREG)
 # define STKSPACE	(STKOFF_RA + SZREG)
-# define SAVESTK 	addi sp, sp, -STKSPACE; cfi_adjust_cfa_offset(STKSPACE)
-# define RESTORESTK 	addi sp, sp, STKSPACE; cfi_adjust_cfa_offset(-STKSPACE)
 
 # ifdef IS_IN_libpthread
-#  define CENABLE  jal __pthread_enable_asynccancel
-#  define CDISABLE jal __pthread_disable_asynccancel
+#  define CENABLE  call __pthread_enable_asynccancel
+#  define CDISABLE call __pthread_disable_asynccancel
 # elif defined IS_IN_librt
-#  define CENABLE  jal __librt_enable_asynccancel
-#  define CDISABLE jal __librt_disable_asynccancel
+#  define CENABLE  call __librt_enable_asynccancel
+#  define CDISABLE call __librt_disable_asynccancel
 # else
-#  define CENABLE  jal __libc_enable_asynccancel
-#  define CDISABLE jal __libc_disable_asynccancel
+#  define CENABLE  call __libc_enable_asynccancel
+#  define CDISABLE call __libc_disable_asynccancel
 # endif
 
 # ifndef __ASSEMBLER__
