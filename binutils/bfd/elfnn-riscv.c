@@ -2612,7 +2612,7 @@ riscv_relax_delete_bytes (bfd *abfd, asection *sec, bfd_vma addr, size_t count)
 	{
 	  /* If the symbol is in the range of memory we just moved, we
 	     have to adjust its value.  */
-	  if (sym->st_value > addr && sym->st_value < toaddr)
+	  if (sym->st_value > addr && sym->st_value <= toaddr)
 	    sym->st_value -= count;
 
 	  /* If the symbol *spans* the bytes we just deleted (i.e. its
@@ -2639,7 +2639,7 @@ riscv_relax_delete_bytes (bfd *abfd, asection *sec, bfd_vma addr, size_t count)
 	{
 	  /* As above, adjust the value if needed.  */
 	  if (sym_hash->root.u.def.value > addr
-	      && sym_hash->root.u.def.value < toaddr)
+	      && sym_hash->root.u.def.value <= toaddr)
 	    sym_hash->root.u.def.value -= count;
 
 	  /* As above, adjust the size if needed.  */
