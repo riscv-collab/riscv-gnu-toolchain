@@ -1969,7 +1969,7 @@ riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 		      || h->root.type == bfd_link_hash_undefined)))
 	    {
 	      Elf_Internal_Rela outrel;
-	      bfd_boolean skip;
+	      bfd_boolean skip_static_relocation, skip_dynamic_relocation;
 
 	      /* When generating a shared object, these relocations
 		 are copied into the output file to be resolved at run
@@ -1978,10 +1978,11 @@ riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 	      outrel.r_offset =
 		_bfd_elf_section_offset (output_bfd, info, input_section,
 					 rel->r_offset);
-	      skip = outrel.r_offset >= (bfd_vma) -2;
+	      skip_static_relocation = outrel.r_offset != (bfd_vma) -2;
+	      skip_dynamic_relocation = outrel.r_offset >= (bfd_vma) -2;
 	      outrel.r_offset += sec_addr (input_section);
 
-	      if (skip)
+	      if (skip_dynamic_relocation)
 		memset (&outrel, 0, sizeof outrel);
 	      else if (h != NULL && h->dynindx != -1
 		       && !(info->shared
@@ -1998,7 +1999,8 @@ riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 		}
 
 	      riscv_elf_append_rela (output_bfd, sreloc, &outrel);
-	      continue;
+	      if (skip_static_relocation)
+		continue;
 	    }
 	  break;
 
