@@ -198,17 +198,14 @@ along with GCC; see the file COPYING3.  If not see
 #define SUBTARGET_EXTRA_SPECS
 #endif
 
-#ifndef PREFERRED_DEBUGGING_TYPE
-#define PREFERRED_DEBUGGING_TYPE DWARF2_DEBUG
-#endif
-
-#define DWARF2_ADDR_SIZE UNITS_PER_WORD
-
 /* By default, turn on GDB extensions.  */
 #define DEFAULT_GDB_EXTENSIONS 1
 
 #define LOCAL_LABEL_PREFIX	"."
 #define USER_LABEL_PREFIX	""
+
+#define DWARF2_DEBUGGING_INFO 1
+#define DWARF2_ASM_LINE_DEBUG_INFO 0
 
 /* The mapping from gcc register number to DWARF 2 CFA column number.  */
 #define DWARF_FRAME_REGNUM(REGNO) \
@@ -229,11 +226,6 @@ along with GCC; see the file COPYING3.  If not see
   ((N) < 4 ? (N) + GP_ARG_FIRST : INVALID_REGNUM)
 
 #define EH_RETURN_STACKADJ_RTX  gen_rtx_REG (Pmode, GP_ARG_FIRST + 4)
-
-/* Offsets recorded in opcodes are a multiple of this alignment factor.
-   The default for this in 64-bit mode is 8, which causes problems with
-   SFmode register saves.  */
-#define DWARF_CIE_DATA_ALIGNMENT -4
 
 /* Target machine storage layout */
 
@@ -464,7 +456,7 @@ along with GCC; see the file COPYING3.  If not see
    signal handler context.  This means that to maintain backwards
    compatibility, no hard register can be assigned this column if it
    would need to be handled by the DWARF unwinder.  */
-#define DWARF_ALT_FRAME_RETURN_COLUMN 66
+#define DWARF_ALT_FRAME_RETURN_COLUMN 64
 
 #define GP_REG_P(REGNO)	\
   ((unsigned int) ((int) (REGNO) - GP_REG_FIRST) < GP_REG_NUM)
@@ -1132,4 +1124,4 @@ extern const char* riscv_hi_relocs[];
 #endif
 
 #define ASM_PREFERRED_EH_DATA_FORMAT(CODE,GLOBAL) \
-  (((GLOBAL) ? DW_EH_PE_indirect : 0) | DW_EH_PE_pcrel)
+  (((GLOBAL) ? DW_EH_PE_indirect : 0) | DW_EH_PE_pcrel | DW_EH_PE_sdata4)

@@ -56,7 +56,7 @@ struct riscv_cl_insn
   fixS *fixp;
 };
 
-static bfd_boolean rv64 = TRUE; /* RV64 (true) or RV32 (false) */
+bfd_boolean rv64 = TRUE; /* RV64 (true) or RV32 (false) */
 #define LOAD_ADDRESS_INSN (rv64 ? "ld" : "lw")
 #define ADD32_INSN (rv64 ? "addiw" : "addi")
 
