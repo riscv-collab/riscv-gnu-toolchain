@@ -42,6 +42,27 @@ riscv_before_allocation (void)
   link_info.relax_pass = 2;
 }
 
+static void
+riscv_after_allocation (void)
+{
+  int need_layout = 0;
+
+  /* Don't attempt to discard unused .eh_frame sections until the final link,
+     as we can't reliably tell if they're used until after relaxation.  */
+  if (!link_info.relocatable)
+    {
+      need_layout = bfd_elf_discard_info (link_info.output_bfd, &link_info);
+      if (need_layout < 0)
+	{
+	  einfo ("%X%P: .eh_frame/.stab edit: %E\n");
+	  return;
+	}
+    }
+
+  gld${EMULATION_NAME}_map_segments (need_layout);
+}
+
 EOF
 
 LDEMUL_BEFORE_ALLOCATION=riscv_before_allocation
+LDEMUL_AFTER_ALLOCATION=riscv_after_allocation
