@@ -132,7 +132,6 @@ const struct riscv_opcode riscv_builtin_opcodes[] =
 {"li",        "I",   "d,I",  0,    (int) M_LI,  match_never, INSN_MACRO },
 {"mv",        "I",   "d,s",  MATCH_ADDI, MASK_ADDI | MASK_IMM, match_opcode,   INSN_ALIAS|WR_xd|RD_xs1 },
 {"move",      "I",   "d,s",  MATCH_ADDI, MASK_ADDI | MASK_IMM, match_opcode,   INSN_ALIAS|WR_xd|RD_xs1 },
-{"b",         "I",   "p",  MATCH_BEQ, MASK_BEQ | MASK_RS1 | MASK_RS2, match_opcode,   0 },/* beq 0,0 */
 {"andi",      "I",   "d,s,j",  MATCH_ANDI, MASK_ANDI, match_opcode,   WR_xd|RD_xs1 },
 {"and",       "I",   "d,s,t",  MATCH_AND, MASK_AND, match_opcode,   WR_xd|RD_xs1|RD_xs2 },
 {"and",       "I",   "d,s,j",  MATCH_ANDI, MASK_ANDI, match_opcode,   INSN_ALIAS|WR_xd|RD_xs1 },
