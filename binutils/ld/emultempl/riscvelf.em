@@ -26,7 +26,7 @@ fragment <<EOF
 #include "elfxx-riscv.h"
 
 static void
-riscv_before_allocation (void)
+riscv_elf_before_allocation (void)
 {
   gld${EMULATION_NAME}_before_allocation ();
 
@@ -43,7 +43,7 @@ riscv_before_allocation (void)
 }
 
 static void
-riscv_after_allocation (void)
+gld${EMULATION_NAME}_after_allocation (void)
 {
   int need_layout = 0;
 
@@ -64,5 +64,5 @@ riscv_after_allocation (void)
 
 EOF
 
-LDEMUL_BEFORE_ALLOCATION=riscv_before_allocation
-LDEMUL_AFTER_ALLOCATION=riscv_after_allocation
+LDEMUL_BEFORE_ALLOCATION=riscv_elf_before_allocation
+LDEMUL_AFTER_ALLOCATION=gld${EMULATION_NAME}_after_allocation
