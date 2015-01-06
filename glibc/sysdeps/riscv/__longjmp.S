@@ -35,7 +35,6 @@ ENTRY (__longjmp)
 	REG_L s10,11*SZREG(a0)
 	REG_L s11,12*SZREG(a0)
 	REG_L sp, 13*SZREG(a0)
-	REG_L tp, 14*SZREG(a0)
 
 #ifdef __riscv_hard_float
 	REG_L a3, 15*SZREG(a0)

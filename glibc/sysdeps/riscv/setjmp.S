@@ -43,7 +43,6 @@ ENTRY (__sigsetjmp)
 	REG_S s10,11*SZREG(a0)
 	REG_S s11,12*SZREG(a0)
 	REG_S sp, 13*SZREG(a0)
-	REG_S tp, 14*SZREG(a0)
 
 #ifdef __riscv_hard_float
 	frsr a3
