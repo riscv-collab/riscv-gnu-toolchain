@@ -35,19 +35,17 @@
 
 #ifndef __ASSEMBLER__
 
-/* In order to get __set_errno() definition in INLINE_SYSCALL.  */
-#include <errno.h>
-
 /* Define a macro which expands into the inline wrapper code for a system
    call.  */
 #undef INLINE_SYSCALL
 #define INLINE_SYSCALL(name, nr, args...)				\
   ({ INTERNAL_SYSCALL_DECL(err);					\
      long result_var = INTERNAL_SYSCALL (name, err, nr, args);		\
-     if ( INTERNAL_SYSCALL_ERROR_P (result_var, err) )			\
+     if (result_var < 0)						\
        {								\
-	 __set_errno (INTERNAL_SYSCALL_ERRNO (result_var, err));	\
-	 result_var = -1L;						\
+	 /* __syscall_error handles result_var <= -4096 corner case */	\
+	 extern long __syscall_error (long) attribute_hidden;		\
+	 result_var = __syscall_error (result_var);			\
        }								\
      result_var; })
 
@@ -55,7 +53,7 @@
 #define INTERNAL_SYSCALL_DECL(err) do { } while (0)
 
 #undef INTERNAL_SYSCALL_ERROR_P
-#define INTERNAL_SYSCALL_ERROR_P(val, err)   ((long) (val) < 0)
+#define INTERNAL_SYSCALL_ERROR_P(val, err)   ((unsigned long) (val) > -4096UL)
 
 #undef INTERNAL_SYSCALL_ERRNO
 #define INTERNAL_SYSCALL_ERRNO(val, err)     (-val)

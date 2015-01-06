@@ -26,7 +26,7 @@ long syscall (long syscall_number, long arg1, long arg2, long arg3,
   ret = INTERNAL_SYSCALL_NCS(syscall_number, err, 7, arg1, arg2, arg3, arg4,
 			     arg5, arg6, arg7);
 
-  if (INTERNAL_SYSCALL_ERROR_P(ret, err))
+  if (INTERNAL_SYSCALL_ERROR_P (ret, err))
     {
       extern long __syscall_error() attribute_hidden;
       return __syscall_error();

@@ -23,19 +23,11 @@
 
 long __syscall_error(long a0)
 {
-  /* Referencing errno may call a function, clobbering a0. */
-  long errno_val = -a0;
+  /* We got here because a0 < 0, but only codes in the range [-4095, -1]
+     represent errors.  Otherwise, just return the result normally.  */
+  if (a0 <= -4096)
+    return a0;
 
-#if defined (EWOULDBLOCK_sys) && EWOULDBLOCK_sys != EAGAIN
-	/* We translate the system's EWOULDBLOCK error into EAGAIN.
-	   The GNU C library always defines EWOULDBLOCK==EAGAIN.
-	   EWOULDBLOCK_sys is the original number.  */
-
-  if (errno_val == EWOULDBLOCK_sys)
-    errno_val = EAGAIN;
-#endif
-
-  errno = errno_val;
-
+  errno = -a0;
   return -1;
 }
