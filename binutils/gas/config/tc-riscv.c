@@ -435,10 +435,18 @@ hash_reg_names (enum reg_class class, const char * const names[], unsigned n)
     hash_reg_name (class, names[i], i);
 }
 
+static unsigned int
+reg_lookup_internal (const char *s, enum reg_class class)
+{
+  struct regname *r = (struct regname *) hash_find (reg_names_hash, s);
+  if (r == NULL || DECODE_REG_CLASS (r) != class)
+    return -1;
+  return DECODE_REG_NUM (r);
+}
+
 static int
 reg_lookup (char **s, enum reg_class class, unsigned int *regnop)
 {
-  void *r;
   char *e;
   char save_c;
   int reg = -1;
@@ -454,28 +462,14 @@ reg_lookup (char **s, enum reg_class class, unsigned int *regnop)
   save_c = *e;
   *e = '\0';
 
-  /* Look for the register.  */
-  r = hash_find (reg_names_hash, *s);
-  if (r != NULL && DECODE_REG_CLASS (r) == class)
-    reg = DECODE_REG_NUM (r);
-
-  /* Advance to next token if a register was recognised.  */
-  if (reg >= 0)
+  /* Look for the register.  Advance to next token if one was recognized.  */
+  if ((reg = reg_lookup_internal (*s, class)) >= 0)
     *s = e;
 
   *e = save_c;
   if (regnop)
     *regnop = reg;
   return reg >= 0;
-}
-
-static unsigned int
-reg_lookup_assert (const char *s, enum reg_class class)
-{
-  struct regname *r = (struct regname *) hash_find (reg_names_hash, s);
-  if (r == NULL || DECODE_REG_CLASS (r) != class)
-    as_bad (_("unknown register `%s'"), s);
-  return DECODE_REG_NUM (r);
 }
 
 static int
@@ -2159,7 +2153,16 @@ riscv_cfi_frame_initial_instructions (void)
 int
 tc_riscv_regname_to_dw2regnum (char *regname)
 {
-  return reg_lookup_assert (regname, RCLASS_GPR);
+  int reg;
+
+  if ((reg = reg_lookup_internal (regname, RCLASS_GPR)) >= 0)
+    return reg;
+
+  if ((reg = reg_lookup_internal (regname, RCLASS_FPR)) >= 0)
+    return reg + 32;
+
+  as_bad (_("unknown register `%s'"), regname);
+  return -1;
 }
 
 void
