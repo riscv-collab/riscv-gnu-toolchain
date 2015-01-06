@@ -41,11 +41,12 @@
 /*
  * LEAF - declare leaf routine
  */
-#define	LEAF(symbol)	\
-		.globl	symbol;                         \
-		.align	2;                              \
-		.type	symbol,@function;               \
-symbol:
+#define	LEAF(symbol)				\
+		.globl	symbol;			\
+		.align	2;			\
+		.type	symbol,@function;	\
+symbol:						\
+		cfi_startproc;
 
 /*
  * NESTED - declare nested routine entry point
@@ -55,15 +56,13 @@ symbol:
 /*
  * END - mark end of function
  */
-#ifndef END
-# define END(function)                                   \
+#define END(function)				\
+		cfi_endproc;			\
 		.size	function,.-function
-#endif
 
 /*
  * Stack alignment
  */
-#define ALSZ	15
 #define ALMASK	~15
 
 #endif /* sys/asm.h */

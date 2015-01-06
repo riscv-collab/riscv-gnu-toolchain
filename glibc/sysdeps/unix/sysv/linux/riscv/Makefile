@@ -8,6 +8,5 @@ endif
 endif
 
 ifeq ($(subdir),stdlib)
-sysdep_routines += __start_context
 gen-as-const-headers += ucontext_i.sym
 endif

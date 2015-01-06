@@ -18,22 +18,14 @@
    Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
    02111-1307 USA.  */
 
-#include <sysdeps/unix/sysdep.h>
-
 #ifdef __ASSEMBLER__
 
 #include <sys/asm.h>
 
 #define ENTRY(name) LEAF(name)
 
-#undef END
-#define	END(function)                                   \
-		.size	function,.-function
-
-#define ret	ret
-
 #undef PSEUDO_END
-#define PSEUDO_END(sym) .size sym,.-sym
+#define PSEUDO_END(sym) END(sym)
 
 #define PSEUDO_NOERRNO(name, syscall_name, args)	\
   .align 2;						\
@@ -42,7 +34,7 @@
   scall
 
 #undef PSEUDO_END_NOERRNO
-#define PSEUDO_END_NOERRNO(sym) .size sym,.-sym
+#define PSEUDO_END_NOERRNO(sym) PSEUDO_END(sym)
 
 #define ret_NOERRNO ret
 
@@ -70,3 +62,5 @@
 L(syse1):
 
 #endif
+
+#include <sysdeps/unix/sysdep.h>

@@ -5,10 +5,9 @@
 #include <assert.h>
 
 void __makecontext (ucontext_t *ucp, void (*func) (void), int argc,
-		    long a0, long a1, long a2, long a3,
-		    long a4, ...)
+		    long a0, long a1, long a2, long a3, long a4, ...)
 {
-  extern void __start_context(void);
+  extern void __start_context(void) attribute_hidden;
   long i, sp;
   va_list vl;
 
@@ -38,6 +37,8 @@ void __makecontext (ucontext_t *ucp, void (*func) (void), int argc,
   ucp->uc_mcontext.gregs[REG_SP] = sp;
   ucp->uc_mcontext.gregs[REG_PC] = (long)func;
   ucp->uc_mcontext.gregs[REG_RA] = (long)&__start_context;
+
+  va_end(vl);
 }
 
 weak_alias (__makecontext, makecontext)

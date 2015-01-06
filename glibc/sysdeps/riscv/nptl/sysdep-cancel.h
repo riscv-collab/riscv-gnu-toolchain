@@ -34,7 +34,6 @@
 # define PSEUDO(name, syscall_name, args)				\
       .align 2;								\
   L(pseudo_start):							\
-      cfi_startproc;							\
   99: j __syscall_error;						\
   ENTRY (name)								\
     SINGLE_THREAD_P(t0);						\
@@ -66,9 +65,6 @@
     bltz a0, 99b;							\
   L(pseudo_end):
 
-
-# undef PSEUDO_END
-# define PSEUDO_END(sym) cfi_endproc; .size sym,.-sym
 
 # define PUSHARGS_0	/* nothing to do */
 # define PUSHARGS_1	PUSHARGS_0 REG_S a0, STKOFF_A0(sp); cfi_rel_offset (a0, STKOFF_A0);
