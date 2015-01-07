@@ -64,35 +64,35 @@ strcmp:
 .Lmismatch:
   # words don't match, but a2 has no null byte.
 #ifdef __riscv64
-  sll   a0, a2, 48
-  sll   a1, a3, 48
-  bne   a0, a1, .Lmismatch_upper
-  sll   a0, a2, 32
-  sll   a1, a3, 32
-  bne   a0, a1, .Lmismatch_upper
+  sll   a4, a2, 48
+  sll   a5, a3, 48
+  bne   a4, a5, .Lmismatch_upper
+  sll   a4, a2, 32
+  sll   a5, a3, 32
+  bne   a4, a5, .Lmismatch_upper
 #endif
-  sll   a0, a2, 16
-  sll   a1, a3, 16
-  bne   a0, a1, .Lmismatch_upper
+  sll   a4, a2, 16
+  sll   a5, a3, 16
+  bne   a4, a5, .Lmismatch_upper
 
-  srl   a0, a2, 8*SZREG-16
-  srl   a1, a3, 8*SZREG-16
-  sub   a0, a0, a1
-  and   a4, a0, 0xff
-  bnez  a4, 1f
+  srl   a4, a2, 8*SZREG-16
+  srl   a5, a3, 8*SZREG-16
+  sub   a0, a4, a5
+  and   a1, a0, 0xff
+  bnez  a1, 1f
   ret
 
 .Lmismatch_upper:
-  srl   a0, a0, 8*SZREG-16
-  srl   a1, a1, 8*SZREG-16
-  sub   a2, a0, a1
-  and   a3, a2, 0xff
-  bnez  a3, 1f
+  srl   a4, a4, 8*SZREG-16
+  srl   a5, a5, 8*SZREG-16
+  sub   a0, a4, a5
+  and   a1, a0, 0xff
+  bnez  a1, 1f
   ret
 
-1:and   a0, a0, 0xff
-  and   a1, a1, 0xff
-  sub   a0, a0, a1
+1:and   a4, a4, 0xff
+  and   a5, a5, 0xff
+  sub   a0, a4, a5
   ret
 
 .Lmisaligned:
