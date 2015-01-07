@@ -18,20 +18,51 @@
 #ifndef _LINUX_RISCV_SYSDEP_H
 #define _LINUX_RISCV_SYSDEP_H 1
 
-#include <sysdeps/unix/riscv/sysdep.h>
 #include <sysdeps/unix/sysv/linux/generic/sysdep.h>
 #include <tls.h>
 
-/* For Linux we can use the system call table in the header file
-	/usr/include/asm/unistd.h
-   of the kernel.  But these symbols do not follow the SYS_* syntax
-   so we have to redefine the `SYS_ify' macro here.  */
+#ifdef __ASSEMBLER__
+
+#include <sys/asm.h>
+
+#define ENTRY(name) LEAF(name)
+
+#define PSEUDO_END(sym) END(sym)
+
+#define PSEUDO_NOERRNO(name, syscall_name, args)	\
+  .align 2;						\
+  ENTRY(name)						\
+  li a7, SYS_ify(syscall_name);				\
+  scall
+
+#define ret_NOERRNO ret
+
+#define PSEUDO_ERRVAL(name, syscall_name, args) \
+  PSEUDO_NOERRNO(name, syscall_name, args)
+
+#define ret_ERRVAL ret
+
+#define r0	a0
+#define r1	a1
+#define MOVE(x,y)	move y , x
+
+#define L(label) .L ## label
+
+#define PSEUDO(name, syscall_name, args) \
+  .align 2;							\
+  99: j __syscall_error;					\
+  ENTRY(name)							\
+  li a7, SYS_ify(syscall_name);					\
+  scall;							\
+  bltz a0, 99b;							\
+L(syse1):
+
+#endif /* __ASSEMBLER__ */
+
+#include <sysdeps/unix/sysdep.h>
+
 #undef SYS_ify
-#ifdef __STDC__
-# define SYS_ify(syscall_name)	__NR_##syscall_name
-#else
-# define SYS_ify(syscall_name)	__NR_/**/syscall_name
-#endif
+#define SYS_ify(syscall_name)	__NR_##syscall_name
 
 #ifndef __ASSEMBLER__
 
@@ -49,20 +80,15 @@
        }								\
      result_var; })
 
-#undef INTERNAL_SYSCALL_DECL
 #define INTERNAL_SYSCALL_DECL(err) do { } while (0)
 
-#undef INTERNAL_SYSCALL_ERROR_P
 #define INTERNAL_SYSCALL_ERROR_P(val, err)   ((unsigned long) (val) > -4096UL)
 
-#undef INTERNAL_SYSCALL_ERRNO
 #define INTERNAL_SYSCALL_ERRNO(val, err)     (-val)
 
-#undef INTERNAL_SYSCALL
 #define INTERNAL_SYSCALL(name, err, nr, args...) \
 	internal_syscall##nr (SYS_ify (name), err, args)
 
-#undef INTERNAL_SYSCALL_NCS
 #define INTERNAL_SYSCALL_NCS(number, err, nr, args...) \
 	internal_syscall##nr (number, err, args)
 
