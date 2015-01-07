@@ -79,8 +79,8 @@ LEAF (__setcontext)
 	/* Note the contents of argument registers will be random
 	   unless makecontext() has been called.  */
 	REG_L	t1, MCONTEXT_PC(t0)
-	REG_L	ra, ( 1 * SZREG + MCONTEXT_GREGS)(t0)
-	REG_L	sp, ( 2 * SZREG + MCONTEXT_GREGS)(t0)
+	RESTORE_INT_REG_CFI (ra,   1, t0)
+	RESTORE_INT_REG     (sp,   2, t0)
 	RESTORE_INT_REG_CFI (s0,   8, t0)
 	RESTORE_INT_REG_CFI (s1,   9, t0)
 	RESTORE_INT_REG     (a0,  10, t0)
@@ -111,9 +111,16 @@ weak_alias (__setcontext, setcontext)
 
 LEAF (__start_context)
 
-	/* if (link == 0) exit(0); else __setcontext(link); */
-	move	a0, s0
-	bnez	s0, __setcontext
-	j	exit
+	/* Terminate call stack by noting ra == 0.  Happily, s0 == 0 here.  */
+	cfi_register (ra, s0)
+
+	/* Call the function passed to makecontext.  */
+	jalr	s1
+
+	/* Invoke subsequent context if present, else exit(0).  */
+	mv	a0, s2
+	beqz	s2, 1f
+	jal	__setcontext
+1:	j	exit
 
 PSEUDO_END (__start_context)
