@@ -403,7 +403,7 @@ along with GCC; see the file COPYING3.  If not see
 
 #define FIRST_PSEUDO_REGISTER 66
 
-/* x0, sp, tp, and gp are fixed. */
+/* x0, sp, gp, and tp are fixed. */
 
 #define FIXED_REGISTERS							\
 { /* General registers.  */                                             \
@@ -484,7 +484,7 @@ along with GCC; see the file COPYING3.  If not see
 /* Use s0 as the frame pointer if it is so requested. */
 #define HARD_FRAME_POINTER_REGNUM 8
 #define STACK_POINTER_REGNUM 2
-#define THREAD_POINTER_REGNUM 3
+#define THREAD_POINTER_REGNUM 4
 
 /* These two registers don't really exist: they get eliminated to either
    the stack or hard frame pointer.  */
@@ -892,7 +892,7 @@ typedef struct {
 #endif
 
 #define REGISTER_NAMES						\
-{ "zero","ra",  "sp",  "tp",  "gp",  "t0",  "t1",  "t2",	\
+{ "zero","ra",  "sp",  "gp",  "tp",  "t0",  "t1",  "t2",	\
   "s0",  "s1",  "a0",  "a1",  "a2",  "a3",  "a4",  "a5",	\
   "a6",  "a7",  "s2",  "s3",  "s4",  "s5",  "s6",  "s7",	\
   "s8",  "s9",  "s10", "s11", "t3",  "t4",  "t5",  "t6",	\
