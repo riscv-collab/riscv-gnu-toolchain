@@ -15,6 +15,12 @@ AC_CHECK_LIB(mpc, mpc_add, , [AC_MSG_ERROR(
      [MPC 0.8.1 or greater not found.
      See http://www.multiprecision.org])])
 
+AC_ARG_ENABLE(linux,
+        [Toolchain targets Linux],
+        AC_SUBST(default_target, linux),
+        AC_SUBST(default_target, newlib)
+        )
+
 AC_OUTPUT(
     Makefile
 )
