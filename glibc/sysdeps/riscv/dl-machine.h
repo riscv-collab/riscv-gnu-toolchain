@@ -78,8 +78,6 @@
 #define ELF_MACHINE_NO_REL 1
 #define ELF_MACHINE_NO_RELA 0
 
-#define ELF_MACHINE_DEBUG_SETUP(l,r)
-
 /* Return nonzero iff ELF header is compatible with the running host.  */
 static inline int __attribute_used__
 elf_machine_matches_host (const ElfW(Ehdr) *ehdr)
