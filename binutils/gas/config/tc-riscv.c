@@ -1855,12 +1855,28 @@ md_apply_fix (fixS *fixP, valueT *valP, segT seg ATTRIBUTE_UNUSED)
 	}
       break;
 
+    case BFD_RELOC_RISCV_JMP:
+      if (fixP->fx_addsy)
+	{
+	  /* Fill in a tentative value to improve objdump readability.  */
+	  bfd_vma delta = ENCODE_UJTYPE_IMM (S_GET_VALUE (fixP->fx_addsy) + *valP);
+	  bfd_putl32 (bfd_getl32 (buf) | delta, buf);
+	}
+      break;
+
+    case BFD_RELOC_12_PCREL:
+      if (fixP->fx_addsy)
+	{
+	  /* Fill in a tentative value to improve objdump readability.  */
+	  bfd_vma delta = ENCODE_SBTYPE_IMM (S_GET_VALUE (fixP->fx_addsy) + *valP);
+	  bfd_putl32 (bfd_getl32 (buf) | delta, buf);
+	}
+      break;
+
     case BFD_RELOC_RISCV_PCREL_LO12_S:
     case BFD_RELOC_RISCV_PCREL_LO12_I:
     case BFD_RELOC_RISCV_CALL:
     case BFD_RELOC_RISCV_CALL_PLT:
-    case BFD_RELOC_RISCV_JMP:
-    case BFD_RELOC_12_PCREL:
     case BFD_RELOC_RISCV_ALIGN:
       break;
 
