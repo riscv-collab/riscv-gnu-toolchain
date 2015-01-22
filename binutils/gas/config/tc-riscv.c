@@ -819,14 +819,8 @@ normalize_constant_expr (expressionS *ex)
 static symbolS *
 make_internal_label (void)
 {
-  static uint32_t count;
-  char name[16];
-
-  sprintf (name, ".LX%d", count);
-  gas_assert (++count != 0);
-
-  return (symbolS *) local_symbol_make (name, now_seg, (valueT) frag_now_fix(),
-					frag_now);
+  return (symbolS *) local_symbol_make (FAKE_LABEL_NAME, now_seg,
+					(valueT) frag_now_fix(), frag_now);
 }
 
 /* Load an entry from the GOT. */
