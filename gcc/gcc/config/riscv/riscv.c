@@ -384,8 +384,10 @@ riscv_build_integer_1 (struct mips_integer_op *codes, HOST_WIDE_INT value,
   /* Eliminate trailing zeros and end with SLLI */
   if (cost > 2 && (value & 1) == 0)
     {
-      int shift = __builtin_ctzl(value);
-      alt_cost = 1 + riscv_build_integer_1 (alt_codes, value >> shift, mode);
+      int shift = 0;
+      while ((value & 1) == 0)
+	shift++, value >>= 1;
+      alt_cost = 1 + riscv_build_integer_1 (alt_codes, value, mode);
       alt_codes[alt_cost-1].code = ASHIFT;
       alt_codes[alt_cost-1].value = shift;
       if (alt_cost < cost)
@@ -406,11 +408,12 @@ riscv_build_integer (struct mips_integer_op *codes, HOST_WIDE_INT value,
   if (value > 0 && cost > 2)
     {
       struct mips_integer_op alt_codes[RISCV_MAX_INTEGER_OPS];
-      int alt_cost, shift;
+      int alt_cost, shift = 0;
       HOST_WIDE_INT shifted_val;
 
       /* Try filling trailing bits with 1s */
-      shift = __builtin_clzl(value);
+      while ((value << shift) >= 0)
+	shift++;
       shifted_val = (value << shift) | ((((HOST_WIDE_INT) 1) << shift) - 1);
       alt_cost = 1 + riscv_build_integer_1 (alt_codes, shifted_val, mode);
       alt_codes[alt_cost-1].code = LSHIFTRT;
