@@ -26,6 +26,11 @@ struct usb_endpoint_descriptor_no_audio {
 	__u8  bInterval;
 } __attribute__((packed));
 
+
+/*
+ * All numbers must be in little endian order.
+ */
+
 /* Legacy format, deprecated as of 3.14. */
 struct usb_functionfs_descs_head {
 	__le32 magic;
@@ -33,17 +38,6 @@ struct usb_functionfs_descs_head {
 	__le32 fs_count;
 	__le32 hs_count;
 } __attribute__((packed, deprecated));
-
-/*
- * All numbers must be in little endian order.
- */
-
-struct usb_functionfs_descs_head {
-	__le32 magic;
-	__le32 length;
-	__le32 fs_count;
-	__le32 hs_count;
-} __attribute__((packed));
 
 /*
  * Descriptors format:
