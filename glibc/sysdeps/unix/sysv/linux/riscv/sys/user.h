@@ -1,1 +1,2 @@
-/* This file is not needed, but in practice gdb might try to include it.  */
+/* x86 puts "struct user_regs_struct" in here, this is just a shim. */
+#include <asm/ptrace.h>
