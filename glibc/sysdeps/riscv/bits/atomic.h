@@ -42,6 +42,12 @@ typedef uintmax_t uatomic_max_t;
 
 #ifdef __riscv_atomic
 
+#ifdef __riscv64
+# define __HAVE_64B_ATOMICS 1
+#endif
+
+#define USE_ATOMIC_COMPILER_BUILTINS 1
+
 #define asm_amo(which, ordering, mem, value) ({ 		\
   typeof(*mem) __tmp; 						\
   if (sizeof(__tmp) == 4)					\
@@ -110,6 +116,11 @@ typedef uintmax_t uatomic_max_t;
   atomic_exchange_and_add(mem, value)
 #define catomic_max(mem, value) atomic_max(mem, value)
 
-#endif /* __riscv_atomic */
+#else /* __riscv_atomic */
+
+#define __HAVE_64B_ATOMICS 0
+#define USE_ATOMIC_COMPILER_BUILTINS 0
+
+#endif /* !__riscv_atomic */
 
 #endif /* bits/atomic.h */

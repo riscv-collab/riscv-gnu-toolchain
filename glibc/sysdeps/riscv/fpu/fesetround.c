@@ -22,7 +22,7 @@
 #include <fpu_control.h>
 
 int
-fesetround (int round)
+__fesetround (int round)
 {
   switch (round)
     {
@@ -36,5 +36,6 @@ fesetround (int round)
       return round; /* a nonzero value */
     }
 }
-
-libm_hidden_def (fesetround)
+libm_hidden_def (__fesetround)
+weak_alias (__fesetround, fesetround)
+libm_hidden_weak (fesetround)

@@ -19,17 +19,14 @@
    02111-1307 USA.  */
 
 #include <fenv.h>
-#include <fpu_control.h>
+#include <math_private.h>
 
 int
-feupdateenv (const fenv_t *envp)
+__feupdateenv (const fenv_t *envp)
 {
-  fenv_t env = *envp;
-
-  /* rm = 0; rm |= fenv.rm; flags |= fenv.flags */
-  _FPU_SETROUND (0);
-  asm volatile ("csrs fcsr, %0" : : "r"(env));
-
+  libc_feupdateenv_riscv (envp);
   return 0;
 }
-libm_hidden_def (feupdateenv)
+libm_hidden_def (__feupdateenv)
+weak_alias (__feupdateenv, feupdateenv)
+libm_hidden_weak (feupdateenv)

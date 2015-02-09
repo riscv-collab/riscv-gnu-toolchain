@@ -19,13 +19,14 @@
    02111-1307 USA.  */
 
 #include <fenv.h>
-#include <fpu_control.h>
+#include <math_private.h>
 
 int
-fesetenv (const fenv_t *envp)
+__fesetenv (const fenv_t *envp)
 {
-  _FPU_SETCW (envp == FE_DFL_ENV ? 0 : *envp);
+  libc_fesetenv_riscv (envp);
   return 0;
 }
-
-libm_hidden_def (fesetenv)
+libm_hidden_def (__fesetenv)
+weak_alias (__fesetenv, fesetenv)
+libm_hidden_weak (fesetenv)

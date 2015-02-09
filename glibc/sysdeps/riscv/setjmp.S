@@ -63,7 +63,7 @@ ENTRY (__sigsetjmp)
 	REG_S a3, 15*SZREG(a0)
 #endif
 
-#if defined NOT_IN_libc && defined IS_IN_rtld
+#if !IS_IN (libc) && IS_IN (rtld)
   /* In ld.so we never save the signal mask.  */
   li a0, 0
   ret

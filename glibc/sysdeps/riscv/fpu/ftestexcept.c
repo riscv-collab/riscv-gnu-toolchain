@@ -19,15 +19,11 @@
    02111-1307 USA.  */
 
 #include <fenv.h>
-#include <fpu_control.h>
+#include <math_private.h>
 
 int
 fetestexcept (int excepts)
 {
-  int cw;
-
-  _FPU_GETFLAGS (cw);
-
-  return cw & excepts;
+  return libc_fetestexcept_riscv (excepts);
 }
 libm_hidden_def (fetestexcept)

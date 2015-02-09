@@ -28,7 +28,7 @@
    happen before any instructions.  So we use cfi_same_value instead of
    cfi_restore.  */
 
-#if !defined NOT_IN_libc || defined IS_IN_libpthread || defined IS_IN_librt
+#if IS_IN (libc) || IS_IN (libpthread) || IS_IN (librt)
 
 # undef PSEUDO
 # define PSEUDO(name, syscall_name, args)				\
@@ -93,10 +93,10 @@
 # define STKOFF_RA	(STKOFF_SVMSK + SZREG)
 # define STKSPACE	(STKOFF_RA + SZREG)
 
-# ifdef IS_IN_libpthread
+# if IS_IN (libpthread)
 #  define CENABLE  call __pthread_enable_asynccancel
 #  define CDISABLE call __pthread_disable_asynccancel
-# elif defined IS_IN_librt
+# elif IS_IN (librt)
 #  define CENABLE  call __librt_enable_asynccancel
 #  define CDISABLE call __librt_disable_asynccancel
 # else

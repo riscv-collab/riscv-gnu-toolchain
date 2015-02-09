@@ -28,7 +28,7 @@ typedef struct La_riscv_regs
   unsigned long lr_sp;
 } La_riscv_regs;
 
-/* Return values for calls from PLT on MIPS.  */
+/* Return values for calls from PLT on RISC-V.  */
 typedef struct La_riscv_retval
 {
   unsigned long lrv_a0;

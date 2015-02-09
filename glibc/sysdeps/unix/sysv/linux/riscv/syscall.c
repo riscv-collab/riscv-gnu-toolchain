@@ -21,14 +21,15 @@
 long syscall (long syscall_number, long arg1, long arg2, long arg3,
 	      long arg4, long arg5, long arg6, long arg7)
 {
-  long ret, err; 
+  long ret;
+  INTERNAL_SYSCALL_DECL (err);
 
   ret = INTERNAL_SYSCALL_NCS(syscall_number, err, 7, arg1, arg2, arg3, arg4,
 			     arg5, arg6, arg7);
 
   if (INTERNAL_SYSCALL_ERROR_P (ret, err))
     {
-      extern long __syscall_error() attribute_hidden;
+      extern long __syscall_error (void) attribute_hidden;
       return __syscall_error();
     }
 

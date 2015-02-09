@@ -19,14 +19,14 @@
    02111-1307 USA.  */
 
 #include <fenv.h>
-#include <fpu_control.h>
+#include <math_private.h>
 
 int
-feholdexcept (fenv_t *envp)
+__feholdexcept (fenv_t *envp)
 {
-  _FPU_GETCW (*envp);
-  _FPU_SETFLAGS (0);
+  libc_feholdexcept_riscv (envp);
   return 0;
 }
-
-libm_hidden_def (feholdexcept)
+libm_hidden_def (__feholdexcept)
+weak_alias (__feholdexcept, feholdexcept)
+libm_hidden_weak (feholdexcept)

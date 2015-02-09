@@ -136,7 +136,7 @@ elf_machine_load_address (void)
 	add a3, a3, a2\n\
 	add a3, a3, " STRINGXP (SZREG) "\n\
 	# Call the function to run the initializers.\n\
-	jal _dl_init_internal\n\
+	jal _dl_init\n\
 	# Pass our finalizer function to _start.\n\
 	lla a0, _dl_fini\n\
 	# Jump to the user entry point.\n\
@@ -176,7 +176,7 @@ elf_machine_rela (struct link_map *map, const ElfW(Rela) *reloc,
   ElfW(Addr) r_info = reloc->r_info;
   const unsigned long int r_type = ELFW(R_TYPE) (r_info);
   ElfW(Addr) *addr_field = (ElfW(Addr) *) reloc_addr;
-  const ElfW(Sym) *const refsym = sym;
+  const ElfW(Sym) *const __attribute__((unused)) refsym = sym;
   struct link_map *sym_map = RESOLVE_MAP (&sym, version, r_type);
   ElfW(Addr) value = 0;
   if (sym_map != NULL)
@@ -216,7 +216,7 @@ elf_machine_rela (struct link_map *map, const ElfW(Rela) *reloc,
 	    /* There's nothing to do if the symbol is in .tbss.  */
 	    if (__glibc_likely (sym->st_value >= sym_map->l_tls_initimage_size))
 	      break;
-	    value += sym_map->l_tls_initimage - sym_map->l_addr;
+	    value += (ElfW(Addr)) sym_map->l_tls_initimage - sym_map->l_addr;
 	  }
 
 	size_t size = sym->st_size;
