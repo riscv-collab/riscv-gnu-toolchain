@@ -27,6 +27,15 @@ AC_CHECK_LIB(mpfr, mpfr_init, ,
 AC_CHECK_LIB(mpc, mpc_init2, ,
 	[AC_MSG_ERROR([MPC not found; see http://www.multiprecision.org/])])
 
+AC_PATH_PROG([CURL], [curl], [no])
+AC_PATH_PROG([WGET], [wget], [no])
+AC_PATH_PROG([FTP], [ftp], [no])
+AS_IF([test x"$CURL" != xno], [FETCHER="$CURL -o - --ftp-pasv"],
+	[test x"$WGET" != xno], [FETCHER="$WGET -O -"],
+	[test x"$FTP" != xno], [FETCHER="$FTP -o - -p"],
+	[AC_MSG_ERROR([no file transfer utility found])])
+AC_SUBST(FETCHER)
+
 AC_ARG_ENABLE(linux,
         [Toolchain targets Linux],
         AC_SUBST(default_target, linux),
