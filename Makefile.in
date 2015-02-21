@@ -1,5 +1,6 @@
+srcdir := @abs_top_srcdir@
+builddir := @abs_top_builddir@
 INSTALL_DIR := @prefix@
-srcdir := $(shell cd @top_srcdir@ && pwd)
 
 PACKAGES := binutils gcc glibc newlib
 gcc_version := 4.9.2
@@ -13,33 +14,14 @@ binutils_url := $(GNU_MIRROR)/binutils/binutils-$(binutils_version).tar.gz
 glibc_url := $(GNU_MIRROR)/glibc/glibc-$(glibc_version).tar.gz
 newlib_url := ftp://sourceware.org/pub/newlib/newlib-$(newlib_version).tar.gz
 
-LINUX_DIR := $(srcdir)/linux-headers/
-
 XLEN ?= 64
-
 SYSROOT := $(INSTALL_DIR)/sysroot$(XLEN)
 
-# Check that we have gawk installed.  Set awk=gawk if necessary.
-ifeq ($(shell awk --version | grep GNU),)
-ifeq ($(shell gawk --version),)
-$(error You must have gawk installed on your system!)
-else
-PATH := $(srcdir)/scripts/gawk:$(PATH)
-endif
-endif
-
-# Check that we have gsed installed.  Set sed=gsed if necessary.
-ifeq ($(shell sed --version 2> /dev/null | grep GNU),)
-ifeq ($(shell gsed --version),)
-$(error You must have gsed installed on your system!)
-else
-PATH := $(srcdir)/scripts/gsed:$(PATH)
-endif
-endif
-
-SHELL := /bin/bash
-PATH := $(INSTALL_DIR)/bin:$(PATH)
-export PATH := $(PATH)
+SHELL := /bin/sh
+AWK := @GAWK@
+SED := @GSED@
+PATH := $(INSTALL_DIR)/bin:$(builddir)/scripts/wrapper:$(PATH)
+export PATH AWK SED
 
 all: @default_target@
 
@@ -50,29 +32,28 @@ linux: build-gcc-linux-stage2
 $(addprefix src/original-,$(PACKAGES)):
 	mkdir -p src
 	rm -rf $@ $(subst original-,,$@)-*
-	cd src && curl $($(subst src/original-,,$@)_url) | tar zx
+	cd src && @FETCHER@ $($(subst src/original-,,$@)_url) | tar zxf -
 	mv $(subst original-,,$@)-$($(subst src/original-,,$@)_version) $@
 
 $(addprefix src/,$(PACKAGES)): src/%: src/original-%
 	rm -rf $@ $@.tmp
-	cp -r $< $@.tmp
-	$(srcdir)/scripts/cp_s $(srcdir)/$(shell basename $@) $@.tmp
-	cd $@.tmp && patch -p1 < $(srcdir)/patches/$(shell basename $@)
+	cp -R $< $@.tmp
+	$(srcdir)/scripts/cp_s $(srcdir)/$(notdir $@) $@.tmp
+	cd $@.tmp && patch -p1 < $(srcdir)/patches/$(notdir $@)
 	mv $@.tmp $@
 
 .PHONY: patches $(addprefix $(srcdir)/patches/,$(PACKAGES))
 $(addprefix $(srcdir)/patches/,$(PACKAGES)): $(srcdir)/patches/%: src/%
-	-cd src/$(shell basename $@) && rm `cd $(srcdir)/$(shell basename $@) && find . -type f`
-	-cd src && diff --exclude=manual --exclude=autom4te.cache -rupN original-$(shell basename $@) $(shell basename $@) | filterdiff --remove-timestamps > $@
-	$(srcdir)/scripts/cp_s $(srcdir)/$(shell basename $@) $<
+	-cd src/$(notdir $@) && rm `cd $(srcdir)/$(notdir $@) && find . -type f`
+	-cd src && diff --exclude=manual --exclude=autom4te.cache -rupN original-$(notdir $@) $(notdir $@) | filterdiff --remove-timestamps > $@
+	$(srcdir)/scripts/cp_s $(srcdir)/$(notdir $@) $<
 
 patches: $(addprefix $(srcdir)/patches/,$(PACKAGES))
 
 build-binutils-linux: src/binutils
 	rm -rf $@
 	mkdir $@
-	cd $@ && \
-	$(shell pwd)/$</configure \
+	cd $@ && $(CURDIR)/$</configure \
 		--target=riscv$(XLEN)-unknown-linux-gnu \
 		--prefix=$(INSTALL_DIR) \
 		--with-sysroot=$(SYSROOT) \
@@ -83,10 +64,10 @@ build-binutils-linux: src/binutils
 
 build-glibc-linux: src/glibc build-gcc-linux-stage1
 	mkdir -p $(SYSROOT)/usr/lib $(SYSROOT)/lib $(SYSROOT)/usr/include
-	cp -r $(srcdir)/linux-headers/include/* $(SYSROOT)/usr/include
+	cp -R $(srcdir)/linux-headers/include/* $(SYSROOT)/usr/include
 	rm -rf $@
 	mkdir $@
-	cd $@ && CC= $(shell pwd)/$</configure \
+	cd $@ && CC= $(CURDIR)/$</configure \
 		--host=riscv$(XLEN)-unknown-linux-gnu \
 		--prefix=/usr \
 		libc_cv_forced_unwind=yes \
@@ -101,7 +82,7 @@ build-glibc-linux: src/glibc build-gcc-linux-stage1
 build-gcc-linux-stage1: src/gcc build-binutils-linux
 	rm -rf $@
 	mkdir $@
-	cd $@ && $(shell pwd)/$</configure \
+	cd $@ && $(CURDIR)/$</configure \
 		--target=riscv$(XLEN)-unknown-linux-gnu \
 		--prefix=$(INSTALL_DIR) \
 		--with-sysroot=$(SYSROOT) \
@@ -125,7 +106,7 @@ build-gcc-linux-stage1: src/gcc build-binutils-linux
 build-gcc-linux-stage2: src/gcc build-glibc-linux
 	rm -rf $@
 	mkdir $@
-	cd $@ && $(shell pwd)/$</configure \
+	cd $@ && $(CURDIR)/$</configure \
 		--target=riscv$(XLEN)-unknown-linux-gnu \
 		--prefix=$(INSTALL_DIR) \
 		--with-sysroot=$(SYSROOT) \
@@ -144,8 +125,7 @@ build-gcc-linux-stage2: src/gcc build-glibc-linux
 build-binutils-newlib: src/binutils
 	rm -rf $@
 	mkdir $@
-	cd $@ && \
-	$(shell pwd)/$</configure \
+	cd $@ && $(CURDIR)/$</configure \
 		--target=riscv$(XLEN)-unknown-elf \
 		--prefix=$(INSTALL_DIR) \
 		--enable-tls \
@@ -155,16 +135,16 @@ build-binutils-newlib: src/binutils
 
 src/newlib-gcc: src/gcc src/newlib
 	rm -rf $@ $@.tmp
-	cp -r src/gcc $@.tmp
-	cp -r src/newlib/newlib $@.tmp
-	cp -r src/newlib/libgloss $@.tmp
+	cp -R src/gcc $@.tmp
+	cp -R src/newlib/newlib $@.tmp
+	cp -R src/newlib/libgloss $@.tmp
 	$(srcdir)/scripts/cp_s $(srcdir)/newlib $@.tmp
 	mv $@.tmp $@
 
 build-gcc-newlib: src/newlib-gcc build-binutils-newlib
 	rm -rf $@
 	mkdir $@
-	cd $@ && $(shell pwd)/$</configure \
+	cd $@ && $(CURDIR)/$</configure \
 		--target=riscv$(XLEN)-unknown-elf \
 		--prefix=$(INSTALL_DIR) \
 		--disable-shared \
