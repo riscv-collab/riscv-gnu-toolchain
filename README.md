@@ -51,3 +51,18 @@ run the following command:
     ./configure --prefix=/opt/riscv
     make linux
 
+### Installation (Linux multilib)
+
+To build the Linux cross-compiler with support for both 32-bit and
+64-bit, run the following commands:
+
+    ./configure --prefix=/opt/riscv --enable-multilib
+    make linux
+
+The multilib compiler will have the prefix riscv-unknown-linux-gnu-,
+rather than the usual prefix (riscv32-... or riscv64-...).
+
+### Advanced Options
+
+There are a number of additional options that may be passed to
+configure.  See './configure --help' for more details.
