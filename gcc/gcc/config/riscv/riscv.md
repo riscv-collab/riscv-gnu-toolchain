@@ -2282,7 +2282,7 @@
 })
 
 (define_insn "sibcall_internal"
-  [(call (mem:SI (match_operand:SI 0 "call_insn_operand" "j,S"))
+  [(call (mem:SI (match_operand 0 "call_insn_operand" "j,S"))
 	 (match_operand 1 "" ""))]
   "SIBLING_CALL_P (insn)"
   { return REG_P (operands[0]) ? "jr\t%0"
@@ -2303,7 +2303,7 @@
 
 (define_insn "sibcall_value_internal"
   [(set (match_operand 0 "register_operand" "")
-        (call (mem:SI (match_operand:SI 1 "call_insn_operand" "j,S"))
+        (call (mem:SI (match_operand 1 "call_insn_operand" "j,S"))
               (match_operand 2 "" "")))]
   "SIBLING_CALL_P (insn)"
   { return REG_P (operands[1]) ? "jr\t%1"
@@ -2313,7 +2313,7 @@
 
 (define_insn "sibcall_value_multiple_internal"
   [(set (match_operand 0 "register_operand" "")
-        (call (mem:SI (match_operand:SI 1 "call_insn_operand" "j,S"))
+        (call (mem:SI (match_operand 1 "call_insn_operand" "j,S"))
               (match_operand 2 "" "")))
    (set (match_operand 3 "register_operand" "")
 	(call (mem:SI (match_dup 1))
@@ -2337,7 +2337,7 @@
 })
 
 (define_insn "call_internal"
-  [(call (mem:SI (match_operand:SI 0 "call_insn_operand" "r,S"))
+  [(call (mem:SI (match_operand 0 "call_insn_operand" "r,S"))
 	 (match_operand 1 "" ""))
    (clobber (reg:SI RETURN_ADDR_REGNUM))]
   ""
@@ -2360,7 +2360,7 @@
 ;; See comment for call_internal.
 (define_insn "call_value_internal"
   [(set (match_operand 0 "register_operand" "")
-        (call (mem:SI (match_operand:SI 1 "call_insn_operand" "r,S"))
+        (call (mem:SI (match_operand 1 "call_insn_operand" "r,S"))
               (match_operand 2 "" "")))
    (clobber (reg:SI RETURN_ADDR_REGNUM))]
   ""
@@ -2372,7 +2372,7 @@
 ;; See comment for call_internal.
 (define_insn "call_value_multiple_internal"
   [(set (match_operand 0 "register_operand" "")
-        (call (mem:SI (match_operand:SI 1 "call_insn_operand" "r,S"))
+        (call (mem:SI (match_operand 1 "call_insn_operand" "r,S"))
               (match_operand 2 "" "")))
    (set (match_operand 3 "register_operand" "")
 	(call (mem:SI (match_dup 1))
