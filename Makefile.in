@@ -8,6 +8,7 @@ binutils_version := 2.25
 glibc_version := 2.21
 newlib_version := 1.18.0
 
+DISTDIR ?= /var/cache/distfiles
 GNU_MIRROR := http://mirrors.kernel.org/gnu
 gcc_url := $(GNU_MIRROR)/gcc/gcc-$(gcc_version)/gcc-$(gcc_version).tar.gz
 binutils_url := $(GNU_MIRROR)/binutils/binutils-$(binutils_version).tar.gz
@@ -32,7 +33,7 @@ linux: stamps/build-gcc-linux-stage2
 $(addprefix src/original-,$(PACKAGES)):
 	mkdir -p src
 	rm -rf $@ $(subst original-,,$@)-*
-	cd src && @FETCHER@ $($(subst src/original-,,$@)_url) | tar zxf -
+	cd src && (cat $(DISTDIR)/$(subst src/original-,,$@)-$($(subst src/original-,,$@)_version).tar.gz || @FETCHER@ $($(subst src/original-,,$@)_url)) | tar zxf -
 	mv $(subst original-,,$@)-$($(subst src/original-,,$@)_version) $@
 
 $(addprefix src/,$(PACKAGES)): src/%: src/original-%
@@ -63,11 +64,31 @@ stamps/build-binutils-linux: src/binutils
 	$(MAKE) -C $(notdir $@) install
 	mkdir -p $(dir $@) && touch $@
 
+stamps/build-linux-headers:
+	mkdir -p $(SYSROOT)/usr/
+	cp -R $(srcdir)/linux-headers/include $(SYSROOT)/usr/
+	mkdir -p $(dir $@) && touch $@
+
+stamps/build-glibc-linux-headers: src/glibc
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	mkdir -p $(SYSROOT)/usr/lib $(SYSROOT)/lib
+	cd $(notdir $@) && CC= $(CURDIR)/$</configure \
+		--host=riscv$(XLEN)-unknown-linux-gnu \
+		--prefix=/usr \
+		libc_cv_forced_unwind=yes \
+		libc_cv_c_cleanup=yes \
+		--enable-shared \
+		--enable-__thread \
+		--disable-multilib \
+		--enable-kernel=2.6.32
+	$(MAKE) -C $(notdir $@) install-headers install_root=$(SYSROOT)
+	mkdir -p $(dir $@) && touch $@
+
 stamps/build-glibc-linux: src/glibc stamps/build-gcc-linux-stage1
 	rm -rf $@ $(notdir $@)
 	mkdir $(notdir $@)
 	mkdir -p $(SYSROOT)/usr/lib $(SYSROOT)/lib
-	cp -R $(srcdir)/linux-headers/include $(SYSROOT)/usr/
 	cd $(notdir $@) && CC= $(CURDIR)/$</configure \
 		--host=riscv$(XLEN)-unknown-linux-gnu \
 		--prefix=/usr \
@@ -81,7 +102,9 @@ stamps/build-glibc-linux: src/glibc stamps/build-gcc-linux-stage1
 	$(MAKE) -C $(notdir $@) install install_root=$(SYSROOT)
 	mkdir -p $(dir $@) && touch $@
 
-stamps/build-gcc-linux-stage1: src/gcc stamps/build-binutils-linux
+stamps/build-gcc-linux-stage1: src/gcc stamps/build-binutils-linux \
+                               stamps/build-glibc-linux-headers \
+                               stamps/build-linux-headers
 	rm -rf $@ $(notdir $@)
 	mkdir $(notdir $@)
 	cd $(notdir $@) && $(CURDIR)/$</configure \
@@ -102,8 +125,10 @@ stamps/build-gcc-linux-stage1: src/gcc stamps/build-binutils-linux
 		--disable-nls \
 		--disable-multilib \
 		--disable-bootstrap
-	-$(MAKE) -C $(notdir $@) inhibit-libc=true
-	$(MAKE) -C $(notdir $@) install
+	$(MAKE) -C $(notdir $@) inhibit-libc=true all-gcc
+	$(MAKE) -C $(notdir $@) inhibit-libc=true install-gcc
+	$(MAKE) -C $(notdir $@) inhibit-libc=true all-target-libgcc
+	$(MAKE) -C $(notdir $@) inhibit-libc=true install-target-libgcc
 	mkdir -p $(dir $@) && touch $@
 
 stamps/build-gcc-linux-stage2: src/gcc stamps/build-glibc-linux
