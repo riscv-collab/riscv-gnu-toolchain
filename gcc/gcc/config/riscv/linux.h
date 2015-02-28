@@ -1,4 +1,4 @@
-/* Definitions for MIPS running Linux-based GNU systems with ELF format.
+/* Definitions for RISC-V GNU/Linux systems with ELF format.
    Copyright (C) 1998, 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006,
    2007, 2008, 2010, 2011 Free Software Foundation, Inc.
 

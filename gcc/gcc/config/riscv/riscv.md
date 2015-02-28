@@ -231,9 +231,9 @@
 	  ;; Otherwise, constants, loads and stores are handled by external
 	  ;; routines.
 	  (eq_attr "move_type" "load,fpload")
-	  (symbol_ref "mips_load_store_insns (operands[1], insn) * 4")
+	  (symbol_ref "riscv_load_store_insns (operands[1], insn) * 4")
 	  (eq_attr "move_type" "store,fpstore")
-	  (symbol_ref "mips_load_store_insns (operands[0], insn) * 4")
+	  (symbol_ref "riscv_load_store_insns (operands[0], insn) * 4")
 	  ] (const_int 4)))
 
 ;; Describe a user's asm statement.
@@ -657,8 +657,8 @@
    (set (match_dup 5) (match_dup 3))
   ]
 {
-  operands[4] = mips_subword (operands[0], true);
-  operands[5] = mips_subword (operands[0], false);
+  operands[4] = riscv_subword (operands[0], true);
+  operands[5] = riscv_subword (operands[0], false);
 }
   )
 
@@ -697,8 +697,8 @@
    (set (match_dup 5) (match_dup 3))
   ]
 {
-  operands[4] = mips_subword (operands[0], true);
-  operands[5] = mips_subword (operands[0], false);
+  operands[4] = riscv_subword (operands[0], true);
+  operands[5] = riscv_subword (operands[0], false);
 }
   )
 
@@ -727,9 +727,9 @@
 {
   rtx temp = gen_reg_rtx (SImode);
   emit_insn (gen_mulsi3 (temp, operands[1], operands[2]));
-  emit_insn (gen_<u>mulsi3_highpart (mips_subword (operands[0], true),
+  emit_insn (gen_<u>mulsi3_highpart (riscv_subword (operands[0], true),
 				     operands[1], operands[2]));
-  emit_insn (gen_movsi (mips_subword (operands[0], false), temp));
+  emit_insn (gen_movsi (riscv_subword (operands[0], false), temp));
   DONE;
 }
   )
@@ -760,9 +760,9 @@
 {
   rtx temp = gen_reg_rtx (SImode);
   emit_insn (gen_mulsi3 (temp, operands[1], operands[2]));
-  emit_insn (gen_usmulsi3_highpart (mips_subword (operands[0], true),
+  emit_insn (gen_usmulsi3_highpart (riscv_subword (operands[0], true),
 				     operands[1], operands[2]));
-  emit_insn (gen_movsi (mips_subword (operands[0], false), temp));
+  emit_insn (gen_movsi (riscv_subword (operands[0], false), temp));
   DONE;
 }
   )
@@ -1440,7 +1440,7 @@
    (set_attr "mode" "<MODE>")])
 
 ;; Instructions for adding the low 16 bits of an address to a register.
-;; Operand 2 is the address: mips_print_operand works out which relocation
+;; Operand 2 is the address: riscv_print_operand works out which relocation
 ;; should be applied.
 
 (define_insn "*low<mode>"
@@ -1461,7 +1461,7 @@
   ""
   [(const_int 0)]
 {
-  mips_move_integer (operands[2], operands[0], INTVAL (operands[1]));
+  riscv_move_integer (operands[2], operands[0], INTVAL (operands[1]));
   DONE;
 })
 
@@ -1470,10 +1470,10 @@
   [(set (match_operand:P 0 "register_operand")
 	(match_operand:P 1))
    (clobber (match_operand:P 2 "register_operand"))]
-  "mips_split_symbol (operands[2], operands[1], MAX_MACHINE_MODE, NULL)"
+  "riscv_split_symbol (operands[2], operands[1], MAX_MACHINE_MODE, NULL)"
   [(set (match_dup 0) (match_dup 3))]
 {
-  mips_split_symbol (operands[2], operands[1],
+  riscv_split_symbol (operands[2], operands[1],
 		     MAX_MACHINE_MODE, &operands[3]);
 })
 
@@ -1488,7 +1488,7 @@
 	(match_operand:DI 1 ""))]
   ""
 {
-  if (mips_legitimize_move (DImode, operands[0], operands[1]))
+  if (riscv_legitimize_move (DImode, operands[0], operands[1]))
     DONE;
 })
 
@@ -1498,7 +1498,7 @@
   "!TARGET_64BIT
    && (register_operand (operands[0], DImode)
        || reg_or_0_operand (operands[1], DImode))"
-  { return mips_output_move (operands[0], operands[1]); }
+  { return riscv_output_move (operands[0], operands[1]); }
   [(set_attr "move_type" "move,const,load,store,mtc,fpload,mfc,fpstore")
    (set_attr "mode" "DI")])
 
@@ -1508,7 +1508,7 @@
   "TARGET_64BIT
    && (register_operand (operands[0], DImode)
        || reg_or_0_operand (operands[1], DImode))"
-  { return mips_output_move (operands[0], operands[1]); }
+  { return riscv_output_move (operands[0], operands[1]); }
   [(set_attr "move_type" "move,const,load,store,mtc,fpload,mfc,fpstore")
    (set_attr "mode" "DI")])
 
@@ -1523,7 +1523,7 @@
 	(match_operand:IMOVE32 1 ""))]
   ""
 {
-  if (mips_legitimize_move (<MODE>mode, operands[0], operands[1]))
+  if (riscv_legitimize_move (<MODE>mode, operands[0], operands[1]))
     DONE;
 })
 
@@ -1535,7 +1535,7 @@
 	(match_operand:IMOVE32 1 "move_operand" "r,T,m,rJ,*r*J,*m,*f,*f"))]
   "(register_operand (operands[0], <MODE>mode)
     || reg_or_0_operand (operands[1], <MODE>mode))"
-  { return mips_output_move (operands[0], operands[1]); }
+  { return riscv_output_move (operands[0], operands[1]); }
   [(set_attr "move_type" "move,const,load,store,mtc,fpload,mfc,fpstore")
    (set_attr "mode" "SI")])
 
@@ -1551,7 +1551,7 @@
 	(match_operand:HI 1 ""))]
   ""
 {
-  if (mips_legitimize_move (HImode, operands[0], operands[1]))
+  if (riscv_legitimize_move (HImode, operands[0], operands[1]))
     DONE;
 })
 
@@ -1560,11 +1560,11 @@
 	(match_operand:HI 1 "move_operand"         "r,T,m,rJ,*r*J,*f"))]
   "(register_operand (operands[0], HImode)
     || reg_or_0_operand (operands[1], HImode))"
-  { return mips_output_move (operands[0], operands[1]); }
+  { return riscv_output_move (operands[0], operands[1]); }
   [(set_attr "move_type" "move,const,load,store,mtc,mfc")
    (set_attr "mode" "HI")])
 
-;; HImode constant generation; see mips_move_integer for details.
+;; HImode constant generation; see riscv_move_integer for details.
 ;; si+si->hi without truncation is legal because of TRULY_NOOP_TRUNCATION.
 
 (define_insn "add<mode>hi3"
@@ -1592,7 +1592,7 @@
 	(match_operand:QI 1 ""))]
   ""
 {
-  if (mips_legitimize_move (QImode, operands[0], operands[1]))
+  if (riscv_legitimize_move (QImode, operands[0], operands[1]))
     DONE;
 })
 
@@ -1601,7 +1601,7 @@
 	(match_operand:QI 1 "move_operand"         "r,I,m,rJ,*r*J,*f"))]
   "(register_operand (operands[0], QImode)
     || reg_or_0_operand (operands[1], QImode))"
-  { return mips_output_move (operands[0], operands[1]); }
+  { return riscv_output_move (operands[0], operands[1]); }
   [(set_attr "move_type" "move,const,load,store,mtc,mfc")
    (set_attr "mode" "QI")])
 
@@ -1612,7 +1612,7 @@
 	(match_operand:SF 1 ""))]
   ""
 {
-  if (mips_legitimize_move (SFmode, operands[0], operands[1]))
+  if (riscv_legitimize_move (SFmode, operands[0], operands[1]))
     DONE;
 })
 
@@ -1622,7 +1622,7 @@
   "TARGET_HARD_FLOAT
    && (register_operand (operands[0], SFmode)
        || reg_or_0_operand (operands[1], SFmode))"
-  { return mips_output_move (operands[0], operands[1]); }
+  { return riscv_output_move (operands[0], operands[1]); }
   [(set_attr "move_type" "fmove,mtc,fpload,fpstore,store,mtc,mfc,move,load,store")
    (set_attr "mode" "SF")])
 
@@ -1632,7 +1632,7 @@
   "TARGET_SOFT_FLOAT
    && (register_operand (operands[0], SFmode)
        || reg_or_0_operand (operands[1], SFmode))"
-  { return mips_output_move (operands[0], operands[1]); }
+  { return riscv_output_move (operands[0], operands[1]); }
   [(set_attr "move_type" "move,load,store")
    (set_attr "mode" "SF")])
 
@@ -1643,7 +1643,7 @@
 	(match_operand:DF 1 ""))]
   ""
 {
-  if (mips_legitimize_move (DFmode, operands[0], operands[1]))
+  if (riscv_legitimize_move (DFmode, operands[0], operands[1]))
     DONE;
 })
 
@@ -1655,7 +1655,7 @@
   "!TARGET_64BIT && TARGET_HARD_FLOAT
    && (register_operand (operands[0], DFmode)
        || reg_or_0_operand (operands[1], DFmode))"
-  { return mips_output_move (operands[0], operands[1]); }
+  { return riscv_output_move (operands[0], operands[1]); }
   [(set_attr "move_type" "fmove,mtc,fpload,fpstore,store,move,load,store")
    (set_attr "mode" "DF")])
 
@@ -1665,7 +1665,7 @@
   "TARGET_64BIT && TARGET_HARD_FLOAT
    && (register_operand (operands[0], DFmode)
        || reg_or_0_operand (operands[1], DFmode))"
-  { return mips_output_move (operands[0], operands[1]); }
+  { return riscv_output_move (operands[0], operands[1]); }
   [(set_attr "move_type" "fmove,mtc,fpload,fpstore,store,mtc,mfc,move,load,store")
    (set_attr "mode" "DF")])
 
@@ -1675,7 +1675,7 @@
   "TARGET_SOFT_FLOAT
    && (register_operand (operands[0], DFmode)
        || reg_or_0_operand (operands[1], DFmode))"
-  { return mips_output_move (operands[0], operands[1]); }
+  { return riscv_output_move (operands[0], operands[1]); }
   [(set_attr "move_type" "move,load,store")
    (set_attr "mode" "DF")])
 
@@ -1686,7 +1686,7 @@
 	(match_operand:TI 1))]
   "TARGET_64BIT"
 {
-  if (mips_legitimize_move (TImode, operands[0], operands[1]))
+  if (riscv_legitimize_move (TImode, operands[0], operands[1]))
     DONE;
 })
 
@@ -1704,10 +1704,10 @@
   [(set (match_operand:MOVE64 0 "nonimmediate_operand")
 	(match_operand:MOVE64 1 "move_operand"))]
   "reload_completed && !TARGET_64BIT
-   && mips_split_64bit_move_p (operands[0], operands[1])"
+   && riscv_split_64bit_move_p (operands[0], operands[1])"
   [(const_int 0)]
 {
-  mips_split_doubleword_move (operands[0], operands[1]);
+  riscv_split_doubleword_move (operands[0], operands[1]);
   DONE;
 })
 
@@ -1717,7 +1717,7 @@
   "TARGET_64BIT && reload_completed"
   [(const_int 0)]
 {
-  mips_split_doubleword_move (operands[0], operands[1]);
+  riscv_split_doubleword_move (operands[0], operands[1]);
   DONE;
 })
 
@@ -1730,8 +1730,8 @@
 		       UNSPEC_LOAD_LOW))]
   "TARGET_HARD_FLOAT"
 {
-  operands[0] = mips_subword (operands[0], 0);
-  return mips_output_move (operands[0], operands[1]);
+  operands[0] = riscv_subword (operands[0], 0);
+  return riscv_output_move (operands[0], operands[1]);
 }
   [(set_attr "move_type" "mtc,fpload")
    (set_attr "mode" "<HALFMODE>")])
@@ -1745,8 +1745,8 @@
 		       UNSPEC_LOAD_HIGH))]
   "TARGET_HARD_FLOAT"
 {
-  operands[0] = mips_subword (operands[0], 1);
-  return mips_output_move (operands[0], operands[1]);
+  operands[0] = riscv_subword (operands[0], 1);
+  return riscv_output_move (operands[0], operands[1]);
 }
   [(set_attr "move_type" "mtc,fpload")
    (set_attr "mode" "<HALFMODE>")])
@@ -1760,8 +1760,8 @@
 			   UNSPEC_STORE_WORD))]
   "TARGET_HARD_FLOAT"
 {
-  operands[1] = mips_subword (operands[1], INTVAL (operands[2]));
-  return mips_output_move (operands[0], operands[1]);
+  operands[1] = riscv_subword (operands[1], INTVAL (operands[2]));
+  return riscv_output_move (operands[0], operands[1]);
 }
   [(set_attr "move_type" "mfc,fpstore")
    (set_attr "mode" "<HALFMODE>")])
@@ -1788,7 +1788,7 @@
   ""
   "fence.i")
 
-;; Block moves, see mips.c for more details.
+;; Block moves, see riscv.c for more details.
 ;; Argument 0 is the destination
 ;; Argument 1 is the source
 ;; Argument 2 is the length
@@ -2400,7 +2400,7 @@
   for (i = 0; i < XVECLEN (operands[2], 0); i++)
     {
       rtx set = XVECEXP (operands[2], 0, i);
-      mips_emit_move (SET_DEST (set), SET_SRC (set));
+      riscv_emit_move (SET_DEST (set), SET_SRC (set));
     }
 
   emit_insn (gen_blockage ());

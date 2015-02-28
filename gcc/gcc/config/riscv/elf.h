@@ -1,4 +1,4 @@
-/* Target macros for mips*-elf targets.
+/* Target macros for riscv*-elf targets.
    Copyright (C) 1994, 1997, 1999, 2000, 2002, 2003, 2004, 2007, 2010
    Free Software Foundation, Inc.
 

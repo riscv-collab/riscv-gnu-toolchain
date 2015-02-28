@@ -78,7 +78,7 @@
 (define_predicate "move_operand"
   (match_operand 0 "general_operand")
 {
-  enum mips_symbol_type symbol_type;
+  enum riscv_symbol_type symbol_type;
 
   /* The thinking here is as follows:
 
@@ -120,12 +120,12 @@
     case CONST:
     case SYMBOL_REF:
     case LABEL_REF:
-      return (mips_symbolic_constant_p (op, &symbol_type)
+      return (riscv_symbolic_constant_p (op, &symbol_type)
 	      && !riscv_hi_relocs[symbol_type]);
 
     case HIGH:
       op = XEXP (op, 0);
-      return mips_symbolic_constant_p (op, &symbol_type);
+      return riscv_symbolic_constant_p (op, &symbol_type);
 
     default:
       return true;
@@ -138,23 +138,23 @@
 (define_predicate "symbolic_operand"
   (match_code "const,symbol_ref,label_ref")
 {
-  enum mips_symbol_type type;
-  return mips_symbolic_constant_p (op, &type);
+  enum riscv_symbol_type type;
+  return riscv_symbolic_constant_p (op, &type);
 })
 
 (define_predicate "absolute_symbolic_operand"
   (match_code "const,symbol_ref,label_ref")
 {
-  enum mips_symbol_type type;
-  return (mips_symbolic_constant_p (op, &type)
+  enum riscv_symbol_type type;
+  return (riscv_symbolic_constant_p (op, &type)
 	  && type == SYMBOL_ABSOLUTE);
 })
 
 (define_predicate "plt_symbolic_operand"
   (match_code "const,symbol_ref,label_ref")
 {
-  enum mips_symbol_type type;
-  return (mips_symbolic_constant_p (op, &type)
+  enum riscv_symbol_type type;
+  return (riscv_symbolic_constant_p (op, &type)
 	  && type == SYMBOL_GOT_DISP && !SYMBOL_REF_WEAK (op) && TARGET_PLT);
 })
 

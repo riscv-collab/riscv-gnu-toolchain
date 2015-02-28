@@ -68,14 +68,14 @@ along with GCC; see the file COPYING3.  If not see
 
 /* Extract the symbol type from UNSPEC wrapper X.  */
 #define UNSPEC_ADDRESS_TYPE(X) \
-  ((enum mips_symbol_type) (XINT (X, 1) - UNSPEC_ADDRESS_FIRST))
+  ((enum riscv_symbol_type) (XINT (X, 1) - UNSPEC_ADDRESS_FIRST))
 
 /* The maximum distance between the top of the stack frame and the
    value sp has when we save and restore registers.  This is set by the
    range  of load/store offsets and must also preserve stack alignment. */
 #define RISCV_MAX_FIRST_STACK_STEP (RISCV_IMM_REACH/2 - 16)
 
-/* True if INSN is a mips.md pattern or asm statement.  */
+/* True if INSN is a riscv.md pattern or asm statement.  */
 #define USEFUL_INSN_P(INSN)						\
   (NONDEBUG_INSN_P (INSN)						\
    && GET_CODE (PATTERN (INSN)) != USE					\
@@ -90,7 +90,7 @@ along with GCC; see the file COPYING3.  If not see
 
    ADDRESS_REG
        A natural register + offset address.  The register satisfies
-       mips_valid_base_register_p and the offset is a const_arith_operand.
+       riscv_valid_base_register_p and the offset is a const_arith_operand.
 
    ADDRESS_LO_SUM
        A LO_SUM rtx.  The first operand is a valid base register and
@@ -101,7 +101,7 @@ along with GCC; see the file COPYING3.  If not see
 
    ADDRESS_SYMBOLIC:
        A constant symbolic address.  */
-enum mips_address_type {
+enum riscv_address_type {
   ADDRESS_REG,
   ADDRESS_LO_SUM,
   ADDRESS_CONST_INT,
@@ -115,7 +115,7 @@ enum mips_address_type {
 #define RISCV_FTYPE_NAME4(A, B, C, D, E) RISCV_##A##_FTYPE_##B##_##C##_##D##_##E
 
 /* Classifies the prototype of a built-in function.  */
-enum mips_function_type {
+enum riscv_function_type {
 #define DEF_RISCV_FTYPE(NARGS, LIST) RISCV_FTYPE_NAME##NARGS LIST,
 #include "config/riscv/riscv-ftypes.def"
 #undef DEF_RISCV_FTYPE
@@ -123,7 +123,7 @@ enum mips_function_type {
 };
 
 /* Specifies how a built-in function should be converted into rtl.  */
-enum mips_builtin_type {
+enum riscv_builtin_type {
   /* The function corresponds directly to an .md pattern.  The return
      value is mapped to operand 0 and the arguments are mapped to
      operands 1 and above.  */
@@ -169,7 +169,7 @@ struct GTY(())  machine_function {
 };
 
 /* Information about a single argument.  */
-struct mips_arg_info {
+struct riscv_arg_info {
   /* True if the argument is passed in a floating-point register, or
      would have been if we hadn't run out of registers.  */
   bool fpr_p;
@@ -194,7 +194,7 @@ struct mips_arg_info {
   unsigned int stack_offset;
 };
 
-/* Information about an address described by mips_address_type.
+/* Information about an address described by riscv_address_type.
 
    ADDRESS_CONST_INT
        No fields are used.
@@ -208,11 +208,11 @@ struct mips_arg_info {
 
    ADDRESS_SYMBOLIC
        SYMBOL_TYPE is the type of symbol that the address references.  */
-struct mips_address_info {
-  enum mips_address_type type;
+struct riscv_address_info {
+  enum riscv_address_type type;
   rtx reg;
   rtx offset;
-  enum mips_symbol_type symbol_type;
+  enum riscv_symbol_type symbol_type;
 };
 
 /* One stage in a constant building sequence.  These sequences have
@@ -225,7 +225,7 @@ struct mips_address_info {
 
    where A is an accumulator, each CODE[i] is a binary rtl operation
    and each VALUE[i] is a constant integer.  CODE[0] is undefined.  */
-struct mips_integer_op {
+struct riscv_integer_op {
   enum rtx_code code;
   unsigned HOST_WIDE_INT value;
 };
@@ -350,12 +350,12 @@ riscv_parse_cpu (const char *cpu_string)
    Return the number of operations needed.  */
 
 static int
-riscv_build_integer_1 (struct mips_integer_op *codes, HOST_WIDE_INT value,
+riscv_build_integer_1 (struct riscv_integer_op *codes, HOST_WIDE_INT value,
 		       enum machine_mode mode)
 {
   HOST_WIDE_INT low_part = RISCV_CONST_LOW_PART (value);
   int cost = INT_MAX, alt_cost;
-  struct mips_integer_op alt_codes[RISCV_MAX_INTEGER_OPS];
+  struct riscv_integer_op alt_codes[RISCV_MAX_INTEGER_OPS];
 
   if (SMALL_OPERAND (value) || LUI_OPERAND (value))
     {
@@ -402,7 +402,7 @@ riscv_build_integer_1 (struct mips_integer_op *codes, HOST_WIDE_INT value,
 }
 
 static int
-riscv_build_integer (struct mips_integer_op *codes, HOST_WIDE_INT value,
+riscv_build_integer (struct riscv_integer_op *codes, HOST_WIDE_INT value,
 		     enum machine_mode mode)
 {
   int cost = riscv_build_integer_1 (codes, value, mode);
@@ -410,7 +410,7 @@ riscv_build_integer (struct mips_integer_op *codes, HOST_WIDE_INT value,
   /* Eliminate leading zeros and end with SRLI */
   if (value > 0 && cost > 2)
     {
-      struct mips_integer_op alt_codes[RISCV_MAX_INTEGER_OPS];
+      struct riscv_integer_op alt_codes[RISCV_MAX_INTEGER_OPS];
       int alt_cost, shift = 0;
       HOST_WIDE_INT shifted_val;
 
@@ -441,7 +441,7 @@ riscv_split_integer_cost (HOST_WIDE_INT val)
 {
   int cost;
   int32_t loval = val, hival = (val - (int32_t)val) >> 32;
-  struct mips_integer_op codes[RISCV_MAX_INTEGER_OPS];
+  struct riscv_integer_op codes[RISCV_MAX_INTEGER_OPS];
 
   cost = 2 + riscv_build_integer (codes, loval, VOIDmode);
   if (loval != hival)
@@ -453,7 +453,7 @@ riscv_split_integer_cost (HOST_WIDE_INT val)
 static int
 riscv_integer_cost (HOST_WIDE_INT val)
 {
-  struct mips_integer_op codes[RISCV_MAX_INTEGER_OPS];
+  struct riscv_integer_op codes[RISCV_MAX_INTEGER_OPS];
   return MIN (riscv_build_integer (codes, val, VOIDmode),
 	      riscv_split_integer_cost (val));
 }
@@ -466,8 +466,8 @@ riscv_split_integer (HOST_WIDE_INT val, enum machine_mode mode)
   int32_t loval = val, hival = (val - (int32_t)val) >> 32;
   rtx hi = gen_reg_rtx (mode), lo = gen_reg_rtx (mode);
 
-  mips_move_integer (hi, hi, hival);
-  mips_move_integer (lo, lo, loval);
+  riscv_move_integer (hi, hi, hival);
+  riscv_move_integer (lo, lo, loval);
 
   hi = gen_rtx_fmt_ee (ASHIFT, mode, hi, GEN_INT (32));
   hi = force_reg (mode, hi);
@@ -478,7 +478,7 @@ riscv_split_integer (HOST_WIDE_INT val, enum machine_mode mode)
 /* Return true if X is a thread-local symbol.  */
 
 static bool
-mips_tls_symbol_p (const_rtx x)
+riscv_tls_symbol_p (const_rtx x)
 {
   return GET_CODE (x) == SYMBOL_REF && SYMBOL_REF_TLS_MODEL (x) != 0;
 }
@@ -494,10 +494,10 @@ riscv_symbol_binds_local_p (const_rtx x)
 /* Return the method that should be used to access SYMBOL_REF or
    LABEL_REF X in context CONTEXT.  */
 
-static enum mips_symbol_type
-mips_classify_symbol (const_rtx x)
+static enum riscv_symbol_type
+riscv_classify_symbol (const_rtx x)
 {
-  if (mips_tls_symbol_p (x))
+  if (riscv_tls_symbol_p (x))
     return SYMBOL_TLS;
 
   if (GET_CODE (x) == LABEL_REF)
@@ -518,8 +518,8 @@ mips_classify_symbol (const_rtx x)
 /* Classify the base of symbolic expression X, given that X appears in
    context CONTEXT.  */
 
-static enum mips_symbol_type
-mips_classify_symbolic_expression (rtx x)
+static enum riscv_symbol_type
+riscv_classify_symbolic_expression (rtx x)
 {
   rtx offset;
 
@@ -527,14 +527,14 @@ mips_classify_symbolic_expression (rtx x)
   if (UNSPEC_ADDRESS_P (x))
     return UNSPEC_ADDRESS_TYPE (x);
 
-  return mips_classify_symbol (x);
+  return riscv_classify_symbol (x);
 }
 
 /* Return true if X is a symbolic constant that can be used in context
    CONTEXT.  If it is, store the type of the symbol in *SYMBOL_TYPE.  */
 
 bool
-mips_symbolic_constant_p (rtx x, enum mips_symbol_type *symbol_type)
+riscv_symbolic_constant_p (rtx x, enum riscv_symbol_type *symbol_type)
 {
   rtx offset;
 
@@ -545,7 +545,7 @@ mips_symbolic_constant_p (rtx x, enum mips_symbol_type *symbol_type)
       x = UNSPEC_ADDRESS (x);
     }
   else if (GET_CODE (x) == SYMBOL_REF || GET_CODE (x) == LABEL_REF)
-    *symbol_type = mips_classify_symbol (x);
+    *symbol_type = riscv_classify_symbol (x);
   else
     return false;
 
@@ -568,7 +568,7 @@ mips_symbolic_constant_p (rtx x, enum mips_symbol_type *symbol_type)
 
 /* Returns the number of instructions necessary to reference a symbol. */
 
-static int riscv_symbol_insns (enum mips_symbol_type type)
+static int riscv_symbol_insns (enum riscv_symbol_type type)
 {
   switch (type)
   {
@@ -584,9 +584,9 @@ static int riscv_symbol_insns (enum mips_symbol_type type)
    thread-local symbol.  */
 
 static int
-mips_tls_symbol_ref_1 (rtx *x, void *data ATTRIBUTE_UNUSED)
+riscv_tls_symbol_ref_1 (rtx *x, void *data ATTRIBUTE_UNUSED)
 {
-  return mips_tls_symbol_p (*x);
+  return riscv_tls_symbol_p (*x);
 }
 
 /* Implement TARGET_LEGITIMATE_CONSTANT_P.  */
@@ -602,7 +602,7 @@ riscv_legitimate_constant_p (enum machine_mode mode ATTRIBUTE_UNUSED, rtx x)
 static bool
 riscv_cannot_force_const_mem (enum machine_mode mode, rtx x)
 {
-  enum mips_symbol_type type;
+  enum riscv_symbol_type type;
   rtx base, offset;
 
   /* There is no assembler syntax for expressing an address-sized
@@ -610,7 +610,7 @@ riscv_cannot_force_const_mem (enum machine_mode mode, rtx x)
   if (GET_CODE (x) == HIGH)
     return true;
 
-  /* As an optimization, reject constants that mips_legitimize_move
+  /* As an optimization, reject constants that riscv_legitimize_move
      can expand inline.
 
      Suppose we have a multi-instruction sequence that loads constant C
@@ -623,7 +623,7 @@ riscv_cannot_force_const_mem (enum machine_mode mode, rtx x)
     return true;
 
   split_const (x, &base, &offset);
-  if (mips_symbolic_constant_p (base, &type))
+  if (riscv_symbolic_constant_p (base, &type))
     {
       /* The same optimization as for CONST_INT.  */
       if (SMALL_INT (offset) && riscv_symbol_insns (type) > 0)
@@ -634,8 +634,8 @@ riscv_cannot_force_const_mem (enum machine_mode mode, rtx x)
 	return true;
     }
 
-  /* TLS symbols must be computed by mips_legitimize_move.  */
-  if (for_each_rtx (&x, &mips_tls_symbol_ref_1, NULL))
+  /* TLS symbols must be computed by riscv_legitimize_move.  */
+  if (for_each_rtx (&x, &riscv_tls_symbol_ref_1, NULL))
     return true;
 
   return false;
@@ -668,7 +668,7 @@ riscv_regno_mode_ok_for_base_p (int regno, enum machine_mode mode ATTRIBUTE_UNUS
    STRICT_P is true if REG_OK_STRICT is in effect.  */
 
 static bool
-mips_valid_base_register_p (rtx x, enum machine_mode mode, bool strict_p)
+riscv_valid_base_register_p (rtx x, enum machine_mode mode, bool strict_p)
 {
   if (!strict_p && GET_CODE (x) == SUBREG)
     x = SUBREG_REG (x);
@@ -681,7 +681,7 @@ mips_valid_base_register_p (rtx x, enum machine_mode mode, bool strict_p)
    can address a value of mode MODE.  */
 
 static bool
-mips_valid_offset_p (rtx x, enum machine_mode mode)
+riscv_valid_offset_p (rtx x, enum machine_mode mode)
 {
   /* Check that X is a signed 12-bit number.  */
   if (!const_arith_operand (x, Pmode))
@@ -700,7 +700,7 @@ mips_valid_offset_p (rtx x, enum machine_mode mode)
    LO_SUM symbol has type SYMBOL_TYPE.  */
 
 static bool
-mips_valid_lo_sum_p (enum mips_symbol_type symbol_type, enum machine_mode mode)
+riscv_valid_lo_sum_p (enum riscv_symbol_type symbol_type, enum machine_mode mode)
 {
   /* Check that symbols of type SYMBOL_TYPE can be used to access values
      of mode MODE.  */
@@ -727,7 +727,7 @@ mips_valid_lo_sum_p (enum mips_symbol_type symbol_type, enum machine_mode mode)
    effect.  */
 
 static bool
-mips_classify_address (struct mips_address_info *info, rtx x,
+riscv_classify_address (struct riscv_address_info *info, rtx x,
 		       enum machine_mode mode, bool strict_p)
 {
   switch (GET_CODE (x))
@@ -737,14 +737,14 @@ mips_classify_address (struct mips_address_info *info, rtx x,
       info->type = ADDRESS_REG;
       info->reg = x;
       info->offset = const0_rtx;
-      return mips_valid_base_register_p (info->reg, mode, strict_p);
+      return riscv_valid_base_register_p (info->reg, mode, strict_p);
 
     case PLUS:
       info->type = ADDRESS_REG;
       info->reg = XEXP (x, 0);
       info->offset = XEXP (x, 1);
-      return (mips_valid_base_register_p (info->reg, mode, strict_p)
-	      && mips_valid_offset_p (info->offset, mode));
+      return (riscv_valid_base_register_p (info->reg, mode, strict_p)
+	      && riscv_valid_offset_p (info->offset, mode));
 
     case LO_SUM:
       info->type = ADDRESS_LO_SUM;
@@ -755,14 +755,14 @@ mips_classify_address (struct mips_address_info *info, rtx x,
 	 create and verify the matching HIGH.  Target-independent code that
 	 adds an offset to a LO_SUM must prove that the offset will not
 	 induce a carry.  Failure to do either of these things would be
-	 a bug, and we are not required to check for it here.  The MIPS
+	 a bug, and we are not required to check for it here.  The RISCV
 	 backend itself should only create LO_SUMs for valid symbolic
 	 constants, with the high part being either a HIGH or a copy
 	 of _gp. */
       info->symbol_type
-	= mips_classify_symbolic_expression (info->offset);
-      return (mips_valid_base_register_p (info->reg, mode, strict_p)
-	      && mips_valid_lo_sum_p (info->symbol_type, mode));
+	= riscv_classify_symbolic_expression (info->offset);
+      return (riscv_valid_base_register_p (info->reg, mode, strict_p)
+	      && riscv_valid_lo_sum_p (info->symbol_type, mode));
 
     case CONST_INT:
       /* Small-integer addresses don't occur very often, but they
@@ -778,11 +778,11 @@ mips_classify_address (struct mips_address_info *info, rtx x,
 /* Implement TARGET_LEGITIMATE_ADDRESS_P.  */
 
 static bool
-mips_legitimate_address_p (enum machine_mode mode, rtx x, bool strict_p)
+riscv_legitimate_address_p (enum machine_mode mode, rtx x, bool strict_p)
 {
-  struct mips_address_info addr;
+  struct riscv_address_info addr;
 
-  return mips_classify_address (&addr, x, mode, strict_p);
+  return riscv_classify_address (&addr, x, mode, strict_p);
 }
 
 /* Return the number of instructions needed to load or store a value
@@ -794,10 +794,10 @@ mips_legitimate_address_p (enum machine_mode mode, rtx x, bool strict_p)
 int
 riscv_address_insns (rtx x, enum machine_mode mode, bool might_split_p)
 {
-  struct mips_address_info addr;
+  struct riscv_address_info addr;
   int n = 1;
 
-  if (!mips_classify_address (&addr, x, mode, false))
+  if (!riscv_classify_address (&addr, x, mode, false))
     return 0;
 
   /* BLKmode is used for single unaligned loads and stores and should
@@ -817,13 +817,13 @@ riscv_address_insns (rtx x, enum machine_mode mode, bool might_split_p)
 int
 riscv_const_insns (rtx x)
 {
-  enum mips_symbol_type symbol_type;
+  enum riscv_symbol_type symbol_type;
   rtx offset;
 
   switch (GET_CODE (x))
     {
     case HIGH:
-      if (!mips_symbolic_constant_p (XEXP (x, 0), &symbol_type)
+      if (!riscv_symbolic_constant_p (XEXP (x, 0), &symbol_type)
 	  || !riscv_hi_relocs[symbol_type])
 	return 0;
 
@@ -844,7 +844,7 @@ riscv_const_insns (rtx x)
 
     case CONST:
       /* See if we can refer to X directly.  */
-      if (mips_symbolic_constant_p (x, &symbol_type))
+      if (riscv_symbolic_constant_p (x, &symbol_type))
 	return riscv_symbol_insns (symbol_type);
 
       /* Otherwise try splitting the constant into a base and offset.
@@ -871,7 +871,7 @@ riscv_const_insns (rtx x)
 
     case SYMBOL_REF:
     case LABEL_REF:
-      return riscv_symbol_insns (mips_classify_symbol (x));
+      return riscv_symbol_insns (riscv_classify_symbol (x));
 
     default:
       return 0;
@@ -887,8 +887,8 @@ riscv_split_const_insns (rtx x)
 {
   unsigned int low, high;
 
-  low = riscv_const_insns (mips_subword (x, false));
-  high = riscv_const_insns (mips_subword (x, true));
+  low = riscv_const_insns (riscv_subword (x, false));
+  high = riscv_const_insns (riscv_subword (x, true));
   gcc_assert (low > 0 && high > 0);
   return low + high;
 }
@@ -897,7 +897,7 @@ riscv_split_const_insns (rtx x)
    given that it loads from or stores to MEM. */
 
 int
-mips_load_store_insns (rtx mem, rtx insn)
+riscv_load_store_insns (rtx mem, rtx insn)
 {
   enum machine_mode mode;
   bool might_split_p;
@@ -911,7 +911,7 @@ mips_load_store_insns (rtx mem, rtx insn)
   if (GET_MODE_BITSIZE (mode) == 64)
     {
       set = single_set (insn);
-      if (set && !mips_split_64bit_move_p (SET_DEST (set), SET_SRC (set)))
+      if (set && !riscv_split_64bit_move_p (SET_DEST (set), SET_SRC (set)))
 	might_split_p = false;
     }
 
@@ -925,7 +925,7 @@ mips_load_store_insns (rtx mem, rtx insn)
    constant pool address is not itself legitimate.  */
 
 rtx
-mips_emit_move (rtx dest, rtx src)
+riscv_emit_move (rtx dest, rtx src)
 {
   return (can_create_pseudo_p ()
 	  ? emit_move_insn (dest, src)
@@ -935,7 +935,7 @@ mips_emit_move (rtx dest, rtx src)
 /* Emit an instruction of the form (set TARGET (CODE OP0 OP1)).  */
 
 static void
-mips_emit_binary (enum rtx_code code, rtx target, rtx op0, rtx op1)
+riscv_emit_binary (enum rtx_code code, rtx target, rtx op0, rtx op1)
 {
   emit_insn (gen_rtx_SET (VOIDmode, target,
 			  gen_rtx_fmt_ee (code, GET_MODE (target), op0, op1)));
@@ -945,12 +945,12 @@ mips_emit_binary (enum rtx_code code, rtx target, rtx op0, rtx op1)
    of mode MODE.  Return that new register.  */
 
 static rtx
-mips_force_binary (enum machine_mode mode, enum rtx_code code, rtx op0, rtx op1)
+riscv_force_binary (enum machine_mode mode, enum rtx_code code, rtx op0, rtx op1)
 {
   rtx reg;
 
   reg = gen_reg_rtx (mode);
-  mips_emit_binary (code, reg, op0, op1);
+  riscv_emit_binary (code, reg, op0, op1);
   return reg;
 }
 
@@ -958,13 +958,13 @@ mips_force_binary (enum machine_mode mode, enum rtx_code code, rtx op0, rtx op1)
    are allowed, copy it into a new register, otherwise use DEST.  */
 
 static rtx
-mips_force_temporary (rtx dest, rtx value)
+riscv_force_temporary (rtx dest, rtx value)
 {
   if (can_create_pseudo_p ())
     return force_reg (Pmode, value);
   else
     {
-      mips_emit_move (dest, value);
+      riscv_emit_move (dest, value);
       return dest;
     }
 }
@@ -973,8 +973,8 @@ mips_force_temporary (rtx dest, rtx value)
    then add CONST_INT OFFSET to the result.  */
 
 static rtx
-mips_unspec_address_offset (rtx base, rtx offset,
-			    enum mips_symbol_type symbol_type)
+riscv_unspec_address_offset (rtx base, rtx offset,
+			    enum riscv_symbol_type symbol_type)
 {
   base = gen_rtx_UNSPEC (Pmode, gen_rtvec (1, base),
 			 UNSPEC_ADDRESS_FIRST + symbol_type);
@@ -987,19 +987,19 @@ mips_unspec_address_offset (rtx base, rtx offset,
    type SYMBOL_TYPE.  */
 
 rtx
-mips_unspec_address (rtx address, enum mips_symbol_type symbol_type)
+riscv_unspec_address (rtx address, enum riscv_symbol_type symbol_type)
 {
   rtx base, offset;
 
   split_const (address, &base, &offset);
-  return mips_unspec_address_offset (base, offset, symbol_type);
+  return riscv_unspec_address_offset (base, offset, symbol_type);
 }
 
 /* If OP is an UNSPEC address, return the address to which it refers,
    otherwise return OP itself.  */
 
 static rtx
-mips_strip_unspec_address (rtx op)
+riscv_strip_unspec_address (rtx op)
 {
   rtx base, offset;
 
@@ -1009,17 +1009,17 @@ mips_strip_unspec_address (rtx op)
   return op;
 }
 
-/* If mips_unspec_address (ADDR, SYMBOL_TYPE) is a 32-bit value, add the
+/* If riscv_unspec_address (ADDR, SYMBOL_TYPE) is a 32-bit value, add the
    high part to BASE and return the result.  Just return BASE otherwise.
-   TEMP is as for mips_force_temporary.
+   TEMP is as for riscv_force_temporary.
 
    The returned expression can be used as the first operand to a LO_SUM.  */
 
 static rtx
-mips_unspec_offset_high (rtx temp, rtx addr, enum mips_symbol_type symbol_type)
+riscv_unspec_offset_high (rtx temp, rtx addr, enum riscv_symbol_type symbol_type)
 {
-  addr = gen_rtx_HIGH (Pmode, mips_unspec_address (addr, symbol_type));
-  return mips_force_temporary (temp, addr);
+  addr = gen_rtx_HIGH (Pmode, riscv_unspec_address (addr, symbol_type));
+  return riscv_force_temporary (temp, addr);
 }
 
 /* Load an entry from the GOT. */
@@ -1045,7 +1045,7 @@ static rtx riscv_tls_add_tp_le(rtx dest, rtx base, rtx sym)
    If so, and if LOW_OUT is nonnull, emit the high part and store the
    low part in *LOW_OUT.  Leave *LOW_OUT unchanged otherwise.
 
-   TEMP is as for mips_force_temporary and is used to load the high
+   TEMP is as for riscv_force_temporary and is used to load the high
    part into a register.
 
    When MODE is MAX_MACHINE_MODE, the low part is guaranteed to be
@@ -1053,13 +1053,13 @@ static rtx riscv_tls_add_tp_le(rtx dest, rtx base, rtx sym)
    is guaranteed to be a legitimate address for mode MODE.  */
 
 bool
-mips_split_symbol (rtx temp, rtx addr, enum machine_mode mode, rtx *low_out)
+riscv_split_symbol (rtx temp, rtx addr, enum machine_mode mode, rtx *low_out)
 {
-  enum mips_symbol_type symbol_type;
+  enum riscv_symbol_type symbol_type;
   rtx high;
 
   if ((GET_CODE (addr) == HIGH && mode == MAX_MACHINE_MODE)
-      || !mips_symbolic_constant_p (addr, &symbol_type)
+      || !riscv_symbolic_constant_p (addr, &symbol_type)
       || riscv_symbol_insns (symbol_type) == 0
       || !riscv_hi_relocs[symbol_type])
     return false;
@@ -1070,7 +1070,7 @@ mips_split_symbol (rtx temp, rtx addr, enum machine_mode mode, rtx *low_out)
 	{
 	case SYMBOL_ABSOLUTE:
 	  high = gen_rtx_HIGH (Pmode, copy_rtx (addr));
-      	  high = mips_force_temporary (temp, high);
+      	  high = riscv_force_temporary (temp, high);
       	  *low_out = gen_rtx_LO_SUM (Pmode, high, addr);
 	  break;
 	
@@ -1083,11 +1083,11 @@ mips_split_symbol (rtx temp, rtx addr, enum machine_mode mode, rtx *low_out)
 }
 
 /* Return a legitimate address for REG + OFFSET.  TEMP is as for
-   mips_force_temporary; it is only needed when OFFSET is not a
+   riscv_force_temporary; it is only needed when OFFSET is not a
    SMALL_OPERAND.  */
 
 static rtx
-mips_add_offset (rtx temp, rtx reg, HOST_WIDE_INT offset)
+riscv_add_offset (rtx temp, rtx reg, HOST_WIDE_INT offset)
 {
   if (!SMALL_OPERAND (offset))
     {
@@ -1098,14 +1098,14 @@ mips_add_offset (rtx temp, rtx reg, HOST_WIDE_INT offset)
          overflow, so we need to force a sign-extension check.  */
       high = gen_int_mode (RISCV_CONST_HIGH_PART (offset), Pmode);
       offset = RISCV_CONST_LOW_PART (offset);
-      high = mips_force_temporary (temp, high);
-      reg = mips_force_temporary (temp, gen_rtx_PLUS (Pmode, high, reg));
+      high = riscv_force_temporary (temp, high);
+      reg = riscv_force_temporary (temp, gen_rtx_PLUS (Pmode, high, reg));
     }
   return plus_constant (Pmode, reg, offset);
 }
 
 /* The __tls_get_attr symbol.  */
-static GTY(()) rtx mips_tls_symbol;
+static GTY(()) rtx riscv_tls_symbol;
 
 /* Return an instruction sequence that calls __tls_get_addr.  SYM is
    the TLS symbol we are referencing and TYPE is the symbol type to use
@@ -1113,17 +1113,17 @@ static GTY(()) rtx mips_tls_symbol;
    return value location.  */
 
 static rtx
-mips_call_tls_get_addr (rtx sym, rtx result)
+riscv_call_tls_get_addr (rtx sym, rtx result)
 {
   rtx insn, a0 = gen_rtx_REG (Pmode, GP_ARG_FIRST);
 
-  if (!mips_tls_symbol)
-    mips_tls_symbol = init_one_libfunc ("__tls_get_addr");
+  if (!riscv_tls_symbol)
+    riscv_tls_symbol = init_one_libfunc ("__tls_get_addr");
 
   start_sequence ();
   
   emit_insn (riscv_got_load_tls_gd (a0, sym));
-  insn = riscv_expand_call (false, result, mips_tls_symbol, const0_rtx);
+  insn = riscv_expand_call (false, result, riscv_tls_symbol, const0_rtx);
   RTL_CONST_CALL_P (insn) = 1;
   use_reg (&CALL_INSN_FUNCTION_USAGE (insn), a0);
   insn = get_insns ();
@@ -1138,7 +1138,7 @@ mips_call_tls_get_addr (rtx sym, rtx result)
    SET_SRC (either a REG or a LO_SUM).  */
 
 static rtx
-mips_legitimize_tls_address (rtx loc)
+riscv_legitimize_tls_address (rtx loc)
 {
   rtx dest, insn, tp, tmp1;
   enum tls_model model = SYMBOL_REF_TLS_MODEL (loc);
@@ -1154,7 +1154,7 @@ mips_legitimize_tls_address (rtx loc)
 	 provides.  The anchor's address is loaded with GD TLS. */
     case TLS_MODEL_GLOBAL_DYNAMIC:
       tmp1 = gen_rtx_REG (Pmode, GP_RETURN);
-      insn = mips_call_tls_get_addr (loc, tmp1);
+      insn = riscv_call_tls_get_addr (loc, tmp1);
       dest = gen_reg_rtx (Pmode);
       emit_libcall_block (insn, dest, tmp1, loc);
       break;
@@ -1169,11 +1169,11 @@ mips_legitimize_tls_address (rtx loc)
       break;
 
     case TLS_MODEL_LOCAL_EXEC:
-      tmp1 = mips_unspec_offset_high (NULL, loc, SYMBOL_TLS_LE);
+      tmp1 = riscv_unspec_offset_high (NULL, loc, SYMBOL_TLS_LE);
       dest = gen_reg_rtx (Pmode);
       emit_insn (riscv_tls_add_tp_le (dest, tmp1, loc));
       dest = gen_rtx_LO_SUM (Pmode, dest,
-			     mips_unspec_address (loc, SYMBOL_TLS_LE));
+			     riscv_unspec_address (loc, SYMBOL_TLS_LE));
       break;
 
     default:
@@ -1185,9 +1185,9 @@ mips_legitimize_tls_address (rtx loc)
 /* If X is not a valid address for mode MODE, force it into a register.  */
 
 static rtx
-mips_force_address (rtx x, enum machine_mode mode)
+riscv_force_address (rtx x, enum machine_mode mode)
 {
-  if (!mips_legitimate_address_p (mode, x, false))
+  if (!riscv_legitimate_address_p (mode, x, false))
     x = force_reg (Pmode, x);
   return x;
 }
@@ -1198,40 +1198,40 @@ mips_force_address (rtx x, enum machine_mode mode)
    the memory being accessed.  */
 
 static rtx
-mips_legitimize_address (rtx x, rtx oldx ATTRIBUTE_UNUSED,
+riscv_legitimize_address (rtx x, rtx oldx ATTRIBUTE_UNUSED,
 			 enum machine_mode mode)
 {
   rtx addr;
 
-  if (mips_tls_symbol_p (x))
-    return mips_legitimize_tls_address (x);
+  if (riscv_tls_symbol_p (x))
+    return riscv_legitimize_tls_address (x);
 
   /* See if the address can split into a high part and a LO_SUM.  */
-  if (mips_split_symbol (NULL, x, mode, &addr))
-    return mips_force_address (addr, mode);
+  if (riscv_split_symbol (NULL, x, mode, &addr))
+    return riscv_force_address (addr, mode);
 
-  /* Handle BASE + OFFSET using mips_add_offset.  */
+  /* Handle BASE + OFFSET using riscv_add_offset.  */
   if (GET_CODE (x) == PLUS && CONST_INT_P (XEXP (x, 1))
       && INTVAL (XEXP (x, 1)) != 0)
     {
       rtx base = XEXP (x, 0);
       HOST_WIDE_INT offset = INTVAL (XEXP (x, 1));
 
-      if (!mips_valid_base_register_p (base, mode, false))
+      if (!riscv_valid_base_register_p (base, mode, false))
 	base = copy_to_mode_reg (Pmode, base);
-      addr = mips_add_offset (NULL, base, offset);
-      return mips_force_address (addr, mode);
+      addr = riscv_add_offset (NULL, base, offset);
+      return riscv_force_address (addr, mode);
     }
 
   return x;
 }
 
-/* Load VALUE into DEST.  TEMP is as for mips_force_temporary.  */
+/* Load VALUE into DEST.  TEMP is as for riscv_force_temporary.  */
 
 void
-mips_move_integer (rtx temp, rtx dest, HOST_WIDE_INT value)
+riscv_move_integer (rtx temp, rtx dest, HOST_WIDE_INT value)
 {
-  struct mips_integer_op codes[RISCV_MAX_INTEGER_OPS];
+  struct riscv_integer_op codes[RISCV_MAX_INTEGER_OPS];
   enum machine_mode mode;
   int i, num_ops;
   rtx x;
@@ -1264,33 +1264,33 @@ mips_move_integer (rtx temp, rtx dest, HOST_WIDE_INT value)
   emit_insn (gen_rtx_SET (VOIDmode, dest, x));
 }
 
-/* Subroutine of mips_legitimize_move.  Move constant SRC into register
+/* Subroutine of riscv_legitimize_move.  Move constant SRC into register
    DEST given that SRC satisfies immediate_operand but doesn't satisfy
    move_operand.  */
 
 static void
-mips_legitimize_const_move (enum machine_mode mode, rtx dest, rtx src)
+riscv_legitimize_const_move (enum machine_mode mode, rtx dest, rtx src)
 {
   rtx base, offset;
 
   /* Split moves of big integers into smaller pieces.  */
   if (splittable_const_int_operand (src, mode))
     {
-      mips_move_integer (dest, dest, INTVAL (src));
+      riscv_move_integer (dest, dest, INTVAL (src));
       return;
     }
 
   /* Split moves of symbolic constants into high/low pairs.  */
-  if (mips_split_symbol (dest, src, MAX_MACHINE_MODE, &src))
+  if (riscv_split_symbol (dest, src, MAX_MACHINE_MODE, &src))
     {
       emit_insn (gen_rtx_SET (VOIDmode, dest, src));
       return;
     }
 
   /* Generate the appropriate access sequences for TLS symbols.  */
-  if (mips_tls_symbol_p (src))
+  if (riscv_tls_symbol_p (src))
     {
-      mips_emit_move (dest, mips_legitimize_tls_address (src));
+      riscv_emit_move (dest, riscv_legitimize_tls_address (src));
       return;
     }
 
@@ -1302,8 +1302,8 @@ mips_legitimize_const_move (enum machine_mode mode, rtx dest, rtx src)
   if (offset != const0_rtx
       && (targetm.cannot_force_const_mem (mode, src) || can_create_pseudo_p ()))
     {
-      base = mips_force_temporary (dest, base);
-      mips_emit_move (dest, mips_add_offset (NULL, base, INTVAL (offset)));
+      base = riscv_force_temporary (dest, base);
+      riscv_emit_move (dest, riscv_add_offset (NULL, base, INTVAL (offset)));
       return;
     }
 
@@ -1311,19 +1311,19 @@ mips_legitimize_const_move (enum machine_mode mode, rtx dest, rtx src)
 
   /* When using explicit relocs, constant pool references are sometimes
      not legitimate addresses.  */
-  mips_split_symbol (dest, XEXP (src, 0), mode, &XEXP (src, 0));
-  mips_emit_move (dest, src);
+  riscv_split_symbol (dest, XEXP (src, 0), mode, &XEXP (src, 0));
+  riscv_emit_move (dest, src);
 }
 
 /* If (set DEST SRC) is not a valid move instruction, emit an equivalent
    sequence that is valid.  */
 
 bool
-mips_legitimize_move (enum machine_mode mode, rtx dest, rtx src)
+riscv_legitimize_move (enum machine_mode mode, rtx dest, rtx src)
 {
   if (!register_operand (dest, mode) && !reg_or_0_operand (src, mode))
     {
-      mips_emit_move (dest, force_reg (mode, src));
+      riscv_emit_move (dest, force_reg (mode, src));
       return true;
     }
 
@@ -1331,7 +1331,7 @@ mips_legitimize_move (enum machine_mode mode, rtx dest, rtx src)
      immediate_operands but aren't legitimate move_operands.  */
   if (CONSTANT_P (src) && !move_operand (src, mode))
     {
-      mips_legitimize_const_move (mode, dest, src);
+      riscv_legitimize_const_move (mode, dest, src);
       set_unique_reg_note (get_last_insn (), REG_EQUAL, copy_rtx (src));
       return true;
     }
@@ -1342,7 +1342,7 @@ mips_legitimize_move (enum machine_mode mode, rtx dest, rtx src)
    X as an immediate operand. */
 
 static int
-mips_immediate_operand_p (int code, HOST_WIDE_INT x)
+riscv_immediate_operand_p (int code, HOST_WIDE_INT x)
 {
   switch (code)
     {
@@ -1397,7 +1397,7 @@ riscv_binary_cost (rtx x, int single_insns, int double_insns)
    cost of OP itself.  */
 
 static int
-mips_sign_extend_cost (enum machine_mode mode, rtx op)
+riscv_sign_extend_cost (enum machine_mode mode, rtx op)
 {
   if (MEM_P (op))
     /* Extended loads are as cheap as unextended ones.  */
@@ -1415,7 +1415,7 @@ mips_sign_extend_cost (enum machine_mode mode, rtx op)
    cost of OP itself.  */
 
 static int
-mips_zero_extend_cost (enum machine_mode mode, rtx op)
+riscv_zero_extend_cost (enum machine_mode mode, rtx op)
 {
   if (MEM_P (op))
     /* Extended loads are as cheap as unextended ones.  */
@@ -1443,7 +1443,7 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
   switch (code)
     {
     case CONST_INT:
-      if (mips_immediate_operand_p (outer_code, INTVAL (x)))
+      if (riscv_immediate_operand_p (outer_code, INTVAL (x)))
 	{
 	  *total = 0;
 	  return true;
@@ -1524,7 +1524,7 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
 	  && !HONOR_NANS (mode)
 	  && !HONOR_SIGNED_ZEROS (mode))
 	{
-	  /* See if we can use NMADD or NMSUB.  See mips.md for the
+	  /* See if we can use NMADD or NMSUB.  See riscv.md for the
 	     associated patterns.  */
 	  rtx op0 = XEXP (x, 0);
 	  rtx op1 = XEXP (x, 1);
@@ -1559,7 +1559,7 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
 	  && !HONOR_NANS (mode)
 	  && HONOR_SIGNED_ZEROS (mode))
 	{
-	  /* See if we can use NMADD or NMSUB.  See mips.md for the
+	  /* See if we can use NMADD or NMSUB.  See riscv.md for the
 	     associated patterns.  */
 	  rtx op = XEXP (x, 0);
 	  if ((GET_CODE (op) == PLUS || GET_CODE (op) == MINUS)
@@ -1609,11 +1609,11 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
       return false;
 
     case SIGN_EXTEND:
-      *total = mips_sign_extend_cost (mode, XEXP (x, 0));
+      *total = riscv_sign_extend_cost (mode, XEXP (x, 0));
       return false;
 
     case ZERO_EXTEND:
-      *total = mips_zero_extend_cost (mode, XEXP (x, 0));
+      *total = riscv_zero_extend_cost (mode, XEXP (x, 0));
       return false;
 
     case FLOAT:
@@ -1643,7 +1643,7 @@ riscv_address_cost (rtx addr, enum machine_mode mode,
    high part or false to select the low part. */
 
 rtx
-mips_subword (rtx op, bool high_p)
+riscv_subword (rtx op, bool high_p)
 {
   unsigned int byte;
   enum machine_mode mode;
@@ -1666,7 +1666,7 @@ mips_subword (rtx op, bool high_p)
 /* Return true if a 64-bit move from SRC to DEST should be split into two.  */
 
 bool
-mips_split_64bit_move_p (rtx dest, rtx src)
+riscv_split_64bit_move_p (rtx dest, rtx src)
 {
   /* All 64b moves are legal in 64b mode.  All 64b FPR <-> FPR and
      FPR <-> MEM moves are legal in 32b mode, too.  Although
@@ -1680,26 +1680,26 @@ mips_split_64bit_move_p (rtx dest, rtx src)
 }
 
 /* Split a doubleword move from SRC to DEST.  On 32-bit targets,
-   this function handles 64-bit moves for which mips_split_64bit_move_p
+   this function handles 64-bit moves for which riscv_split_64bit_move_p
    holds.  For 64-bit targets, this function handles 128-bit moves.  */
 
 void
-mips_split_doubleword_move (rtx dest, rtx src)
+riscv_split_doubleword_move (rtx dest, rtx src)
 {
   rtx low_dest;
 
    /* The operation can be split into two normal moves.  Decide in
       which order to do them.  */
-   low_dest = mips_subword (dest, false);
+   low_dest = riscv_subword (dest, false);
    if (REG_P (low_dest) && reg_overlap_mentioned_p (low_dest, src))
      {
-       mips_emit_move (mips_subword (dest, true), mips_subword (src, true));
-       mips_emit_move (low_dest, mips_subword (src, false));
+       riscv_emit_move (riscv_subword (dest, true), riscv_subword (src, true));
+       riscv_emit_move (low_dest, riscv_subword (src, false));
      }
    else
      {
-       mips_emit_move (low_dest, mips_subword (src, false));
-       mips_emit_move (mips_subword (dest, true), mips_subword (src, true));
+       riscv_emit_move (low_dest, riscv_subword (src, false));
+       riscv_emit_move (riscv_subword (dest, true), riscv_subword (src, true));
      }
 }
 
@@ -1707,7 +1707,7 @@ mips_split_doubleword_move (rtx dest, rtx src)
    that SRC is operand 1 and DEST is operand 0.  */
 
 const char *
-mips_output_move (rtx dest, rtx src)
+riscv_output_move (rtx dest, rtx src)
 {
   enum rtx_code dest_code, src_code;
   enum machine_mode mode;
@@ -1718,7 +1718,7 @@ mips_output_move (rtx dest, rtx src)
   mode = GET_MODE (dest);
   dbl_p = (GET_MODE_SIZE (mode) == 8);
 
-  if (dbl_p && mips_split_64bit_move_p (dest, src))
+  if (dbl_p && riscv_split_64bit_move_p (dest, src))
     return "#";
 
   if ((src_code == REG && GP_REG_P (REGNO (src)))
@@ -1773,7 +1773,7 @@ mips_output_move (rtx dest, rtx src)
 	return "lui\t%0,%h1";
 
       if (symbolic_operand (src, VOIDmode))
-	switch (mips_classify_symbolic_expression (src))
+	switch (riscv_classify_symbolic_expression (src))
 	  {
 	  case SYMBOL_GOT_DISP: return "la\t%0,%1";
 	  case SYMBOL_ABSOLUTE: return "lla\t%0,%1";
@@ -1797,10 +1797,10 @@ mips_output_move (rtx dest, rtx src)
 }
 
 /* Return true if CMP1 is a suitable second operand for integer ordering
-   test CODE.  See also the *sCC patterns in mips.md.  */
+   test CODE.  See also the *sCC patterns in riscv.md.  */
 
 static bool
-mips_int_order_operand_ok_p (enum rtx_code code, rtx cmp1)
+riscv_int_order_operand_ok_p (enum rtx_code code, rtx cmp1)
 {
   switch (code)
     {
@@ -1834,12 +1834,12 @@ mips_int_order_operand_ok_p (enum rtx_code code, rtx cmp1)
    them alone.  */
 
 static bool
-mips_canonicalize_int_order_test (enum rtx_code *code, rtx *cmp1,
+riscv_canonicalize_int_order_test (enum rtx_code *code, rtx *cmp1,
 				  enum machine_mode mode)
 {
   HOST_WIDE_INT plus_one;
 
-  if (mips_int_order_operand_ok_p (*code, *cmp1))
+  if (riscv_int_order_operand_ok_p (*code, *cmp1))
     return true;
 
   if (CONST_INT_P (*cmp1))
@@ -1877,37 +1877,37 @@ mips_canonicalize_int_order_test (enum rtx_code *code, rtx *cmp1,
    flip *INVERT_PTR instead.  */
 
 static void
-mips_emit_int_order_test (enum rtx_code code, bool *invert_ptr,
+riscv_emit_int_order_test (enum rtx_code code, bool *invert_ptr,
 			  rtx target, rtx cmp0, rtx cmp1)
 {
   enum machine_mode mode;
 
-  /* First see if there is a MIPS instruction that can do this operation.
+  /* First see if there is a RISCV instruction that can do this operation.
      If not, try doing the same for the inverse operation.  If that also
      fails, force CMP1 into a register and try again.  */
   mode = GET_MODE (cmp0);
-  if (mips_canonicalize_int_order_test (&code, &cmp1, mode))
-    mips_emit_binary (code, target, cmp0, cmp1);
+  if (riscv_canonicalize_int_order_test (&code, &cmp1, mode))
+    riscv_emit_binary (code, target, cmp0, cmp1);
   else
     {
       enum rtx_code inv_code = reverse_condition (code);
-      if (!mips_canonicalize_int_order_test (&inv_code, &cmp1, mode))
+      if (!riscv_canonicalize_int_order_test (&inv_code, &cmp1, mode))
 	{
 	  cmp1 = force_reg (mode, cmp1);
-	  mips_emit_int_order_test (code, invert_ptr, target, cmp0, cmp1);
+	  riscv_emit_int_order_test (code, invert_ptr, target, cmp0, cmp1);
 	}
       else if (invert_ptr == 0)
 	{
 	  rtx inv_target;
 
-	  inv_target = mips_force_binary (GET_MODE (target),
+	  inv_target = riscv_force_binary (GET_MODE (target),
 					  inv_code, cmp0, cmp1);
-	  mips_emit_binary (XOR, target, inv_target, const1_rtx);
+	  riscv_emit_binary (XOR, target, inv_target, const1_rtx);
 	}
       else
 	{
 	  *invert_ptr = !*invert_ptr;
-	  mips_emit_binary (inv_code, target, cmp0, cmp1);
+	  riscv_emit_binary (inv_code, target, cmp0, cmp1);
 	}
     }
 }
@@ -1916,7 +1916,7 @@ mips_emit_int_order_test (enum rtx_code code, bool *invert_ptr,
    The register will have the same mode as CMP0.  */
 
 static rtx
-mips_zero_if_equal (rtx cmp0, rtx cmp1)
+riscv_zero_if_equal (rtx cmp0, rtx cmp1)
 {
   if (cmp1 == const0_rtx)
     return cmp0;
@@ -1957,7 +1957,7 @@ riscv_reversed_fp_cond (enum rtx_code *code)
    Update *CODE, *OP0 and *OP1 so that they describe the final comparison. */
 
 static void
-mips_emit_compare (enum rtx_code *code, rtx *op0, rtx *op1)
+riscv_emit_compare (enum rtx_code *code, rtx *op0, rtx *op1)
 {
   rtx cmp_op0 = *op0;
   rtx cmp_op1 = *op1;
@@ -1995,7 +1995,7 @@ mips_emit_compare (enum rtx_code *code, rtx *op0, rtx *op1)
 	      if (SMALL_OPERAND (-rhs))
 		{
 		  *op0 = gen_reg_rtx (GET_MODE (cmp_op0));
-		  mips_emit_binary (PLUS, *op0, cmp_op0, GEN_INT (-rhs));
+		  riscv_emit_binary (PLUS, *op0, cmp_op0, GEN_INT (-rhs));
 		  *op1 = const0_rtx;
 		}
 	    default:
@@ -2019,21 +2019,21 @@ mips_emit_compare (enum rtx_code *code, rtx *op0, rtx *op1)
 	case ORDERED:
 	  /* a == a && b == b */
 	  tmp0 = gen_reg_rtx (SImode);
-	  mips_emit_binary (EQ, tmp0, cmp_op0, cmp_op0);
+	  riscv_emit_binary (EQ, tmp0, cmp_op0, cmp_op0);
 	  tmp1 = gen_reg_rtx (SImode);
-	  mips_emit_binary (EQ, tmp1, cmp_op1, cmp_op1);
+	  riscv_emit_binary (EQ, tmp1, cmp_op1, cmp_op1);
 	  final_op = gen_reg_rtx (SImode);
-	  mips_emit_binary (AND, final_op, tmp0, tmp1);
+	  riscv_emit_binary (AND, final_op, tmp0, tmp1);
 	  break;
 
 	case LTGT:
 	  /* a < b || a > b */
 	  tmp0 = gen_reg_rtx (SImode);
-	  mips_emit_binary (LT, tmp0, cmp_op0, cmp_op1);
+	  riscv_emit_binary (LT, tmp0, cmp_op0, cmp_op1);
 	  tmp1 = gen_reg_rtx (SImode);
-	  mips_emit_binary (GT, tmp1, cmp_op0, cmp_op1);
+	  riscv_emit_binary (GT, tmp1, cmp_op0, cmp_op1);
 	  final_op = gen_reg_rtx (SImode);
-	  mips_emit_binary (IOR, final_op, tmp0, tmp1);
+	  riscv_emit_binary (IOR, final_op, tmp0, tmp1);
 	  break;
 
 	case EQ:
@@ -2043,7 +2043,7 @@ mips_emit_compare (enum rtx_code *code, rtx *op0, rtx *op1)
 	case GT:
 	  /* We have instructions for these cases. */
 	  final_op = gen_reg_rtx (SImode);
-	  mips_emit_binary (fp_code, final_op, cmp_op0, cmp_op1);
+	  riscv_emit_binary (fp_code, final_op, cmp_op0, cmp_op1);
 	  break;
 
 	default:
@@ -2074,11 +2074,11 @@ riscv_expand_scc (rtx operands[])
 
   if (code == EQ || code == NE)
     {
-      rtx zie = mips_zero_if_equal (op0, op1);
-      mips_emit_binary (code, target, zie, const0_rtx);
+      rtx zie = riscv_zero_if_equal (op0, op1);
+      riscv_emit_binary (code, target, zie, const0_rtx);
     }
   else
-    mips_emit_int_order_test (code, 0, target, op0, op1);
+    riscv_emit_int_order_test (code, 0, target, op0, op1);
 }
 
 /* Compare OPERANDS[1] with OPERANDS[2] using comparison code
@@ -2092,7 +2092,7 @@ riscv_expand_conditional_branch (rtx *operands)
   rtx op1 = operands[2];
   rtx condition;
 
-  mips_emit_compare (&code, &op0, &op1);
+  riscv_emit_compare (&code, &op0, &op1);
   condition = gen_rtx_fmt_ee (code, VOIDmode, op0, op1);
   emit_jump_insn (gen_condjump (condition, operands[3]));
 }
@@ -2120,7 +2120,7 @@ riscv_function_arg_boundary (enum machine_mode mode, const_tree type)
    is a named (fixed) argument rather than a variable one.  */
 
 static void
-mips_get_arg_info (struct mips_arg_info *info, const CUMULATIVE_ARGS *cum,
+riscv_get_arg_info (struct riscv_arg_info *info, const CUMULATIVE_ARGS *cum,
 		   enum machine_mode mode, const_tree type, bool named)
 {
   bool doubleword_aligned_p;
@@ -2183,7 +2183,7 @@ mips_get_arg_info (struct mips_arg_info *info, const CUMULATIVE_ARGS *cum,
    available if HARD_FLOAT_P.  */
 
 static unsigned int
-mips_arg_regno (const struct mips_arg_info *info, bool hard_float_p)
+riscv_arg_regno (const struct riscv_arg_info *info, bool hard_float_p)
 {
   if (!info->fpr_p || !hard_float_p)
     return GP_ARG_FIRST + info->reg_offset;
@@ -2198,12 +2198,12 @@ riscv_function_arg (cumulative_args_t cum_v, enum machine_mode mode,
 		    const_tree type, bool named)
 {
   CUMULATIVE_ARGS *cum = get_cumulative_args (cum_v);
-  struct mips_arg_info info;
+  struct riscv_arg_info info;
 
   if (mode == VOIDmode)
     return NULL;
 
-  mips_get_arg_info (&info, cum, mode, type, named);
+  riscv_get_arg_info (&info, cum, mode, type, named);
 
   /* Return straight away if the whole argument is passed on the stack.  */
   if (info.reg_offset == MAX_ARGS_IN_REGISTERS)
@@ -2304,7 +2304,7 @@ riscv_function_arg (cumulative_args_t cum_v, enum machine_mode mode,
 	}
     }
 
-  return gen_rtx_REG (mode, mips_arg_regno (&info, TARGET_HARD_FLOAT));
+  return gen_rtx_REG (mode, riscv_arg_regno (&info, TARGET_HARD_FLOAT));
 }
 
 /* Implement TARGET_FUNCTION_ARG_ADVANCE.  */
@@ -2314,9 +2314,9 @@ riscv_function_arg_advance (cumulative_args_t cum_v, enum machine_mode mode,
 			    const_tree type, bool named)
 {
   CUMULATIVE_ARGS *cum = get_cumulative_args (cum_v);
-  struct mips_arg_info info;
+  struct riscv_arg_info info;
 
-  mips_get_arg_info (&info, cum, mode, type, named);
+  riscv_get_arg_info (&info, cum, mode, type, named);
 
   /* Advance the register count.  This has the effect of setting
      num_gprs to MAX_ARGS_IN_REGISTERS if a doubleword-aligned
@@ -2335,9 +2335,9 @@ static int
 riscv_arg_partial_bytes (cumulative_args_t cum,
 			 enum machine_mode mode, tree type, bool named)
 {
-  struct mips_arg_info info;
+  struct riscv_arg_info info;
 
-  mips_get_arg_info (&info, get_cumulative_args (cum), mode, type, named);
+  riscv_get_arg_info (&info, get_cumulative_args (cum), mode, type, named);
   return info.stack_words > 0 ? info.reg_words * UNITS_PER_WORD : 0;
 }
 
@@ -2351,7 +2351,7 @@ riscv_arg_partial_bytes (cumulative_args_t cum,
    type.  */
 
 static int
-mips_fpr_return_fields (const_tree valtype, tree *fields)
+riscv_fpr_return_fields (const_tree valtype, tree *fields)
 {
   tree field;
   int i;
@@ -2380,7 +2380,7 @@ mips_fpr_return_fields (const_tree valtype, tree *fields)
    floating-point register.  */
 
 static bool
-mips_return_mode_in_fpr_p (enum machine_mode mode)
+riscv_return_mode_in_fpr_p (enum machine_mode mode)
 {
   return ((GET_MODE_CLASS (mode) == MODE_FLOAT
 	   || GET_MODE_CLASS (mode) == MODE_VECTOR_FLOAT
@@ -2399,7 +2399,7 @@ mips_return_mode_in_fpr_p (enum machine_mode mode)
    the structure itself has mode BLKmode.  */
 
 static rtx
-mips_return_fpr_single (enum machine_mode type_mode,
+riscv_return_fpr_single (enum machine_mode type_mode,
 			enum machine_mode value_mode)
 {
   rtx x;
@@ -2422,7 +2422,7 @@ mips_return_fpr_single (enum machine_mode type_mode,
    Otherwise the values are packed together as closely as possible.  */
 
 static rtx
-mips_return_fpr_pair (enum machine_mode mode,
+riscv_return_fpr_pair (enum machine_mode mode,
 		      enum machine_mode mode1, HOST_WIDE_INT offset1,
 		      enum machine_mode mode2, HOST_WIDE_INT offset2)
 {
@@ -2458,14 +2458,14 @@ riscv_function_value (const_tree valtype, const_tree func, enum machine_mode mod
       mode = promote_function_mode (valtype, mode, &unsigned_p, func, 1);
 
       /* Handle structures whose fields are returned in $f0/$f2.  */
-      switch (mips_fpr_return_fields (valtype, fields))
+      switch (riscv_fpr_return_fields (valtype, fields))
 	{
 	case 1:
-	  return mips_return_fpr_single (mode,
+	  return riscv_return_fpr_single (mode,
 					 TYPE_MODE (TREE_TYPE (fields[0])));
 
 	case 2:
-	  return mips_return_fpr_pair (mode,
+	  return riscv_return_fpr_pair (mode,
 				       TYPE_MODE (TREE_TYPE (fields[0])),
 				       int_byte_position (fields[0]),
 				       TYPE_MODE (TREE_TYPE (fields[1])),
@@ -2479,14 +2479,14 @@ riscv_function_value (const_tree valtype, const_tree func, enum machine_mode mod
 
   /* Handle long doubles for n32 & n64.  */
   if (mode == TFmode)
-    return mips_return_fpr_pair (mode,
+    return riscv_return_fpr_pair (mode,
     			     DImode, 0,
     			     DImode, GET_MODE_SIZE (mode) / 2);
 
-  if (mips_return_mode_in_fpr_p (mode))
+  if (riscv_return_mode_in_fpr_p (mode))
     {
       if (GET_MODE_CLASS (mode) == MODE_COMPLEX_FLOAT)
-        return mips_return_fpr_pair (mode,
+        return riscv_return_fpr_pair (mode,
     				 GET_MODE_INNER (mode), 0,
     				 GET_MODE_INNER (mode),
     				 GET_MODE_SIZE (mode) / 2);
@@ -2501,7 +2501,7 @@ riscv_function_value (const_tree valtype, const_tree func, enum machine_mode mod
    that fit in two registers are returned in a0/a1. */
 
 static bool
-mips_return_in_memory (const_tree type, const_tree fndecl ATTRIBUTE_UNUSED)
+riscv_return_in_memory (const_tree type, const_tree fndecl ATTRIBUTE_UNUSED)
 {
   return !IN_RANGE (int_size_in_bytes (type), 0, 2 * UNITS_PER_WORD);
 }
@@ -2513,7 +2513,7 @@ riscv_pass_by_reference (cumulative_args_t cum ATTRIBUTE_UNUSED,
 			 enum machine_mode mode, const_tree type,
 			 bool named ATTRIBUTE_UNUSED)
 {
-  if (type && mips_return_in_memory (type, NULL_TREE))
+  if (type && riscv_return_in_memory (type, NULL_TREE))
     return true;
   return targetm.calls.must_pass_in_stack (mode, type);
 }
@@ -2521,7 +2521,7 @@ riscv_pass_by_reference (cumulative_args_t cum ATTRIBUTE_UNUSED,
 /* Implement TARGET_SETUP_INCOMING_VARARGS.  */
 
 static void
-mips_setup_incoming_varargs (cumulative_args_t cum, enum machine_mode mode,
+riscv_setup_incoming_varargs (cumulative_args_t cum, enum machine_mode mode,
 			     tree type, int *pretend_size ATTRIBUTE_UNUSED,
 			     int no_rtl)
 {
@@ -2557,7 +2557,7 @@ mips_setup_incoming_varargs (cumulative_args_t cum, enum machine_mode mode,
 /* Implement TARGET_EXPAND_BUILTIN_VA_START.  */
 
 static void
-mips_va_start (tree valist, rtx nextarg)
+riscv_va_start (tree valist, rtx nextarg)
 {
   nextarg = plus_constant (Pmode, nextarg, -cfun->machine->varargs_size);
   std_expand_builtin_va_start (valist, nextarg);
@@ -2566,7 +2566,7 @@ mips_va_start (tree valist, rtx nextarg)
 /* Expand a call of type TYPE.  RESULT is where the result will go (null
    for "call"s and "sibcall"s), ADDR is the address of the function,
    ARGS_SIZE is the size of the arguments and AUX is the value passed
-   to us by mips_function_arg.  Return the call itself.  */
+   to us by riscv_function_arg.  Return the call itself.  */
 
 rtx
 riscv_expand_call (bool sibcall_p, rtx result, rtx addr, rtx args_size)
@@ -2576,7 +2576,7 @@ riscv_expand_call (bool sibcall_p, rtx result, rtx addr, rtx args_size)
   if (!call_insn_operand (addr, VOIDmode))
     {
       rtx reg = RISCV_EPILOGUE_TEMP (Pmode);
-      mips_emit_move (reg, addr);
+      riscv_emit_move (reg, addr);
       addr = reg;
     }
 
@@ -2593,7 +2593,7 @@ riscv_expand_call (bool sibcall_p, rtx result, rtx addr, rtx args_size)
     }
   else if (GET_CODE (result) == PARALLEL && XVECLEN (result, 0) == 2)
     {
-      /* Handle return values created by mips_return_fpr_pair.  */
+      /* Handle return values created by riscv_return_fpr_pair.  */
       rtx (*fn) (rtx, rtx, rtx, rtx);
       rtx reg1, reg2;
 
@@ -2615,7 +2615,7 @@ riscv_expand_call (bool sibcall_p, rtx result, rtx addr, rtx args_size)
       else
 	fn = gen_call_value_internal;
 
-      /* Handle return values created by mips_return_fpr_single.  */
+      /* Handle return values created by riscv_return_fpr_single.  */
       if (GET_CODE (result) == PARALLEL && XVECLEN (result, 0) == 1)
 	result = XEXP (XVECEXP (result, 0, 0), 0);
       pattern = fn (result, addr, args_size);
@@ -2650,12 +2650,12 @@ riscv_block_move_straight (rtx dest, rtx src, HOST_WIDE_INT length)
   for (offset = 0, i = 0; offset + delta <= length; offset += delta, i++)
     {
       regs[i] = gen_reg_rtx (mode);
-	mips_emit_move (regs[i], adjust_address (src, mode, offset));
+	riscv_emit_move (regs[i], adjust_address (src, mode, offset));
     }
 
   /* Copy the chunks to the destination.  */
   for (offset = 0, i = 0; offset + delta <= length; offset += delta, i++)
-      mips_emit_move (adjust_address (dest, mode, offset), regs[i]);
+      riscv_emit_move (adjust_address (dest, mode, offset), regs[i]);
 
   /* Mop up any left-over bytes.  */
   if (offset < length)
@@ -2676,7 +2676,7 @@ riscv_block_move_straight (rtx dest, rtx src, HOST_WIDE_INT length)
    register.  Store them in *LOOP_REG and *LOOP_MEM respectively.  */
 
 static void
-mips_adjust_block_mem (rtx mem, HOST_WIDE_INT length,
+riscv_adjust_block_mem (rtx mem, HOST_WIDE_INT length,
 		       rtx *loop_reg, rtx *loop_mem)
 {
   *loop_reg = copy_addr_to_reg (XEXP (mem, 0));
@@ -2702,8 +2702,8 @@ riscv_block_move_loop (rtx dest, rtx src, HOST_WIDE_INT length,
   length -= leftover;
 
   /* Create registers and memory references for use within the loop.  */
-  mips_adjust_block_mem (src, bytes_per_iter, &src_reg, &src);
-  mips_adjust_block_mem (dest, bytes_per_iter, &dest_reg, &dest);
+  riscv_adjust_block_mem (src, bytes_per_iter, &src_reg, &src);
+  riscv_adjust_block_mem (dest, bytes_per_iter, &dest_reg, &dest);
 
   /* Calculate the value that SRC_REG should have after the last iteration
      of the loop.  */
@@ -2718,8 +2718,8 @@ riscv_block_move_loop (rtx dest, rtx src, HOST_WIDE_INT length,
   riscv_block_move_straight (dest, src, bytes_per_iter);
 
   /* Move on to the next block.  */
-  mips_emit_move (src_reg, plus_constant (Pmode, src_reg, bytes_per_iter));
-  mips_emit_move (dest_reg, plus_constant (Pmode, dest_reg, bytes_per_iter));
+  riscv_emit_move (src_reg, plus_constant (Pmode, src_reg, bytes_per_iter));
+  riscv_emit_move (dest_reg, plus_constant (Pmode, dest_reg, bytes_per_iter));
 
   /* Emit the loop condition.  */
   test = gen_rtx_NE (VOIDmode, src_reg, final_src);
@@ -2764,7 +2764,7 @@ riscv_expand_block_move (rtx dest, rtx src, rtx length)
 /* (Re-)Initialize riscv_lo_relocs and riscv_hi_relocs.  */
 
 static void
-mips_init_relocs (void)
+riscv_init_relocs (void)
 {
   memset (riscv_hi_relocs, '\0', sizeof (riscv_hi_relocs));
   memset (riscv_lo_relocs, '\0', sizeof (riscv_lo_relocs));
@@ -2786,16 +2786,16 @@ mips_init_relocs (void)
    in context CONTEXT.  RELOCS is the array of relocations to use.  */
 
 static void
-mips_print_operand_reloc (FILE *file, rtx op, const char **relocs)
+riscv_print_operand_reloc (FILE *file, rtx op, const char **relocs)
 {
-  enum mips_symbol_type symbol_type;
+  enum riscv_symbol_type symbol_type;
   const char *p;
 
-  symbol_type = mips_classify_symbolic_expression (op);
+  symbol_type = riscv_classify_symbolic_expression (op);
   gcc_assert (relocs[symbol_type]);
 
   fputs (relocs[symbol_type], file);
-  output_addr_const (file, mips_strip_unspec_address (op));
+  output_addr_const (file, riscv_strip_unspec_address (op));
   for (p = relocs[symbol_type]; *p != 0; p++)
     if (*p == '(')
       fputc (')', file);
@@ -2820,7 +2820,7 @@ riscv_memory_model_suffix (enum memmodel model)
     }
 }
 
-/* Implement TARGET_PRINT_OPERAND.  The MIPS-specific operand codes are:
+/* Implement TARGET_PRINT_OPERAND.  The RISCV-specific operand codes are:
 
    'h'	Print the high-part relocation associated with OP, after stripping
 	  any outermost HIGH.
@@ -2830,7 +2830,7 @@ riscv_memory_model_suffix (enum memmodel model)
    'z'	Print $0 if OP is zero, otherwise print OP normally.  */
 
 static void
-mips_print_operand (FILE *file, rtx op, int letter)
+riscv_print_operand (FILE *file, rtx op, int letter)
 {
   enum rtx_code code;
 
@@ -2842,11 +2842,11 @@ mips_print_operand (FILE *file, rtx op, int letter)
     case 'h':
       if (code == HIGH)
 	op = XEXP (op, 0);
-      mips_print_operand_reloc (file, op, riscv_hi_relocs);
+      riscv_print_operand_reloc (file, op, riscv_hi_relocs);
       break;
 
     case 'R':
-      mips_print_operand_reloc (file, op, riscv_lo_relocs);
+      riscv_print_operand_reloc (file, op, riscv_lo_relocs);
       break;
 
     case 'C':
@@ -2882,7 +2882,7 @@ mips_print_operand (FILE *file, rtx op, int letter)
 	  else if (letter && letter != 'z')
 	    output_operand_lossage ("invalid use of '%%%c'", letter);
 	  else
-	    output_addr_const (file, mips_strip_unspec_address (op));
+	    output_addr_const (file, riscv_strip_unspec_address (op));
 	  break;
 	}
     }
@@ -2891,20 +2891,20 @@ mips_print_operand (FILE *file, rtx op, int letter)
 /* Implement TARGET_PRINT_OPERAND_ADDRESS.  */
 
 static void
-mips_print_operand_address (FILE *file, rtx x)
+riscv_print_operand_address (FILE *file, rtx x)
 {
-  struct mips_address_info addr;
+  struct riscv_address_info addr;
 
-  if (mips_classify_address (&addr, x, word_mode, true))
+  if (riscv_classify_address (&addr, x, word_mode, true))
     switch (addr.type)
       {
       case ADDRESS_REG:
-	mips_print_operand (file, addr.offset, 0);
+	riscv_print_operand (file, addr.offset, 0);
 	fprintf (file, "(%s)", reg_names[REGNO (addr.reg)]);
 	return;
 
       case ADDRESS_LO_SUM:
-	mips_print_operand_reloc (file, addr.offset, riscv_lo_relocs);
+	riscv_print_operand_reloc (file, addr.offset, riscv_lo_relocs);
 	fprintf (file, "(%s)", reg_names[REGNO (addr.reg)]);
 	return;
 
@@ -2914,7 +2914,7 @@ mips_print_operand_address (FILE *file, rtx x)
 	return;
 
       case ADDRESS_SYMBOLIC:
-	output_addr_const (file, mips_strip_unspec_address (x));
+	output_addr_const (file, riscv_strip_unspec_address (x));
 	return;
       }
   gcc_unreachable ();
@@ -2971,7 +2971,7 @@ riscv_elf_select_rtx_section (enum machine_mode mode, rtx x,
 /* Implement TARGET_ASM_OUTPUT_DWARF_DTPREL.  */
 
 static void ATTRIBUTE_UNUSED
-mips_output_dwarf_dtprel (FILE *file, int size, rtx x)
+riscv_output_dwarf_dtprel (FILE *file, int size, rtx x)
 {
   switch (size)
     {
@@ -2994,7 +2994,7 @@ mips_output_dwarf_dtprel (FILE *file, int size, rtx x)
    the operation described by FRAME_PATTERN.  */
 
 static void
-mips_set_frame_expr (rtx frame_pattern)
+riscv_set_frame_expr (rtx frame_pattern)
 {
   rtx insn;
 
@@ -3009,7 +3009,7 @@ mips_set_frame_expr (rtx frame_pattern)
    REG must be a single register.  */
 
 static rtx
-mips_frame_set (rtx mem, rtx reg)
+riscv_frame_set (rtx mem, rtx reg)
 {
   rtx set;
 
@@ -3139,7 +3139,7 @@ riscv_compute_frame_info (void)
    pointer.  */
 
 static bool
-mips_can_eliminate (const int from ATTRIBUTE_UNUSED, const int to)
+riscv_can_eliminate (const int from ATTRIBUTE_UNUSED, const int to)
 {
   return (to == HARD_FRAME_POINTER_REGNUM || to == STACK_POINTER_REGNUM);
 }
@@ -3194,22 +3194,22 @@ riscv_set_return_address (rtx address, rtx scratch)
   rtx slot_address;
 
   gcc_assert (BITSET_P (cfun->machine->frame.mask, RETURN_ADDR_REGNUM));
-  slot_address = mips_add_offset (scratch, stack_pointer_rtx,
+  slot_address = riscv_add_offset (scratch, stack_pointer_rtx,
 				  cfun->machine->frame.gp_sp_offset);
-  mips_emit_move (gen_frame_mem (GET_MODE (address), slot_address), address);
+  riscv_emit_move (gen_frame_mem (GET_MODE (address), slot_address), address);
 }
 
 /* A function to save or store a register.  The first argument is the
    register and the second is the stack slot.  */
-typedef void (*mips_save_restore_fn) (rtx, rtx);
+typedef void (*riscv_save_restore_fn) (rtx, rtx);
 
 /* Use FN to save or restore register REGNO.  MODE is the register's
    mode and OFFSET is the offset of its save slot from the current
    stack pointer.  */
 
 static void
-mips_save_restore_reg (enum machine_mode mode, int regno,
-		       HOST_WIDE_INT offset, mips_save_restore_fn fn)
+riscv_save_restore_reg (enum machine_mode mode, int regno,
+		       HOST_WIDE_INT offset, riscv_save_restore_fn fn)
 {
   rtx mem;
 
@@ -3223,7 +3223,7 @@ mips_save_restore_reg (enum machine_mode mode, int regno,
 
 static void
 riscv_for_each_saved_gpr_and_fpr (HOST_WIDE_INT sp_offset,
-				 mips_save_restore_fn fn)
+				 riscv_save_restore_fn fn)
 {
   HOST_WIDE_INT offset;
   int regno;
@@ -3233,7 +3233,7 @@ riscv_for_each_saved_gpr_and_fpr (HOST_WIDE_INT sp_offset,
   for (regno = GP_REG_FIRST; regno <= GP_REG_LAST-1; regno++)
     if (BITSET_P (cfun->machine->frame.mask, regno - GP_REG_FIRST))
       {
-        mips_save_restore_reg (word_mode, regno, offset, fn);
+        riscv_save_restore_reg (word_mode, regno, offset, fn);
         offset -= UNITS_PER_WORD;
       }
 
@@ -3243,7 +3243,7 @@ riscv_for_each_saved_gpr_and_fpr (HOST_WIDE_INT sp_offset,
   for (regno = FP_REG_FIRST; regno <= FP_REG_LAST; regno++)
     if (BITSET_P (cfun->machine->frame.fmask, regno - FP_REG_FIRST))
       {
-	mips_save_restore_reg (DFmode, regno, offset, fn);
+	riscv_save_restore_reg (DFmode, regno, offset, fn);
 	offset -= GET_MODE_SIZE (DFmode);
       }
 }
@@ -3274,15 +3274,15 @@ riscv_emit_save_slot_move (rtx dest, rtx src, rtx temp)
 					 GET_MODE (mem), mem, mem == src);
 
   if (rclass == NO_REGS)
-    mips_emit_move (dest, src);
+    riscv_emit_move (dest, src);
   else
     {
       gcc_assert (!reg_overlap_mentioned_p (dest, temp));
-      mips_emit_move (temp, src);
-      mips_emit_move (dest, temp);
+      riscv_emit_move (temp, src);
+      riscv_emit_move (dest, temp);
     }
   if (MEM_P (dest))
-    mips_set_frame_expr (mips_frame_set (dest, src));
+    riscv_set_frame_expr (riscv_frame_set (dest, src));
 }
 
 /* Save register REG to MEM.  Make the instruction frame-related.  */
@@ -3342,13 +3342,13 @@ riscv_expand_prologue (void)
 						       GEN_INT (-size)))) = 1;
       else
 	{
-	  mips_emit_move (RISCV_PROLOGUE_TEMP (Pmode), GEN_INT (size));
+	  riscv_emit_move (RISCV_PROLOGUE_TEMP (Pmode), GEN_INT (size));
 	  emit_insn (gen_sub3_insn (stack_pointer_rtx,
 				    stack_pointer_rtx,
 				    RISCV_PROLOGUE_TEMP (Pmode)));
 
 	  /* Describe the combined effect of the previous instructions.  */
-	  mips_set_frame_expr
+	  riscv_set_frame_expr
 	    (gen_rtx_SET (VOIDmode, stack_pointer_rtx,
 			  plus_constant (Pmode, stack_pointer_rtx, -size)));
 	}
@@ -3393,7 +3393,7 @@ riscv_expand_epilogue (bool sibcall_p)
       rtx adjust = GEN_INT (-frame->hard_frame_pointer_offset);
       if (!SMALL_INT (adjust))
 	{
-	  mips_emit_move (RISCV_EPILOGUE_TEMP (Pmode), adjust);
+	  riscv_emit_move (RISCV_EPILOGUE_TEMP (Pmode), adjust);
 	  adjust = RISCV_EPILOGUE_TEMP (Pmode);
 	}
 
@@ -3415,7 +3415,7 @@ riscv_expand_epilogue (bool sibcall_p)
       rtx adjust = GEN_INT (step1);
       if (!SMALL_OPERAND (step1))
 	{
-	  mips_emit_move (RISCV_EPILOGUE_TEMP (Pmode), adjust);
+	  riscv_emit_move (RISCV_EPILOGUE_TEMP (Pmode), adjust);
 	  adjust = RISCV_EPILOGUE_TEMP (Pmode);
 	}
 
@@ -3523,7 +3523,7 @@ riscv_class_max_nregs (enum reg_class rclass, enum machine_mode mode)
 /* Implement TARGET_PREFERRED_RELOAD_CLASS.  */
 
 static reg_class_t
-mips_preferred_reload_class (rtx x ATTRIBUTE_UNUSED, reg_class_t rclass)
+riscv_preferred_reload_class (rtx x ATTRIBUTE_UNUSED, reg_class_t rclass)
 {
   return reg_class_subset_p (FP_REGS, rclass) ? FP_REGS :
          reg_class_subset_p (GR_REGS, rclass) ? GR_REGS :
@@ -3534,7 +3534,7 @@ mips_preferred_reload_class (rtx x ATTRIBUTE_UNUSED, reg_class_t rclass)
    Return a "canonical" class to represent it in later calculations.  */
 
 static reg_class_t
-mips_canonicalize_move_class (reg_class_t rclass)
+riscv_canonicalize_move_class (reg_class_t rclass)
 {
   if (reg_class_subset_p (rclass, GENERAL_REGS))
     rclass = GENERAL_REGS;
@@ -3547,11 +3547,11 @@ mips_canonicalize_move_class (reg_class_t rclass)
    the maximum for us.  */
 
 static int
-mips_register_move_cost (enum machine_mode mode ATTRIBUTE_UNUSED,
+riscv_register_move_cost (enum machine_mode mode ATTRIBUTE_UNUSED,
 			 reg_class_t from, reg_class_t to)
 {
-  from = mips_canonicalize_move_class (from);
-  to = mips_canonicalize_move_class (to);
+  from = riscv_canonicalize_move_class (from);
+  to = riscv_canonicalize_move_class (to);
 
   if ((from == GENERAL_REGS && to == GENERAL_REGS)
       || (from == GENERAL_REGS && to == FP_REGS)
@@ -3567,7 +3567,7 @@ mips_register_move_cost (enum machine_mode mode ATTRIBUTE_UNUSED,
 /* Implement TARGET_MEMORY_MOVE_COST.  */
 
 static int
-mips_memory_move_cost (enum machine_mode mode, reg_class_t rclass, bool in)
+riscv_memory_move_cost (enum machine_mode mode, reg_class_t rclass, bool in)
 {
   return (tune_info->memory_cost
 	  + memory_move_secondary_cost (mode, rclass, in));
@@ -3618,7 +3618,7 @@ riscv_secondary_reload_class (enum reg_class rclass,
 /* Implement TARGET_MODE_REP_EXTENDED.  */
 
 static int
-mips_mode_rep_extended (enum machine_mode mode, enum machine_mode mode_rep)
+riscv_mode_rep_extended (enum machine_mode mode, enum machine_mode mode_rep)
 {
   /* On 64-bit targets, SImode register values are sign-extended to DImode.  */
   if (TARGET_64BIT && mode == SImode && mode_rep == DImode)
@@ -3630,7 +3630,7 @@ mips_mode_rep_extended (enum machine_mode mode, enum machine_mode mode_rep)
 /* Implement TARGET_SCALAR_MODE_SUPPORTED_P.  */
 
 static bool
-mips_scalar_mode_supported_p (enum machine_mode mode)
+riscv_scalar_mode_supported_p (enum machine_mode mode)
 {
   if (ALL_FIXED_POINT_MODE_P (mode)
       && GET_MODE_PRECISION (mode) <= 2 * BITS_PER_WORD)
@@ -3643,7 +3643,7 @@ mips_scalar_mode_supported_p (enum machine_mode mode)
    dependencies have no cost. */
 
 static int
-mips_adjust_cost (rtx insn ATTRIBUTE_UNUSED, rtx link,
+riscv_adjust_cost (rtx insn ATTRIBUTE_UNUSED, rtx link,
 		  rtx dep ATTRIBUTE_UNUSED, int cost)
 {
   if (REG_NOTE_KIND (link) != 0)
@@ -3660,8 +3660,8 @@ riscv_issue_rate (void)
 }
 
 /* This structure describes a single built-in function.  */
-struct mips_builtin_description {
-  /* The code of the main .md file instruction.  See mips_builtin_type
+struct riscv_builtin_description {
+  /* The code of the main .md file instruction.  See riscv_builtin_type
      for more information.  */
   enum insn_code icode;
 
@@ -3669,41 +3669,41 @@ struct mips_builtin_description {
   const char *name;
 
   /* Specifies how the function should be expanded.  */
-  enum mips_builtin_type builtin_type;
+  enum riscv_builtin_type builtin_type;
 
   /* The function's prototype.  */
-  enum mips_function_type function_type;
+  enum riscv_function_type function_type;
 
   /* Whether the function is available.  */
   unsigned int (*avail) (void);
 };
 
 static unsigned int
-mips_builtin_avail_riscv (void)
+riscv_builtin_avail_riscv (void)
 {
   return 1;
 }
 
-/* Construct a mips_builtin_description from the given arguments.
+/* Construct a riscv_builtin_description from the given arguments.
 
    INSN is the name of the associated instruction pattern, without the
-   leading CODE_FOR_mips_.
+   leading CODE_FOR_riscv_.
 
    CODE is the floating-point condition code associated with the
    function.  It can be 'f' if the field is not applicable.
 
    NAME is the name of the function itself, without the leading
-   "__builtin_mips_".
+   "__builtin_riscv_".
 
-   BUILTIN_TYPE and FUNCTION_TYPE are mips_builtin_description fields.
+   BUILTIN_TYPE and FUNCTION_TYPE are riscv_builtin_description fields.
 
    AVAIL is the name of the availability predicate, without the leading
-   mips_builtin_avail_.  */
+   riscv_builtin_avail_.  */
 #define RISCV_BUILTIN(INSN, NAME, BUILTIN_TYPE, FUNCTION_TYPE, AVAIL)	\
   { CODE_FOR_ ## INSN, "__builtin_riscv_" NAME,				\
-    BUILTIN_TYPE, FUNCTION_TYPE, mips_builtin_avail_ ## AVAIL }
+    BUILTIN_TYPE, FUNCTION_TYPE, riscv_builtin_avail_ ## AVAIL }
 
-/* Define __builtin_mips_<INSN>, which is a RISCV_BUILTIN_DIRECT function
+/* Define __builtin_riscv_<INSN>, which is a RISCV_BUILTIN_DIRECT function
    mapped to instruction CODE_FOR_<INSN>,  FUNCTION_TYPE and AVAIL
    are as for RISCV_BUILTIN.  */
 #define DIRECT_BUILTIN(INSN, FUNCTION_TYPE, AVAIL)			\
@@ -3716,13 +3716,13 @@ mips_builtin_avail_riscv (void)
   RISCV_BUILTIN (INSN, #INSN, RISCV_BUILTIN_DIRECT_NO_TARGET,		\
 		FUNCTION_TYPE, AVAIL)
 
-static const struct mips_builtin_description mips_builtins[] = {
+static const struct riscv_builtin_description riscv_builtins[] = {
   DIRECT_NO_TARGET_BUILTIN (nop, RISCV_VOID_FTYPE_VOID, riscv),
 };
 
-/* Index I is the function declaration for mips_builtins[I], or null if the
+/* Index I is the function declaration for riscv_builtins[I], or null if the
    function isn't defined on this target.  */
-static GTY(()) tree mips_builtin_decls[ARRAY_SIZE (mips_builtins)];
+static GTY(()) tree riscv_builtin_decls[ARRAY_SIZE (riscv_builtins)];
 
 
 /* Source-level argument types.  */
@@ -3758,7 +3758,7 @@ static GTY(()) tree mips_builtin_decls[ARRAY_SIZE (mips_builtins)];
 /* Return the function type associated with function prototype TYPE.  */
 
 static tree
-mips_build_function_type (enum mips_function_type type)
+riscv_build_function_type (enum riscv_function_type type)
 {
   static tree types[(int) RISCV_MAX_FTYPE_MAX];
 
@@ -3783,20 +3783,20 @@ mips_build_function_type (enum mips_function_type type)
 /* Implement TARGET_INIT_BUILTINS.  */
 
 static void
-mips_init_builtins (void)
+riscv_init_builtins (void)
 {
-  const struct mips_builtin_description *d;
+  const struct riscv_builtin_description *d;
   unsigned int i;
 
   /* Iterate through all of the bdesc arrays, initializing all of the
      builtin functions.  */
-  for (i = 0; i < ARRAY_SIZE (mips_builtins); i++)
+  for (i = 0; i < ARRAY_SIZE (riscv_builtins); i++)
     {
-      d = &mips_builtins[i];
+      d = &riscv_builtins[i];
       if (d->avail ())
-	mips_builtin_decls[i]
+	riscv_builtin_decls[i]
 	  = add_builtin_function (d->name,
-				  mips_build_function_type (d->function_type),
+				  riscv_build_function_type (d->function_type),
 				  i, BUILT_IN_MD, NULL, NULL);
     }
 }
@@ -3804,11 +3804,11 @@ mips_init_builtins (void)
 /* Implement TARGET_BUILTIN_DECL.  */
 
 static tree
-mips_builtin_decl (unsigned int code, bool initialize_p ATTRIBUTE_UNUSED)
+riscv_builtin_decl (unsigned int code, bool initialize_p ATTRIBUTE_UNUSED)
 {
-  if (code >= ARRAY_SIZE (mips_builtins))
+  if (code >= ARRAY_SIZE (riscv_builtins))
     return error_mark_node;
-  return mips_builtin_decls[code];
+  return riscv_builtin_decls[code];
 }
 
 /* Take argument ARGNO from EXP's argument list and convert it into a
@@ -3816,7 +3816,7 @@ mips_builtin_decl (unsigned int code, bool initialize_p ATTRIBUTE_UNUSED)
    value.  */
 
 static rtx
-mips_prepare_builtin_arg (enum insn_code icode,
+riscv_prepare_builtin_arg (enum insn_code icode,
 			  unsigned int opno, tree exp, unsigned int argno)
 {
   tree arg;
@@ -3852,7 +3852,7 @@ mips_prepare_builtin_arg (enum insn_code icode,
    If TARGET is non-null, try to use it where possible.  */
 
 static rtx
-mips_prepare_builtin_target (enum insn_code icode, unsigned int op, rtx target)
+riscv_prepare_builtin_target (enum insn_code icode, unsigned int op, rtx target)
 {
   enum machine_mode mode;
 
@@ -3879,7 +3879,7 @@ riscv_expand_builtin_direct (enum insn_code icode, rtx target, tree exp,
   opno = 0;
   if (has_target_p)
     {
-      target = mips_prepare_builtin_target (icode, opno, target);
+      target = riscv_prepare_builtin_target (icode, opno, target);
       ops[opno] = target;
       opno++;
     }
@@ -3890,7 +3890,7 @@ riscv_expand_builtin_direct (enum insn_code icode, rtx target, tree exp,
      of arguments to the expander function.  */
   gcc_assert (opno + call_expr_nargs (exp) <= insn_data[icode].n_operands);
   for (argno = 0; argno < call_expr_nargs (exp); argno++, opno++)
-    ops[opno] = mips_prepare_builtin_arg (icode, opno, exp, argno);
+    ops[opno] = riscv_prepare_builtin_arg (icode, opno, exp, argno);
 
   switch (opno)
     {
@@ -3921,12 +3921,12 @@ riscv_expand_builtin (tree exp, rtx target, rtx subtarget ATTRIBUTE_UNUSED,
 {
   tree fndecl;
   unsigned int fcode, avail;
-  const struct mips_builtin_description *d;
+  const struct riscv_builtin_description *d;
 
   fndecl = TREE_OPERAND (CALL_EXPR_FN (exp), 0);
   fcode = DECL_FUNCTION_CODE (fndecl);
-  gcc_assert (fcode < ARRAY_SIZE (mips_builtins));
-  d = &mips_builtins[fcode];
+  gcc_assert (fcode < ARRAY_SIZE (riscv_builtins));
+  d = &riscv_builtins[fcode];
   avail = d->avail ();
   gcc_assert (avail != 0);
   switch (d->builtin_type)
@@ -3944,7 +3944,7 @@ riscv_expand_builtin (tree exp, rtx target, rtx subtarget ATTRIBUTE_UNUSED,
    in order to avoid duplicating too much logic from elsewhere.  */
 
 static void
-mips_output_mi_thunk (FILE *file, tree thunk_fndecl ATTRIBUTE_UNUSED,
+riscv_output_mi_thunk (FILE *file, tree thunk_fndecl ATTRIBUTE_UNUSED,
 		      HOST_WIDE_INT delta, HOST_WIDE_INT vcall_offset,
 		      tree function)
 {
@@ -3977,7 +3977,7 @@ mips_output_mi_thunk (FILE *file, tree thunk_fndecl ATTRIBUTE_UNUSED,
       rtx offset = GEN_INT (delta);
       if (!SMALL_OPERAND (delta))
 	{
-	  mips_emit_move (temp1, offset);
+	  riscv_emit_move (temp1, offset);
 	  offset = temp1;
 	}
       emit_insn (gen_add3_insn (this_rtx, this_rtx, offset));
@@ -3989,13 +3989,13 @@ mips_output_mi_thunk (FILE *file, tree thunk_fndecl ATTRIBUTE_UNUSED,
       rtx addr;
 
       /* Set TEMP1 to *THIS_RTX.  */
-      mips_emit_move (temp1, gen_rtx_MEM (Pmode, this_rtx));
+      riscv_emit_move (temp1, gen_rtx_MEM (Pmode, this_rtx));
 
       /* Set ADDR to a legitimate address for *THIS_RTX + VCALL_OFFSET.  */
-      addr = mips_add_offset (temp2, temp1, vcall_offset);
+      addr = riscv_add_offset (temp2, temp1, vcall_offset);
 
       /* Load the offset and add it to THIS_RTX.  */
-      mips_emit_move (temp1, gen_rtx_MEM (Pmode, addr));
+      riscv_emit_move (temp1, gen_rtx_MEM (Pmode, addr));
       emit_insn (gen_add3_insn (this_rtx, this_rtx, temp1));
     }
 
@@ -4008,7 +4008,7 @@ mips_output_mi_thunk (FILE *file, tree thunk_fndecl ATTRIBUTE_UNUSED,
     }
   else
     {
-      mips_emit_move(temp1, fnaddr);
+      riscv_emit_move(temp1, fnaddr);
       emit_jump_insn (gen_indirect_jump (temp1));
     }
 
@@ -4029,7 +4029,7 @@ mips_output_mi_thunk (FILE *file, tree thunk_fndecl ATTRIBUTE_UNUSED,
 /* Allocate a chunk of memory for per-function machine-dependent data.  */
 
 static struct machine_function *
-mips_init_machine_status (void)
+riscv_init_machine_status (void)
 {
   return ggc_alloc_cleared_machine_function ();
 }
@@ -4037,7 +4037,7 @@ mips_init_machine_status (void)
 /* Implement TARGET_OPTION_OVERRIDE.  */
 
 static void
-mips_option_override (void)
+riscv_option_override (void)
 {
   int regno, mode;
   const struct riscv_cpu_info *cpu;
@@ -4052,7 +4052,7 @@ mips_option_override (void)
     g_switch_value = 0;
 
   /* Prefer a call to memcpy over inline code when optimizing for size,
-     though see MOVE_RATIO in mips.h.  */
+     though see MOVE_RATIO in riscv.h.  */
   if (optimize_size && (target_flags_explicit & MASK_MEMCPY) == 0)
     target_flags |= MASK_MEMCPY;
 
@@ -4073,15 +4073,15 @@ mips_option_override (void)
 	= riscv_hard_regno_mode_ok_p (regno, (enum machine_mode) mode);
 
   /* Function to allocate machine-dependent function status.  */
-  init_machine_status = &mips_init_machine_status;
+  init_machine_status = &riscv_init_machine_status;
 
-  mips_init_relocs ();
+  riscv_init_relocs ();
 }
 
 /* Implement TARGET_CONDITIONAL_REGISTER_USAGE.  */
 
 static void
-mips_conditional_register_usage (void)
+riscv_conditional_register_usage (void)
 {
   int regno;
 
@@ -4095,7 +4095,7 @@ mips_conditional_register_usage (void)
 /* Implement TARGET_TRAMPOLINE_INIT.  */
 
 static void
-mips_trampoline_init (rtx m_tramp, tree fndecl, rtx chain_value)
+riscv_trampoline_init (rtx m_tramp, tree fndecl, rtx chain_value)
 {
   rtx addr, end_addr, mem;
   rtx trampoline[4];
@@ -4110,7 +4110,7 @@ mips_trampoline_init (rtx m_tramp, tree fndecl, rtx chain_value)
 
   /* Get pointers to the beginning and end of the code block.  */
   addr = force_reg (Pmode, XEXP (m_tramp, 0));
-  end_addr = mips_force_binary (Pmode, PLUS, addr, GEN_INT (TRAMPOLINE_CODE_SIZE));
+  end_addr = riscv_force_binary (Pmode, PLUS, addr, GEN_INT (TRAMPOLINE_CODE_SIZE));
 
 #define OP(X) gen_int_mode (X, SImode)
 #define MATCH_LREG ((Pmode) == DImode ? MATCH_LD : MATCH_LW)
@@ -4135,16 +4135,16 @@ mips_trampoline_init (rtx m_tramp, tree fndecl, rtx chain_value)
   for (i = 0; i < ARRAY_SIZE (trampoline); i++)
     {
       mem = adjust_address (m_tramp, SImode, i * GET_MODE_SIZE (SImode));
-      mips_emit_move (mem, trampoline[i]);
+      riscv_emit_move (mem, trampoline[i]);
     }
 
   /* Set up the static chain pointer field.  */
   mem = adjust_address (m_tramp, ptr_mode, static_chain_offset);
-  mips_emit_move (mem, chain_value);
+  riscv_emit_move (mem, chain_value);
 
   /* Set up the target function field.  */
   mem = adjust_address (m_tramp, ptr_mode, target_function_offset);
-  mips_emit_move (mem, XEXP (DECL_RTL (fndecl), 0));
+  riscv_emit_move (mem, XEXP (DECL_RTL (fndecl), 0));
 
   /* Flush the code part of the trampoline.  */
   emit_insn (gen_add3_insn (end_addr, addr, GEN_INT (TRAMPOLINE_SIZE)));
@@ -4166,13 +4166,13 @@ riscv_lra_p (void)
 #define TARGET_ASM_ALIGNED_DI_OP "\t.dword\t"
 
 #undef TARGET_OPTION_OVERRIDE
-#define TARGET_OPTION_OVERRIDE mips_option_override
+#define TARGET_OPTION_OVERRIDE riscv_option_override
 
 #undef TARGET_LEGITIMIZE_ADDRESS
-#define TARGET_LEGITIMIZE_ADDRESS mips_legitimize_address
+#define TARGET_LEGITIMIZE_ADDRESS riscv_legitimize_address
 
 #undef TARGET_SCHED_ADJUST_COST
-#define TARGET_SCHED_ADJUST_COST mips_adjust_cost
+#define TARGET_SCHED_ADJUST_COST riscv_adjust_cost
 #undef TARGET_SCHED_ISSUE_RATE
 #define TARGET_SCHED_ISSUE_RATE riscv_issue_rate
 
@@ -4180,41 +4180,41 @@ riscv_lra_p (void)
 #define TARGET_FUNCTION_OK_FOR_SIBCALL hook_bool_tree_tree_true
 
 #undef TARGET_REGISTER_MOVE_COST
-#define TARGET_REGISTER_MOVE_COST mips_register_move_cost
+#define TARGET_REGISTER_MOVE_COST riscv_register_move_cost
 #undef TARGET_MEMORY_MOVE_COST
-#define TARGET_MEMORY_MOVE_COST mips_memory_move_cost
+#define TARGET_MEMORY_MOVE_COST riscv_memory_move_cost
 #undef TARGET_RTX_COSTS
 #define TARGET_RTX_COSTS riscv_rtx_costs
 #undef TARGET_ADDRESS_COST
 #define TARGET_ADDRESS_COST riscv_address_cost
 
 #undef  TARGET_PREFERRED_RELOAD_CLASS
-#define TARGET_PREFERRED_RELOAD_CLASS mips_preferred_reload_class
+#define TARGET_PREFERRED_RELOAD_CLASS riscv_preferred_reload_class
 
 #undef TARGET_ASM_FILE_START_FILE_DIRECTIVE
 #define TARGET_ASM_FILE_START_FILE_DIRECTIVE true
 
 #undef TARGET_EXPAND_BUILTIN_VA_START
-#define TARGET_EXPAND_BUILTIN_VA_START mips_va_start
+#define TARGET_EXPAND_BUILTIN_VA_START riscv_va_start
 
 #undef  TARGET_PROMOTE_FUNCTION_MODE
 #define TARGET_PROMOTE_FUNCTION_MODE default_promote_function_mode_always_promote
 
 #undef TARGET_RETURN_IN_MEMORY
-#define TARGET_RETURN_IN_MEMORY mips_return_in_memory
+#define TARGET_RETURN_IN_MEMORY riscv_return_in_memory
 
 #undef TARGET_ASM_OUTPUT_MI_THUNK
-#define TARGET_ASM_OUTPUT_MI_THUNK mips_output_mi_thunk
+#define TARGET_ASM_OUTPUT_MI_THUNK riscv_output_mi_thunk
 #undef TARGET_ASM_CAN_OUTPUT_MI_THUNK
 #define TARGET_ASM_CAN_OUTPUT_MI_THUNK hook_bool_const_tree_hwi_hwi_const_tree_true
 
 #undef TARGET_PRINT_OPERAND
-#define TARGET_PRINT_OPERAND mips_print_operand
+#define TARGET_PRINT_OPERAND riscv_print_operand
 #undef TARGET_PRINT_OPERAND_ADDRESS
-#define TARGET_PRINT_OPERAND_ADDRESS mips_print_operand_address
+#define TARGET_PRINT_OPERAND_ADDRESS riscv_print_operand_address
 
 #undef TARGET_SETUP_INCOMING_VARARGS
-#define TARGET_SETUP_INCOMING_VARARGS mips_setup_incoming_varargs
+#define TARGET_SETUP_INCOMING_VARARGS riscv_setup_incoming_varargs
 #undef TARGET_STRICT_ARGUMENT_NAMING
 #define TARGET_STRICT_ARGUMENT_NAMING hook_bool_CUMULATIVE_ARGS_true
 #undef TARGET_MUST_PASS_IN_STACK
@@ -4231,15 +4231,15 @@ riscv_lra_p (void)
 #define TARGET_FUNCTION_ARG_BOUNDARY riscv_function_arg_boundary
 
 #undef TARGET_MODE_REP_EXTENDED
-#define TARGET_MODE_REP_EXTENDED mips_mode_rep_extended
+#define TARGET_MODE_REP_EXTENDED riscv_mode_rep_extended
 
 #undef TARGET_SCALAR_MODE_SUPPORTED_P
-#define TARGET_SCALAR_MODE_SUPPORTED_P mips_scalar_mode_supported_p
+#define TARGET_SCALAR_MODE_SUPPORTED_P riscv_scalar_mode_supported_p
 
 #undef TARGET_INIT_BUILTINS
-#define TARGET_INIT_BUILTINS mips_init_builtins
+#define TARGET_INIT_BUILTINS riscv_init_builtins
 #undef TARGET_BUILTIN_DECL
-#define TARGET_BUILTIN_DECL mips_builtin_decl
+#define TARGET_BUILTIN_DECL riscv_builtin_decl
 #undef TARGET_EXPAND_BUILTIN
 #define TARGET_EXPAND_BUILTIN riscv_expand_builtin
 
@@ -4257,20 +4257,20 @@ riscv_lra_p (void)
 
 #ifdef HAVE_AS_DTPRELWORD
 #undef TARGET_ASM_OUTPUT_DWARF_DTPREL
-#define TARGET_ASM_OUTPUT_DWARF_DTPREL mips_output_dwarf_dtprel
+#define TARGET_ASM_OUTPUT_DWARF_DTPREL riscv_output_dwarf_dtprel
 #endif
 
 #undef TARGET_LEGITIMATE_ADDRESS_P
-#define TARGET_LEGITIMATE_ADDRESS_P	mips_legitimate_address_p
+#define TARGET_LEGITIMATE_ADDRESS_P	riscv_legitimate_address_p
 
 #undef TARGET_CAN_ELIMINATE
-#define TARGET_CAN_ELIMINATE mips_can_eliminate
+#define TARGET_CAN_ELIMINATE riscv_can_eliminate
 
 #undef TARGET_CONDITIONAL_REGISTER_USAGE
-#define TARGET_CONDITIONAL_REGISTER_USAGE mips_conditional_register_usage
+#define TARGET_CONDITIONAL_REGISTER_USAGE riscv_conditional_register_usage
 
 #undef TARGET_TRAMPOLINE_INIT
-#define TARGET_TRAMPOLINE_INIT mips_trampoline_init
+#define TARGET_TRAMPOLINE_INIT riscv_trampoline_init
 
 #undef TARGET_IN_SMALL_DATA_P
 #define TARGET_IN_SMALL_DATA_P riscv_in_small_data_p
