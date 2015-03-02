@@ -108,6 +108,8 @@ enum riscv_address_type {
   ADDRESS_SYMBOLIC
 };
 
+enum riscv_code_model riscv_cmodel = CM_MEDLOW;
+
 /* Macros to create an enumeration identifier for a function prototype.  */
 #define RISCV_FTYPE_NAME1(A, B) RISCV_##A##_FTYPE_##B
 #define RISCV_FTYPE_NAME2(A, B, C) RISCV_##A##_FTYPE_##B##_##C
@@ -2769,7 +2771,7 @@ riscv_init_relocs (void)
   memset (riscv_hi_relocs, '\0', sizeof (riscv_hi_relocs));
   memset (riscv_lo_relocs, '\0', sizeof (riscv_lo_relocs));
 
-  if (!flag_pic)
+  if (!flag_pic && riscv_cmodel == CM_MEDLOW)
     {
       riscv_hi_relocs[SYMBOL_ABSOLUTE] = "%hi(";
       riscv_lo_relocs[SYMBOL_ABSOLUTE] = "%lo(";
@@ -4074,6 +4076,19 @@ riscv_option_override (void)
 
   /* Function to allocate machine-dependent function status.  */
   init_machine_status = &riscv_init_machine_status;
+
+  if (riscv_cmodel_string)
+    {
+      if (strcmp (riscv_cmodel_string, "medlow") == 0)
+	riscv_cmodel = CM_MEDLOW;
+      else if (strcmp (riscv_cmodel_string, "medany") == 0)
+	riscv_cmodel = CM_MEDANY;
+      else
+	error ("unsupported code model: %s", riscv_cmodel_string);
+    }
+
+  if (flag_pic)
+    riscv_cmodel = CM_PIC;
 
   riscv_init_relocs ();
 }

@@ -837,6 +837,7 @@ typedef struct {
 
 #define JUMP_TABLES_IN_TEXT_SECTION 0
 #define CASE_VECTOR_MODE SImode
+#define CASE_VECTOR_PC_RELATIVE (riscv_cmodel != CM_MEDLOW)
 
 /* Define this as 1 if `char' should by default be signed; else as 0.  */
 #define DEFAULT_SIGNED_CHAR 0

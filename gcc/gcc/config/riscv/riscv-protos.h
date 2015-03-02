@@ -32,6 +32,13 @@ enum riscv_symbol_type {
 };
 #define NUM_SYMBOL_TYPES (SYMBOL_TLS_GD + 1)
 
+enum riscv_code_model {
+  CM_MEDLOW,
+  CM_MEDANY,
+  CM_PIC
+};
+extern enum riscv_code_model riscv_cmodel;
+
 extern bool riscv_symbolic_constant_p (rtx, enum riscv_symbol_type *);
 extern int riscv_regno_mode_ok_for_base_p (int, enum machine_mode, bool);
 extern int riscv_address_insns (rtx, enum machine_mode, bool);

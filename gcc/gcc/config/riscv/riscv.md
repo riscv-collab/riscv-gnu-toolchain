@@ -2126,12 +2126,12 @@
 	      (use (label_ref (match_operand 1 "" "")))]
   ""
 {
-  if (flag_pic)
+  if (CASE_VECTOR_PC_RELATIVE)
       operands[0] = expand_simple_binop (Pmode, PLUS, operands[0],
 					 gen_rtx_LABEL_REF (Pmode, operands[1]),
 					 NULL_RTX, 0, OPTAB_DIRECT);
 
-  if (flag_pic && Pmode == DImode)
+  if (CASE_VECTOR_PC_RELATIVE && Pmode == DImode)
     emit_jump_insn (gen_tablejumpdi (operands[0], operands[1]));
   else
     emit_jump_insn (gen_tablejumpsi (operands[0], operands[1]));
