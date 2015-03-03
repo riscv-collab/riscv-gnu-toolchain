@@ -37,10 +37,15 @@ AS_IF([test x"$CURL" != xno], [FETCHER="$CURL -o - --ftp-pasv"],
 AC_SUBST(FETCHER)
 
 AC_ARG_ENABLE(linux,
-        [Toolchain targets Linux],
-        AC_SUBST(default_target, linux),
-        AC_SUBST(default_target, newlib)
+        [AS_HELP_STRING([--enable-linux],
+		[set linux as the default make target @<:@--disable-linux@:>@])],
+        [],
+        [enable_linux=no]
         )
+
+AS_IF([test "x$enable_linux" != xno],
+	[AC_SUBST(default_target, linux)],
+	[AC_SUBST(default_target, newlib)])
 
 AC_CONFIG_FILES([Makefile])
 AC_CONFIG_FILES([scripts/wrapper/awk], [chmod +x scripts/wrapper/awk])
