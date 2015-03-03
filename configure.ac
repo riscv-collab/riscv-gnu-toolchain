@@ -42,6 +42,12 @@ AC_ARG_ENABLE(linux,
         AC_SUBST(default_target, newlib)
         )
 
+AC_ARG_WITH(xlen,
+	[Set XLEN, the X-register bit width],
+	AC_SUBST(XLEN, $withval),
+	AC_SUBST(XLEN, 64)
+	)
+
 AC_CONFIG_FILES([Makefile])
 AC_CONFIG_FILES([scripts/wrapper/awk], [chmod +x scripts/wrapper/awk])
 AC_CONFIG_FILES([scripts/wrapper/sed], [chmod +x scripts/wrapper/sed])
