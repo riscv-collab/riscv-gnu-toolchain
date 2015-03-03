@@ -37,14 +37,14 @@
 #define __arch_compare_and_exchange_val_32_acq(mem, newval, oldval) \
   ({									      \
     INTERNAL_SYSCALL_DECL (__err);					      \
-    INTERNAL_SYSCALL (sysriscv, __err, 4,				      \
+    (__typeof (*mem)) INTERNAL_SYSCALL (sysriscv, __err, 4,		      \
 		      RISCV_ATOMIC_CMPXCHG, mem, oldval, newval);	      \
   })
 
 #define __arch_compare_and_exchange_val_64_acq(mem, newval, oldval) \
   ({									      \
     INTERNAL_SYSCALL_DECL (__err);					      \
-    INTERNAL_SYSCALL (sysriscv, __err, 4,				      \
+    (__typeof (*mem)) INTERNAL_SYSCALL (sysriscv, __err, 4,		      \
 		      RISCV_ATOMIC_CMPXCHG64, mem, oldval, newval);	      \
   })
 
