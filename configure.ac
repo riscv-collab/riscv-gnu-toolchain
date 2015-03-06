@@ -54,6 +54,41 @@ AC_ARG_WITH(xlen,
 	AC_SUBST(XLEN, 64)
 	)
 
+AC_ARG_ENABLE(atomic,
+	[AS_HELP_STRING([--disable-atomic],
+		[disable use of atomic memory instructions in glibc @<:@--enable-atomic@:>@])],
+	[],
+	[enable_atomic=yes]
+	)
+
+AS_IF([test "x$enable_atomic" != xno],
+        [],
+	[AC_SUBST(atomic_cflags,-mno-atomic)])
+
+AC_ARG_ENABLE(float,
+	[AS_HELP_STRING([--disable-float],
+		[use software floating point in glibc @<:@--enable-float@:>@])],
+	[],
+	[enable_float=yes]
+	)
+
+AS_IF([test "x$enable_float" != xno],
+	    [],
+	    [AC_SUBST(float_cflags,-msoft-float)dnl
+AC_SUBST(float_asflags,-msoft-float)dnl
+AC_SUBST(glibc_configure_flags,--without-fp)])
+
+AC_ARG_ENABLE(multilib,
+	[AS_HELP_STRING([--enable-multilib],
+		[build multilib glibc (32 and 64 bit) @<:@--disable-multilib@:>@])],
+	[],
+	[enable_multilib=no]
+	)
+
+AS_IF([test "x$enable_multilib" != xno],
+        [AC_SUBST(multilib_flags,)],
+	[AC_SUBST(multilib_flags,--disable-multilib)])
+
 AC_CONFIG_FILES([Makefile])
 AC_CONFIG_FILES([scripts/wrapper/awk], [chmod +x scripts/wrapper/awk])
 AC_CONFIG_FILES([scripts/wrapper/sed], [chmod +x scripts/wrapper/sed])

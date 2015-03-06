@@ -16,7 +16,7 @@ glibc_url := $(GNU_MIRROR)/glibc/glibc-$(glibc_version).tar.gz
 newlib_url := ftp://sourceware.org/pub/newlib/newlib-$(newlib_version).tar.gz
 
 XLEN ?= @XLEN@
-SYSROOT := $(INSTALL_DIR)/sysroot$(XLEN)
+SYSROOT := $(INSTALL_DIR)/sysroot
 
 SHELL := /bin/sh
 AWK := @GAWK@
@@ -24,11 +24,32 @@ SED := @GSED@
 PATH := $(INSTALL_DIR)/bin:$(builddir)/scripts/wrapper:$(PATH)
 export PATH AWK SED
 
+MULTILIB_FLAGS := @multilib_flags@
+ATOMIC_CFLAGS := @atomic_cflags@
+FLOAT_CFLAGS := @float_cflags@
+FLOAT_ASFLAGS := @float_asflags@
+GLIBC_CONFIGURE_FLAGS := @glibc_configure_flags@
+
+CFLAGS_FOR_TARGET := $(CFLAGS_FOR_TARGET_EXTRA) $(ATOMIC_CFLAGS) $(FLOAT_CFLAGS)
+ASFLAGS_FOR_TARGET := $(ASFLAGS_FOR_TARGET_EXTRA) $(FLOAT_ASFLAGS)
+
 all: @default_target@
 
 newlib: stamps/build-gcc-newlib
 
+ifneq ($(findstring --disable-multilib,$(MULTILIB_FLAGS)),)
 linux: stamps/build-gcc-linux-stage2
+else
+linux:
+	$(MAKE) stamps/build-gcc-linux-stage1 XLEN=
+	$(MAKE) stamps/build-glibc-linux XLEN=
+	$(MAKE) stamps/build-glibc-linux32 XLEN=32 \
+		CC="riscv-unknown-linux-gnu-gcc -m32" \
+		READELF=riscv-unknown-linux-gnu-readelf \
+		CFLAGS_FOR_TARGET_EXTRA="-m32" \
+		ASFLAGS_FOR_TARGET_EXTRA="-m32"
+	$(MAKE) stamps/build-gcc-linux-stage2 XLEN=
+endif
 
 $(addprefix src/original-,$(PACKAGES)):
 	mkdir -p src
@@ -58,7 +79,7 @@ stamps/build-binutils-linux: src/binutils
 		--target=riscv$(XLEN)-unknown-linux-gnu \
 		--prefix=$(INSTALL_DIR) \
 		--with-sysroot=$(SYSROOT) \
-		--disable-multilib \
+		$(MULTILIB_FLAGS) \
 		--disable-nls
 	$(MAKE) -C $(notdir $@)
 	$(MAKE) -C $(notdir $@) install
@@ -73,7 +94,7 @@ stamps/build-glibc-linux-headers: src/glibc
 	rm -rf $@ $(notdir $@)
 	mkdir $(notdir $@)
 	mkdir -p $(SYSROOT)/usr/lib $(SYSROOT)/lib
-	cd $(notdir $@) && CC= $(CURDIR)/$</configure \
+	cd $(notdir $@) && $(CURDIR)/$</configure \
 		--host=riscv$(XLEN)-unknown-linux-gnu \
 		--prefix=/usr \
 		libc_cv_forced_unwind=yes \
@@ -85,19 +106,22 @@ stamps/build-glibc-linux-headers: src/glibc
 	$(MAKE) -C $(notdir $@) install-headers install_root=$(SYSROOT)
 	mkdir -p $(dir $@) && touch $@
 
-stamps/build-glibc-linux: src/glibc stamps/build-gcc-linux-stage1
+stamps/build-glibc-linux$(XLEN): src/glibc stamps/build-gcc-linux-stage1
 	rm -rf $@ $(notdir $@)
 	mkdir $(notdir $@)
 	mkdir -p $(SYSROOT)/usr/lib $(SYSROOT)/lib
-	cd $(notdir $@) && CC= $(CURDIR)/$</configure \
+	cd $(notdir $@) && CFLAGS="$(CFLAGS_FOR_TARGET) -g -O2" \
+		ASFLAGS="$(ASFLAGS_FOR_TARGET)" \
+		$(CURDIR)/$</configure \
 		--host=riscv$(XLEN)-unknown-linux-gnu \
 		--prefix=/usr \
 		libc_cv_forced_unwind=yes \
 		libc_cv_c_cleanup=yes \
 		--enable-shared \
 		--enable-__thread \
-		--disable-multilib \
-		--enable-kernel=2.6.32
+		$(MULTILIB_FLAGS) \
+		--enable-kernel=2.6.32 \
+		$(GLIBC_CONFIGURE_FLAGS)
 	$(MAKE) -C $(notdir $@)
 	$(MAKE) -C $(notdir $@) install install_root=$(SYSROOT)
 	mkdir -p $(dir $@) && touch $@
@@ -123,7 +147,7 @@ stamps/build-gcc-linux-stage1: src/gcc stamps/build-binutils-linux \
 		--disable-libquadmath \
 		--disable-libgomp \
 		--disable-nls \
-		--disable-multilib \
+		$(MULTILIB_FLAGS) \
 		--disable-bootstrap
 	$(MAKE) -C $(notdir $@) inhibit-libc=true all-gcc
 	$(MAKE) -C $(notdir $@) inhibit-libc=true install-gcc
@@ -131,7 +155,7 @@ stamps/build-gcc-linux-stage1: src/gcc stamps/build-binutils-linux \
 	$(MAKE) -C $(notdir $@) inhibit-libc=true install-target-libgcc
 	mkdir -p $(dir $@) && touch $@
 
-stamps/build-gcc-linux-stage2: src/gcc stamps/build-glibc-linux
+stamps/build-gcc-linux-stage2: src/gcc stamps/build-glibc-linux$(XLEN)
 	rm -rf $@ $(notdir $@)
 	mkdir $(notdir $@)
 	cd $(notdir $@) && $(CURDIR)/$</configure \
@@ -145,7 +169,7 @@ stamps/build-gcc-linux-stage2: src/gcc stamps/build-glibc-linux
 		--disable-libssp \
 		--disable-libquadmath \
 		--disable-nls \
-		--disable-multilib \
+		$(MULTILIB_FLAGS) \
 		--disable-bootstrap
 	$(MAKE) -C $(notdir $@)
 	$(MAKE) -C $(notdir $@) install
