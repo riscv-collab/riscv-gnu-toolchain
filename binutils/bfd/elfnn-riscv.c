@@ -2664,12 +2664,12 @@ _bfd_riscv_relax_call (bfd *abfd, asection *sec,
 {
   bfd_byte *contents = elf_section_data (sec)->this_hdr.contents;
   bfd_signed_vma foff = symval - (sec_addr (sec) + rel->r_offset);
-  bfd_boolean near_zero = !link_info->shared && symval < RISCV_IMM_REACH/2;
+  bfd_boolean near_zero = (symval + RISCV_IMM_REACH/2) < RISCV_IMM_REACH;
   bfd_vma auipc, jalr;
   int r_type;
 
   /* See if this function call can be shortened.  */
-  if (!VALID_UJTYPE_IMM (foff) && !near_zero)
+  if (!VALID_UJTYPE_IMM (foff) && !(!link_info->shared && near_zero))
     return TRUE;
 
   /* Shorten the function call.  */
