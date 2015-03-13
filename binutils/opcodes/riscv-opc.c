@@ -228,6 +228,7 @@ const struct riscv_opcode riscv_builtin_opcodes[] =
 {"rdtimeh",   "32I", "d",  MATCH_RDTIMEH, MASK_RDTIMEH, match_opcode,  WR_xd },
 {"sbreak",    "I",   "",    MATCH_SBREAK, MASK_SBREAK, match_opcode,   0 },
 {"scall",     "I",   "",    MATCH_SCALL, MASK_SCALL, match_opcode,   0 },
+{"hcall",     "I",   "",    MATCH_HCALL, MASK_HCALL, match_opcode,   0 },
 {"mcall",     "I",   "",    MATCH_MCALL, MASK_MCALL, match_opcode,   0 },
 {"xori",      "I",   "d,s,j",  MATCH_XORI, MASK_XORI, match_opcode,   WR_xd|RD_xs1 },
 {"xor",       "I",   "d,s,t",  MATCH_XOR, MASK_XOR, match_opcode,   WR_xd|RD_xs1|RD_xs2 },
