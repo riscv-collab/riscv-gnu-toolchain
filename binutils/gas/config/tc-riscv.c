@@ -60,6 +60,20 @@ bfd_boolean rv64 = TRUE; /* RV64 (true) or RV32 (false) */
 #define LOAD_ADDRESS_INSN (rv64 ? "ld" : "lw")
 #define ADD32_INSN (rv64 ? "addiw" : "addi")
 
+/* This is the set of options which the .option pseudo-op may modify.  */
+
+struct riscv_set_options
+{
+  int pic; /* Generate position-independent code.  */
+  int rvc; /* Generate RVC code.  */
+};
+
+static struct riscv_set_options riscv_opts =
+{
+  0,	/* pic */
+  0,	/* rvc */
+};
+
 struct riscv_subset
 {
   const char* name;
@@ -94,7 +108,7 @@ riscv_subset_supports(const char* feature)
 }
 
 static void
-riscv_add_subset(const char* subset)
+riscv_add_subset (const char* subset)
 {
   struct riscv_subset* s = xmalloc(sizeof(struct riscv_subset));
   s->name = xstrdup(subset);
@@ -105,7 +119,7 @@ riscv_add_subset(const char* subset)
 }
 
 static void
-riscv_set_arch(const char* arg)
+riscv_set_arch (const char* arg)
 {
   /* Formally, ISA subset names begin with RV, RV32, or RV64, but we allow the
      prefix to be omitted.  We also allow all-lowercase names if version
@@ -113,8 +127,9 @@ riscv_set_arch(const char* arg)
      is supported in this case).
      
      FIXME: Version numbers are not supported yet. */
-  const char* subsets = "IMAFD";
+  const char* subsets = "IMAFDC";
   const char* p;
+  int rvc = 0;
   
   for (p = arg; *p; p++)
     if (!ISLOWER(*p) || strchr(subsets, TOUPPER(*p)) == NULL)
@@ -124,10 +139,10 @@ riscv_set_arch(const char* arg)
     {
       /* Legal all-lowercase name. */
       for (p = arg; *p; p++)
-        {
-          char subset[2] = {TOUPPER(*p), 0};
-          riscv_add_subset(subset);
-        }
+	{
+	  char subset[2] = {TOUPPER(*p), 0};
+	  riscv_add_subset(subset);
+	}
       return;
     }
 
@@ -150,45 +165,35 @@ riscv_set_arch(const char* arg)
   for (p = arg; *p; p++)
     {
       if (*p == 'X')
-        {
-          const char* q = p+1;
-          while (ISLOWER(*q))
-            q++;
+	{
+	  char *subset = xstrdup(p + 1), *q = subset;
 
-          char subset[q-p+1];
-          memcpy(subset, p, q-p);
-          subset[q-p] = 0;
+	  while (ISLOWER(*q))
+	    q++;
+	  *q = 0;
 
-          riscv_add_subset(subset);
-          p = q-1;
-        }
+	  riscv_add_subset (subset);
+	  p += strlen (subset);
+	  free (subset);
+	}
       else if (strchr(subsets, *p) != NULL)
-        {
-          char subset[2] = {*p, 0};
-          riscv_add_subset(subset);
-        }
+	{
+	  char subset[2] = {*p, 0};
+	  riscv_add_subset (subset);
+	  if (*p == 'C')
+	    rvc = 1;
+	}
       else
-        as_fatal("unsupported ISA subset %c", *p);
+	as_fatal("unsupported ISA subset %c", *p);
     }
+
+  if (rvc)
+    /* Override -m[no-]rvc setting if C was explicitly listed.  */
+    riscv_opts.rvc = 1;
+  else
+    /* Add RVC anyway.  -m[no-]rvc toggles its availability.  */
+    riscv_add_subset ("C");
 }
-
-/* This is the set of options which may be modified by the .set
-   pseudo-op.  We use a struct so that .set push and .set pop are more
-   reliable.  */
-
-struct riscv_set_options
-{
-  /* Generate position-independent code.  */
-  int pic;
-  /* Generate RVC code.  */
-  int rvc;
-};
-
-static struct riscv_set_options riscv_opts =
-{
-  0,	/* pic */
-  0,	/* rvc */
-};
 
 /* handle of the OPCODE hash table */
 static struct hash_control *op_hash = NULL;
@@ -281,17 +286,6 @@ static char *insn_error;
     as_fatal (_("internal Error, line %d, %s"), __LINE__, __FILE__)
 
 static char *expr_end;
-
-/* Expressions which appear in instructions.  These are set by
-   riscv_ip.  */
-
-static expressionS imm_expr;
-static expressionS offset_expr;
-
-/* Relocs associated with imm_expr and offset_expr.  */
-
-static bfd_reloc_code_real_type imm_reloc = BFD_RELOC_UNUSED;
-static bfd_reloc_code_real_type offset_reloc = BFD_RELOC_UNUSED;
 
 /* The default target format to use.  */
 
@@ -497,18 +491,15 @@ validate_riscv_insn (const struct riscv_opcode *opc)
 {
   const char *p = opc->args;
   char c;
-  insn_t required_bits, used_bits = opc->mask;
+  insn_t used_bits = opc->mask;
+  insn_t required_bits = (uint64_t)-1 >> (64 - 8 * riscv_insn_length (opc->match));
 
-  if ((used_bits & opc->match) != opc->match)
+  if ((used_bits & opc->match) != (opc->match & required_bits))
     {
       as_bad (_("internal: bad RISC-V opcode (mask error): %s %s"),
 	      opc->name, opc->args);
       return 0;
     }
-  required_bits = ((insn_t)1 << (8 * riscv_insn_length (opc->match))) - 1;
-  /* Work around for undefined behavior of uint64_t << 64 */
-  if(riscv_insn_length (opc->match) == 8)
-    required_bits = 0xffffffffffffffff;
 
 #define USE_BITS(mask,shift)	(used_bits |= ((insn_t)(mask) << (shift)))
   while (*p)
@@ -546,6 +537,26 @@ validate_riscv_insn (const struct riscv_opcode *opc)
           return 0;
         }
       break;
+      case 'C': /* RVC */
+	switch (c = *p++)
+	  {
+	  case 'd': USE_BITS (OP_MASK_CRDS, OP_SH_CRDS); break;
+	  case 's': USE_BITS (OP_MASK_CRS1S, OP_SH_CRS1S); break;
+	  case 'S': USE_BITS (OP_MASK_CRS1, OP_SH_CRS1); break;
+	  case 'c': break; /* RS1, constrained to equal sp */
+	  case 'U': break; /* RS2, constrained to equal RD */
+	  case 'j': used_bits |= ENCODE_RVC_IMM(-1U); break;
+	  case 'k': used_bits |= ENCODE_RVC_LW_IMM(-1U); break;
+	  case 'l': used_bits |= ENCODE_RVC_LD_IMM(-1U); break;
+	  case 'm': used_bits |= ENCODE_RVC_LWSP_IMM(-1U); break;
+	  case 'n': used_bits |= ENCODE_RVC_LDSP_IMM(-1U); break;
+	  case 'u': used_bits |= ENCODE_RVC_IMM(-1U); break;
+	  default:
+	    as_bad (_("internal: bad RISC-V opcode (unknown operand type `C%c'): %s %s"),
+		    c, opc->name, opc->args);
+	    return 0;
+	  }
+	break;
       case ',': break;
       case '(': break;
       case ')': break;
@@ -614,8 +625,13 @@ md_begin (void)
     {
       const char *name = riscv_opcodes[i].name;
 
-      if (riscv_subset_supports(riscv_opcodes[i].subset))
-        retval = hash_insert (op_hash, name, (void *) &riscv_opcodes[i]);
+      if (!riscv_subset_supports(riscv_opcodes[i].subset))
+	{
+	  i++;
+	  continue;
+	}
+
+      retval = hash_insert (op_hash, name, (void *) &riscv_opcodes[i]);
 
       if (retval != NULL)
 	{
@@ -664,10 +680,9 @@ append_insn (struct riscv_cl_insn *ip, expressionS *address_expr,
   dwarf2_emit_insn (0);
 #endif
 
-  gas_assert(reloc_type <= BFD_RELOC_UNUSED);
-
-  if (address_expr != NULL)
+  if (reloc_type != BFD_RELOC_UNUSED)
     {
+      gas_assert(address_expr);
       if (address_expr->X_op == O_constant)
 	{
 	  switch (reloc_type)
@@ -685,7 +700,6 @@ append_insn (struct riscv_cl_insn *ip, expressionS *address_expr,
 	      ip->insn_opcode |= ENCODE_STYPE_IMM (address_expr->X_add_number);
 	      break;
 
-	    case BFD_RELOC_UNUSED:
 	    case BFD_RELOC_RISCV_LO12_I:
 	      ip->insn_opcode |= ENCODE_ITYPE_IMM (address_expr->X_add_number);
 	      break;
@@ -703,7 +717,7 @@ append_insn (struct riscv_cl_insn *ip, expressionS *address_expr,
 			    address_expr->X_add_number);
 	  return;
 	}
-      else if (reloc_type < BFD_RELOC_UNUSED)
+      else
 	{
 	  reloc_howto_type *howto;
 
@@ -756,6 +770,10 @@ macro_build (expressionS *ep, const char *name, const char *fmt, ...)
   r = BFD_RELOC_UNUSED;
   mo = (struct riscv_opcode *) hash_find (op_hash, name);
   gas_assert (mo);
+
+  /* Find a non-RVC variant of the instruction.  */
+  while (riscv_insn_length (mo->match) < 4)
+    mo++;
   gas_assert (strcmp (name, mo->name) == 0);
 
   create_insn (&insn, mo);
@@ -921,7 +939,8 @@ load_const (int reg, expressionS *ep)
 
 /* Expand RISC-V assembly macros into one or more instructions. */
 static void
-macro (struct riscv_cl_insn *ip)
+macro (struct riscv_cl_insn *ip, expressionS *imm_expr,
+       bfd_reloc_code_real_type *imm_reloc)
 {
   int rd = (ip->insn_opcode >> OP_SH_RD) & OP_MASK_RD;
   int rs1 = (ip->insn_opcode >> OP_SH_RS1) & OP_MASK_RS1;
@@ -931,117 +950,117 @@ macro (struct riscv_cl_insn *ip)
   switch (mask)
     {
     case M_LI:
-      load_const (rd, &imm_expr);
+      load_const (rd, imm_expr);
       break;
 
     case M_LA:
     case M_LLA:
       /* Load the address of a symbol into a register. */
-      if (!IS_SEXT_32BIT_NUM (offset_expr.X_add_number))
+      if (!IS_SEXT_32BIT_NUM (imm_expr->X_add_number))
 	as_bad(_("offset too large"));
 
-      if (offset_expr.X_op == O_constant)
-	load_const (rd, &offset_expr);
+      if (imm_expr->X_op == O_constant)
+	load_const (rd, imm_expr);
       else if (riscv_opts.pic && mask == M_LA) /* Global PIC symbol */
-	pcrel_load (rd, rd, &offset_expr, LOAD_ADDRESS_INSN,
+	pcrel_load (rd, rd, imm_expr, LOAD_ADDRESS_INSN,
 		    BFD_RELOC_RISCV_GOT_HI20, BFD_RELOC_RISCV_PCREL_LO12_I);
       else /* Local PIC symbol, or any non-PIC symbol */
-	pcrel_load (rd, rd, &offset_expr, "addi",
+	pcrel_load (rd, rd, imm_expr, "addi",
 		    BFD_RELOC_RISCV_PCREL_HI20, BFD_RELOC_RISCV_PCREL_LO12_I);
       break;
 
     case M_LA_TLS_GD: 
-      pcrel_load (rd, rd, &offset_expr, "addi",
+      pcrel_load (rd, rd, imm_expr, "addi",
 		  BFD_RELOC_RISCV_TLS_GD_HI20, BFD_RELOC_RISCV_PCREL_LO12_I);
       break;
 
     case M_LA_TLS_IE: 
-      pcrel_load (rd, rd, &offset_expr, LOAD_ADDRESS_INSN,
+      pcrel_load (rd, rd, imm_expr, LOAD_ADDRESS_INSN,
 		  BFD_RELOC_RISCV_TLS_GOT_HI20, BFD_RELOC_RISCV_PCREL_LO12_I);
       break;
 
     case M_LB:
-      pcrel_load (rd, rd, &offset_expr, "lb",
+      pcrel_load (rd, rd, imm_expr, "lb",
 		  BFD_RELOC_RISCV_PCREL_HI20, BFD_RELOC_RISCV_PCREL_LO12_I);
       break;
 
     case M_LBU:
-      pcrel_load (rd, rd, &offset_expr, "lbu",
+      pcrel_load (rd, rd, imm_expr, "lbu",
 		  BFD_RELOC_RISCV_PCREL_HI20, BFD_RELOC_RISCV_PCREL_LO12_I);
       break;
 
     case M_LH:
-      pcrel_load (rd, rd, &offset_expr, "lh",
+      pcrel_load (rd, rd, imm_expr, "lh",
 		  BFD_RELOC_RISCV_PCREL_HI20, BFD_RELOC_RISCV_PCREL_LO12_I);
       break;
 
     case M_LHU:
-      pcrel_load (rd, rd, &offset_expr, "lhu",
+      pcrel_load (rd, rd, imm_expr, "lhu",
 		  BFD_RELOC_RISCV_PCREL_HI20, BFD_RELOC_RISCV_PCREL_LO12_I);
       break;
 
     case M_LW:
-      pcrel_load (rd, rd, &offset_expr, "lw",
+      pcrel_load (rd, rd, imm_expr, "lw",
 		  BFD_RELOC_RISCV_PCREL_HI20, BFD_RELOC_RISCV_PCREL_LO12_I);
       break;
 
     case M_LWU:
-      pcrel_load (rd, rd, &offset_expr, "lwu",
+      pcrel_load (rd, rd, imm_expr, "lwu",
 		  BFD_RELOC_RISCV_PCREL_HI20, BFD_RELOC_RISCV_PCREL_LO12_I);
       break;
 
     case M_LD:
-      pcrel_load (rd, rd, &offset_expr, "ld",
+      pcrel_load (rd, rd, imm_expr, "ld",
 		  BFD_RELOC_RISCV_PCREL_HI20, BFD_RELOC_RISCV_PCREL_LO12_I);
       break;
 
     case M_FLW:
-      pcrel_load (rd, rs1, &offset_expr, "flw",
+      pcrel_load (rd, rs1, imm_expr, "flw",
 		  BFD_RELOC_RISCV_PCREL_HI20, BFD_RELOC_RISCV_PCREL_LO12_I);
       break;
 
     case M_FLD:
-      pcrel_load (rd, rs1, &offset_expr, "fld",
+      pcrel_load (rd, rs1, imm_expr, "fld",
 		  BFD_RELOC_RISCV_PCREL_HI20, BFD_RELOC_RISCV_PCREL_LO12_I);
       break;
 
     case M_SB:
-      pcrel_store (rs2, rs1, &offset_expr, "sb",
+      pcrel_store (rs2, rs1, imm_expr, "sb",
 		   BFD_RELOC_RISCV_PCREL_HI20, BFD_RELOC_RISCV_PCREL_LO12_S);
       break;
 
     case M_SH:
-      pcrel_store (rs2, rs1, &offset_expr, "sh",
+      pcrel_store (rs2, rs1, imm_expr, "sh",
 		   BFD_RELOC_RISCV_PCREL_HI20, BFD_RELOC_RISCV_PCREL_LO12_S);
       break;
 
     case M_SW:
-      pcrel_store (rs2, rs1, &offset_expr, "sw",
+      pcrel_store (rs2, rs1, imm_expr, "sw",
 		   BFD_RELOC_RISCV_PCREL_HI20, BFD_RELOC_RISCV_PCREL_LO12_S);
       break;
 
     case M_SD:
-      pcrel_store (rs2, rs1, &offset_expr, "sd",
+      pcrel_store (rs2, rs1, imm_expr, "sd",
 		   BFD_RELOC_RISCV_PCREL_HI20, BFD_RELOC_RISCV_PCREL_LO12_S);
       break;
 
     case M_FSW:
-      pcrel_store (rs2, rs1, &offset_expr, "fsw",
+      pcrel_store (rs2, rs1, imm_expr, "fsw",
 		   BFD_RELOC_RISCV_PCREL_HI20, BFD_RELOC_RISCV_PCREL_LO12_S);
       break;
 
     case M_FSD:
-      pcrel_store (rs2, rs1, &offset_expr, "fsd",
+      pcrel_store (rs2, rs1, imm_expr, "fsd",
 		   BFD_RELOC_RISCV_PCREL_HI20, BFD_RELOC_RISCV_PCREL_LO12_S);
       break;
 
     case M_VF:
-      pcrel_access (0, rs1, &offset_expr, "vf", "s,s,q",
+      pcrel_access (0, rs1, imm_expr, "vf", "s,s,q",
 		    BFD_RELOC_RISCV_PCREL_HI20, BFD_RELOC_RISCV_PCREL_LO12_S);
       break;
 
     case M_CALL:
-      riscv_call (rd, rs1, &offset_expr, offset_reloc);
+      riscv_call (rd, rs1, imm_expr, *imm_reloc);
       break;
 
     default:
@@ -1137,8 +1156,16 @@ my_getSmallExpression (expressionS *ep, bfd_reloc_code_real_type *reloc,
 		       char *str, const struct percent_op_match *percent_op)
 {
   size_t reloc_index;
-  int crux_depth, str_depth;
+  unsigned crux_depth, str_depth, regno;
   char *crux;
+
+  /* First, check for integer registers.  */
+  if (reg_lookup (&str, RCLASS_GPR, &regno))
+    {
+      ep->X_op = O_register;
+      ep->X_add_number = regno;
+      return 0;
+    }
 
   /* Search for the start of the main expression.
      End the loop with CRUX pointing to the start
@@ -1179,12 +1206,12 @@ my_getSmallExpression (expressionS *ep, bfd_reloc_code_real_type *reloc,
 }
 
 /* This routine assembles an instruction into its binary format.  As a
-   side effect, it sets one of the global variables imm_reloc or
-   offset_reloc to the type of relocation to do if one of the operands
-   is an address expression.  */
+   side effect, it sets the global variable imm_reloc to the type of
+   relocation to do if one of the operands is an address expression.  */
 
 static void
-riscv_ip (char *str, struct riscv_cl_insn *ip)
+riscv_ip (char *str, struct riscv_cl_insn *ip, expressionS *imm_expr,
+	  bfd_reloc_code_real_type *imm_reloc)
 {
   char *s;
   const char *args;
@@ -1249,18 +1276,26 @@ riscv_ip (char *str, struct riscv_cl_insn *ip)
   argsStart = s;
   for (;;)
     {
-      bfd_boolean ok = TRUE;
+      bfd_boolean ok;
       gas_assert (strcmp (insn->name, str) == 0);
 
       create_insn (ip, insn);
       insn_error = NULL;
       argnum = 1;
+
+      imm_expr->X_op = O_absent;
+      *imm_reloc = BFD_RELOC_UNUSED;
+
       for (args = insn->args;; ++args)
 	{
 	  s += strspn (s, " \t");
 	  switch (*args)
 	    {
 	    case '\0':		/* end of args */
+	      if (insn->pinfo != INSN_MACRO
+		  && riscv_insn_length (insn->match) == 2
+		  && !riscv_opts.rvc)
+		break;
 	      if (*s == '\0')
 		return;
 	      break;
@@ -1268,29 +1303,29 @@ riscv_ip (char *str, struct riscv_cl_insn *ip)
             case '^':
             {
               unsigned long max = OP_MASK_RD;
-              my_getExpression (&imm_expr, s);
-              check_absolute_expr (ip, &imm_expr);
+              my_getExpression (imm_expr, s);
+              check_absolute_expr (ip, imm_expr);
               switch (*++args)
                 {
                 case 'j':
                   max = OP_MASK_CUSTOM_IMM;
-                  INSERT_OPERAND (CUSTOM_IMM, *ip, imm_expr.X_add_number);
+                  INSERT_OPERAND (CUSTOM_IMM, *ip, imm_expr->X_add_number);
                   break;
                 case 'd':
-                  INSERT_OPERAND (RD, *ip, imm_expr.X_add_number);
+                  INSERT_OPERAND (RD, *ip, imm_expr->X_add_number);
                   break;
                 case 's':
-                  INSERT_OPERAND (RS1, *ip, imm_expr.X_add_number);
+                  INSERT_OPERAND (RS1, *ip, imm_expr->X_add_number);
                   break;
                 case 't':
-                  INSERT_OPERAND (RS2, *ip, imm_expr.X_add_number);
+                  INSERT_OPERAND (RS2, *ip, imm_expr->X_add_number);
                   break;
                 }
-              imm_expr.X_op = O_absent;
+              imm_expr->X_op = O_absent;
               s = expr_end;
-              if ((unsigned long) imm_expr.X_add_number > max)
+              if ((unsigned long) imm_expr->X_add_number > max)
                   as_warn ("Bad custom immediate (%lu), must be at most %lu",
-                           (unsigned long)imm_expr.X_add_number, max);
+                           (unsigned long)imm_expr->X_add_number, max);
               continue;
             }
 
@@ -1299,33 +1334,33 @@ riscv_ip (char *str, struct riscv_cl_insn *ip)
               switch ( *++args )
                 {
                 case 'g':
-                  my_getExpression( &imm_expr, s );
+                  my_getExpression( imm_expr, s );
                   /* check_absolute_expr( ip, &imm_expr ); */
-                  if ((unsigned long) imm_expr.X_add_number > 32 )
+                  if ((unsigned long) imm_expr->X_add_number > 32 )
                     as_warn( _( "Improper ngpr amount (%lu)" ),
-                             (unsigned long) imm_expr.X_add_number );
-                  INSERT_OPERAND( IMMNGPR, *ip, imm_expr.X_add_number );
-                  imm_expr.X_op = O_absent;
+                             (unsigned long) imm_expr->X_add_number );
+                  INSERT_OPERAND( IMMNGPR, *ip, imm_expr->X_add_number );
+                  imm_expr->X_op = O_absent;
                   s = expr_end;
                   continue;
                 case 'f':
-                  my_getExpression( &imm_expr, s );
+                  my_getExpression( imm_expr, s );
                   /* check_absolute_expr( ip, &imm_expr ); */
-                  if ((unsigned long) imm_expr.X_add_number > 32 )
+                  if ((unsigned long) imm_expr->X_add_number > 32 )
                     as_warn( _( "Improper nfpr amount (%lu)" ),
-                             (unsigned long) imm_expr.X_add_number );
-                  INSERT_OPERAND( IMMNFPR, *ip, imm_expr.X_add_number );
-                  imm_expr.X_op = O_absent;
+                             (unsigned long) imm_expr->X_add_number );
+                  INSERT_OPERAND( IMMNFPR, *ip, imm_expr->X_add_number );
+                  imm_expr->X_op = O_absent;
                   s = expr_end;
                   continue;
                 case 'n':
-                  my_getExpression( &imm_expr, s );
+                  my_getExpression( imm_expr, s );
                   /* check_absolute_expr( ip, &imm_expr ); */
-                  if ((unsigned long) imm_expr.X_add_number > 8 )
+                  if ((unsigned long) imm_expr->X_add_number > 8 )
                     as_warn( _( "Improper nelm amount (%lu)" ),
-                             (unsigned long) imm_expr.X_add_number );
-                  INSERT_OPERAND( IMMSEGNELM, *ip, imm_expr.X_add_number - 1 );
-                  imm_expr.X_op = O_absent;
+                             (unsigned long) imm_expr->X_add_number );
+                  INSERT_OPERAND( IMMSEGNELM, *ip, imm_expr->X_add_number - 1 );
+                  imm_expr->X_op = O_absent;
                   s = expr_end;
                   continue;
                 case 'd':
@@ -1379,6 +1414,105 @@ riscv_ip (char *str, struct riscv_cl_insn *ip)
                 }
               break;
 
+	    case 'C': /* RVC */
+	      switch (*++args)
+		{
+		case 'd': /* RD x8-x15 */
+		  if (!reg_lookup (&s, RCLASS_GPR, &regno)
+		      || !(regno >= 8 && regno <= 15))
+		    break;
+		  INSERT_OPERAND (CRDS, *ip, regno % 8);
+		  continue;
+		case 's': /* RS1 x8-x15 */
+		  if (!reg_lookup (&s, RCLASS_GPR, &regno)
+		      || !(regno >= 8 && regno <= 15))
+		    break;
+		  INSERT_OPERAND (CRS1S, *ip, regno % 8);
+		  continue;
+		case 'S': /* RS1 */
+		  if (!reg_lookup (&s, RCLASS_GPR, &regno))
+		    break;
+		  INSERT_OPERAND (CRS1, *ip, regno);
+		  continue;
+		case 'U': /* RS2, constrained to equal RD */
+		  if (!reg_lookup (&s, RCLASS_GPR, &regno)
+		      || EXTRACT_OPERAND (RD, *ip) != regno)
+		    break;
+		  continue;
+		case 'c': /* RS1, constrained to equal sp */
+		  if (!reg_lookup (&s, RCLASS_GPR, &regno)
+		      || regno != X_SP)
+		    break;
+		  continue;
+		case 'j':
+		  p = percent_op_itype;
+		  if (my_getSmallExpression (imm_expr, imm_reloc, s, p)
+		      || imm_expr->X_op != O_constant
+		      || !VALID_RVC_IMM (imm_expr->X_add_number))
+		    break;
+		  s = expr_end;
+                  imm_expr->X_op = O_absent;
+		  ip->insn_opcode |= ENCODE_RVC_IMM (imm_expr->X_add_number);
+		  continue;
+		case 'k':
+		  p = percent_op_itype;
+		  if (my_getSmallExpression (imm_expr, imm_reloc, s, p)
+		      || imm_expr->X_op != O_constant
+		      || !VALID_RVC_LW_IMM (imm_expr->X_add_number))
+		    break;
+		  s = expr_end;
+                  imm_expr->X_op = O_absent;
+		  ip->insn_opcode |= ENCODE_RVC_LW_IMM (imm_expr->X_add_number);
+		  continue;
+		case 'l':
+		  p = percent_op_itype;
+		  if (my_getSmallExpression (imm_expr, imm_reloc, s, p)
+		      || imm_expr->X_op != O_constant
+		      || !VALID_RVC_LD_IMM (imm_expr->X_add_number))
+		    break;
+		  s = expr_end;
+                  imm_expr->X_op = O_absent;
+		  ip->insn_opcode |= ENCODE_RVC_LD_IMM (imm_expr->X_add_number);
+		  continue;
+		case 'm':
+		  p = percent_op_itype;
+		  if (my_getSmallExpression (imm_expr, imm_reloc, s, p)
+		      || imm_expr->X_op != O_constant
+		      || !VALID_RVC_LWSP_IMM (imm_expr->X_add_number))
+		    break;
+		  s = expr_end;
+                  imm_expr->X_op = O_absent;
+		  ip->insn_opcode |= ENCODE_RVC_LWSP_IMM (imm_expr->X_add_number);
+		  continue;
+		case 'n':
+		  p = percent_op_itype;
+		  if (my_getSmallExpression (imm_expr, imm_reloc, s, p)
+		      || imm_expr->X_op != O_constant
+		      || !VALID_RVC_LDSP_IMM (imm_expr->X_add_number))
+		    break;
+		  s = expr_end;
+                  imm_expr->X_op = O_absent;
+		  ip->insn_opcode |= ENCODE_RVC_LDSP_IMM (imm_expr->X_add_number);
+		  continue;
+		case 'u':
+		  p = percent_op_utype;
+		  if (my_getSmallExpression (imm_expr, imm_reloc, s, p)
+		      || imm_expr->X_op != O_constant
+		      || imm_expr->X_add_number < 0
+		      || imm_expr->X_add_number >= RISCV_BIGIMM_REACH
+		      || (imm_expr->X_add_number >= RISCV_RVC_IMM_REACH/2
+			  && imm_expr->X_add_number <
+			      RISCV_BIGIMM_REACH - RISCV_RVC_IMM_REACH/2))
+		    break;
+		  s = expr_end;
+                  imm_expr->X_op = O_absent;
+		  ip->insn_opcode |= ENCODE_RVC_IMM (imm_expr->X_add_number);
+		  continue;
+		default:
+		  as_bad (_("bad RVC field specifier 'C%c'\n"), *args);
+		}
+	      break;
+
 	    case ',':
 	      ++argnum;
 	      if (*s++ == *args)
@@ -1395,35 +1529,35 @@ riscv_ip (char *str, struct riscv_cl_insn *ip)
 	      break;
 
 	    case '<':		/* shift amount, 0 - 31 */
-	      my_getExpression (&imm_expr, s);
-	      check_absolute_expr (ip, &imm_expr);
-	      if ((unsigned long) imm_expr.X_add_number > 31)
+	      my_getExpression (imm_expr, s);
+	      check_absolute_expr (ip, imm_expr);
+	      if ((unsigned long) imm_expr->X_add_number > 31)
 		as_warn (_("Improper shift amount (%lu)"),
-			 (unsigned long) imm_expr.X_add_number);
-	      INSERT_OPERAND (SHAMTW, *ip, imm_expr.X_add_number);
-	      imm_expr.X_op = O_absent;
+			 (unsigned long) imm_expr->X_add_number);
+	      INSERT_OPERAND (SHAMTW, *ip, imm_expr->X_add_number);
+	      imm_expr->X_op = O_absent;
 	      s = expr_end;
 	      continue;
 
 	    case '>':		/* shift amount, 0 - (XLEN-1) */
-	      my_getExpression (&imm_expr, s);
-	      check_absolute_expr (ip, &imm_expr);
-	      if ((unsigned long) imm_expr.X_add_number > (rv64 ? 63 : 31))
+	      my_getExpression (imm_expr, s);
+	      check_absolute_expr (ip, imm_expr);
+	      if ((unsigned long) imm_expr->X_add_number > (rv64 ? 63 : 31))
 		as_warn (_("Improper shift amount (%lu)"),
-			 (unsigned long) imm_expr.X_add_number);
-	      INSERT_OPERAND (SHAMT, *ip, imm_expr.X_add_number);
-	      imm_expr.X_op = O_absent;
+			 (unsigned long) imm_expr->X_add_number);
+	      INSERT_OPERAND (SHAMT, *ip, imm_expr->X_add_number);
+	      imm_expr->X_op = O_absent;
 	      s = expr_end;
 	      continue;
 
 	    case 'Z':		/* CSRRxI immediate */
-	      my_getExpression (&imm_expr, s);
-	      check_absolute_expr (ip, &imm_expr);
-	      if ((unsigned long) imm_expr.X_add_number > 31)
+	      my_getExpression (imm_expr, s);
+	      check_absolute_expr (ip, imm_expr);
+	      if ((unsigned long) imm_expr->X_add_number > 31)
 		as_warn (_("Improper CSRxI immediate (%lu)"),
-			 (unsigned long) imm_expr.X_add_number);
-	      INSERT_OPERAND (RS1, *ip, imm_expr.X_add_number);
-	      imm_expr.X_op = O_absent;
+			 (unsigned long) imm_expr->X_add_number);
+	      INSERT_OPERAND (RS1, *ip, imm_expr->X_add_number);
+	      imm_expr->X_op = O_absent;
 	      s = expr_end;
 	      continue;
 
@@ -1433,13 +1567,13 @@ riscv_ip (char *str, struct riscv_cl_insn *ip)
 	        INSERT_OPERAND (CSR, *ip, regno);
 	      else
 		{
-	          my_getExpression (&imm_expr, s);
-	          check_absolute_expr (ip, &imm_expr);
-		  if ((unsigned long) imm_expr.X_add_number > 0xfff)
+	          my_getExpression (imm_expr, s);
+	          check_absolute_expr (ip, imm_expr);
+		  if ((unsigned long) imm_expr->X_add_number > 0xfff)
 	            as_warn(_("Improper CSR address (%lu)"),
-	                    (unsigned long) imm_expr.X_add_number);
-	          INSERT_OPERAND (CSR, *ip, imm_expr.X_add_number);
-		  imm_expr.X_op = O_absent;
+	                    (unsigned long) imm_expr->X_add_number);
+	          INSERT_OPERAND (CSR, *ip, imm_expr->X_add_number);
+		  imm_expr->X_op = O_absent;
 		  s = expr_end;
 	        }
 	      continue;
@@ -1526,55 +1660,55 @@ riscv_ip (char *str, struct riscv_cl_insn *ip)
 	      break;
 
 	    case 'I':
-	      my_getExpression (&imm_expr, s);
-	      if (imm_expr.X_op != O_big
-		  && imm_expr.X_op != O_constant)
+	      my_getExpression (imm_expr, s);
+	      if (imm_expr->X_op != O_big
+		  && imm_expr->X_op != O_constant)
 		insn_error = _("absolute expression required");
-	      normalize_constant_expr (&imm_expr);
+	      normalize_constant_expr (imm_expr);
 	      s = expr_end;
 	      continue;
 
 	    case 'A':
-	      my_getExpression (&offset_expr, s);
-	      normalize_constant_expr (&offset_expr);
-	      imm_reloc = BFD_RELOC_32;
+	      my_getExpression (imm_expr, s);
+	      normalize_constant_expr (imm_expr);
+	      *imm_reloc = BFD_RELOC_32;
 	      s = expr_end;
 	      continue;
 
 	    case 'j': /* sign-extended immediate */
-	      imm_reloc = BFD_RELOC_RISCV_LO12_I;
+	      *imm_reloc = BFD_RELOC_RISCV_LO12_I;
 	      p = percent_op_itype;
 	      goto alu_op;
 	    case 'q': /* store displacement */
 	      p = percent_op_stype;
-	      offset_reloc = BFD_RELOC_RISCV_LO12_S;
+	      *imm_reloc = BFD_RELOC_RISCV_LO12_S;
 	      goto load_store;
 	    case 'o': /* load displacement */
 	      p = percent_op_itype;
-	      offset_reloc = BFD_RELOC_RISCV_LO12_I;
+	      *imm_reloc = BFD_RELOC_RISCV_LO12_I;
 	      goto load_store;
 	    case '0': /* AMO "displacement," which must be zero */
 	      p = percent_op_rtype;
-	      offset_reloc = BFD_RELOC_UNUSED;
+	      *imm_reloc = BFD_RELOC_UNUSED;
 load_store:
 	      /* Check whether there is only a single bracketed expression
 	         left.  If so, it must be the base register and the
 	         constant must be zero.  */
-	      offset_expr.X_op = O_constant;
-	      offset_expr.X_add_number = 0;
+	      imm_expr->X_op = O_constant;
+	      imm_expr->X_add_number = 0;
 	      if (*s == '(' && strchr (s + 1, '(') == 0)
 		continue;
 alu_op:
 	      /* If this value won't fit into a 16 bit offset, then go
 	         find a macro that will generate the 32 bit offset
 	         code pattern.  */
-	      if (!my_getSmallExpression (&offset_expr, &offset_reloc, s, p))
+	      if (!my_getSmallExpression (imm_expr, imm_reloc, s, p))
 		{
-		  normalize_constant_expr (&offset_expr);
-		  if (offset_expr.X_op != O_constant
-		      || (*args == '0' && offset_expr.X_add_number != 0)
-	              || offset_expr.X_add_number >= (signed)RISCV_IMM_REACH/2
-	              || offset_expr.X_add_number < -(signed)RISCV_IMM_REACH/2)
+		  normalize_constant_expr (imm_expr);
+		  if (imm_expr->X_op != O_constant
+		      || (*args == '0' && imm_expr->X_add_number != 0)
+	              || imm_expr->X_add_number >= (signed)RISCV_IMM_REACH/2
+	              || imm_expr->X_add_number < -(signed)RISCV_IMM_REACH/2)
 		    break;
 		}
 
@@ -1582,38 +1716,38 @@ alu_op:
 	      continue;
 
 	    case 'p':		/* pc relative offset */
-	      offset_reloc = BFD_RELOC_12_PCREL;
-	      my_getExpression (&offset_expr, s);
+	      *imm_reloc = BFD_RELOC_12_PCREL;
+	      my_getExpression (imm_expr, s);
 	      s = expr_end;
 	      continue;
 
 	    case 'u':		/* upper 20 bits */
 	      p = percent_op_utype;
-	      if (!my_getSmallExpression (&imm_expr, &imm_reloc, s, p)
-		  && imm_expr.X_op == O_constant)
+	      if (!my_getSmallExpression (imm_expr, imm_reloc, s, p)
+		  && imm_expr->X_op == O_constant)
 		{
-		  if (imm_expr.X_add_number < 0
-		      || imm_expr.X_add_number >= (signed)RISCV_BIGIMM_REACH)
+		  if (imm_expr->X_add_number < 0
+		      || imm_expr->X_add_number >= (signed)RISCV_BIGIMM_REACH)
 		    as_bad (_("lui expression not in range 0..1048575"));
 	      
-		  imm_reloc = BFD_RELOC_RISCV_HI20;
-		  imm_expr.X_add_number <<= RISCV_IMM_BITS;
+		  *imm_reloc = BFD_RELOC_RISCV_HI20;
+		  imm_expr->X_add_number <<= RISCV_IMM_BITS;
 		}
 	      s = expr_end;
 	      continue;
 
 	    case 'a':		/* 26 bit address */
-	      my_getExpression (&offset_expr, s);
+	      my_getExpression (imm_expr, s);
 	      s = expr_end;
-	      offset_reloc = BFD_RELOC_RISCV_JMP;
+	      *imm_reloc = BFD_RELOC_RISCV_JMP;
 	      continue;
 
 	    case 'c':
-	      my_getExpression (&offset_expr, s);
+	      my_getExpression (imm_expr, s);
 	      s = expr_end;
-	      offset_reloc = BFD_RELOC_RISCV_CALL;
+	      *imm_reloc = BFD_RELOC_RISCV_CALL;
 	      if (*s == '@')
-		offset_reloc = BFD_RELOC_RISCV_CALL_PLT, s++;
+		*imm_reloc = BFD_RELOC_RISCV_CALL_PLT, s++;
 	      continue;
 
 	    default:
@@ -1642,13 +1776,13 @@ void
 md_assemble (char *str)
 {
   struct riscv_cl_insn insn;
+  expressionS imm_expr;
+  bfd_reloc_code_real_type imm_reloc = BFD_RELOC_UNUSED;
 
   imm_expr.X_op = O_absent;
-  offset_expr.X_op = O_absent;
   imm_reloc = BFD_RELOC_UNUSED;
-  offset_reloc = BFD_RELOC_UNUSED;
 
-  riscv_ip (str, &insn);
+  riscv_ip (str, &insn, &imm_expr, &imm_reloc);
 
   if (insn_error)
     {
@@ -1657,16 +1791,9 @@ md_assemble (char *str)
     }
 
   if (insn.insn_mo->pinfo == INSN_MACRO)
-    macro (&insn);
+    macro (&insn, &imm_expr, &imm_reloc);
   else
-    {
-      if (imm_expr.X_op != O_absent)
-	append_insn (&insn, &imm_expr, imm_reloc);
-      else if (offset_expr.X_op != O_absent)
-	append_insn (&insn, &offset_expr, offset_reloc);
-      else
-	append_insn (&insn, NULL, BFD_RELOC_UNUSED);
-    }
+    append_insn (&insn, &imm_expr, imm_reloc);
 }
 
 char *
@@ -1732,7 +1859,7 @@ md_parse_option (int c, char *arg)
       break;
 
     case OPTION_MARCH:
-      riscv_set_arch(arg);
+      riscv_set_arch (arg);
 
     case OPTION_NO_PIC:
       riscv_opts.pic = FALSE;
@@ -1753,7 +1880,7 @@ void
 riscv_after_parse_args (void)
 {
   if (riscv_subsets == NULL)
-    riscv_set_arch("RVIMAFDXcustom");
+    riscv_set_arch ("RVIMAFDXcustom");
 }
 
 void
@@ -1881,7 +2008,7 @@ md_apply_fix (fixS *fixP, valueT *valP, segT seg ATTRIBUTE_UNUSED)
     }
 }
 
-/* This structure is used to hold a stack of .set values.  */
+/* This structure is used to hold a stack of .option values.  */
 
 struct riscv_option_stack
 {
@@ -1891,7 +2018,7 @@ struct riscv_option_stack
 
 static struct riscv_option_stack *riscv_opts_stack;
 
-/* Handle the .set pseudo-op.  */
+/* Handle the .option pseudo-op.  */
 
 static void
 s_riscv_option (int x ATTRIBUTE_UNUSED)

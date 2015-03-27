@@ -117,9 +117,10 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
   struct riscv_private_data *pd = info->private_data;
   int rs1 = (l >> OP_SH_RS1) & OP_MASK_RS1;
   int rd = (l >> OP_SH_RD) & OP_MASK_RD;
+  fprintf_ftype print = info->fprintf_func;
 
   if (*d != '\0')
-    (*info->fprintf_func) (info->stream, "\t");
+    print (info->stream, "\t");
 
   for (; *d != '\0'; d++)
     {
@@ -211,6 +212,50 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
               break;
           }
           break;
+
+	case 'C': /* RVC */
+	  switch (*++d)
+	    {
+	    case 'd': /* RD x8-x15 */
+	      print (info->stream, "%s",
+		     riscv_gpr_names[((l >> OP_SH_CRDS) & OP_MASK_CRDS) + 8]);
+	      break;
+	    case 's': /* RS1 x8-x15 */
+	      print (info->stream, "%s",
+		     riscv_gpr_names[((l >> OP_SH_CRS1S) & OP_MASK_CRS1S) + 8]);
+	      break;
+	    case 'S': /* RS1 */
+	      print (info->stream, "%s",
+		     riscv_gpr_names[(l >> OP_SH_CRS1) & OP_MASK_CRS1]);
+	      break;
+	    case 'c': /* RS1, constrained to equal sp */
+	      print (info->stream, "%s", riscv_gpr_names[X_SP]);
+	      continue;
+	    case 'U': /* RS2, constrained to equal RD */
+	    case 'T': /* RS2 */
+	      print (info->stream, "%s", riscv_gpr_names[rd]);
+	      continue;
+	    case 'j':
+	      print (info->stream, "%d", (int)EXTRACT_RVC_IMM (l));
+	      break;
+	    case 'k':
+	      print (info->stream, "%d", (int)EXTRACT_RVC_LW_IMM (l));
+	      break;
+	    case 'l':
+	      print (info->stream, "%d", (int)EXTRACT_RVC_LD_IMM (l));
+	      break;
+	    case 'm':
+	      print (info->stream, "%d", (int)EXTRACT_RVC_LWSP_IMM (l));
+	      break;
+	    case 'n':
+	      print (info->stream, "%d", (int)EXTRACT_RVC_LDSP_IMM (l));
+	      break;
+	    case 'u':
+	      print (info->stream, "0x%x",
+		     (int)(EXTRACT_RVC_IMM (l) & (RISCV_BIGIMM_REACH-1)));
+	      break;
+	    }
+	  break;
 
 	case ',':
 	case '(':
@@ -362,20 +407,19 @@ riscv_disassemble_insn (bfd_vma memaddr, insn_t word, disassemble_info *info)
   struct riscv_private_data *pd;
   int insnlen;
 
+#define OP_HASH_IDX(i) ((i) & (riscv_insn_length (i) == 2 ? 0x3 : 0x7f))
+
   /* Build a hash table to shorten the search time.  */
   if (! init)
     {
-      unsigned int i;
       unsigned int e_flags = elf_elfheader (info->section->owner)->e_flags;
       extension = riscv_elf_flag_to_name(EF_GET_RISCV_EXT(e_flags));
 
-      for (i = 0; i <= OP_MASK_OP; i++)
-        for (op = riscv_opcodes; op < &riscv_opcodes[NUMOPCODES]; op++)
-          if (i == ((op->match >> OP_SH_OP) & OP_MASK_OP))
-            {
-              riscv_hash[i] = op;
-              break;
-            }
+      for (op = riscv_opcodes; op < &riscv_opcodes[NUMOPCODES]; op++)
+        {
+	  if (!riscv_hash[OP_HASH_IDX (op->match)])
+	    riscv_hash[OP_HASH_IDX (op->match)] = op;
+        }
 
       init = 1;
     }
@@ -409,7 +453,7 @@ riscv_disassemble_insn (bfd_vma memaddr, insn_t word, disassemble_info *info)
   info->target = 0;
   info->target2 = 0;
 
-  op = riscv_hash[(word >> OP_SH_OP) & OP_MASK_OP];
+  op = riscv_hash[OP_HASH_IDX (word)];
   if (op != NULL)
     {
       for (; op < &riscv_opcodes[NUMOPCODES]; op++)

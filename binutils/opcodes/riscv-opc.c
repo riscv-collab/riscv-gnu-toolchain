@@ -105,7 +105,7 @@ const char * const riscv_vec_fpr_names[32] =
 
 static int match_opcode(const struct riscv_opcode *op, insn_t insn)
 {
-  return (insn & op->mask) == op->match;
+  return ((insn ^ op->match) & op->mask) == 0;
 }
 
 static int match_never(const struct riscv_opcode *op ATTRIBUTE_UNUSED,
@@ -122,14 +122,17 @@ static int match_rs1_eq_rs2(const struct riscv_opcode *op, insn_t insn)
 
 const struct riscv_opcode riscv_builtin_opcodes[] =
 {
-/* These instructions appear first so that the disassembler will find
-   them first.  The assemblers uses a hash table based on the
-   instruction name anyhow.  */
-/* name,      isa,   operands, match, mask, pinfo */
-{"unimp",     "I",   "",         0, 0xffff,  match_opcode, 0 },
+/* name,      isa,   operands, match, mask, match_func, pinfo */
+{"unimp",     "C",   "",  0, 0xffffU,  match_opcode, 0 },
+{"unimp",     "I",   "",  MATCH_CSRRW | (CSR_CYCLE << OP_SH_CSR), 0xffffffffU,  match_opcode, 0 }, /* csrw cycle, x0 */
+{"sbreak",    "C",   "",  MATCH_C_LI | ENCODE_RVC_IMM(-32U), MASK_C_LI | MASK_RD | ENCODE_RVC_IMM(-1U), match_opcode, 0 },
+{"sbreak",    "I",   "",    MATCH_SBREAK, MASK_SBREAK, match_opcode,   0 },
+{"nop",       "C",   "",  MATCH_C_MV, MASK_C_MV | MASK_RD | (OP_MASK_CRS1 << OP_SH_CRS1), match_opcode, 0 },
 {"nop",       "I",   "",         MATCH_ADDI, MASK_ADDI | MASK_RD | MASK_RS1 | MASK_IMM, match_opcode,  INSN_ALIAS },
+{"li",        "C",   "d,Cj",  MATCH_C_LI, MASK_C_LI, match_opcode, 0 },
 {"li",        "I",   "d,j",      MATCH_ADDI, MASK_ADDI | MASK_RS1, match_opcode,  INSN_ALIAS|WR_xd }, /* addi */
 {"li",        "I",   "d,I",  0,    (int) M_LI,  match_never, INSN_MACRO },
+{"mv",        "C",   "d,CS",  MATCH_C_MV, MASK_C_MV, match_opcode, 0 },
 {"mv",        "I",   "d,s",  MATCH_ADDI, MASK_ADDI | MASK_IMM, match_opcode,   INSN_ALIAS|WR_xd|RD_xs1 },
 {"move",      "I",   "d,s",  MATCH_ADDI, MASK_ADDI | MASK_IMM, match_opcode,   INSN_ALIAS|WR_xd|RD_xs1 },
 {"andi",      "I",   "d,s,j",  MATCH_ANDI, MASK_ANDI, match_opcode,   WR_xd|RD_xs1 },
@@ -151,7 +154,13 @@ const struct riscv_opcode riscv_builtin_opcodes[] =
 {"bgtu",      "I",   "t,s,p",  MATCH_BLTU, MASK_BLTU, match_opcode,   INSN_ALIAS|RD_xs1|RD_xs2 },
 {"bnez",      "I",   "s,p",  MATCH_BNE, MASK_BNE | MASK_RS2, match_opcode,   INSN_ALIAS|RD_xs1 },
 {"bne",       "I",   "s,t,p",  MATCH_BNE, MASK_BNE, match_opcode,   RD_xs1|RD_xs2 },
+{"addi",      "C",   "d,CU,Cj",  MATCH_C_ADDI, MASK_C_ADDI, match_opcode, 0 },
+{"addi",      "C",   "d,CU,Cm",  MATCH_C_ADDI4, MASK_C_ADDI4, match_opcode, 0 },
 {"addi",      "I",   "d,s,j",  MATCH_ADDI, MASK_ADDI, match_opcode,  WR_xd|RD_xs1 },
+{"add",       "C",   "d,CU,CS",  MATCH_C_ADD, MASK_C_ADD, match_opcode, 0 },
+{"add",       "C",   "d,CS,CU",  MATCH_C_ADD, MASK_C_ADD, match_opcode, 0 },
+{"add",       "C",   "d,CU,Cj",  MATCH_C_ADDI, MASK_C_ADDI, match_opcode, 0 },
+{"add",       "C",   "d,CU,Cm",  MATCH_C_ADDI4, MASK_C_ADDI4, match_opcode, 0 },
 {"add",       "I",   "d,s,t",  MATCH_ADD, MASK_ADD, match_opcode,  WR_xd|RD_xs1|RD_xs2 },
 {"add",       "I",   "d,s,t,0",MATCH_ADD, MASK_ADD, match_opcode,  WR_xd|RD_xs1|RD_xs2 },
 {"add",       "I",   "d,s,j",  MATCH_ADDI, MASK_ADDI, match_opcode,  INSN_ALIAS|WR_xd|RD_xs1 },
@@ -160,7 +169,9 @@ const struct riscv_opcode riscv_builtin_opcodes[] =
 {"la.tls.gd", "I",   "d,A",  0,    (int) M_LA_TLS_GD,  match_never, INSN_MACRO },
 {"la.tls.ie", "I",   "d,A",  0,    (int) M_LA_TLS_IE,  match_never, INSN_MACRO },
 {"neg",       "I",   "d,t",  MATCH_SUB, MASK_SUB | MASK_RS1, match_opcode,   INSN_ALIAS|WR_xd|RD_xs2 }, /* sub 0 */
+{"slli",      "C",   "d,CU,Cj",  MATCH_C_SLLI, MASK_C_SLLI, match_opcode, 0 },
 {"slli",      "I",   "d,s,>",   MATCH_SLLI, MASK_SLLI, match_opcode,   WR_xd|RD_xs1 },
+{"sll",       "C",   "d,CU,Cj",  MATCH_C_SLLI, MASK_C_SLLI, match_opcode, 0 },
 {"sll",       "I",   "d,s,t",   MATCH_SLL, MASK_SLL, match_opcode,   WR_xd|RD_xs1|RD_xs2 },
 {"sll",       "I",   "d,s,>",   MATCH_SLLI, MASK_SLLI, match_opcode,   INSN_ALIAS|WR_xd|RD_xs1 },
 {"srli",      "I",   "d,s,>",   MATCH_SRLI, MASK_SRLI, match_opcode,   WR_xd|RD_xs1 },
@@ -177,8 +188,11 @@ const struct riscv_opcode riscv_builtin_opcodes[] =
 {"call",      "I",   "c", (X_T0 << OP_SH_RS1) | (X_RA << OP_SH_RD), (int) M_CALL,  match_never, INSN_MACRO },
 {"tail",      "I",   "c", (X_T0 << OP_SH_RS1), (int) M_CALL,  match_never, INSN_MACRO },
 {"jump",      "I",   "c,s", 0, (int) M_CALL,  match_never, INSN_MACRO },
+{"jr",        "C",   "CS",  MATCH_C_JALR, MASK_C_JALR | MASK_RD, match_opcode, 0 },
 {"jr",        "I",   "s",  MATCH_JALR, MASK_JALR | MASK_RD | MASK_IMM, match_opcode,   INSN_ALIAS|WR_xd|RD_xs1 },
 {"jr",        "I",   "s,j",  MATCH_JALR, MASK_JALR | MASK_RD, match_opcode,   INSN_ALIAS|WR_xd|RD_xs1 },
+{"jalr",      "C",   "CS",  MATCH_C_JALR | (X_RA << OP_SH_RD), MASK_C_JALR | MASK_RD, match_opcode, 0 },
+{"jalr",      "C",   "d,CS",  MATCH_C_JALR, MASK_C_JALR, match_opcode, 0 },
 {"jalr",      "I",   "s",  MATCH_JALR | (X_RA << OP_SH_RD), MASK_JALR | MASK_RD | MASK_IMM, match_opcode,   INSN_ALIAS|WR_xd|RD_xs1 },
 {"jalr",      "I",   "s,j",  MATCH_JALR | (X_RA << OP_SH_RD), MASK_JALR | MASK_RD, match_opcode,   INSN_ALIAS|WR_xd|RD_xs1 },
 {"jalr",      "I",   "d,s",  MATCH_JALR, MASK_JALR | MASK_IMM, match_opcode,   INSN_ALIAS|WR_xd|RD_xs1 },
@@ -191,8 +205,11 @@ const struct riscv_opcode riscv_builtin_opcodes[] =
 {"lh",        "I",   "d,A",  0, (int) M_LH, match_never, INSN_MACRO },
 {"lhu",       "I",   "d,o(s)",  MATCH_LHU, MASK_LHU, match_opcode,   WR_xd|RD_xs1 },
 {"lhu",       "I",   "d,A",  0, (int) M_LHU, match_never, INSN_MACRO },
+{"lw",        "C",   "d,Cm(Cc)",  MATCH_C_LWSP, MASK_C_LWSP, match_opcode,   WR_xd|RD_xs1 },
+{"lw",        "C",   "Cd,Ck(Cs)",  MATCH_C_LW, MASK_C_LW, match_opcode,   WR_xd|RD_xs1 },
 {"lw",        "I",   "d,o(s)",  MATCH_LW, MASK_LW, match_opcode,   WR_xd|RD_xs1 },
 {"lw",        "I",   "d,A",  0, (int) M_LW, match_never, INSN_MACRO },
+{"lui",       "C",   "d,Cu",  MATCH_C_LUI, MASK_C_LUI, match_opcode, 0 },
 {"lui",       "I",   "d,u",  MATCH_LUI, MASK_LUI, match_opcode,   WR_xd },
 {"not",       "I",   "d,s",  MATCH_XORI | MASK_IMM, MASK_XORI | MASK_IMM, match_opcode,   INSN_ALIAS|WR_xd|RD_xs1 },
 {"ori",       "I",   "d,s,j",  MATCH_ORI, MASK_ORI, match_opcode,   WR_xd|RD_xs1 },
@@ -215,6 +232,8 @@ const struct riscv_opcode riscv_builtin_opcodes[] =
 {"sb",        "I",   "t,A,s",  0, (int) M_SB, match_never,  INSN_MACRO },
 {"sh",        "I",   "t,q(s)",  MATCH_SH, MASK_SH, match_opcode,   RD_xs1|RD_xs2 },
 {"sh",        "I",   "t,A,s",  0, (int) M_SH, match_never,  INSN_MACRO },
+{"sw",        "C",   "d,Cm(Cc)",  MATCH_C_SWSP, MASK_C_SWSP, match_opcode,   WR_xd|RD_xs1 },
+{"sw",        "C",   "Cd,Ck(Cs)",  MATCH_C_SW, MASK_C_SW, match_opcode,   WR_xd|RD_xs1 },
 {"sw",        "I",   "t,q(s)",  MATCH_SW, MASK_SW, match_opcode,   RD_xs1|RD_xs2 },
 {"sw",        "I",   "t,A,s",  0, (int) M_SW, match_never,  INSN_MACRO },
 {"fence",     "I",   "",  MATCH_FENCE | MASK_PRED | MASK_SUCC, MASK_FENCE | MASK_RD | MASK_RS1 | MASK_IMM, match_opcode,   INSN_ALIAS },
@@ -226,7 +245,6 @@ const struct riscv_opcode riscv_builtin_opcodes[] =
 {"rdcycleh",  "32I", "d",  MATCH_RDCYCLEH, MASK_RDCYCLEH, match_opcode,  WR_xd },
 {"rdinstreth","32I", "d",  MATCH_RDINSTRETH, MASK_RDINSTRETH, match_opcode,  WR_xd },
 {"rdtimeh",   "32I", "d",  MATCH_RDTIMEH, MASK_RDTIMEH, match_opcode,  WR_xd },
-{"sbreak",    "I",   "",    MATCH_SBREAK, MASK_SBREAK, match_opcode,   0 },
 {"scall",     "I",   "",    MATCH_SCALL, MASK_SCALL, match_opcode,   0 },
 {"ecall",     "I",   "",    MATCH_SCALL, MASK_SCALL, match_opcode,   0 },
 {"xori",      "I",   "d,s,j",  MATCH_XORI, MASK_XORI, match_opcode,   WR_xd|RD_xs1 },
@@ -234,12 +252,20 @@ const struct riscv_opcode riscv_builtin_opcodes[] =
 {"xor",       "I",   "d,s,j",  MATCH_XORI, MASK_XORI, match_opcode,   INSN_ALIAS|WR_xd|RD_xs1 },
 {"lwu",       "64I", "d,o(s)",  MATCH_LWU, MASK_LWU, match_opcode,   WR_xd|RD_xs1 },
 {"lwu",       "64I", "d,A",  0, (int) M_LWU, match_never, INSN_MACRO },
+{"ld",        "64C", "d,Cn(Cc)",  MATCH_C_LDSP, MASK_C_LDSP, match_opcode,   WR_xd|RD_xs1 },
+{"ld",        "64C", "Cd,Cl(Cs)",  MATCH_C_LD, MASK_C_LD, match_opcode,   WR_xd|RD_xs1 },
 {"ld",        "64I", "d,o(s)", MATCH_LD, MASK_LD, match_opcode,  WR_xd|RD_xs1 },
 {"ld",        "64I", "d,A",  0, (int) M_LD, match_never, INSN_MACRO },
+{"sd",        "64C", "d,Cn(Cc)",  MATCH_C_SDSP, MASK_C_SDSP, match_opcode,   WR_xd|RD_xs1 },
+{"sd",        "64C", "Cd,Cl(Cs)",  MATCH_C_SD, MASK_C_SD, match_opcode,   WR_xd|RD_xs1 },
 {"sd",        "64I", "t,q(s)",  MATCH_SD, MASK_SD, match_opcode,   RD_xs1|RD_xs2 },
 {"sd",        "64I", "t,A,s",  0, (int) M_SD, match_never,  INSN_MACRO },
 {"sext.w",    "64I", "d,s",  MATCH_ADDIW, MASK_ADDIW | MASK_IMM, match_opcode,   INSN_ALIAS|WR_xd|RD_xs1 },
+{"addiw",     "64C", "d,CU,Cj",  MATCH_C_ADDIW, MASK_C_ADDIW, match_opcode, 0 },
 {"addiw",     "64I", "d,s,j",  MATCH_ADDIW, MASK_ADDIW, match_opcode,   WR_xd|RD_xs1 },
+{"addw",      "64C", "d,CU,CS",  MATCH_C_ADDW, MASK_C_ADDW, match_opcode, 0 },
+{"addw",      "64C", "d,CS,CU",  MATCH_C_ADDW, MASK_C_ADDW, match_opcode, 0 },
+{"addw",      "64C", "d,CU,Cj",  MATCH_C_ADDIW, MASK_C_ADDIW, match_opcode, 0 },
 {"addw",      "64I", "d,s,t",  MATCH_ADDW, MASK_ADDW, match_opcode,   WR_xd|RD_xs1|RD_xs2 },
 {"addw",      "64I", "d,s,j",  MATCH_ADDIW, MASK_ADDIW, match_opcode,   INSN_ALIAS|WR_xd|RD_xs1 },
 {"negw",      "64I", "d,t",  MATCH_SUBW, MASK_SUBW | MASK_RS1, match_opcode,   INSN_ALIAS|WR_xd|RD_xs2 }, /* sub 0 */
