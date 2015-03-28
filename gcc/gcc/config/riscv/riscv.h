@@ -104,7 +104,7 @@ along with GCC; see the file COPYING3.  If not see
 /* Default target_flags if no switches are specified  */
 
 #ifndef TARGET_DEFAULT
-#define TARGET_DEFAULT (TARGET_ATOMIC | 
+#define TARGET_DEFAULT 0
 #endif
 
 #ifndef RISCV_ARCH_STRING_DEFAULT

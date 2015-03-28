@@ -119,7 +119,8 @@ static const struct default_options riscv_option_optimization_table[] =
 
 #undef TARGET_DEFAULT_TARGET_FLAGS
 #define TARGET_DEFAULT_TARGET_FLAGS				\
-  (riscv_flags_from_arch_string (RISCV_ARCH_STRING_DEFAULT)	\
+  (TARGET_DEFAULT						\
+   | riscv_flags_from_arch_string (RISCV_ARCH_STRING_DEFAULT)	\
    | (TARGET_64BIT_DEFAULT ? 0 : MASK_32BIT))
 
 #undef TARGET_HANDLE_OPTION
