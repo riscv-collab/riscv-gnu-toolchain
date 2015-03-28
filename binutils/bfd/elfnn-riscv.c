@@ -860,6 +860,7 @@ riscv_elf_adjust_dynamic_symbol (struct bfd_link_info *info,
   /* Make sure we know what is going on here.  */
   BFD_ASSERT (dynobj != NULL
 	      && (h->needs_plt
+		  || h->type == STT_GNU_IFUNC
 		  || h->u.weakdef != NULL
 		  || (h->def_dynamic
 		      && h->ref_regular
@@ -868,7 +869,7 @@ riscv_elf_adjust_dynamic_symbol (struct bfd_link_info *info,
   /* If this is a function, put it in the procedure linkage table.  We
      will fill in the contents of the procedure linkage table later
      (although we could actually do it here).  */
-  if (h->type == STT_FUNC || h->needs_plt)
+  if (h->type == STT_FUNC || h->type == STT_GNU_IFUNC || h->needs_plt)
     {
       if (h->plt.refcount <= 0
 	  || SYMBOL_CALLS_LOCAL (info, h)
