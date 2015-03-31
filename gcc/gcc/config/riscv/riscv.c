@@ -108,7 +108,7 @@ enum riscv_address_type {
   ADDRESS_SYMBOLIC
 };
 
-enum riscv_code_model riscv_cmodel = CM_MEDLOW;
+enum riscv_code_model riscv_cmodel = TARGET_DEFAULT_CMODEL;
 
 /* Macros to create an enumeration identifier for a function prototype.  */
 #define RISCV_FTYPE_NAME1(A, B) RISCV_##A##_FTYPE_##B

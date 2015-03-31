@@ -198,6 +198,8 @@ along with GCC; see the file COPYING3.  If not see
 #define SUBTARGET_EXTRA_SPECS
 #endif
 
+#define TARGET_DEFAULT_CMODEL CM_MEDLOW
+
 /* By default, turn on GDB extensions.  */
 #define DEFAULT_GDB_EXTENSIONS 1
 
