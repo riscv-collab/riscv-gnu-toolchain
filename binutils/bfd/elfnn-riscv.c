@@ -577,6 +577,8 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	case R_RISCV_CALL:
 	case R_RISCV_JAL:
 	case R_RISCV_BRANCH:
+	case R_RISCV_RVC_BRANCH:
+	case R_RISCV_RVC_JUMP:
 	case R_RISCV_PCREL_HI20:
 	  /* In shared libs, these relocs are known to bind locally.  */
 	  if (info->shared)
@@ -816,6 +818,8 @@ riscv_elf_gc_sweep_hook (bfd *abfd, struct bfd_link_info *info,
 	case R_RISCV_BRANCH:
 	case R_RISCV_CALL:
 	case R_RISCV_JAL:
+	case R_RISCV_RVC_BRANCH:
+	case R_RISCV_RVC_JUMP:
 	  if (info->shared)
 	    break;
 	  /* Fall through.  */
@@ -1506,6 +1510,18 @@ perform_relocation (const reloc_howto_type *howto,
       value = ENCODE_SBTYPE_IMM (value);
       break;
 
+    case R_RISCV_RVC_BRANCH:
+      if (!VALID_RVC_B_IMM (value))
+	return bfd_reloc_overflow;
+      value = ENCODE_RVC_B_IMM (value);
+      break;
+
+    case R_RISCV_RVC_JUMP:
+      if (!VALID_RVC_J_IMM (value))
+	return bfd_reloc_overflow;
+      value = ENCODE_RVC_J_IMM (value);
+      break;
+
     case R_RISCV_32:
     case R_RISCV_64:
     case R_RISCV_ADD8:
@@ -1776,6 +1792,7 @@ riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 	  continue;
 
 	case R_RISCV_BRANCH:
+	case R_RISCV_RVC_BRANCH:
 	case R_RISCV_HI20:
 	  /* These require no special handling beyond perform_relocation.  */
 	  break;
@@ -1884,6 +1901,7 @@ riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 	case R_RISCV_CALL_PLT:
 	case R_RISCV_CALL:
 	case R_RISCV_JAL:
+	case R_RISCV_RVC_JUMP:
 	  if (info->shared && h != NULL && h->plt.offset != MINUS_ONE)
 	    {
 	      /* Refer to the PLT entry.  */

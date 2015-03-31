@@ -64,15 +64,11 @@ static const char* const riscv_pred_succ[16] = {
   "i", "iw", "ir", "irw", "io", "iow", "ior", "iorw",
 };
 
-#define RVC_JUMP_BITS 10
-#define RVC_JUMP_ALIGN_BITS 1
-#define RVC_JUMP_ALIGN (1 << RVC_JUMP_ALIGN_BITS)
-#define RVC_JUMP_REACH ((1ULL<<RVC_JUMP_BITS)*RVC_JUMP_ALIGN)
+#define RVC_JUMP_BITS 11
+#define RVC_JUMP_REACH ((1ULL<<RVC_JUMP_BITS)*RISCV_JUMP_ALIGN)
 
-#define RVC_BRANCH_BITS 5
-#define RVC_BRANCH_ALIGN_BITS RVC_JUMP_ALIGN_BITS
-#define RVC_BRANCH_ALIGN (1 << RVC_BRANCH_ALIGN_BITS)
-#define RVC_BRANCH_REACH ((1ULL<<RVC_BRANCH_BITS)*RVC_BRANCH_ALIGN)
+#define RVC_BRANCH_BITS 8
+#define RVC_BRANCH_REACH ((1ULL<<RVC_BRANCH_BITS)*RISCV_BRANCH_ALIGN)
 
 #define RV_X(x, s, n) (((x) >> (s)) & ((1<<(n))-1))
 #define RV_IMM_SIGN(x) (-(((x) >> 31) & 1))
@@ -97,6 +93,10 @@ static const char* const riscv_pred_succ[16] = {
   ((RV_X(x, 4, 3) << 2) | (RV_X(x, 12, 1) << 5) | (RV_X(x, 2, 2) << 6))
 #define EXTRACT_RVC_LDSP_IMM(x) \
   ((RV_X(x, 5, 2) << 3) | (RV_X(x, 12, 1) << 5) | (RV_X(x, 2, 3) << 6))
+#define EXTRACT_RVC_B_IMM(x) \
+  ((RV_X(x, 7, 1) << 1) | (RV_X(x, 11, 1) << 2) | (RV_X(x, 5, 2) << 3) | (RV_X(x, 12, 1) << 5) | (RV_X(x, 10, 1) << 6) | (RV_X(x, 8, 1) << 7) | (-RV_X(x, 9, 1) << 8))
+#define EXTRACT_RVC_J_IMM(x) \
+  ((RV_X(x, 7, 1) << 1) | (RV_X(x, 11, 1) << 2) | (RV_X(x, 5, 2) << 3) | (RV_X(x, 12, 1) << 5) | (RV_X(x, 10, 1) << 6) | (RV_X(x, 8, 2) << 7) | (RV_X(x, 2, 2) << 9) | (-RV_X(x, 4, 1) << 11))
 
 #define ENCODE_ITYPE_IMM(x) \
   (RV_X(x, 0, 12) << 20)
@@ -118,6 +118,10 @@ static const char* const riscv_pred_succ[16] = {
   ((RV_X(x, 2, 3) << 4) | (RV_X(x, 5, 1) << 12) | (RV_X(x, 6, 2) << 2))
 #define ENCODE_RVC_LDSP_IMM(x) \
   ((RV_X(x, 3, 2) << 5) | (RV_X(x, 5, 1) << 12) | (RV_X(x, 6, 3) << 2))
+#define ENCODE_RVC_B_IMM(x) \
+  ((RV_X(x, 1, 1) << 7) | (RV_X(x, 2, 1) << 11) | (RV_X(x, 3, 2) << 5) | (RV_X(x, 5, 1) << 12) | (RV_X(x, 6, 1) << 10) | (RV_X(x, 7, 2) << 8))
+#define ENCODE_RVC_J_IMM(x) \
+  ((RV_X(x, 1, 1) << 7) | (RV_X(x, 2, 1) << 11) | (RV_X(x, 3, 2) << 5) | (RV_X(x, 5, 1) << 12) | (RV_X(x, 6, 1) << 10) | (RV_X(x, 7, 2) << 8) | (RV_X(x, 9, 3) << 2))
 
 #define VALID_ITYPE_IMM(x) (EXTRACT_ITYPE_IMM(ENCODE_ITYPE_IMM(x)) == (x))
 #define VALID_STYPE_IMM(x) (EXTRACT_STYPE_IMM(ENCODE_STYPE_IMM(x)) == (x))
@@ -129,6 +133,8 @@ static const char* const riscv_pred_succ[16] = {
 #define VALID_RVC_LD_IMM(x) (EXTRACT_RVC_LD_IMM(ENCODE_RVC_LD_IMM(x)) == (x))
 #define VALID_RVC_LWSP_IMM(x) (EXTRACT_RVC_LWSP_IMM(ENCODE_RVC_LWSP_IMM(x)) == (x))
 #define VALID_RVC_LDSP_IMM(x) (EXTRACT_RVC_LDSP_IMM(ENCODE_RVC_LDSP_IMM(x)) == (x))
+#define VALID_RVC_B_IMM(x) (EXTRACT_RVC_B_IMM(ENCODE_RVC_B_IMM(x)) == (x))
+#define VALID_RVC_J_IMM(x) (EXTRACT_RVC_J_IMM(ENCODE_RVC_J_IMM(x)) == (x))
 
 #define RISCV_RTYPE(insn, rd, rs1, rs2) \
   ((MATCH_ ## insn) | ((rd) << OP_SH_RD) | ((rs1) << OP_SH_RS1) | ((rs2) << OP_SH_RS2))

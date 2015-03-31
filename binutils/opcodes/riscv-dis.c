@@ -250,9 +250,20 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
 	    case 'n':
 	      print (info->stream, "%d", (int)EXTRACT_RVC_LDSP_IMM (l));
 	      break;
+	    case 'p':
+	      info->target = EXTRACT_RVC_B_IMM (l) + pc;
+	      (*info->print_address_func) (info->target, info);
+	      break;
+	    case 'a':
+	      info->target = EXTRACT_RVC_J_IMM (l) + pc;
+	      (*info->print_address_func) (info->target, info);
+	      break;
 	    case 'u':
 	      print (info->stream, "0x%x",
 		     (int)(EXTRACT_RVC_IMM (l) & (RISCV_BIGIMM_REACH-1)));
+	      break;
+	    case '>':
+	      print (info->stream, "0x%x", (int)EXTRACT_RVC_IMM (l) & 0x3f);
 	      break;
 	    }
 	  break;
