@@ -1729,7 +1729,7 @@ riscv_output_move (rtx dest, rtx src)
       if (dest_code == REG)
 	{
 	  if (GP_REG_P (REGNO (dest)))
-	    return "move\t%0,%z1";
+	    return "mv\t%0,%z1";
 
 	  if (FP_REG_P (REGNO (dest)))
 	    {

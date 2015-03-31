@@ -1905,7 +1905,11 @@
 	 (label_ref (match_operand 0 "" ""))
 	 (pc)))]
   ""
-  "b%C1\t%2,%z3,%0"
+{
+  if (GET_CODE (operands[3]) == CONST_INT)
+    return "b%C1z\t%2,%0";
+  return "b%C1\t%2,%3,%0";
+}
   [(set_attr "type" "branch")
    (set_attr "mode" "none")])
 
