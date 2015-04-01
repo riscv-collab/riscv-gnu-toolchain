@@ -98,6 +98,8 @@ along with GCC; see the file COPYING3.  If not see
 	  builtin_define_std ("LANGUAGE_C");				\
 	  builtin_define ("_LANGUAGE_C");				\
 	}								\
+      if (riscv_cmodel == CM_MEDANY)					\
+	builtin_define ("_RISCV_CMODEL_MEDANY");			\
     }									\
   while (0)
 
