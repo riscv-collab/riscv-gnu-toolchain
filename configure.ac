@@ -18,14 +18,16 @@ AC_PATH_PROGS_FEATURE_CHECK([GSED], [gsed sed],
 	[AC_MSG_ERROR([GNU sed not found])])
 AC_SUBST([GSED], [$ac_cv_path_GSED])
 
-AC_CHECK_LIB(gmp, __gmpz_init, ,
-	[AC_MSG_ERROR([GNU MP not found; see https://gmplib.org/])])
-
-AC_CHECK_LIB(mpfr, mpfr_init, ,
-	[AC_MSG_ERROR([MPFR not found; see http://www.mpfr.org/])])
-
-AC_CHECK_LIB(mpc, mpc_init2, ,
-	[AC_MSG_ERROR([MPC not found; see http://www.multiprecision.org/])])
+need_gcc_external_libraries="no"
+AC_CHECK_LIB(gmp, __gmpz_init,
+        [need_gcc_external_libraries="yes"])
+AC_CHECK_LIB(mpfr, mpfr_init,
+        [need_gcc_external_libraries="yes"])
+AC_CHECK_LIB(mpc, mpc_init2,
+        [need_gcc_external_libraries="yes"])
+AS_IF([test x"$need_gcc_external_libraries" == xno],
+      [AC_SUBST(NEED_GCC_EXTERNAL_LIBRARIES,true)],
+      [AC_SUBST(NEED_GCC_EXTERNAL_LIBRARIES,false)])
 
 AC_PATH_PROG([CURL], [curl], [no])
 AC_PATH_PROG([WGET], [wget], [no])
