@@ -92,7 +92,7 @@ AS_IF([test "x$enable_multilib" != xno],
 	[AC_SUBST(multilib_flags,--disable-multilib)])
 
 AC_CONFIG_FILES([Makefile])
-AC_CONFIG_FILES([scripts/wrapper/awk], [chmod +x scripts/wrapper/awk])
-AC_CONFIG_FILES([scripts/wrapper/sed], [chmod +x scripts/wrapper/sed])
+AC_CONFIG_FILES([scripts/wrapper/awk/awk], [chmod +x scripts/wrapper/awk])
+AC_CONFIG_FILES([scripts/wrapper/sed/sed], [chmod +x scripts/wrapper/sed])
 
 AC_OUTPUT
