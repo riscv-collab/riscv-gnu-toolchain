@@ -1952,7 +1952,7 @@
 	 (match_operator 0 "equality_operator"
 	  [(zero_extract:GPR (match_operand:GPR 2 "register_operand" "r")
 		 (const_int 1)
-		 (match_operand 3 "const_int_operand"))
+		 (match_operand 3 "branch_on_bit_operand"))
 		 (const_int 0)])
 	 (label_ref (match_operand 1))
 	 (pc)))
@@ -1982,7 +1982,7 @@
 	(if_then_else
 	 (match_operator 0 "equality_operator"
 	  [(zero_extract:GPR (match_operand:GPR 2 "register_operand" "r")
-		 (match_operand 3 "const_int_operand")
+		 (match_operand 3 "branch_on_bit_operand")
 		 (const_int 0))
 		 (const_int 0)])
 	 (label_ref (match_operand 1))

@@ -51,6 +51,11 @@
   (ior (match_operand 0 "const_1_operand")
        (match_operand 0 "register_operand")))
 
+;; Only use branch-on-bit sequences when the mask is not an ANDI immediate.
+(define_predicate "branch_on_bit_operand"
+  (and (match_code "const_int")
+       (match_test "INTVAL (op) >= RISCV_IMM_BITS - 1")))
+
 ;; This is used for indexing into vectors, and hence only accepts const_int.
 (define_predicate "const_0_or_1_operand"
   (and (match_code "const_int")
