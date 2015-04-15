@@ -2775,28 +2775,37 @@ _bfd_riscv_relax_align (bfd *abfd, asection *sec,
 			bfd_vma symval,
 			bfd_boolean *again ATTRIBUTE_UNUSED)
 {
-  bfd_vma alignment = 1;
+  bfd_byte *contents = elf_section_data (sec)->this_hdr.contents;
+  bfd_vma alignment = 1, pos;
   while (alignment <= rel->r_addend)
     alignment *= 2;
 
   symval -= rel->r_addend;
   bfd_vma aligned_addr = ((symval - 1) & ~(alignment - 1)) + alignment;
-  bfd_vma nop_bytes_needed = aligned_addr - symval;
+  bfd_vma nop_bytes = aligned_addr - symval;
 
   /* Make sure there are enough NOPs to actually achieve the alignment.  */
-  if (rel->r_addend < nop_bytes_needed)
+  if (rel->r_addend < nop_bytes)
     return FALSE;
 
   /* Delete the reloc.  */
   rel->r_info = ELFNN_R_INFO (0, R_RISCV_NONE);
 
   /* If the number of NOPs is already correct, there's nothing to do.  */
-  if (nop_bytes_needed == rel->r_addend)
+  if (nop_bytes == rel->r_addend)
     return TRUE;
 
-  /* Delete the excess NOPs.  */
-  return riscv_relax_delete_bytes (abfd, sec, rel->r_offset,
-				   rel->r_addend - nop_bytes_needed);
+  /* Write as many RISC-V NOPs as we need.  */
+  for (pos = 0; pos < (nop_bytes & -4); pos += 4)
+    bfd_put_32 (abfd, RISCV_NOP, contents + rel->r_offset + pos);
+
+  /* Write a final RVC NOP if need be.  */
+  if (nop_bytes % 4 != 0)
+    bfd_put_16 (abfd, RVC_NOP, contents + rel->r_offset + pos);
+
+  /* Delete the excess bytes.  */
+  return riscv_relax_delete_bytes (abfd, sec, rel->r_offset + nop_bytes,
+				   rel->r_addend - nop_bytes);
 }
 
 /* Relax a section.  Pass 0 shortens code sequences unless disabled.

@@ -2160,19 +2160,22 @@ s_align (int x ATTRIBUTE_UNUSED)
       fill_value_specified = 1;
     }
 
-  if (!fill_value_specified && subseg_text_p (now_seg) && alignment > 2)
+  if (!fill_value_specified && subseg_text_p (now_seg)
+      && alignment > (riscv_opts.rvc ? 1 : 2))
     {
       /* Emit the worst-case NOP string.  The linker will delete any
          unnecessary NOPs.  This allows us to support code alignment
          in spite of linker relaxations.  */
-      bfd_vma i, worst_case_nop_bytes = (1L << alignment) - 4;
-      char *nops = frag_more (worst_case_nop_bytes);
-      for (i = 0; i < worst_case_nop_bytes; i += 4)
+      bfd_vma i, worst_case_bytes = (1L << alignment) - (riscv_opts.rvc ? 2 :4);
+      char *nops = frag_more (worst_case_bytes);
+      for (i = 0; i < worst_case_bytes - 2; i += 4)
 	md_number_to_chars (nops + i, RISCV_NOP, 4);
+      if (i < worst_case_bytes)
+	md_number_to_chars (nops + i, RVC_NOP, 2);
 
       expressionS ex;
       ex.X_op = O_constant;
-      ex.X_add_number = worst_case_nop_bytes;
+      ex.X_add_number = worst_case_bytes;
 
       fix_new_exp (frag_now, nops - frag_now->fr_literal, 0,
 		   &ex, FALSE, BFD_RELOC_RISCV_ALIGN);

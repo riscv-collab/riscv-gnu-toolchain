@@ -150,6 +150,7 @@ static const char* const riscv_pred_succ[16] = {
   ((MATCH_ ## insn) | ((rd) << OP_SH_RD) | ENCODE_UJTYPE_IMM(target))
 
 #define RISCV_NOP RISCV_ITYPE(ADDI, 0, 0, 0)
+#define RVC_NOP MATCH_C_ADDI
 
 #define RISCV_CONST_HIGH_PART(VALUE) \
   (((VALUE) + (RISCV_IMM_REACH/2)) & ~(RISCV_IMM_REACH-1))
