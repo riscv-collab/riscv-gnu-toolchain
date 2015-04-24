@@ -31,29 +31,76 @@ along with GCC; see the file COPYING3.  If not see
 #include "insn-attr.h"
 #include "recog.h"
 #include "output.h"
+#include "hash-set.h"
+#include "machmode.h"
+#include "vec.h"
+#include "double-int.h"
+#include "input.h"
+#include "alias.h"
+#include "symtab.h"
+#include "wide-int.h"
+#include "inchash.h"
 #include "tree.h"
+#include "fold-const.h"
 #include "varasm.h"
+#include "stringpool.h"
 #include "stor-layout.h"
 #include "calls.h"
 #include "function.h"
+#include "hashtab.h"
+#include "flags.h"
+#include "statistics.h"
+#include "real.h"
+#include "fixed-value.h"
+#include "expmed.h"
+#include "dojump.h"
+#include "explow.h"
+#include "emit-rtl.h"
+#include "stmt.h"
 #include "expr.h"
+#include "insn-codes.h"
 #include "optabs.h"
 #include "libfuncs.h"
-#include "flags.h"
 #include "reload.h"
 #include "tm_p.h"
 #include "ggc.h"
 #include "gstab.h"
-#include "hashtab.h"
+#include "hash-table.h"
 #include "debug.h"
 #include "target.h"
 #include "target-def.h"
+#include "common/common-target.h"
 #include "langhooks.h"
+#include "dominance.h"
+#include "cfg.h"
+#include "cfgrtl.h"
+#include "cfganal.h"
+#include "lcm.h"
+#include "cfgbuild.h"
+#include "cfgcleanup.h"
+#include "predict.h"
+#include "basic-block.h"
 #include "sched-int.h"
+#include "tree-ssa-alias.h"
+#include "internal-fn.h"
+#include "gimple-fold.h"
+#include "tree-eh.h"
+#include "gimple-expr.h"
+#include "is-a.h"
+#include "gimple.h"
+#include "gimplify.h"
 #include "bitmap.h"
 #include "diagnostic.h"
 #include "target-globals.h"
-#include "symcat.h"
+#include "opts.h"
+#include "tree-pass.h"
+#include "context.h"
+#include "hash-map.h"
+#include "plugin-api.h"
+#include "ipa-ref.h"
+#include "cgraph.h"
+#include "builtins.h"
+#include "rtl-iter.h"
 #include <stdint.h>
 
 /* True if X is an UNSPEC wrapper around a SYMBOL_REF or LABEL_REF.  */
@@ -582,15 +629,6 @@ static int riscv_symbol_insns (enum riscv_symbol_type type)
   }
 }
 
-/* A for_each_rtx callback.  Stop the search if *X references a
-   thread-local symbol.  */
-
-static int
-riscv_tls_symbol_ref_1 (rtx *x, void *data ATTRIBUTE_UNUSED)
-{
-  return riscv_tls_symbol_p (*x);
-}
-
 /* Implement TARGET_LEGITIMATE_CONSTANT_P.  */
 
 static bool
@@ -612,32 +650,21 @@ riscv_cannot_force_const_mem (enum machine_mode mode, rtx x)
   if (GET_CODE (x) == HIGH)
     return true;
 
-  /* As an optimization, reject constants that riscv_legitimize_move
-     can expand inline.
-
-     Suppose we have a multi-instruction sequence that loads constant C
-     into register R.  If R does not get allocated a hard register, and
-     R is used in an operand that allows both registers and memory
-     references, reload will consider forcing C into memory and using
-     one of the instruction's memory alternatives.  Returning false
-     here will force it to use an input reload instead.  */
-  if (CONST_INT_P (x) && riscv_legitimate_constant_p (mode, x))
-    return true;
-
   split_const (x, &base, &offset);
   if (riscv_symbolic_constant_p (base, &type))
     {
-      /* The same optimization as for CONST_INT.  */
+      /* As an optimization, don't spill symbolic constants that are as
+	 cheap to rematerialize as to access in the constant pool.  */
       if (SMALL_INT (offset) && riscv_symbol_insns (type) > 0)
 	return true;
 
-      /* It's not worth creating additional dynamic relocations.  */
+      /* As an optimization, avoid needlessly generate dynamic relocations.  */
       if (flag_pic)
 	return true;
     }
 
   /* TLS symbols must be computed by riscv_legitimize_move.  */
-  if (for_each_rtx (&x, &riscv_tls_symbol_ref_1, NULL))
+  if (tls_referenced_p (x))
     return true;
 
   return false;
@@ -899,7 +926,7 @@ riscv_split_const_insns (rtx x)
    given that it loads from or stores to MEM. */
 
 int
-riscv_load_store_insns (rtx mem, rtx insn)
+riscv_load_store_insns (rtx mem, rtx_insn *insn)
 {
   enum machine_mode mode;
   bool might_split_p;
@@ -2938,7 +2965,7 @@ riscv_in_small_data_p (const_tree x)
 
   if (TREE_CODE (x) == VAR_DECL && DECL_SECTION_NAME (x))
     {
-      const char *sec = TREE_STRING_POINTER (DECL_SECTION_NAME (x));
+      const char *sec = DECL_SECTION_NAME (x);
       return strcmp (sec, ".sdata") == 0 || strcmp (sec, ".sbss") == 0;
     }
 
@@ -3645,8 +3672,8 @@ riscv_scalar_mode_supported_p (enum machine_mode mode)
    dependencies have no cost. */
 
 static int
-riscv_adjust_cost (rtx insn ATTRIBUTE_UNUSED, rtx link,
-		  rtx dep ATTRIBUTE_UNUSED, int cost)
+riscv_adjust_cost (rtx_insn *insn ATTRIBUTE_UNUSED, rtx link,
+		   rtx_insn *dep ATTRIBUTE_UNUSED, int cost)
 {
   if (REG_NOTE_KIND (link) != 0)
     return 0;
@@ -3950,7 +3977,8 @@ riscv_output_mi_thunk (FILE *file, tree thunk_fndecl ATTRIBUTE_UNUSED,
 		      HOST_WIDE_INT delta, HOST_WIDE_INT vcall_offset,
 		      tree function)
 {
-  rtx this_rtx, temp1, temp2, insn, fnaddr;
+  rtx this_rtx, temp1, temp2, fnaddr;
+  rtx_insn *insn;
   bool use_sibcall_p;
 
   /* Pretend to be a post-reload pass while generating rtl.  */
@@ -4033,7 +4061,7 @@ riscv_output_mi_thunk (FILE *file, tree thunk_fndecl ATTRIBUTE_UNUSED,
 static struct machine_function *
 riscv_init_machine_status (void)
 {
-  return ggc_alloc_cleared_machine_function ();
+  return ggc_cleared_alloc<machine_function> ();
 }
 
 /* Implement TARGET_OPTION_OVERRIDE.  */

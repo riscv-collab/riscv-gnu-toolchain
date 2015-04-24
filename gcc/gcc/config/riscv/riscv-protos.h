@@ -44,7 +44,7 @@ extern int riscv_regno_mode_ok_for_base_p (int, enum machine_mode, bool);
 extern int riscv_address_insns (rtx, enum machine_mode, bool);
 extern int riscv_const_insns (rtx);
 extern int riscv_split_const_insns (rtx);
-extern int riscv_load_store_insns (rtx, rtx);
+extern int riscv_load_store_insns (rtx, rtx_insn *);
 extern rtx riscv_emit_move (rtx, rtx);
 extern bool riscv_split_symbol (rtx, rtx, enum machine_mode, rtx *);
 extern rtx riscv_unspec_address (rtx, enum riscv_symbol_type);

@@ -1527,9 +1527,6 @@
     DONE;
 })
 
-;; The difference between these two is whether or not ints are allowed
-;; in FP registers (off by default, use -mdebugh to enable).
-
 (define_insn "*mov<mode>_internal"
   [(set (match_operand:IMOVE32 0 "nonimmediate_operand" "=r,r,r,m,*f,*f,*r,*m")
 	(match_operand:IMOVE32 1 "move_operand" "r,T,m,rJ,*r*J,*m,*f,*f"))]
