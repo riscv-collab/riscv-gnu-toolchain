@@ -2784,6 +2784,9 @@ _bfd_riscv_relax_align (bfd *abfd, asection *sec,
   bfd_vma aligned_addr = ((symval - 1) & ~(alignment - 1)) + alignment;
   bfd_vma nop_bytes = aligned_addr - symval;
 
+  /* Once we've handled an R_RISCV_ALIGN, we can't relax anything else.  */
+  sec->sec_flg0 = TRUE;
+
   /* Make sure there are enough NOPs to actually achieve the alignment.  */
   if (rel->r_addend < nop_bytes)
     return FALSE;
@@ -2825,6 +2828,7 @@ _bfd_riscv_relax_section (bfd *abfd, asection *sec,
   *again = FALSE;
 
   if (info->relocatable
+      || sec->sec_flg0
       || (sec->flags & SEC_RELOC) == 0
       || sec->reloc_count == 0
       || (info->disable_target_specific_optimizations
