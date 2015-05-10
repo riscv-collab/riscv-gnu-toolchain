@@ -20,11 +20,13 @@
 #include "pthreadP.h"
 
 
-#ifndef __riscv_atomic
 int
-pthread_spin_destroy (lock)
-     pthread_spinlock_t *lock;
+pthread_spin_destroy (pthread_spinlock_t *lock)
 {
+#ifdef __riscv_atomic
+  /* Nothing to do.  */
+  return 0;
+#else
   return pthread_mutex_destroy(lock);
-}
 #endif
+}

@@ -21,10 +21,13 @@
 #include "pthreadP.h"
 
 
-#ifndef __riscv_atomic
 int
 pthread_spin_init (pthread_spinlock_t *lock, int pshared)
 {
+#ifdef __riscv_atomic
+  *lock = 0;
+  return 0;
+#else
   return pthread_mutex_init(lock, NULL);
-}
 #endif
+}
