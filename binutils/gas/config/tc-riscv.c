@@ -381,7 +381,8 @@ relaxed_branch_length (fragS *fragp, asection *sec, int update)
   /* Assume jumps are in range; the linker will catch any that aren't.  */
   length = jump ? 4 : 8;
 
-  if (S_IS_DEFINED (fragp->fr_symbol)
+  if (fragp->fr_symbol != NULL
+      && S_IS_DEFINED (fragp->fr_symbol)
       && sec == S_GET_SEGMENT (fragp->fr_symbol))
     {
       offsetT val = S_GET_VALUE (fragp->fr_symbol) + fragp->fr_offset;
@@ -694,35 +695,11 @@ append_insn (struct riscv_cl_insn *ip, expressionS *address_expr,
 
   if (reloc_type != BFD_RELOC_UNUSED)
     {
+      reloc_howto_type *howto;
+
       gas_assert(address_expr);
-      if (address_expr->X_op == O_constant)
-	{
-	  switch (reloc_type)
-	    {
-	    case BFD_RELOC_32:
-	      ip->insn_opcode |= address_expr->X_add_number;
-	      break;
-
-	    case BFD_RELOC_RISCV_HI20:
-	      ip->insn_opcode |= ENCODE_UTYPE_IMM (
-		RISCV_CONST_HIGH_PART (address_expr->X_add_number));
-	      break;
-
-	    case BFD_RELOC_RISCV_LO12_S:
-	      ip->insn_opcode |= ENCODE_STYPE_IMM (address_expr->X_add_number);
-	      break;
-
-	    case BFD_RELOC_RISCV_LO12_I:
-	      ip->insn_opcode |= ENCODE_ITYPE_IMM (address_expr->X_add_number);
-	      break;
-
-	    default:
-	      internalError ();
-	    }
-	    reloc_type = BFD_RELOC_UNUSED;
-	}
-      else if (reloc_type == BFD_RELOC_12_PCREL
-	       || reloc_type == BFD_RELOC_RISCV_JMP)
+      if (reloc_type == BFD_RELOC_12_PCREL
+	  || reloc_type == BFD_RELOC_RISCV_JMP)
 	{
 	  int j = reloc_type == BFD_RELOC_RISCV_JMP;
 	  int best_case = riscv_insn_length (ip->insn_opcode);
@@ -733,34 +710,55 @@ append_insn (struct riscv_cl_insn *ip, expressionS *address_expr,
 			    address_expr->X_add_number);
 	  return;
 	}
-      else
+      else if (address_expr->X_op == O_constant)
 	{
-	  reloc_howto_type *howto;
+	  switch (reloc_type)
+	    {
+	    case BFD_RELOC_32:
+	      ip->insn_opcode |= address_expr->X_add_number;
+	      goto append;
 
-	  howto = bfd_reloc_type_lookup (stdoutput, reloc_type);
-	  if (howto == NULL)
-	    as_bad (_("Unsupported RISC-V relocation number %d"), reloc_type);
+	    case BFD_RELOC_RISCV_HI20:
+	      ip->insn_opcode |= ENCODE_UTYPE_IMM (
+		RISCV_CONST_HIGH_PART (address_expr->X_add_number));
+	      goto append;
 
-	  ip->fixp = fix_new_exp (ip->frag, ip->where,
-				  bfd_get_reloc_size (howto),
-				  address_expr, FALSE, reloc_type);
+	    case BFD_RELOC_RISCV_LO12_S:
+	      ip->insn_opcode |= ENCODE_STYPE_IMM (address_expr->X_add_number);
+	      goto append;
 
-	  /* These relocations can have an addend that won't fit in
-	     4 octets for 64bit assembly.  */
-	  if (rv64
-	      && ! howto->partial_inplace
-	      && (reloc_type == BFD_RELOC_32
-		  || reloc_type == BFD_RELOC_64
-		  || reloc_type == BFD_RELOC_CTOR
-		  || reloc_type == BFD_RELOC_RISCV_HI20
-		  || reloc_type == BFD_RELOC_RISCV_LO12_I
-		  || reloc_type == BFD_RELOC_RISCV_LO12_S))
-	    ip->fixp->fx_no_overflow = 1;
+	    case BFD_RELOC_RISCV_LO12_I:
+	      ip->insn_opcode |= ENCODE_ITYPE_IMM (address_expr->X_add_number);
+	      goto append;
+
+	    default:
+	      break;
+	    }
 	}
+
+	howto = bfd_reloc_type_lookup (stdoutput, reloc_type);
+	if (howto == NULL)
+	  as_bad (_("Unsupported RISC-V relocation number %d"), reloc_type);
+
+	ip->fixp = fix_new_exp (ip->frag, ip->where,
+				bfd_get_reloc_size (howto),
+				address_expr, FALSE, reloc_type);
+
+	/* These relocations can have an addend that won't fit in
+	   4 octets for 64bit assembly.  */
+	if (rv64
+	    && ! howto->partial_inplace
+	    && (reloc_type == BFD_RELOC_32
+		|| reloc_type == BFD_RELOC_64
+		|| reloc_type == BFD_RELOC_CTOR
+		|| reloc_type == BFD_RELOC_RISCV_HI20
+		|| reloc_type == BFD_RELOC_RISCV_LO12_I
+		|| reloc_type == BFD_RELOC_RISCV_LO12_S))
+	  ip->fixp->fx_no_overflow = 1;
     }
 
+append:
   add_fixed_insn (ip);
-
   install_insn (ip);
 }
 
