@@ -168,6 +168,7 @@ along with GCC; see the file COPYING3.  If not see
 #define ASM_SPEC "\
 %(subtarget_asm_debugging_spec) \
 %{m32} %{m64} %{!m32:%{!m64: %(asm_abi_default_spec)}} \
+%{mrvc} \
 %{fPIC|fpic|fPIE|fpie:-fpic} \
 %{march=*} \
 %(subtarget_asm_spec)"
@@ -285,7 +286,7 @@ along with GCC; see the file COPYING3.  If not see
 #define PARM_BOUNDARY BITS_PER_WORD
 
 /* Allocation boundary (in *bits*) for the code of a function.  */
-#define FUNCTION_BOUNDARY 32
+#define FUNCTION_BOUNDARY (TARGET_RVC ? 16 : 32)
 
 /* There is no point aligning anything to a rounder boundary than this.  */
 #define BIGGEST_ALIGNMENT 128

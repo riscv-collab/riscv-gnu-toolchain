@@ -72,6 +72,10 @@ riscv_parse_arch_string (const char *isa, int *flags)
       return;
     }
 
+  *flags &= ~MASK_RVC;
+  if (*p == 'C')
+    *flags |= MASK_RVC, p++;
+
   if (*p)
     {
       error ("-march=%s: unsupported ISA substring %s", isa, p);
