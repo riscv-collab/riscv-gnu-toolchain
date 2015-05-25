@@ -2685,7 +2685,7 @@ _bfd_riscv_relax_call (bfd *abfd, asection *sec,
   bfd_signed_vma foff = symval - (sec_addr (sec) + rel->r_offset);
   bfd_boolean near_zero = (symval + RISCV_IMM_REACH/2) < RISCV_IMM_REACH;
   bfd_vma auipc, jalr;
-  int r_type;
+  int rd, r_type, len = 4, rvc = elf_elfheader (abfd)->e_flags & EF_RISCV_RVC;
 
   /* See if this function call can be shortened.  */
   if (!VALID_UJTYPE_IMM (foff) && !(!link_info->shared && near_zero))
@@ -2696,28 +2696,37 @@ _bfd_riscv_relax_call (bfd *abfd, asection *sec,
 
   auipc = bfd_get_32 (abfd, contents + rel->r_offset);
   jalr = bfd_get_32 (abfd, contents + rel->r_offset + 4);
+  rd = (jalr >> OP_SH_RD) & OP_MASK_RD;
+  rvc = rvc && VALID_RVC_J_IMM (foff);
 
-  if (VALID_UJTYPE_IMM (foff))
+  if (rvc && (rd == 0 || rd == X_RA))
+    {
+      /* Relax to C.J[AL] rd, addr.  */
+      r_type = R_RISCV_RVC_JUMP;
+      auipc = rd == 0 ? MATCH_C_J : MATCH_C_JAL;
+      len = 2;
+    }
+  else if (VALID_UJTYPE_IMM (foff))
     {
       /* Relax to JAL rd, addr.  */
       r_type = R_RISCV_JAL;
-      auipc = (jalr & (OP_MASK_RD << OP_SH_RD)) | MATCH_JAL;
+      auipc = MATCH_JAL | (rd << OP_SH_RD);
     }
   else /* near_zero */
     {
       /* Relax to JALR rd, x0, addr.  */
       r_type = R_RISCV_LO12_I;
-      auipc = (jalr & (OP_MASK_RD << OP_SH_RD)) | MATCH_JALR;
+      auipc = MATCH_JALR | (rd << OP_SH_RD);
     }
 
   /* Replace the R_RISCV_CALL reloc.  */
   rel->r_info = ELFNN_R_INFO (ELFNN_R_SYM (rel->r_info), r_type);
   /* Replace the AUIPC.  */
-  bfd_put_32 (abfd, auipc, contents + rel->r_offset);
+  bfd_put (8 * len, abfd, auipc, contents + rel->r_offset);
 
   /* Delete unnecessary JALR.  */
   *again = TRUE;
-  return riscv_relax_delete_bytes (abfd, sec, rel->r_offset + 4, 4);
+  return riscv_relax_delete_bytes (abfd, sec, rel->r_offset + len, 8 - len);
 }
 
 /* Relax non-PIC global variable references.  */
