@@ -80,6 +80,9 @@ END_RELOC_NUMBERS (R_RISCV_max)
 
 /* Processor specific flags for the ELF header e_flags field.  */
 
+/* File may contain compressed instructions.  */
+#define EF_RISCV_RVC 0x0001
+
 /* Custom flag definitions. */
 
 #define EF_RISCV_EXT_MASK 0xffff

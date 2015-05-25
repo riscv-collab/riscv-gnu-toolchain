@@ -1930,6 +1930,9 @@ riscv_after_parse_args (void)
 {
   if (riscv_subsets == NULL)
     riscv_set_arch ("RVIMAFDXcustom");
+
+  if (riscv_opts.rvc)
+    elf_flags |= EF_RISCV_RVC;
 }
 
 void
