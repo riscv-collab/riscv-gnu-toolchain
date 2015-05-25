@@ -30,7 +30,7 @@
 #include "elf/riscv.h"
 
 #include <stdint.h>
-#include <assert.h>
+#include <ctype.h>
 
 struct riscv_private_data
 {
@@ -223,20 +223,30 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
 		     riscv_gpr_names[((l >> OP_SH_CRDS) & OP_MASK_CRDS) + 8]);
 	      break;
 	    case 's': /* RS1 x8-x15 */
+	    case 'w': /* RS1 x8-x15 */
 	      print (info->stream, "%s",
 		     riscv_gpr_names[((l >> OP_SH_CRS1S) & OP_MASK_CRS1S) + 8]);
 	      break;
-	    case 'S': /* RS1 */
+	    case 't': /* RS2 x8-x15 */
+	    case 'x': /* RS2 x8-x15 */
 	      print (info->stream, "%s",
-		     riscv_gpr_names[(l >> OP_SH_CRS1) & OP_MASK_CRS1]);
+		     riscv_gpr_names[((l >> OP_SH_CRS2S) & OP_MASK_CRS2S) + 8]);
+	      break;
+	    case 'U': /* RS1, constrained to equal RD */
+	    case 'D': /* RS1 or RD, nonzero */
+	      print (info->stream, "%s", riscv_gpr_names[rd]);
 	      break;
 	    case 'c': /* RS1, constrained to equal sp */
 	      print (info->stream, "%s", riscv_gpr_names[X_SP]);
 	      continue;
-	    case 'U': /* RS2, constrained to equal RD */
-	    case 'T': /* RS2 */
-	      print (info->stream, "%s", riscv_gpr_names[rd]);
+	    case 'T': /* RS2, nonzero */
+	    case 'V': /* RS2 */
+	      print (info->stream, "%s",
+		     riscv_gpr_names[(l >> OP_SH_CRS2) & OP_MASK_CRS2]);
 	      continue;
+	    case 'i':
+	      print (info->stream, "%d", (int)EXTRACT_RVC_SIMM3 (l));
+	      break;
 	    case 'j':
 	      print (info->stream, "%d", (int)EXTRACT_RVC_IMM (l));
 	      break;
@@ -251,6 +261,18 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
 	      break;
 	    case 'n':
 	      print (info->stream, "%d", (int)EXTRACT_RVC_LDSP_IMM (l));
+	      break;
+	    case 'K':
+	      print (info->stream, "%d", (int)EXTRACT_RVC_ADDI4SPN_IMM (l));
+	      break;
+	    case 'L':
+	      print (info->stream, "%d", (int)EXTRACT_RVC_ADDI16SP_IMM (l));
+	      break;
+	    case 'M':
+	      print (info->stream, "%d", (int)EXTRACT_RVC_SWSP_IMM (l));
+	      break;
+	    case 'N':
+	      print (info->stream, "%d", (int)EXTRACT_RVC_SDSP_IMM (l));
 	      break;
 	    case 'p':
 	      info->target = EXTRACT_RVC_B_IMM (l) + pc;
@@ -267,6 +289,9 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
 	    case '>':
 	      print (info->stream, "0x%x", (int)EXTRACT_RVC_IMM (l) & 0x3f);
 	      break;
+	    case '<':
+	      print (info->stream, "0x%x", (int)EXTRACT_RVC_IMM (l) & 0x1f);
+	      break;
 	    }
 	  break;
 
@@ -279,6 +304,9 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
 	  break;
 
 	case '0':
+	  /* Only print constant 0 if it is the last argument */
+	  if (!d[1])
+	    print (info->stream, "0");
 	  break;
 
 	case 'b':
@@ -418,7 +446,7 @@ riscv_disassemble_insn (bfd_vma memaddr, insn_t word, disassemble_info *info)
   static const char *extension = NULL;
   static const struct riscv_opcode *riscv_hash[OP_MASK_OP + 1];
   struct riscv_private_data *pd;
-  int insnlen;
+  int xlen, insnlen;
 
 #define OP_HASH_IDX(i) ((i) & (riscv_insn_length (i) == 2 ? 0x3 : 0x7f))
 
@@ -454,6 +482,10 @@ riscv_disassemble_insn (bfd_vma memaddr, insn_t word, disassemble_info *info)
   else
     pd = info->private_data;
 
+  xlen = 32;
+  if (elf_elfheader (info->section->owner)->e_ident[EI_CLASS] == ELFCLASS64)
+    xlen = 64;
+
   insnlen = riscv_insn_length (word);
 
   info->bytes_per_chunk = insnlen % 4 == 0 ? 4 : 2;
@@ -473,7 +505,8 @@ riscv_disassemble_insn (bfd_vma memaddr, insn_t word, disassemble_info *info)
 	{
 	  if ((op->match_func) (op, word)
 	      && !(no_aliases && (op->pinfo & INSN_ALIAS))
-	      && !(op->subset[0] == 'X' && strcmp(op->subset, extension)))
+	      && !(op->subset[0] == 'X' && strcmp(op->subset, extension))
+	      && !(isdigit(op->subset[0]) && atoi(op->subset) != xlen))
 	    {
 	      (*info->fprintf_func) (info->stream, "%s", op->name);
 	      print_insn_args (op->args, word, memaddr, info);

@@ -60,6 +60,8 @@ bfd_boolean rv64 = TRUE; /* RV64 (true) or RV32 (false) */
 #define LOAD_ADDRESS_INSN (rv64 ? "ld" : "lw")
 #define ADD32_INSN (rv64 ? "addiw" : "addi")
 
+unsigned elf_flags = 0;
+
 /* This is the set of options which the .option pseudo-op may modify.  */
 
 struct riscv_set_options
@@ -128,6 +130,7 @@ riscv_set_arch (const char* arg)
      
      FIXME: Version numbers are not supported yet. */
   const char* subsets = "IMAFDC";
+  const char* extension = NULL;
   const char* p;
   int rvc = 0;
   
@@ -172,6 +175,12 @@ riscv_set_arch (const char* arg)
 	    q++;
 	  while (ISLOWER(*q));
 	  *q = 0;
+
+	  if (extension)
+	    as_bad ("only one eXtension is supported (found %s and %s)",
+		    extension, subset);
+	  extension = subset;
+	  EF_SET_RISCV_EXT (elf_flags, riscv_elf_name_to_flag (subset));
 
 	  riscv_add_subset (subset);
 	  p += strlen (subset);
@@ -223,13 +232,6 @@ const char EXP_CHARS[] = "eE";
 /* As in 0f12.456 */
 /* or    0d1.2345e12 */
 const char FLT_CHARS[] = "rRsSfFdDxXpP";
-
-/* Also be aware that MAXIMUM_NUMBER_OF_CHARS_FOR_FLOAT may have to be
-   changed in read.c .  Ideally it shouldn't have to know about it at all,
-   but nothing is ideal around here.
- */
-
-static char *insn_error;
 
 #define RELAX_BRANCH_ENCODE(uncond, rvc, length)	\
   ((relax_substateT) 					\
@@ -551,15 +553,26 @@ validate_riscv_insn (const struct riscv_opcode *opc)
 	  {
 	  case 'd': USE_BITS (OP_MASK_CRDS, OP_SH_CRDS); break;
 	  case 's': USE_BITS (OP_MASK_CRS1S, OP_SH_CRS1S); break;
-	  case 'S': USE_BITS (OP_MASK_CRS1, OP_SH_CRS1); break;
+	  case 't': USE_BITS (OP_MASK_CRS2S, OP_SH_CRS2S); break;
+	  case 'w': break; /* RS1S, constrained to equal RD */
+	  case 'x': break; /* RS1S, constrained to equal RD */
+	  case 'D': USE_BITS (OP_MASK_RD, OP_SH_RD); break;
+	  case 'T': USE_BITS (OP_MASK_CRS2, OP_SH_CRS2); break;
+	  case 'V': USE_BITS (OP_MASK_CRS2, OP_SH_CRS2); break;
 	  case 'c': break; /* RS1, constrained to equal sp */
 	  case 'U': break; /* RS2, constrained to equal RD */
+	  case '<': used_bits |= ENCODE_RVC_IMM(-1U); break;
 	  case '>': used_bits |= ENCODE_RVC_IMM(-1U); break;
+	  case 'i': used_bits |= ENCODE_RVC_SIMM3(-1U); break;
 	  case 'j': used_bits |= ENCODE_RVC_IMM(-1U); break;
 	  case 'k': used_bits |= ENCODE_RVC_LW_IMM(-1U); break;
 	  case 'l': used_bits |= ENCODE_RVC_LD_IMM(-1U); break;
 	  case 'm': used_bits |= ENCODE_RVC_LWSP_IMM(-1U); break;
 	  case 'n': used_bits |= ENCODE_RVC_LDSP_IMM(-1U); break;
+	  case 'K': used_bits |= ENCODE_RVC_ADDI4SPN_IMM(-1U); break;
+	  case 'L': used_bits |= ENCODE_RVC_ADDI16SP_IMM(-1U); break;
+	  case 'M': used_bits |= ENCODE_RVC_SWSP_IMM(-1U); break;
+	  case 'N': used_bits |= ENCODE_RVC_SDSP_IMM(-1U); break;
 	  case 'u': used_bits |= ENCODE_RVC_IMM(-1U); break;
 	  case 'v': used_bits |= ENCODE_RVC_IMM(-1U); break;
 	  case 'a': used_bits |= ENCODE_RVC_J_IMM(-1U); break;
@@ -637,12 +650,6 @@ md_begin (void)
   for (i = 0; i < NUMOPCODES;)
     {
       const char *name = riscv_opcodes[i].name;
-
-      if (!riscv_subset_supports(riscv_opcodes[i].subset))
-	{
-	  i++;
-	  continue;
-	}
 
       retval = hash_insert (op_hash, name, (void *) &riscv_opcodes[i]);
 
@@ -1219,78 +1226,40 @@ my_getSmallExpression (expressionS *ep, bfd_reloc_code_real_type *reloc,
    side effect, it sets the global variable imm_reloc to the type of
    relocation to do if one of the operands is an address expression.  */
 
-static void
+static const char *
 riscv_ip (char *str, struct riscv_cl_insn *ip, expressionS *imm_expr,
 	  bfd_reloc_code_real_type *imm_reloc)
 {
   char *s;
   const char *args;
   char c = 0;
-  struct riscv_opcode *insn;
+  struct riscv_opcode *insn, *end = &riscv_opcodes[NUMOPCODES];
   char *argsStart;
   unsigned int regno;
   char save_c = 0;
   int argnum;
   const struct percent_op_match *p;
+  const char *error = "unrecognized opcode";
 
-  insn_error = NULL;
-
-  /* If the instruction contains a '.', we first try to match an instruction
-     including the '.'.  Then we try again without the '.'.  */
-  insn = NULL;
-  for (s = str; *s != '\0' && !ISSPACE (*s); ++s)
-    continue;
-
-  /* If we stopped on whitespace, then replace the whitespace with null for
-     the call to hash_find.  Save the character we replaced just in case we
-     have to re-parse the instruction.  */
-  if (ISSPACE (*s))
-    {
-      save_c = *s;
-      *s++ = '\0';
-    }
+  /* Parse the name of the instruction.  Terminate the string if whitespace
+     is found so that hash_find only sees the name part of the string.  */
+  for (s = str; *s != '\0'; ++s)
+    if (ISSPACE (*s))
+      {
+	save_c = *s;
+	*s++ = '\0';
+	break;
+      }
 
   insn = (struct riscv_opcode *) hash_find (op_hash, str);
 
-  /* If we didn't find the instruction in the opcode table, try again, but
-     this time with just the instruction up to, but not including the
-     first '.'.  */
-  if (insn == NULL)
+  argsStart = s;
+  for ( ; insn && insn < end && strcmp (insn->name, str) == 0; insn++)
     {
-      /* Restore the character we overwrite above (if any).  */
-      if (save_c)
-	*(--s) = save_c;
-
-      /* Scan up to the first '.' or whitespace.  */
-      for (s = str;
-	   *s != '\0' && *s != '.' && !ISSPACE (*s);
-	   ++s)
+      if (!riscv_subset_supports (insn->subset))
 	continue;
 
-      /* If we did not find a '.', then we can quit now.  */
-      if (*s != '.')
-	{
-	  insn_error = "unrecognized opcode";
-	  return;
-	}
-
-      /* Lookup the instruction in the hash table.  */
-      *s++ = '\0';
-      if ((insn = (struct riscv_opcode *) hash_find (op_hash, str)) == NULL)
-	{
-	  insn_error = "unrecognized opcode";
-	  return;
-	}
-    }
-
-  argsStart = s;
-  for (;;)
-    {
-      bfd_boolean ok;
-      gas_assert (strcmp (insn->name, str) == 0);
-
       create_insn (ip, insn);
-      insn_error = NULL;
       argnum = 1;
 
       imm_expr->X_op = O_absent;
@@ -1308,7 +1277,10 @@ riscv_ip (char *str, struct riscv_cl_insn *ip, expressionS *imm_expr,
 		  && !riscv_opts.rvc)
 		break;
 	      if (*s == '\0')
-		return;
+		{
+		  error = NULL;
+		  goto out;
+		}
 	      break;
             /* Xcustom */
             case '^':
@@ -1375,50 +1347,42 @@ riscv_ip (char *str, struct riscv_cl_insn *ip, expressionS *imm_expr,
                   s = expr_end;
                   continue;
                 case 'd':
-                  ok = reg_lookup( &s, RCLASS_VEC_GPR, &regno );
-                  if ( !ok )
+                  if (!reg_lookup( &s, RCLASS_VEC_GPR, &regno ))
                     as_bad( _( "Invalid vector register" ) );
                   INSERT_OPERAND( VRD, *ip, regno );
                   continue;
                 case 's':
-                  ok = reg_lookup( &s, RCLASS_VEC_GPR, &regno );
-                  if ( !ok )
+                  if (!reg_lookup( &s, RCLASS_VEC_GPR, &regno ))
                     as_bad( _( "Invalid vector register" ) );
                   INSERT_OPERAND( VRS, *ip, regno );
                   continue;
                 case 't':
-                  ok = reg_lookup( &s, RCLASS_VEC_GPR, &regno );
-                  if ( !ok )
+                  if (!reg_lookup( &s, RCLASS_VEC_GPR, &regno ))
                     as_bad( _( "Invalid vector register" ) );
                   INSERT_OPERAND( VRT, *ip, regno );
                   continue;
                 case 'r':
-                  ok = reg_lookup( &s, RCLASS_VEC_GPR, &regno );
-                  if ( !ok )
+                  if (!reg_lookup( &s, RCLASS_VEC_GPR, &regno ))
                     as_bad( _( "Invalid vector register" ) );
                   INSERT_OPERAND( VRR, *ip, regno );
                   continue;
                 case 'D':
-                  ok = reg_lookup( &s, RCLASS_VEC_FPR, &regno );
-                  if ( !ok )
+                  if (!reg_lookup( &s, RCLASS_VEC_FPR, &regno ))
                     as_bad( _( "Invalid vector register" ) );
                   INSERT_OPERAND( VFD, *ip, regno );
                   continue;
                 case 'S':
-                  ok = reg_lookup( &s, RCLASS_VEC_FPR, &regno );
-                  if ( !ok )
+                  if (!reg_lookup( &s, RCLASS_VEC_FPR, &regno ))
                     as_bad( _( "Invalid vector register" ) );
                   INSERT_OPERAND( VFS, *ip, regno );
                   continue;
                 case 'T':
-                  ok = reg_lookup( &s, RCLASS_VEC_FPR, &regno );
-                  if ( !ok )
+                  if (!reg_lookup( &s, RCLASS_VEC_FPR, &regno ))
                     as_bad( _( "Invalid vector register" ) );
                   INSERT_OPERAND( VFT, *ip, regno );
                   continue;
                 case 'R':
-                  ok = reg_lookup( &s, RCLASS_VEC_FPR, &regno );
-                  if ( !ok )
+                  if (!reg_lookup( &s, RCLASS_VEC_FPR, &regno ))
                     as_bad( _( "Invalid vector register" ) );
                   INSERT_OPERAND( VFR, *ip, regno );
                   continue;
@@ -1440,15 +1404,41 @@ riscv_ip (char *str, struct riscv_cl_insn *ip, expressionS *imm_expr,
 		    break;
 		  INSERT_OPERAND (CRS1S, *ip, regno % 8);
 		  continue;
-		case 'S': /* RS1 */
-		  if (!reg_lookup (&s, RCLASS_GPR, &regno))
+		case 'w': /* RS1 x8-x15, constrained to equal RD x8-x15 */
+		  if (!reg_lookup (&s, RCLASS_GPR, &regno)
+		      || EXTRACT_OPERAND (CRS1S, *ip) + 8 != regno)
 		    break;
-		  INSERT_OPERAND (CRS1, *ip, regno);
 		  continue;
-		case 'U': /* RS2, constrained to equal RD */
+		case 't': /* RS2 x8-x15 */
+		  if (!reg_lookup (&s, RCLASS_GPR, &regno)
+		      || !(regno >= 8 && regno <= 15))
+		    break;
+		  INSERT_OPERAND (CRS2S, *ip, regno % 8);
+		  continue;
+		case 'x': /* RS2 x8-x15, constrained to equal RD x8-x15 */
+		  if (!reg_lookup (&s, RCLASS_GPR, &regno)
+		      || EXTRACT_OPERAND (CRS2S, *ip) + 8 != regno)
+		    break;
+		  continue;
+		case 'D': /* RD, nonzero */
+		  if (!reg_lookup (&s, RCLASS_GPR, &regno) || regno == 0)
+		    break;
+		  INSERT_OPERAND (RD, *ip, regno);
+		  continue;
+		case 'U': /* RS1, constrained to equal RD */
 		  if (!reg_lookup (&s, RCLASS_GPR, &regno)
 		      || EXTRACT_OPERAND (RD, *ip) != regno)
 		    break;
+		  continue;
+		case 'T': /* RS2, nonzero */
+		  if (!reg_lookup (&s, RCLASS_GPR, &regno) || regno == 0)
+		    break;
+		  INSERT_OPERAND (CRS2, *ip, regno);
+		  continue;
+		case 'V': /* RS2 */
+		  if (!reg_lookup (&s, RCLASS_GPR, &regno))
+		    break;
+		  INSERT_OPERAND (CRS2, *ip, regno);
 		  continue;
 		case 'c': /* RS1, constrained to equal sp */
 		  if (!reg_lookup (&s, RCLASS_GPR, &regno)
@@ -1458,16 +1448,35 @@ riscv_ip (char *str, struct riscv_cl_insn *ip, expressionS *imm_expr,
 		case '>':
 		  if (my_getSmallExpression (imm_expr, imm_reloc, s, p)
 		      || imm_expr->X_op != O_constant
-		      || !VALID_RVC_IMM (imm_expr->X_add_number - 32))
+		      || imm_expr->X_add_number <= 0
+		      || imm_expr->X_add_number >= 64)
 		    break;
 		  ip->insn_opcode |= ENCODE_RVC_IMM (imm_expr->X_add_number);
 rvc_imm_done:
 		  s = expr_end;
                   imm_expr->X_op = O_absent;
 		  continue;
+		case '<':
+		  if (my_getSmallExpression (imm_expr, imm_reloc, s, p)
+		      || imm_expr->X_op != O_constant
+		      || !VALID_RVC_IMM (imm_expr->X_add_number)
+		      || imm_expr->X_add_number <= 0
+		      || imm_expr->X_add_number >= 32)
+		    break;
+		  ip->insn_opcode |= ENCODE_RVC_IMM (imm_expr->X_add_number);
+		  goto rvc_imm_done;
+		case 'i':
+		  if (my_getSmallExpression (imm_expr, imm_reloc, s, p)
+		      || imm_expr->X_op != O_constant
+		      || imm_expr->X_add_number == 0
+		      || !VALID_RVC_SIMM3 (imm_expr->X_add_number))
+		    break;
+		  ip->insn_opcode |= ENCODE_RVC_SIMM3 (imm_expr->X_add_number);
+		  goto rvc_imm_done;
 		case 'j':
 		  if (my_getSmallExpression (imm_expr, imm_reloc, s, p)
 		      || imm_expr->X_op != O_constant
+		      || imm_expr->X_add_number == 0
 		      || !VALID_RVC_IMM (imm_expr->X_add_number))
 		    break;
 		  ip->insn_opcode |= ENCODE_RVC_IMM (imm_expr->X_add_number);
@@ -1500,13 +1509,41 @@ rvc_imm_done:
 		    break;
 		  ip->insn_opcode |= ENCODE_RVC_LDSP_IMM (imm_expr->X_add_number);
 		  goto rvc_imm_done;
+		case 'K':
+		  if (my_getSmallExpression (imm_expr, imm_reloc, s, p)
+		      || imm_expr->X_op != O_constant
+		      || !VALID_RVC_ADDI4SPN_IMM (imm_expr->X_add_number))
+		    break;
+		  ip->insn_opcode |= ENCODE_RVC_ADDI4SPN_IMM (imm_expr->X_add_number);
+		  goto rvc_imm_done;
+		case 'L':
+		  if (my_getSmallExpression (imm_expr, imm_reloc, s, p)
+		      || imm_expr->X_op != O_constant
+		      || !VALID_RVC_ADDI16SP_IMM (imm_expr->X_add_number))
+		    break;
+		  ip->insn_opcode |= ENCODE_RVC_ADDI16SP_IMM (imm_expr->X_add_number);
+		  goto rvc_imm_done;
+		case 'M':
+		  if (my_getSmallExpression (imm_expr, imm_reloc, s, p)
+		      || imm_expr->X_op != O_constant
+		      || !VALID_RVC_SWSP_IMM (imm_expr->X_add_number))
+		    break;
+		  ip->insn_opcode |= ENCODE_RVC_SWSP_IMM (imm_expr->X_add_number);
+		  goto rvc_imm_done;
+		case 'N':
+		  if (my_getSmallExpression (imm_expr, imm_reloc, s, p)
+		      || imm_expr->X_op != O_constant
+		      || !VALID_RVC_SDSP_IMM (imm_expr->X_add_number))
+		    break;
+		  ip->insn_opcode |= ENCODE_RVC_SDSP_IMM (imm_expr->X_add_number);
+		  goto rvc_imm_done;
 		case 'u':
 		  p = percent_op_utype;
 		  if (my_getSmallExpression (imm_expr, imm_reloc, s, p))
 		    break;
 rvc_lui:
 		  if (imm_expr->X_op != O_constant
-		      || imm_expr->X_add_number < 0
+		      || imm_expr->X_add_number <= 0
 		      || imm_expr->X_add_number >= RISCV_BIGIMM_REACH
 		      || (imm_expr->X_add_number >= RISCV_RVC_IMM_REACH/2
 			  && imm_expr->X_add_number <
@@ -1581,8 +1618,7 @@ rvc_lui:
 	      continue;
 
 	    case 'E':		/* Control register.  */
-	      ok = reg_lookup (&s, RCLASS_CSR, &regno);
-	      if (ok)
+	      if (reg_lookup (&s, RCLASS_CSR, &regno))
 	        INSERT_OPERAND (CSR, *ip, regno);
 	      else
 		{
@@ -1620,8 +1656,7 @@ rvc_lui:
 	    case 'd':		/* destination register */
 	    case 's':		/* source register */
 	    case 't':		/* target register */
-	      ok = reg_lookup (&s, RCLASS_GPR, &regno);
-	      if (ok)
+	      if (reg_lookup (&s, RCLASS_GPR, &regno))
 		{
 		  c = *args;
 		  if (*s == ' ')
@@ -1682,7 +1717,7 @@ rvc_lui:
 	      my_getExpression (imm_expr, s);
 	      if (imm_expr->X_op != O_big
 		  && imm_expr->X_op != O_constant)
-		insn_error = _("absolute expression required");
+		break;
 	      normalize_constant_expr (imm_expr);
 	      s = expr_end;
 	      continue;
@@ -1777,20 +1812,16 @@ jump:
 	    }
 	  break;
 	}
-      /* Args don't match.  */
-      if (insn + 1 < &riscv_opcodes[NUMOPCODES] &&
-	  !strcmp (insn->name, insn[1].name))
-	{
-	  ++insn;
-	  s = argsStart;
-	  insn_error = _("illegal operands");
-	  continue;
-	}
-      if (save_c)
-	*(--argsStart) = save_c;
-      insn_error = _("illegal operands");
-      return;
+      s = argsStart;
+      error = _("illegal operands");
     }
+
+out:
+  /* Restore the character we might have clobbered above.  */
+  if (save_c)
+    *(argsStart - 1) = save_c;
+
+  return error;
 }
 
 void
@@ -1800,11 +1831,11 @@ md_assemble (char *str)
   expressionS imm_expr;
   bfd_reloc_code_real_type imm_reloc = BFD_RELOC_UNUSED;
 
-  riscv_ip (str, &insn, &imm_expr, &imm_reloc);
+  const char *error = riscv_ip (str, &insn, &imm_expr, &imm_reloc);
 
-  if (insn_error)
+  if (error)
     {
-      as_bad ("%s `%s'", insn_error, str);
+      as_bad ("%s `%s'", error, str);
       return;
     }
 
@@ -2268,10 +2299,16 @@ md_convert_frag_branch (fragS *fragp)
 	    rs1 = 8 + ((insn >> OP_SH_CRS1S) & OP_MASK_CRS1S);
 	    if ((insn & MASK_C_J) == MATCH_C_J)
 	      insn = MATCH_JAL;
+	    else if ((insn & MASK_C_JAL) == MATCH_C_JAL)
+	      insn = MATCH_JAL | (X_RA << OP_SH_RD);
 	    else if ((insn & MASK_C_BEQZ) == MATCH_C_BEQZ)
 	      insn = MATCH_BEQ | (rs1 << OP_SH_RS1);
 	    else if ((insn & MASK_C_BNEZ) == MATCH_C_BNEZ)
 	      insn = MATCH_BNE | (rs1 << OP_SH_RS1);
+	    else if ((insn & MASK_C_BLTZ) == MATCH_C_BLTZ)
+	      insn = MATCH_BLT | (rs1 << OP_SH_RS1);
+	    else if ((insn & MASK_C_BGEZ) == MATCH_C_BGEZ)
+	      insn = MATCH_BGE | (rs1 << OP_SH_RS1);
 	    else
 	      abort ();
 	    bfd_putl32 (insn, buf);
@@ -2380,21 +2417,7 @@ tc_riscv_regname_to_dw2regnum (char *regname)
 void
 riscv_elf_final_processing (void)
 {
-  struct riscv_subset* s;
-
-  unsigned int Xlen = 0;
-  for (s = riscv_subsets; s != NULL; s = s->next)
-    if (s->name[0] == 'X')
-      Xlen += strlen(s->name);
-
-  char extension[Xlen]; 
-  extension[0] = 0;
-  for (s = riscv_subsets; s != NULL; s = s->next)
-    if (s->name[0] == 'X')
-      strcat(extension, s->name);
-
-  EF_SET_RISCV_EXT(elf_elfheader (stdoutput)->e_flags,
-    riscv_elf_name_to_flag (extension));
+  elf_elfheader (stdoutput)->e_flags |= elf_flags;
 }
 
 /* Pseudo-op table.  */
