@@ -63,9 +63,11 @@ parse_riscv_dis_option (const char *option)
       riscv_gpr_names = riscv_gpr_names_numeric;
       riscv_fpr_names = riscv_fpr_names_numeric;
     }
-
-  /* Invalid option.  */
-  fprintf (stderr, _("Unrecognized disassembler option: %s\n"), option);
+  else
+    {
+      /* Invalid option.  */
+      fprintf (stderr, _("Unrecognized disassembler option: %s\n"), option);
+    }
 }
 
 static void
