@@ -2854,7 +2854,7 @@ _bfd_riscv_relax_section (bfd *abfd, asection *sec,
   /* Examine and consider relaxing each reloc.  */
   for (i = 0; i < sec->reloc_count; i++)
     {
-      Elf_Internal_Rela *rel = data->relocs + i;
+      Elf_Internal_Rela *rel = relocs + i;
       typeof(&_bfd_riscv_relax_call) relax_func = NULL;
       int type = ELFNN_R_TYPE (rel->r_info);
       bfd_vma symval;
