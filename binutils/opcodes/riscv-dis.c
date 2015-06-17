@@ -443,19 +443,15 @@ riscv_disassemble_insn (bfd_vma memaddr, insn_t word, disassemble_info *info)
 {
   const struct riscv_opcode *op;
   static bfd_boolean init = 0;
-  static const char *extension = NULL;
   static const struct riscv_opcode *riscv_hash[OP_MASK_OP + 1];
   struct riscv_private_data *pd;
-  int xlen, insnlen;
+  int insnlen;
 
 #define OP_HASH_IDX(i) ((i) & (riscv_insn_length (i) == 2 ? 0x3 : 0x7f))
 
   /* Build a hash table to shorten the search time.  */
   if (! init)
     {
-      unsigned int e_flags = elf_elfheader (info->section->owner)->e_flags;
-      extension = riscv_elf_flag_to_name(EF_GET_RISCV_EXT(e_flags));
-
       for (op = riscv_opcodes; op < &riscv_opcodes[NUMOPCODES]; op++)
         {
 	  if (!riscv_hash[OP_HASH_IDX (op->match)])
@@ -469,7 +465,7 @@ riscv_disassemble_insn (bfd_vma memaddr, insn_t word, disassemble_info *info)
     {
       int i;
 
-      pd = info->private_data = calloc(1, sizeof (struct riscv_private_data));
+      pd = info->private_data = xcalloc (1, sizeof (struct riscv_private_data));
       pd->gp = -1;
       pd->print_addr = -1;
       for (i = 0; i < (int) ARRAY_SIZE(pd->hi_addr); i++)
@@ -481,10 +477,6 @@ riscv_disassemble_insn (bfd_vma memaddr, insn_t word, disassemble_info *info)
     }
   else
     pd = info->private_data;
-
-  xlen = 32;
-  if (elf_elfheader (info->section->owner)->e_ident[EI_CLASS] == ELFCLASS64)
-    xlen = 64;
 
   insnlen = riscv_insn_length (word);
 
@@ -501,11 +493,27 @@ riscv_disassemble_insn (bfd_vma memaddr, insn_t word, disassemble_info *info)
   op = riscv_hash[OP_HASH_IDX (word)];
   if (op != NULL)
     {
+      const char *extension = NULL;
+      int xlen = 0;
+
+      /* The incoming section might not always be complete.  */
+      if (info->section != NULL)
+	{
+	  Elf_Internal_Ehdr *ehdr = elf_elfheader (info->section->owner);
+	  unsigned int e_flags = ehdr->e_flags;
+	  extension = riscv_elf_flag_to_name (EF_GET_RISCV_EXT (e_flags));
+
+	  xlen = 32;
+	  if (ehdr->e_ident[EI_CLASS] == ELFCLASS64)
+	    xlen = 64;
+	}
+
       for (; op < &riscv_opcodes[NUMOPCODES]; op++)
 	{
 	  if ((op->match_func) (op, word)
 	      && !(no_aliases && (op->pinfo & INSN_ALIAS))
-	      && !(op->subset[0] == 'X' && strcmp(op->subset, extension))
+	      && !(op->subset[0] == 'X' && extension != NULL
+		   && strcmp (op->subset, extension))
 	      && !(isdigit(op->subset[0]) && atoi(op->subset) != xlen))
 	    {
 	      (*info->fprintf_func) (info->stream, "%s", op->name);
