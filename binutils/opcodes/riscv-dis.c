@@ -465,7 +465,7 @@ riscv_disassemble_insn (bfd_vma memaddr, insn_t word, disassemble_info *info)
     {
       int i;
 
-      pd = info->private_data = calloc(1, sizeof (struct riscv_private_data));
+      pd = info->private_data = xcalloc (1, sizeof (struct riscv_private_data));
       pd->gp = -1;
       pd->print_addr = -1;
       for (i = 0; i < (int) ARRAY_SIZE(pd->hi_addr); i++)
