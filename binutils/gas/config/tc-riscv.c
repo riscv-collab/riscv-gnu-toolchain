@@ -56,6 +56,12 @@ struct riscv_cl_insn
   fixS *fixp;
 };
 
+/* The default architecture.  */
+#ifndef DEFAULT_ARCH
+#define DEFAULT_ARCH "riscv64"
+#endif
+static const char default_arch[] = DEFAULT_ARCH;
+
 bfd_boolean rv64 = TRUE; /* RV64 (true) or RV32 (false) */
 #define LOAD_ADDRESS_INSN (rv64 ? "ld" : "lw")
 #define ADD32_INSN (rv64 ? "addiw" : "addi")
@@ -298,6 +304,11 @@ static char *expr_end;
 const char *
 riscv_target_format (void)
 {
+  if (strcmp (default_arch, "riscv32") == 0)
+    rv64 = FALSE;
+  else if (strcmp (default_arch, "riscv64") == 0)
+    rv64 = TRUE;
+
   return rv64 ? "elf64-littleriscv" : "elf32-littleriscv";
 }
 
