@@ -142,6 +142,7 @@ along with GCC; see the file COPYING3.  If not see
    --with-tune is ignored if -mtune is specified.
    --with-float is ignored if -mhard-float or -msoft-float are specified. */
 #define OPTION_DEFAULT_SPECS \
+  {"arch", "%{!march=*:-march=%(VALUE)}"},			   \
   {"arch_32", "%{" OPT_ARCH32 ":%{m32}}" }, \
   {"arch_64", "%{" OPT_ARCH64 ":%{m64}}" }, \
   {"tune", "%{!mtune=*:-mtune=%(VALUE)}" }, \
