@@ -151,6 +151,7 @@ const struct riscv_opcode riscv_builtin_opcodes[] =
 {"jal",       "I",   "a",  MATCH_JAL | (X_RA << OP_SH_RD), MASK_JAL | MASK_RD, match_opcode,   INSN_ALIAS|WR_xd },
 {"jal",       "I",   "d,a",  MATCH_JAL, MASK_JAL, match_opcode,   WR_xd },
 {"call",      "I",   "c", (X_T0 << OP_SH_RS1) | (X_RA << OP_SH_RD), (int) M_CALL,  match_never, INSN_MACRO },
+{"call",      "I",   "d,c", (X_T0 << OP_SH_RS1), (int) M_CALL,  match_never, INSN_MACRO },
 {"tail",      "I",   "c", (X_T0 << OP_SH_RS1), (int) M_CALL,  match_never, INSN_MACRO },
 {"jump",      "I",   "c,s", 0, (int) M_CALL,  match_never, INSN_MACRO },
 {"nop",       "C",   "",  MATCH_C_ADDI16SP, 0xffff, match_opcode, INSN_ALIAS },
