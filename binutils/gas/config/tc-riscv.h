@@ -92,9 +92,9 @@ extern void riscv_cfi_frame_initial_instructions (void);
 #define tc_regname_to_dw2regnum tc_riscv_regname_to_dw2regnum
 extern int tc_riscv_regname_to_dw2regnum (char *regname);
 
-extern bfd_boolean rv64;
+extern unsigned xlen;
 #define DWARF2_DEFAULT_RETURN_COLUMN X_RA
-#define DWARF2_CIE_DATA_ALIGNMENT (rv64 ? 8 : 4)
+#define DWARF2_CIE_DATA_ALIGNMENT (xlen / 8)
 
 #define elf_tc_final_processing riscv_elf_final_processing
 extern void riscv_elf_final_processing (void);
