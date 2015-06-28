@@ -2188,11 +2188,23 @@ s_bss (int ignore ATTRIBUTE_UNUSED)
 /* Align to a given power of two.  */
 
 static void
-s_align (int x ATTRIBUTE_UNUSED)
+s_align (int bytes_p)
 {
-  int alignment, fill_value = 0, fill_value_specified = 0;
+  int fill_value = 0, fill_value_specified = 0;
+  int min_text_alignment = riscv_opts.rvc ? 2 : 4;
+  int alignment = get_absolute_expression(), bytes;
 
-  alignment = get_absolute_expression ();
+  if (bytes_p)
+    {
+      bytes = alignment;
+      if (bytes < 1 || (bytes & (bytes-1)) != 0)
+	as_bad (_("alignment not a power of 2: %d"), bytes);
+      for (alignment = 0; bytes > 1; bytes >>= 1)
+	alignment++;
+    }
+
+  bytes = 1 << alignment;
+
   if (alignment < 0 || alignment > 31)
     as_bad (_("unsatisfiable alignment: %d"), alignment);
 
@@ -2204,12 +2216,12 @@ s_align (int x ATTRIBUTE_UNUSED)
     }
 
   if (!fill_value_specified && subseg_text_p (now_seg)
-      && alignment > (riscv_opts.rvc ? 1 : 2))
+      && bytes > min_text_alignment)
     {
       /* Emit the worst-case NOP string.  The linker will delete any
          unnecessary NOPs.  This allows us to support code alignment
          in spite of linker relaxations.  */
-      bfd_vma i, worst_case_bytes = (1L << alignment) - (riscv_opts.rvc ? 2 :4);
+      bfd_vma i, worst_case_bytes = bytes - min_text_alignment;
       char *nops = frag_more (worst_case_bytes);
       for (i = 0; i < worst_case_bytes - 2; i += 4)
 	md_number_to_chars (nops + i, RISCV_NOP, 4);
@@ -2447,6 +2459,8 @@ static const pseudo_typeS riscv_pseudo_table[] =
   {"dtpreldword", s_dtprel, 8},
   {"bss", s_bss, 0},
   {"align", s_align, 0},
+  {"p2align", s_align, 0},
+  {"balign", s_align, 1},
 
   /* leb128 doesn't work with relaxation; disallow it */
   {"uleb128", s_err, 0},
