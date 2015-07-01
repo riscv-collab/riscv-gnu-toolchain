@@ -30,7 +30,7 @@ fp_except fpgetsticky(void)
 
 fp_except fpsetmask(fp_except mask)
 {
-  return 0;
+  return -1;
 }
 
 fp_rnd fpsetround(fp_rnd rnd_dir)
