@@ -56,11 +56,11 @@ AC_ARG_WITH(xlen,
 	AC_SUBST(XLEN, 64)
 	)
 
-AC_ARG_WITH(base-isa,
-	[AS_HELP_STRING([--with-base-isa=G/I],
-		[Sets the base RISC-V ISA to either G or I, defaults to G])],
-	AC_SUBST(BASE_ISA, $withval),
-	AC_SUBST(BASE_ISA, G)
+AC_ARG_WITH(arch,
+	[AS_HELP_STRING([--with-arch=G],
+		[Sets the base RISC-V ISA, defaults to G])],
+	AC_SUBST(ARCH, $withval),
+	AC_SUBST(ARCH, G)
 	)
 
 AC_ARG_ENABLE(atomic,
