@@ -31,6 +31,12 @@ On Mac OS, the source and build directories must live in a case-sensitive file
 system.  The simplest approach is to create and mount a new disk image with
 that property.  Make sure that the mount point does not contain spaces.
 
+This process will start by downloading about 200 MiB of upstream sources, then
+will patch, build, and install the toolchain.  If a local cache of the
+upstream sources exists in $(DESTDIR), it will be used; the default location
+is /var/cache/distfiles.  Your computer will need about 8 GiB of disk space to
+complete the process.
+
 ### Installation (Newlib)
 
 To build the Newlib cross-compiler, pick an install path.  If you choose,
