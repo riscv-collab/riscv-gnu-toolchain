@@ -155,20 +155,20 @@ riscv_set_arch (const char* arg)
       return;
     }
 
-  if (strncmp(arg, "RV32", 4) == 0)
+  if (strncasecmp(arg, "RV32", 4) == 0)
     {
       xlen = 32;
       arg += 4;
     }
-  else if (strncmp(arg, "RV64", 4) == 0)
+  else if (strncasecmp(arg, "RV64", 4) == 0)
     {
       xlen = 64;
       arg += 4;
     }
-  else if (strncmp(arg, "RV", 2) == 0)
+  else if (strncasecmp(arg, "RV", 2) == 0)
     arg += 2;
 
-  if (*arg && *arg != 'I')
+  if (*arg && TOUPPER(*arg) != 'I')
     as_fatal("`I' must be the first ISA subset name specified (got %c)", *arg);
 
   for (p = arg; *p; )
@@ -192,11 +192,11 @@ riscv_set_arch (const char* arg)
 	  p += strlen (subset);
 	  free (subset);
 	}
-      else if (strchr(subsets, *p) != NULL)
+      else if (strchr(subsets, TOUPPER(*p)) != NULL)
 	{
-	  char subset[2] = {*p, 0};
+          char subset[2] = {TOUPPER(*p), 0};
 	  riscv_add_subset (subset);
-	  if (*p == 'C')
+	  if (TOUPPER(*p) == 'C')
 	    rvc = 1;
 	  p++;
 	}
