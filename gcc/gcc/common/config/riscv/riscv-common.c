@@ -34,30 +34,30 @@ riscv_parse_arch_string (const char *isa, int *flags)
 {
   const char *p = isa;
 
-  if (strncmp (p, "RV32", 4) == 0)
+  if (strncasecmp (p, "RV32", 4) == 0)
     *flags |= MASK_32BIT, p += 4;
-  else if (strncmp (p, "RV64", 4) == 0)
+  else if (strncasecmp (p, "RV64", 4) == 0)
     *flags &= ~MASK_32BIT, p += 4;
 
-  if (*p++ != 'I')
+  if (TOUPPER(*p++) != 'I')
     {
       error ("-march=%s: ISA strings must begin with I, RV32I, or RV64I", isa);
       return;
     }
 
   *flags &= ~MASK_MULDIV;
-  if (*p == 'M')
+  if (TOUPPER(*p) == 'M')
     *flags |= MASK_MULDIV, p++;
 
   *flags &= ~MASK_ATOMIC;
-  if (*p == 'A')
+  if (TOUPPER(*p) == 'A')
     *flags |= MASK_ATOMIC, p++;
 
   *flags |= MASK_SOFT_FLOAT_ABI;
-  if (*p == 'F')
+  if (TOUPPER(*p) == 'F')
     *flags &= ~MASK_SOFT_FLOAT_ABI, p++;
 
-  if (*p == 'D')
+  if (TOUPPER(*p) == 'D')
     {
       p++;
       if (!TARGET_HARD_FLOAT)
@@ -73,7 +73,7 @@ riscv_parse_arch_string (const char *isa, int *flags)
     }
 
   *flags &= ~MASK_RVC;
-  if (*p == 'C')
+  if (TOUPPER(*p) == 'C')
     *flags |= MASK_RVC, p++;
 
   if (*p)
