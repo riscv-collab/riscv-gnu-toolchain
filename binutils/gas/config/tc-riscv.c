@@ -168,6 +168,13 @@ riscv_set_arch (const char* arg)
   else if (strncasecmp(arg, "RV", 2) == 0)
     arg += 2;
 
+  if (TOUPPER(*arg) == 'G')
+    {
+      if (*(arg+1) != '\0')
+        as_fatal("`G' can not have other extensions, got %s", arg);
+      arg = "IMAFD";
+    }
+
   if (*arg && TOUPPER(*arg) != 'I')
     as_fatal("`I' must be the first ISA subset name specified (got %c)", *arg);
 

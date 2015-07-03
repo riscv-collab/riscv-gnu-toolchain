@@ -39,6 +39,16 @@ riscv_parse_arch_string (const char *isa, int *flags)
   else if (strncasecmp (p, "RV64", 4) == 0)
     *flags &= ~MASK_32BIT, p += 4;
 
+  if (TOUPPER(*p) == 'G')
+    {
+      if (*(p+1) != '\0')
+        {
+          error ("-march=%s: G can't have other extensions", isa);
+          return;
+        }
+      p = "IMAFD";
+    }
+
   if (TOUPPER(*p++) != 'I')
     {
       error ("-march=%s: ISA strings must begin with I, RV32I, or RV64I", isa);
