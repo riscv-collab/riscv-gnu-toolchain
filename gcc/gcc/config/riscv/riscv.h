@@ -727,6 +727,10 @@ enum reg_class
 #define FP_ARG_FIRST (FP_REG_FIRST + 10)
 #define FP_ARG_LAST  (FP_ARG_FIRST + MAX_ARGS_IN_REGISTERS - 1)
 
+#define CALLEE_SAVED_REG_NUMBER(REGNO)			\
+  ((REGNO) >= 8 && (REGNO) <= 9 ? (REGNO) - 8 :		\
+   (REGNO) >= 18 && (REGNO) <= 27 ? (REGNO) - 16 : -1)
+
 #define LIBCALL_VALUE(MODE) \
   riscv_function_value (NULL_TREE, NULL_TREE, MODE)
 

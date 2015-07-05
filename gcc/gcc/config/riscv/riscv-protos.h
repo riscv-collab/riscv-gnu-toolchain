@@ -56,7 +56,7 @@ extern rtx riscv_subword (rtx, bool);
 extern bool riscv_split_64bit_move_p (rtx, rtx);
 extern void riscv_split_doubleword_move (rtx, rtx);
 extern const char *riscv_output_move (rtx, rtx);
-extern const char *riscv_riscv_output_vector_move (enum machine_mode, rtx, rtx);
+extern const char *riscv_output_gpr_save (unsigned);
 #ifdef RTX_CODE
 extern void riscv_expand_scc (rtx *);
 extern void riscv_expand_conditional_branch (rtx *);

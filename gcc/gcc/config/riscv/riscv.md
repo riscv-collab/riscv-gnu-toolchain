@@ -36,6 +36,10 @@
   UNSPEC_TLS_IE
   UNSPEC_TLS_GD
 
+  ;; Register save and restore.
+  UNSPEC_GPR_SAVE
+  UNSPEC_GPR_RESTORE
+
   ;; Blockage and synchronisation.
   UNSPEC_BLOCKAGE
   UNSPEC_FENCE
@@ -44,6 +48,8 @@
 
 (define_constants
   [(RETURN_ADDR_REGNUM		1)
+   (T0_REGNUM			5)
+   (T1_REGNUM			6)
 ])
 
 (include "predicates.md")
@@ -2318,8 +2324,7 @@
               (match_operand 2 "" "")))
    (set (match_operand 3 "register_operand" "")
 	(call (mem:SI (match_dup 1))
-	      (match_dup 2)))
-   (clobber (match_scratch:SI 4 "=j,j"))]
+	      (match_dup 2)))]
   "SIBLING_CALL_P (insn)"
   { return REG_P (operands[1]) ? "jr\t%1"
 	   : absolute_symbolic_operand (operands[1], VOIDmode) ? "tail\t%1"
@@ -2419,6 +2424,25 @@
   [(trap_if (const_int 1) (const_int 0))]
   ""
   "sbreak")
+
+(define_insn "gpr_save"
+  [(unspec_volatile [(match_operand 0 "const_int_operand")] UNSPEC_GPR_SAVE)
+   (clobber (reg:SI T0_REGNUM))
+   (clobber (reg:SI T1_REGNUM))]
+  ""
+  { return riscv_output_gpr_save (INTVAL (operands[0])); })
+
+(define_insn "gpr_restore"
+  [(unspec_volatile [(match_operand 0 "const_int_operand")] UNSPEC_GPR_RESTORE)]
+  ""
+  "tail\t__riscv_restore_%0")
+
+(define_insn "gpr_restore_return"
+  [(return)
+   (use (match_operand 0 "pmode_register_operand" ""))
+   (const_int 0)]
+  ""
+  "")
 
 (include "sync.md")
 (include "peephole.md")

@@ -194,6 +194,9 @@ struct GTY(())  riscv_frame_info {
   /* Likewise FPR X.  */
   unsigned int fmask;
 
+  /* How much the GPR save/restore routines adjust sp (or 0 if unused).  */
+  unsigned save_libcall_adjustment;
+
   /* Offsets of fixed-point and floating-point save areas from frame bottom */
   HOST_WIDE_INT gp_sp_offset;
   HOST_WIDE_INT fp_sp_offset;
@@ -640,7 +643,7 @@ riscv_legitimate_constant_p (enum machine_mode mode ATTRIBUTE_UNUSED, rtx x)
 /* Implement TARGET_CANNOT_FORCE_CONST_MEM.  */
 
 static bool
-riscv_cannot_force_const_mem (enum machine_mode mode, rtx x)
+riscv_cannot_force_const_mem (enum machine_mode mode ATTRIBUTE_UNUSED, rtx x)
 {
   enum riscv_symbol_type type;
   rtx base, offset;
@@ -3150,7 +3153,9 @@ riscv_compute_frame_info (void)
   if (frame->mask)
     {
       unsigned num_saved = __builtin_popcount(frame->mask);
-      offset += RISCV_STACK_ALIGN (num_saved * UNITS_PER_WORD);
+      frame->save_libcall_adjustment =
+	RISCV_STACK_ALIGN (num_saved * UNITS_PER_WORD);
+      offset += frame->save_libcall_adjustment;
       frame->gp_sp_offset = offset - UNITS_PER_WORD;
     }
   /* The hard frame pointer points above the callee-saved GPRs. */
@@ -3162,6 +3167,10 @@ riscv_compute_frame_info (void)
   offset += crtl->args.pretend_args_size;
   frame->total_size = offset;
   /* Next points the incoming stack pointer and any incoming arguments. */
+
+  /* Only use save/restore routines when the GPRs are atop the frame.  */
+  if (frame->hard_frame_pointer_offset != frame->total_size)
+    frame->save_libcall_adjustment = 0;
 }
 
 /* Make sure that we're not trying to eliminate to the wrong hard frame
@@ -3322,21 +3331,74 @@ riscv_save_reg (rtx reg, rtx mem)
   riscv_emit_save_slot_move (mem, reg, RISCV_PROLOGUE_TEMP (GET_MODE (reg)));
 }
 
+/* Determine which GPR save/restore routine to call.  */
+
+static unsigned
+riscv_save_restore_count (unsigned mask)
+{
+  for (unsigned n = GP_REG_LAST; n > GP_REG_FIRST; n--)
+    if (BITSET_P (mask, n))
+      return CALLEE_SAVED_REG_NUMBER (n) + 1;
+  abort ();
+}
+
+/* Return the code to invoke the GPR save routine.  */
+
+const char *
+riscv_output_gpr_save (unsigned mask)
+{
+  static char buf[GP_REG_NUM * 32];
+  size_t len = 0;
+  unsigned n = riscv_save_restore_count (mask), i;
+  unsigned frame_size = RISCV_STACK_ALIGN ((n + 1) * UNITS_PER_WORD);
+
+  len += sprintf (buf + len, "call\tt0,__riscv_save_%u", n);
+
+#ifdef DWARF2_UNWIND_INFO
+  /* Describe the effect of the call to __riscv_save_X.  */
+  if (dwarf2out_do_cfi_asm ())
+    {
+      len += sprintf (buf + len, "\n\t.cfi_def_cfa_offset %u", frame_size);
+
+      for (i = GP_REG_FIRST; i <= GP_REG_LAST; i++)
+	if (BITSET_P (cfun->machine->frame.mask, i))
+	  len += sprintf (buf + len, "\n\t.cfi_offset %u,%d", i,
+			  (CALLEE_SAVED_REG_NUMBER (i) + 2) * -UNITS_PER_WORD);
+    }
+#endif
+
+  return buf;
+}
+
+static bool
+riscv_use_save_libcall (const struct riscv_frame_info *frame)
+{
+  if (!TARGET_SAVE_RESTORE || crtl->calls_eh_return || frame_pointer_needed)
+    return false;
+
+  return frame->save_libcall_adjustment != 0;
+}
 
 /* Expand the "prologue" pattern.  */
 
 void
 riscv_expand_prologue (void)
 {
-  const struct riscv_frame_info *frame;
-  HOST_WIDE_INT size;
+  struct riscv_frame_info *frame = &cfun->machine->frame;
+  HOST_WIDE_INT size = frame->total_size;
+  unsigned mask = frame->mask;
   rtx insn;
-
-  frame = &cfun->machine->frame;
-  size = frame->total_size;
 
   if (flag_stack_usage_info)
     current_function_static_stack_size = size;
+
+  /* When optimizing for size, call a subroutine to save the registers.  */
+  if (riscv_use_save_libcall (frame))
+    {
+      frame->mask = 0; /* Temporarily fib that we need not save GPRs.  */
+      size -= frame->save_libcall_adjustment;
+      emit_insn (gen_gpr_save (GEN_INT (mask)));
+    }
 
   /* Save the registers.  Allocate up to RISCV_MAX_FIRST_STACK_STEP
      bytes beforehand; this is enough to cover the register save area
@@ -3354,6 +3416,8 @@ riscv_expand_prologue (void)
       riscv_for_each_saved_gpr_and_fpr (size, riscv_save_reg);
     }
 
+  frame->mask = mask; /* Undo the above fib.  */
+
   /* Set up the frame pointer, if we're using one.  */
   if (frame_pointer_needed)
     {
@@ -3366,21 +3430,23 @@ riscv_expand_prologue (void)
   if (size > 0)
     {
       if (SMALL_OPERAND (-size))
-	RTX_FRAME_RELATED_P (emit_insn (gen_add3_insn (stack_pointer_rtx,
-						       stack_pointer_rtx,
-						       GEN_INT (-size)))) = 1;
+	emit_insn (gen_add3_insn (stack_pointer_rtx, stack_pointer_rtx,
+				  GEN_INT (-size)));
       else
 	{
-	  riscv_emit_move (RISCV_PROLOGUE_TEMP (Pmode), GEN_INT (size));
-	  emit_insn (gen_sub3_insn (stack_pointer_rtx,
+	  riscv_emit_move (RISCV_PROLOGUE_TEMP (Pmode), GEN_INT (-size));
+	  emit_insn (gen_add3_insn (stack_pointer_rtx,
 				    stack_pointer_rtx,
 				    RISCV_PROLOGUE_TEMP (Pmode)));
-
-	  /* Describe the combined effect of the previous instructions.  */
-	  riscv_set_frame_expr
-	    (gen_rtx_SET (VOIDmode, stack_pointer_rtx,
-			  plus_constant (Pmode, stack_pointer_rtx, -size)));
 	}
+    }
+
+  if (frame->total_size > 0)
+    {
+      /* Describe the effect of the instructions that adjusted sp.  */
+      insn = plus_constant (Pmode, stack_pointer_rtx, -frame->total_size);
+      insn = gen_rtx_SET (VOIDmode, stack_pointer_rtx, insn);
+      riscv_set_frame_expr (insn);
     }
 }
 
@@ -3398,8 +3464,17 @@ riscv_restore_reg (rtx reg, rtx mem)
 void
 riscv_expand_epilogue (bool sibcall_p)
 {
-  const struct riscv_frame_info *frame;
-  HOST_WIDE_INT step1, step2;
+  /* Split the frame into two.  STEP1 is the amount of stack we should
+     deallocate before restoring the registers.  STEP2 is the amount we
+     should deallocate afterwards.
+
+     Start off by assuming that no registers need to be restored.  */
+  struct riscv_frame_info *frame = &cfun->machine->frame;
+  unsigned mask = frame->mask;
+  HOST_WIDE_INT step1 = frame->total_size;
+  HOST_WIDE_INT step2 = 0;
+  bool use_restore_libcall = !sibcall_p && riscv_use_save_libcall (frame);
+  rtx ra = gen_rtx_REG (Pmode, RETURN_ADDR_REGNUM);
 
   if (!sibcall_p && riscv_can_use_return_insn ())
     {
@@ -3407,16 +3482,7 @@ riscv_expand_epilogue (bool sibcall_p)
       return;
     }
 
-  /* Split the frame into two.  STEP1 is the amount of stack we should
-     deallocate before restoring the registers.  STEP2 is the amount we
-     should deallocate afterwards.
-
-     Start off by assuming that no registers need to be restored.  */
-  frame = &cfun->machine->frame;
-  step1 = frame->total_size;
-  step2 = 0;
-
-  /* Move past any dynamic stack allocations. */
+  /* Move past any dynamic stack allocations.  */
   if (cfun->calls_alloca)
     {
       rtx adjust = GEN_INT (-frame->hard_frame_pointer_offset);
@@ -3451,14 +3517,31 @@ riscv_expand_epilogue (bool sibcall_p)
       emit_insn (gen_add3_insn (stack_pointer_rtx, stack_pointer_rtx, adjust));
     }
 
+  if (use_restore_libcall)
+    frame->mask = 0; /* Temporarily fib that we need not save GPRs.  */
+
   /* Restore the registers.  */
   riscv_for_each_saved_gpr_and_fpr (frame->total_size - step2,
 				    riscv_restore_reg);
+
+  if (use_restore_libcall)
+    {
+      frame->mask = mask; /* Undo the above fib.  */
+      gcc_assert (step2 >= frame->save_libcall_adjustment);
+      step2 -= frame->save_libcall_adjustment;
+    }
 
   /* Deallocate the final bit of the frame.  */
   if (step2 > 0)
     emit_insn (gen_add3_insn (stack_pointer_rtx, stack_pointer_rtx,
 			      GEN_INT (step2)));
+
+  if (use_restore_libcall)
+    {
+      emit_insn (gen_gpr_restore (GEN_INT (riscv_save_restore_count (mask))));
+      emit_jump_insn (gen_gpr_restore_return (ra));
+      return;
+    }
 
   /* Add in the __builtin_eh_return stack adjustment. */
   if (crtl->calls_eh_return)
@@ -3466,10 +3549,7 @@ riscv_expand_epilogue (bool sibcall_p)
 			      EH_RETURN_STACKADJ_RTX));
 
   if (!sibcall_p)
-    {
-      rtx ra = gen_rtx_REG (Pmode, RETURN_ADDR_REGNUM);
-      emit_jump_insn (gen_simple_return_internal (ra));
-    }
+    emit_jump_insn (gen_simple_return_internal (ra));
 }
 
 /* Return nonzero if this function is known to have a null epilogue.
