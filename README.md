@@ -33,7 +33,7 @@ that property.  Make sure that the mount point does not contain spaces.
 
 This process will start by downloading about 200 MiB of upstream sources, then
 will patch, build, and install the toolchain.  If a local cache of the
-upstream sources exists in $(DESTDIR), it will be used; the default location
+upstream sources exists in $(DISTDIR), it will be used; the default location
 is /var/cache/distfiles.  Your computer will need about 8 GiB of disk space to
 complete the process.
 
