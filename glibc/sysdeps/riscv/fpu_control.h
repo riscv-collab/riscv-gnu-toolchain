@@ -30,10 +30,14 @@
 #define _FPU_DEFAULT  0x00000000
 typedef unsigned int fpu_control_t;
 #define _FPU_GETCW(cw) (cw) = 0
+#define _FPU_GETROUND(cw) (cw) = 0
+#define _FPU_GETFLAGS(cw) (cw) = 0
 #define _FPU_SETCW(cw) do { } while (0)
+#define _FPU_SETROUND(cw) do { } while (0)
+#define _FPU_SETFLAGS(cw) do { } while (0)
 extern fpu_control_t __fpu_control;
 
-#else /* __mips_soft_float */
+#else /* __riscv_soft_float */
 
 /* rounding control */
 #define _FPU_RC_NEAREST 0x0
@@ -87,6 +91,6 @@ extern fpu_control_t __fpu_control;
 #define _FCLASS_INF      (_FCLASS_MINF | _FCLASS_PINF)
 #define _FCLASS_NAN      (_FCLASS_SNAN | _FCLASS_QNAN)
 
-#endif /* __mips_soft_float */
+#endif /* __riscv_soft_float */
 
 #endif	/* fpu_control.h */

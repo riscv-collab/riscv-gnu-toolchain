@@ -9,8 +9,13 @@ double __fdim (double x, double y)
   if (x <= y)
     return 0.0;
 
+#ifdef __riscv_soft_float
+  if (isinf(diff))
+    errno = ERANGE;
+#else
   if (__builtin_expect(_FCLASS(diff) & _FCLASS_INF, 0))
     errno = ERANGE;
+#endif
 
   return diff;
 }
