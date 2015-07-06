@@ -3066,6 +3066,27 @@ riscv_save_reg_p (unsigned int regno)
 	 || (regno == RETURN_ADDR_REGNUM && crtl->calls_eh_return);
 }
 
+/* Determine whether to call GPR save/restore routines.  */
+static bool
+riscv_use_save_libcall (const struct riscv_frame_info *frame)
+{
+  if (!TARGET_SAVE_RESTORE || crtl->calls_eh_return || frame_pointer_needed)
+    return false;
+
+  return frame->save_libcall_adjustment != 0;
+}
+
+/* Determine which GPR save/restore routine to call.  */
+
+static unsigned
+riscv_save_libcall_count (unsigned mask)
+{
+  for (unsigned n = GP_REG_LAST; n > GP_REG_FIRST; n--)
+    if (BITSET_P (mask, n))
+      return CALLEE_SAVED_REG_NUMBER (n) + 1;
+  abort ();
+}
+
 /* Populate the current function's riscv_frame_info structure.
 
    RISC-V stack frames grown downward.  High addresses are at the top.
@@ -3113,7 +3134,7 @@ riscv_compute_frame_info (void)
 {
   struct riscv_frame_info *frame;
   HOST_WIDE_INT offset;
-  unsigned int regno, i;
+  unsigned int regno, i, num_x_saved = 0, num_f_saved = 0;
 
   frame = &cfun->machine->frame;
   memset (frame, 0, sizeof (*frame));
@@ -3121,20 +3142,20 @@ riscv_compute_frame_info (void)
   /* Find out which GPRs we need to save.  */
   for (regno = GP_REG_FIRST; regno <= GP_REG_LAST; regno++)
     if (riscv_save_reg_p (regno))
-      frame->mask |= 1 << (regno - GP_REG_FIRST);
+      frame->mask |= 1 << (regno - GP_REG_FIRST), num_x_saved++;
 
   /* If this function calls eh_return, we must also save and restore the
      EH data registers.  */
   if (crtl->calls_eh_return)
-    for (i = 0; EH_RETURN_DATA_REGNO (i) != INVALID_REGNUM; i++)
-      frame->mask |= 1 << (EH_RETURN_DATA_REGNO (i) - GP_REG_FIRST);
+    for (i = 0; (regno = EH_RETURN_DATA_REGNO (i)) != INVALID_REGNUM; i++)
+      frame->mask |= 1 << (regno - GP_REG_FIRST), num_x_saved++;
 
   /* Find out which FPRs we need to save.  This loop must iterate over
      the same space as its companion in riscv_for_each_saved_gpr_and_fpr.  */
   if (TARGET_HARD_FLOAT)
     for (regno = FP_REG_FIRST; regno <= FP_REG_LAST; regno++)
       if (riscv_save_reg_p (regno))
-        frame->fmask |= 1 << (regno - FP_REG_FIRST);
+        frame->fmask |= 1 << (regno - FP_REG_FIRST), num_f_saved++;
 
   /* At the bottom of the frame are any outgoing stack arguments. */
   offset = crtl->outgoing_args_size;
@@ -3145,17 +3166,20 @@ riscv_compute_frame_info (void)
   /* Next are the callee-saved FPRs. */
   if (frame->fmask)
     {
-      unsigned num_saved = __builtin_popcount(frame->fmask);
-      offset += RISCV_STACK_ALIGN (num_saved * UNITS_PER_FPREG);
+      offset += RISCV_STACK_ALIGN (num_f_saved * UNITS_PER_FPREG);
       frame->fp_sp_offset = offset - UNITS_PER_HWFPVALUE;
     }
   /* Next are the callee-saved GPRs. */
   if (frame->mask)
     {
-      unsigned num_saved = __builtin_popcount(frame->mask);
-      frame->save_libcall_adjustment =
-	RISCV_STACK_ALIGN (num_saved * UNITS_PER_WORD);
-      offset += frame->save_libcall_adjustment;
+      unsigned x_save_size = RISCV_STACK_ALIGN (num_x_saved * UNITS_PER_WORD);
+      unsigned num_save_restore = 1 + riscv_save_libcall_count (frame->mask);
+
+      /* Only use save/restore routines if they don't alter the stack size.  */
+      if (RISCV_STACK_ALIGN (num_save_restore * UNITS_PER_WORD) == x_save_size)
+	frame->save_libcall_adjustment = x_save_size;
+
+      offset += x_save_size;
       frame->gp_sp_offset = offset - UNITS_PER_WORD;
     }
   /* The hard frame pointer points above the callee-saved GPRs. */
@@ -3331,17 +3355,6 @@ riscv_save_reg (rtx reg, rtx mem)
   riscv_emit_save_slot_move (mem, reg, RISCV_PROLOGUE_TEMP (GET_MODE (reg)));
 }
 
-/* Determine which GPR save/restore routine to call.  */
-
-static unsigned
-riscv_save_restore_count (unsigned mask)
-{
-  for (unsigned n = GP_REG_LAST; n > GP_REG_FIRST; n--)
-    if (BITSET_P (mask, n))
-      return CALLEE_SAVED_REG_NUMBER (n) + 1;
-  abort ();
-}
-
 /* Return the code to invoke the GPR save routine.  */
 
 const char *
@@ -3349,7 +3362,7 @@ riscv_output_gpr_save (unsigned mask)
 {
   static char buf[GP_REG_NUM * 32];
   size_t len = 0;
-  unsigned n = riscv_save_restore_count (mask), i;
+  unsigned n = riscv_save_libcall_count (mask), i;
   unsigned frame_size = RISCV_STACK_ALIGN ((n + 1) * UNITS_PER_WORD);
 
   len += sprintf (buf + len, "call\tt0,__riscv_save_%u", n);
@@ -3368,15 +3381,6 @@ riscv_output_gpr_save (unsigned mask)
 #endif
 
   return buf;
-}
-
-static bool
-riscv_use_save_libcall (const struct riscv_frame_info *frame)
-{
-  if (!TARGET_SAVE_RESTORE || crtl->calls_eh_return || frame_pointer_needed)
-    return false;
-
-  return frame->save_libcall_adjustment != 0;
 }
 
 /* Expand the "prologue" pattern.  */
@@ -3538,7 +3542,7 @@ riscv_expand_epilogue (bool sibcall_p)
 
   if (use_restore_libcall)
     {
-      emit_insn (gen_gpr_restore (GEN_INT (riscv_save_restore_count (mask))));
+      emit_insn (gen_gpr_restore (GEN_INT (riscv_save_libcall_count (mask))));
       emit_jump_insn (gen_gpr_restore_return (ra));
       return;
     }
