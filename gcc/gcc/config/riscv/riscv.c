@@ -216,6 +216,9 @@ struct GTY(())  machine_function {
      This area is allocated by the callee at the very top of the frame.  */
   int varargs_size;
 
+  /* Cached return value of leaf_function_p.  <0 if false, >0 if true.  */
+  int is_leaf;
+
   /* The current frame information, calculated by riscv_compute_frame_info.  */
   struct riscv_frame_info frame;
 };
@@ -4278,6 +4281,23 @@ riscv_trampoline_init (rtx m_tramp, tree fndecl, rtx chain_value)
   emit_insn (gen_clear_cache (addr, end_addr));
 }
 
+/* Implement TARGET_FUNCTION_OK_FOR_SIBCALL.  */
+
+static bool
+riscv_function_ok_for_sibcall (tree decl, tree exp ATTRIBUTE_UNUSED)
+{
+  if (TARGET_SAVE_RESTORE)
+    {
+      /* When optimzing for size, don't use sibcalls in non-leaf routines */
+      if (cfun->machine->is_leaf == 0)
+	cfun->machine->is_leaf = leaf_function_p () ? 1 : -1;
+
+      return cfun->machine->is_leaf > 0;
+    }
+
+  return true;
+}
+
 static bool
 riscv_lra_p (void)
 {
@@ -4304,7 +4324,7 @@ riscv_lra_p (void)
 #define TARGET_SCHED_ISSUE_RATE riscv_issue_rate
 
 #undef TARGET_FUNCTION_OK_FOR_SIBCALL
-#define TARGET_FUNCTION_OK_FOR_SIBCALL hook_bool_tree_tree_true
+#define TARGET_FUNCTION_OK_FOR_SIBCALL riscv_function_ok_for_sibcall
 
 #undef TARGET_REGISTER_MOVE_COST
 #define TARGET_REGISTER_MOVE_COST riscv_register_move_cost
