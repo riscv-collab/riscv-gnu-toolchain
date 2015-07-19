@@ -48,6 +48,12 @@
 #define ELF64_DYNAMIC_INTERPRETER "/lib/ld.so.1"
 #define ELF32_DYNAMIC_INTERPRETER "/lib32/ld.so.1"
 
+#define ELF_ARCH			bfd_arch_riscv
+#define ELF_TARGET_ID			RISCV_ELF_DATA
+#define ELF_MACHINE_CODE		EM_RISCV
+#define ELF_MAXPAGESIZE			0x2000
+#define ELF_COMMONPAGESIZE		0x2000
+
 /* The RISC-V linker needs to keep track of the number of relocs that it
    decides to copy as dynamic relocs in check_relocs for each symbol.
    This is so that it can later discard them if they are found to be
@@ -2675,7 +2681,7 @@ riscv_relax_delete_bytes (bfd *abfd, asection *sec, bfd_vma addr, size_t count)
 /* Relax AUIPC + JALR into JAL.  */
 
 static bfd_boolean
-_bfd_riscv_relax_call (bfd *abfd, asection *sec,
+_bfd_riscv_relax_call (bfd *abfd, asection *sec, asection *sym_sec,
 		       struct bfd_link_info *link_info,
 		       Elf_Internal_Rela *rel,
 		       bfd_vma symval,
@@ -2686,6 +2692,12 @@ _bfd_riscv_relax_call (bfd *abfd, asection *sec,
   bfd_boolean near_zero = (symval + RISCV_IMM_REACH/2) < RISCV_IMM_REACH;
   bfd_vma auipc, jalr;
   int rd, r_type, len = 4, rvc = elf_elfheader (abfd)->e_flags & EF_RISCV_RVC;
+
+  /* If the call crosses section boundaries, an alignment directive could
+     cause the PC-relative offset to later increase.  Assume at most
+     page-alignment, and account for this by adding some slop.  */
+  if (VALID_UJTYPE_IMM (foff) && sym_sec->output_section != sec->output_section)
+    foff += (foff < 0 ? -ELF_MAXPAGESIZE : ELF_MAXPAGESIZE);
 
   /* See if this function call can be shortened.  */
   if (!VALID_UJTYPE_IMM (foff) && !(!link_info->shared && near_zero))
@@ -2733,6 +2745,7 @@ _bfd_riscv_relax_call (bfd *abfd, asection *sec,
 
 static bfd_boolean
 _bfd_riscv_relax_lui (bfd *abfd, asection *sec,
+		      asection *sym_sec ATTRIBUTE_UNUSED,
 		      struct bfd_link_info *link_info,
 		      Elf_Internal_Rela *rel,
 		      bfd_vma symval,
@@ -2757,6 +2770,7 @@ _bfd_riscv_relax_lui (bfd *abfd, asection *sec,
 
 static bfd_boolean
 _bfd_riscv_relax_tls_le (bfd *abfd, asection *sec,
+			 asection *sym_sec ATTRIBUTE_UNUSED,
 			 struct bfd_link_info *link_info,
 			 Elf_Internal_Rela *rel,
 			 bfd_vma symval,
@@ -2779,6 +2793,7 @@ _bfd_riscv_relax_tls_le (bfd *abfd, asection *sec,
 
 static bfd_boolean
 _bfd_riscv_relax_align (bfd *abfd, asection *sec,
+			asection *sym_sec ATTRIBUTE_UNUSED,
 			struct bfd_link_info *link_info ATTRIBUTE_UNUSED,
 			Elf_Internal_Rela *rel,
 			bfd_vma symval,
@@ -2854,6 +2869,7 @@ _bfd_riscv_relax_section (bfd *abfd, asection *sec,
   /* Examine and consider relaxing each reloc.  */
   for (i = 0; i < sec->reloc_count; i++)
     {
+      asection *sym_sec;
       Elf_Internal_Rela *rel = relocs + i;
       typeof(&_bfd_riscv_relax_call) relax_func = NULL;
       int type = ELFNN_R_TYPE (rel->r_info);
@@ -2898,15 +2914,14 @@ _bfd_riscv_relax_section (bfd *abfd, asection *sec,
 				    + ELFNN_R_SYM (rel->r_info));
 
 	  if (isym->st_shndx == SHN_UNDEF)
-	    symval = sec_addr (sec) + rel->r_offset;
+	    sym_sec = sec, symval = sec_addr (sec) + rel->r_offset;
 	  else
 	    {
-	      asection *isec;
 	      BFD_ASSERT (isym->st_shndx < elf_numsections (abfd));
-	      isec = elf_elfsections (abfd)[isym->st_shndx]->bfd_section;
-	      if (sec_addr (isec) == 0)
+	      sym_sec = elf_elfsections (abfd)[isym->st_shndx]->bfd_section;
+	      if (sec_addr (sym_sec) == 0)
 		continue;
-	      symval = sec_addr (isec) + isym->st_value;
+	      symval = sec_addr (sym_sec) + isym->st_value;
 	    }
 	}
       else
@@ -2931,11 +2946,13 @@ _bfd_riscv_relax_section (bfd *abfd, asection *sec,
 	    continue;
 	  else
 	    symval = sec_addr (h->root.u.def.section) + h->root.u.def.value;
+
+	  sym_sec = h->root.u.def.section;
 	}
 
       symval += rel->r_addend;
 
-      if (!relax_func (abfd, sec, info, rel, symval, again))
+      if (!relax_func (abfd, sec, sym_sec, info, rel, symval, again))
 	goto fail;
     }
 
@@ -2947,12 +2964,6 @@ fail:
 
   return ret;
 }
-
-#define ELF_ARCH			bfd_arch_riscv
-#define ELF_TARGET_ID			RISCV_ELF_DATA
-#define ELF_MACHINE_CODE		EM_RISCV
-#define ELF_MAXPAGESIZE			0x2000
-#define ELF_COMMONPAGESIZE		0x2000
 
 #define TARGET_LITTLE_SYM		riscv_elfNN_vec
 #define TARGET_LITTLE_NAME		"elfNN-littleriscv"
