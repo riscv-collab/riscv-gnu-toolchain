@@ -2122,7 +2122,7 @@
 })
 
 (define_insn "indirect_jump<mode>"
-  [(set (pc) (match_operand:P 0 "register_operand" "r"))]
+  [(set (pc) (match_operand:P 0 "register_operand" "l"))]
   ""
   "jr\t%0"
   [(set_attr "type" "jump")
@@ -2146,7 +2146,7 @@
 })
 
 (define_insn "tablejump<mode>"
-  [(set (pc) (match_operand:GPR 0 "register_operand" "r"))
+  [(set (pc) (match_operand:GPR 0 "register_operand" "l"))
    (use (label_ref (match_operand 1 "" "")))]
   ""
   "jr\t%0"
@@ -2343,7 +2343,7 @@
 })
 
 (define_insn "call_internal"
-  [(call (mem:SI (match_operand 0 "call_insn_operand" "r,S"))
+  [(call (mem:SI (match_operand 0 "call_insn_operand" "l,S"))
 	 (match_operand 1 "" ""))
    (clobber (reg:SI RETURN_ADDR_REGNUM))]
   ""
@@ -2366,7 +2366,7 @@
 ;; See comment for call_internal.
 (define_insn "call_value_internal"
   [(set (match_operand 0 "register_operand" "")
-        (call (mem:SI (match_operand 1 "call_insn_operand" "r,S"))
+        (call (mem:SI (match_operand 1 "call_insn_operand" "l,S"))
               (match_operand 2 "" "")))
    (clobber (reg:SI RETURN_ADDR_REGNUM))]
   ""
@@ -2378,7 +2378,7 @@
 ;; See comment for call_internal.
 (define_insn "call_value_multiple_internal"
   [(set (match_operand 0 "register_operand" "")
-        (call (mem:SI (match_operand 1 "call_insn_operand" "r,S"))
+        (call (mem:SI (match_operand 1 "call_insn_operand" "l,S"))
               (match_operand 2 "" "")))
    (set (match_operand 3 "register_operand" "")
 	(call (mem:SI (match_dup 1))

@@ -190,7 +190,7 @@ static void
 riscv_make_plt0_entry(bfd_vma gotplt_addr, bfd_vma addr, uint32_t *entry)
 {
   /* auipc  t2, %hi(.got.plt)
-     sub    t1, t1, t0               # shifted .got.plt offset + hdr size + 12
+     sub    t1, t1, t3               # shifted .got.plt offset + hdr size + 12
      l[w|d] t3, %lo(.got.plt)(t2)    # _dl_runtime_resolve
      addi   t1, t1, -(hdr size + 12) # shifted .got.plt offset
      addi   t0, t2, %lo(.got.plt)    # &.got.plt
@@ -199,7 +199,7 @@ riscv_make_plt0_entry(bfd_vma gotplt_addr, bfd_vma addr, uint32_t *entry)
      jr     t3 */
 
   entry[0] = RISCV_UTYPE (AUIPC, X_T2, RISCV_PCREL_HIGH_PART (gotplt_addr, addr));
-  entry[1] = RISCV_RTYPE (SUB, X_T1, X_T1, X_T0);
+  entry[1] = RISCV_RTYPE (SUB, X_T1, X_T1, X_T3);
   entry[2] = RISCV_ITYPE (LREG, X_T3, X_T2, RISCV_PCREL_LOW_PART (gotplt_addr, addr));
   entry[3] = RISCV_ITYPE (ADDI, X_T1, X_T1, -(PLT_HEADER_SIZE + 12));
   entry[4] = RISCV_ITYPE (ADDI, X_T0, X_T2, RISCV_PCREL_LOW_PART (gotplt_addr, addr));
@@ -213,14 +213,14 @@ riscv_make_plt0_entry(bfd_vma gotplt_addr, bfd_vma addr, uint32_t *entry)
 static void
 riscv_make_plt_entry(bfd_vma got_address, bfd_vma addr, uint32_t *entry)
 {
-  /* auipc  t1, %hi(.got.plt entry)
-     l[w|d] t0, %lo(.got.plt entry)(t1)
-     jalr   t1, t0
+  /* auipc  t3, %hi(.got.plt entry)
+     l[w|d] t3, %lo(.got.plt entry)(t3)
+     jalr   t1, t3
      nop */
 
-  entry[0] = RISCV_UTYPE (AUIPC, X_T1, RISCV_PCREL_HIGH_PART (got_address, addr));
-  entry[1] = RISCV_ITYPE (LREG,  X_T0, X_T1, RISCV_PCREL_LOW_PART(got_address, addr));
-  entry[2] = RISCV_ITYPE (JALR, X_T1, X_T0, 0);
+  entry[0] = RISCV_UTYPE (AUIPC, X_T3, RISCV_PCREL_HIGH_PART (got_address, addr));
+  entry[1] = RISCV_ITYPE (LREG,  X_T3, X_T3, RISCV_PCREL_LOW_PART(got_address, addr));
+  entry[2] = RISCV_ITYPE (JALR, X_T1, X_T3, 0);
   entry[3] = RISCV_NOP;
 }
 

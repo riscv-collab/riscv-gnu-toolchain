@@ -549,6 +549,7 @@ enum reg_class
 {
   NO_REGS,			/* no registers in set */
   T_REGS,			/* registers used by indirect sibcalls */
+  JALR_REGS,			/* registers used by indirect calls */
   GR_REGS,			/* integer registers */
   FP_REGS,			/* floating point registers */
   FRAME_REGS,			/* $arg and $frame */
@@ -568,6 +569,7 @@ enum reg_class
 {									\
   "NO_REGS",								\
   "T_REGS",								\
+  "JALR_REGS",								\
   "GR_REGS",								\
   "FP_REGS",								\
   "FRAME_REGS",								\
@@ -588,7 +590,8 @@ enum reg_class
 #define REG_CLASS_CONTENTS									\
 {												\
   { 0x00000000, 0x00000000, 0x00000000 },	/* NO_REGS */		\
-  { 0xf00000e0, 0x00000000, 0x00000000 },	/* T_REGS */		\
+  { 0xf0000040, 0x00000000, 0x00000000 },	/* T_REGS */		\
+  { 0xffffff40, 0x00000000, 0x00000000 },	/* JALR_REGS */		\
   { 0xffffffff, 0x00000000, 0x00000000 },	/* GR_REGS */		\
   { 0x00000000, 0xffffffff, 0x00000000 },	/* FP_REGS */		\
   { 0x00000000, 0x00000000, 0x00000003 },	/* FRAME_REGS */	\

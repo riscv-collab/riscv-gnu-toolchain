@@ -30,6 +30,9 @@
 (define_register_constraint "j" "T_REGS"
   "@internal")
 
+(define_register_constraint "l" "JALR_REGS"
+  "@internal")
+
 ;; Integer constraints
 
 (define_constraint "Z"
