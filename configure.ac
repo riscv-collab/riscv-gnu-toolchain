@@ -59,8 +59,8 @@ AC_ARG_WITH(xlen,
 AC_ARG_WITH(arch,
 	[AS_HELP_STRING([--with-arch=IMAFD],
 		[Sets the base RISC-V ISA, defaults to IMAFD])],
-	AC_SUBST(ARCH, $withval),
-	AC_SUBST(ARCH, IMAFD)
+	AC_SUBST(WITH_ARCH, --with-arch=$withval),
+	AC_SUBST(WITH_ARCH,)
 	)
 
 AC_ARG_ENABLE(atomic,
