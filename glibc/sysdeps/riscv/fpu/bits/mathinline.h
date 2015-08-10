@@ -1,8 +1,6 @@
-/* Inline math functions for RISC-V.
-   Copyright (C) 2011
-   Free Software Foundation, Inc.
+/* Copyright (C) 2011-2015 Free Software Foundation, Inc.
    This file is part of the GNU C Library.
-   Contributed by Jakub Jelinek <jakub@redhat.com>.
+   Contributed by Chris Metcalf <cmetcalf@tilera.com>, 2011.
 
    The GNU C Library is free software; you can redistribute it and/or
    modify it under the terms of the GNU Lesser General Public
@@ -15,58 +13,32 @@
    Lesser General Public License for more details.
 
    You should have received a copy of the GNU Lesser General Public
-   License along with the GNU C Library; if not, write to the Free
-   Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-   02111-1307 USA.  */
+   License along with the GNU C Library.  If not, see
+   <http://www.gnu.org/licenses/>.  */
 
 #ifndef _MATH_H
 # error "Never use <bits/mathinline.h> directly; include <math.h> instead."
 #endif
 
-#include <bits/wordsize.h>
+#ifndef __extern_always_inline
+# define __MATH_INLINE __inline
+#else
+# define __MATH_INLINE __extern_always_inline
+#endif
 
-#ifdef __GNUC__
 
-#if defined __USE_ISOC99
-# undef isgreater
-# undef isgreaterequal
-# undef isless
-# undef islessequal
-# undef islessgreater
-# undef isunordered
+#if defined __USE_ISOC99 && defined __GNUC__
 
-# define isgreater(x, y) ((x) > (y))
-# define isgreaterequal(x, y) ((x) >= (y))
-# define isless(x, y) ((x) < (y))
-# define islessequal(x, y) ((x) <= (y))
-# define islessgreater(x, y) (!!(isless(x, y) + isgreater(x, y)))
-# define isunordered(x, y) (((x) == (x)) + ((y) == (y)) < 2)
-
-# ifndef __extern_inline
-#  define __MATH_INLINE __inline
-# else
-#  define __MATH_INLINE __extern_inline
-# endif  /* __cplusplus */
-
-__MATH_INLINE int __attribute_used__ __signbit (double __x)
+/* Test for negative number.  Used in the signbit() macro.  */
+__MATH_INLINE int
+__NTH (__signbitf (float __x))
 {
-  union { double __d; long __i[sizeof(double)/sizeof(long)]; } __u;
-  __u.__d = __x;
-  return __u.__i[sizeof(double)/sizeof(long)-1] < 0;
+  return __builtin_signbitf (__x);
+}
+__MATH_INLINE int
+__NTH (__signbit (double __x))
+{
+  return __builtin_signbit (__x);
 }
 
-__MATH_INLINE int __attribute_used__ __signbitf (float __x)
-{
-  union { float __d; int __i; } __u;
-  __u.__d = __x;
-  return __u.__i < 0;
-}
-
-#endif /* __USE_ISOC99 */
-
-#if (!defined __NO_MATH_INLINES || defined __LIBC_INTERNAL_MATH_INLINES) && defined __OPTIMIZE__
-
-/* Nothing yet. */
-
-#endif /* !__NO_MATH_INLINES && __OPTIMIZE__ */
-#endif /* __GNUC__ */
+#endif
