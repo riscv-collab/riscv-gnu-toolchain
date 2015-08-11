@@ -639,7 +639,7 @@ const struct riscv_opcode riscv_builtin_opcodes[] =
 {"eret",      "I",   "",     MATCH_SRET, MASK_SRET, match_opcode,  0 },
 {"sret",      "I",   "",     MATCH_SRET, MASK_SRET, match_opcode,  0 },
 {"mrts",      "I",   "",     MATCH_MRTS, MASK_MRTS, match_opcode,  0 },
-{"sfence.vm", "I",   "",     MATCH_SFENCE_VM | MASK_RS1, MASK_SFENCE_VM | MASK_RS1, match_opcode,  0 },
+{"sfence.vm", "I",   "",     MATCH_SFENCE_VM, MASK_SFENCE_VM | MASK_RS1, match_opcode,  0 },
 {"sfence.vm", "I",   "s",    MATCH_SFENCE_VM, MASK_SFENCE_VM, match_opcode,  RD_xs1 },
 {"wfi",       "I",   "",     MATCH_WFI, MASK_WFI, match_opcode,  0 },
 
