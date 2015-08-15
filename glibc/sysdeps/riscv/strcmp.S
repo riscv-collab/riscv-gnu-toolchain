@@ -3,7 +3,7 @@
 #include <sysdep.h>
 #include <sys/asm.h>
 
-#if BYTE_ORDER != LITTLE_ENDIAN
+#if __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
 # error
 #endif
 
