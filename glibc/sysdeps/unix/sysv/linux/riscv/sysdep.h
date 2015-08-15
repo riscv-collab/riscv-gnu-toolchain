@@ -27,6 +27,7 @@
 
 #define ENTRY(name) LEAF(name)
 
+#undef PSEUDO_END
 #define PSEUDO_END(sym) END(sym)
 
 #define PSEUDO_NOERRNO(name, syscall_name, args)	\
