@@ -56,6 +56,7 @@ symbol:						\
 /*
  * END - mark end of function
  */
+#undef END
 #define END(function)				\
 		cfi_endproc;			\
 		.size	function,.-function
