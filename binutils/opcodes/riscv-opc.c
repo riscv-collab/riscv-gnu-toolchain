@@ -1,5 +1,5 @@
 /* RISC-V opcode list
-   Copyright 2011-2014 Free Software Foundation, Inc.
+   Copyright 2011-2015 Free Software Foundation, Inc.
 
    Contributed by Andrew Waterman (waterman@cs.berkeley.edu) at UC Berkeley.
    Based on MIPS target.
@@ -17,9 +17,8 @@
    License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with this file; see the file COPYING.  If not, write to the
-   Free Software Foundation, 51 Franklin Street - Fifth Floor, Boston,
-   MA 02110-1301, USA.  */
+   along with this program; see the file COPYING3. If not,
+   see <http://www.gnu.org/licenses/>.  */
 
 #include "sysdep.h"
 #include "opcode/riscv.h"
@@ -81,7 +80,7 @@ const char * const riscv_vec_fpr_names[32] =
    registers.
 
    Because of the lookup algorithm used, entries with the same opcode
-   name must be contiguous. */
+   name must be contiguous.  */
 
 #define WR_xd INSN_WRITE_GPR_D
 #define WR_fd INSN_WRITE_FPR_D
@@ -859,8 +858,8 @@ const struct riscv_opcode riscv_builtin_opcodes[] =
   ((sizeof riscv_builtin_opcodes) / (sizeof (riscv_builtin_opcodes[0])))
 const int bfd_riscv_num_builtin_opcodes = RISCV_NUM_OPCODES;
 
-/* const removed from the following to allow for dynamic extensions to the
- * built-in instruction set. */
+/* Removed const from the following to allow for dynamic extensions to the
+   built-in instruction set.  */
 struct riscv_opcode *riscv_opcodes =
   (struct riscv_opcode *) riscv_builtin_opcodes;
 int bfd_riscv_num_opcodes = RISCV_NUM_OPCODES;
