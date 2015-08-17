@@ -1,7 +1,7 @@
 /* riscv.h.  RISC-V opcode list for GDB, the GNU debugger.
    Copyright 2011
    Free Software Foundation, Inc.
-   Contributed by Andrew Waterman 
+   Contributed by Andrew Waterman
 
 This file is part of GDB, GAS, and the GNU binutils.
 
@@ -26,7 +26,7 @@ Software Foundation, 51 Franklin Street - Fifth Floor, Boston, MA 02110-1301, US
 #include <stdlib.h>
 #include <stdint.h>
 
-/* RVC fields */
+/* RVC fields. */
 
 #define OP_MASK_CRS2 0x1f
 #define OP_SH_CRS2 2
@@ -46,33 +46,33 @@ typedef uint64_t insn_t;
 
 static inline unsigned int riscv_insn_length (insn_t insn)
 {
-  if ((insn & 0x3) != 3) /* RVC */
+  if ((insn & 0x3) != 3) /* RVC.  */
     return 2;
-  if ((insn & 0x1f) != 0x1f) /* base ISA and extensions in 32-bit space */
+  if ((insn & 0x1f) != 0x1f) /* Base ISA and extensions in 32-bit space.  */
     return 4;
-  if ((insn & 0x3f) == 0x1f) /* 48-bit extensions */
+  if ((insn & 0x3f) == 0x1f) /* 48-bit extensions.  */
     return 6;
-  if ((insn & 0x7f) == 0x3f) /* 64-bit extensions */
+  if ((insn & 0x7f) == 0x3f) /* 64-bit extensions.  */
     return 8;
-  /* longer instructions not supported at the moment */
+  /* Longer instructions not supported at the moment.  */
   return 2;
 }
 
 static const char * const riscv_rm[8] = {
   "rne", "rtz", "rdn", "rup", "rmm", 0, 0, "dyn"
 };
-static const char* const riscv_pred_succ[16] = {
+static const char * const riscv_pred_succ[16] = {
   0,   "w",  "r",  "rw",  "o",  "ow",  "or",  "orw",
   "i", "iw", "ir", "irw", "io", "iow", "ior", "iorw",
 };
 
 #define RVC_JUMP_BITS 11
-#define RVC_JUMP_REACH ((1ULL<<RVC_JUMP_BITS)*RISCV_JUMP_ALIGN)
+#define RVC_JUMP_REACH ((1ULL << RVC_JUMP_BITS) * RISCV_JUMP_ALIGN)
 
 #define RVC_BRANCH_BITS 8
-#define RVC_BRANCH_REACH ((1ULL<<RVC_BRANCH_BITS)*RISCV_BRANCH_ALIGN)
+#define RVC_BRANCH_REACH ((1ULL << RVC_BRANCH_BITS) * RISCV_BRANCH_ALIGN)
 
-#define RV_X(x, s, n) (((x) >> (s)) & ((1<<(n))-1))
+#define RV_X(x, s, n) (((x) >> (s)) & ((1 << (n)) - 1))
 #define RV_IMM_SIGN(x) (-(((x) >> 31) & 1))
 
 #define EXTRACT_ITYPE_IMM(x) \
@@ -230,16 +230,16 @@ static const char* const riscv_pred_succ[16] = {
 #define OP_MASK_VFR		0x1f
 #define OP_SH_VFR		27
 
-#define OP_MASK_IMMNGPR         0x3f
-#define OP_SH_IMMNGPR           20
-#define OP_MASK_IMMNFPR         0x3f
-#define OP_SH_IMMNFPR           26
-#define OP_MASK_IMMSEGNELM      0x7
-#define OP_SH_IMMSEGNELM        29
-#define OP_MASK_CUSTOM_IMM      0x7f
-#define OP_SH_CUSTOM_IMM        25
-#define OP_MASK_CSR             0xfff
-#define OP_SH_CSR               20
+#define OP_MASK_IMMNGPR		0x3f
+#define OP_SH_IMMNGPR		20
+#define OP_MASK_IMMNFPR		0x3f
+#define OP_SH_IMMNFPR		26
+#define OP_MASK_IMMSEGNELM	0x7
+#define OP_SH_IMMSEGNELM	29
+#define OP_MASK_CUSTOM_IMM	0x7f
+#define OP_SH_CUSTOM_IMM	25
+#define OP_MASK_CSR		0xfff
+#define OP_SH_CSR		20
 
 #define X_RA 1
 #define X_SP 2
@@ -258,17 +258,17 @@ static const char* const riscv_pred_succ[16] = {
 #define RISCV_JUMP_BITS RISCV_BIGIMM_BITS
 #define RISCV_JUMP_ALIGN_BITS 1
 #define RISCV_JUMP_ALIGN (1 << RISCV_JUMP_ALIGN_BITS)
-#define RISCV_JUMP_REACH ((1ULL<<RISCV_JUMP_BITS)*RISCV_JUMP_ALIGN)
+#define RISCV_JUMP_REACH ((1ULL << RISCV_JUMP_BITS) * RISCV_JUMP_ALIGN)
 
 #define RISCV_IMM_BITS 12
-#define RISCV_BIGIMM_BITS (32-RISCV_IMM_BITS)
-#define RISCV_IMM_REACH (1LL<<RISCV_IMM_BITS)
-#define RISCV_BIGIMM_REACH (1LL<<RISCV_BIGIMM_BITS)
-#define RISCV_RVC_IMM_REACH (1LL<<6)
+#define RISCV_BIGIMM_BITS (32 - RISCV_IMM_BITS)
+#define RISCV_IMM_REACH (1LL << RISCV_IMM_BITS)
+#define RISCV_BIGIMM_REACH (1LL << RISCV_BIGIMM_BITS)
+#define RISCV_RVC_IMM_REACH (1LL << 6)
 #define RISCV_BRANCH_BITS RISCV_IMM_BITS
 #define RISCV_BRANCH_ALIGN_BITS RISCV_JUMP_ALIGN_BITS
 #define RISCV_BRANCH_ALIGN (1 << RISCV_BRANCH_ALIGN_BITS)
-#define RISCV_BRANCH_REACH (RISCV_IMM_REACH*RISCV_BRANCH_ALIGN)
+#define RISCV_BRANCH_REACH (RISCV_IMM_REACH * RISCV_BRANCH_ALIGN)
 
 /* This structure holds information for a particular instruction.  */
 
@@ -276,7 +276,7 @@ struct riscv_opcode
 {
   /* The name of the instruction.  */
   const char *name;
-  /* The ISA subset name (I, M, A, F, D, Xextension). */
+  /* The ISA subset name (I, M, A, F, D, Xextension).  */
   const char *subset;
   /* A string describing the arguments for this instruction.  */
   const char *args;
@@ -291,27 +291,27 @@ struct riscv_opcode
      INSN_MACRO, then this field is the macro identifier.  */
   insn_t mask;
   /* A function to determine if a word corresponds to this instruction.
-     Usually, this computes ((word & mask) == match). */
-  int (*match_func)(const struct riscv_opcode *op, insn_t word);
+     Usually, this computes ((word & mask) == match).  */
+  int (*match_func) (const struct riscv_opcode *op, insn_t word);
   /* For a macro, this is INSN_MACRO.  Otherwise, it is a collection
      of bits describing the instruction, notably any relevant hazard
      information.  */
   unsigned long pinfo;
 };
 
-#define INSN_WRITE_GPR_D            0x00000001
-#define INSN_WRITE_GPR_RA           0x00000004
-#define INSN_WRITE_FPR_D            0x00000008
-#define INSN_READ_GPR_S             0x00000040
-#define INSN_READ_GPR_T             0x00000080
-#define INSN_READ_FPR_S             0x00000100
-#define INSN_READ_FPR_T             0x00000200
-#define INSN_READ_FPR_R        	    0x00000400
-/* Instruction is a simple alias (I.E. "move" for daddu/addu/or) */
-#define	INSN_ALIAS		    0x00001000
+#define INSN_WRITE_GPR_D	0x00000001
+#define INSN_WRITE_GPR_RA	0x00000004
+#define INSN_WRITE_FPR_D	0x00000008
+#define INSN_READ_GPR_S		0x00000040
+#define INSN_READ_GPR_T		0x00000080
+#define INSN_READ_FPR_S		0x00000100
+#define INSN_READ_FPR_T		0x00000200
+#define INSN_READ_FPR_R		0x00000400
+/* Instruction is a simple alias (I.E. "move" for daddu/addu/or).  */
+#define	INSN_ALIAS		0x00001000
 /* Instruction is actually a macro.  It should be ignored by the
    disassembler, and requires special treatment by the assembler.  */
-#define INSN_MACRO                  0xffffffff
+#define INSN_MACRO		0xffffffff
 
 /* This is a list of macro expanded instructions.
 

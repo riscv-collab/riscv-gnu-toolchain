@@ -1,5 +1,5 @@
 /* BFD backend for RISC-V
-   Copyright 2011-2014 Free Software Foundation, Inc.
+   Copyright 2011-2015 Free Software Foundation, Inc.
 
    Contributed by Andrew Waterman (waterman@cs.berkeley.edu) at UC Berkeley.
    Based on MIPS target.
@@ -17,9 +17,8 @@
    GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with this program; if not, write to the Free Software
-   Foundation, Inc., 51 Franklin Street - Fifth Floor, Boston,
-   MA 02110-1301, USA.  */
+   along with this program; see the file COPYING3. If not,
+   see <http://www.gnu.org/licenses/>.  */
 
 #include "sysdep.h"
 #include "bfd.h"
@@ -70,11 +69,11 @@ enum
 
 static const bfd_arch_info_type arch_info_struct[] =
 {
-  N (64, 64, bfd_mach_riscv64, "riscv:rv64", FALSE, NN(I_riscv64)),
+  N (64, 64, bfd_mach_riscv64, "riscv:rv64", FALSE, NN (I_riscv64)),
   N (32, 32, bfd_mach_riscv32, "riscv:rv32", FALSE, 0)
 };
 
-/* The default architecture is riscv:rv64. */
+/* The default architecture is riscv:rv64.  */
 
 const bfd_arch_info_type bfd_riscv_arch =
 N (64, 64, 0, "riscv", TRUE, &arch_info_struct[0]);

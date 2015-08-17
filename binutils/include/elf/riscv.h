@@ -1,5 +1,5 @@
 /* RISC-V ELF support for BFD.
-   Copyright 2011-2014 Free Software Foundation, Inc.
+   Copyright 2011-2015 Free Software Foundation, Inc.
 
    Contributed by Andrw Waterman <waterman@cs.berkeley.edu> at UC Berkeley.
    Based on MIPS ELF support for BFD, by Ian Lance Taylor.
@@ -17,9 +17,8 @@
    GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with this program; if not, write to the Free Software
-   Foundation, Inc., 51 Franklin Street - Fifth Floor, Boston,
-   MA 02110-1301, USA.  */
+   along with this program; see the file COPYING3. If not,
+   see <http://www.gnu.org/licenses/>.  */
 
 /* This file holds definitions specific to the RISCV ELF ABI.  Note
    that most of this is not actually implemented by BFD.  */
@@ -83,7 +82,7 @@ END_RELOC_NUMBERS (R_RISCV_max)
 /* File may contain compressed instructions.  */
 #define EF_RISCV_RVC 0x0001
 
-/* Custom flag definitions. */
+/* Custom flag definitions.  */
 
 #define EF_RISCV_EXT_MASK 0xffff
 #define EF_RISCV_EXT_SH 16
@@ -114,27 +113,27 @@ static const struct riscv_extension_entry riscv_extension_map[] =
   {"Xhwacha", E_RISCV_EXT_Xhwacha},
 };
 
-/* Given an extension name, return an elf flag. */
+/* Given an extension name, return an elf flag.  */
 
-static inline const char* riscv_elf_flag_to_name(unsigned int flag)
+static inline const char *riscv_elf_flag_to_name (unsigned int flag)
 {
   unsigned int i;
 
-  for (i=0; i<sizeof(riscv_extension_map)/sizeof(riscv_extension_map[0]); i++)
+  for (i = 0; i < ARRAY_SIZE (riscv_extension_map); ++i)
     if (riscv_extension_map[i].flag == flag)
       return riscv_extension_map[i].name;
 
   return NULL;
 }
 
-/* Given an elf flag, return an extension name. */
+/* Given an elf flag, return an extension name.  */
 
-static inline unsigned int riscv_elf_name_to_flag(const char* name)
+static inline unsigned int riscv_elf_name_to_flag (const char *name)
 {
   unsigned int i;
 
-  for (i=0; i<sizeof(riscv_extension_map)/sizeof(riscv_extension_map[0]); i++)
-    if (strcmp(riscv_extension_map[i].name, name) == 0)
+  for (i = 0; i < ARRAY_SIZE (riscv_extension_map); ++i)
+    if (strcmp (riscv_extension_map[i].name, name) == 0)
       return riscv_extension_map[i].flag;
 
   return E_RISCV_EXT_Xcustom;
