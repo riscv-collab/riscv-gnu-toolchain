@@ -21,12 +21,18 @@
 #include <sysdeps/unix/sysv/linux/generic/sysdep.h>
 #include <tls.h>
 
+/* In order to get __set_errno() definition in INLINE_SYSCALL.  */
+#ifndef __ASSEMBLER__
+#include <errno.h>
+#endif
+
 #ifdef __ASSEMBLER__
 
 #include <sys/asm.h>
 
 #define ENTRY(name) LEAF(name)
 
+#undef PSEUDO_END
 #define PSEUDO_END(sym) END(sym)
 
 #define PSEUDO_NOERRNO(name, syscall_name, args)	\
@@ -69,16 +75,14 @@ L(syse1):
 /* Define a macro which expands into the inline wrapper code for a system
    call.  */
 #undef INLINE_SYSCALL
-#define INLINE_SYSCALL(name, nr, args...)				\
-  ({ INTERNAL_SYSCALL_DECL(err);					\
-     long result_var = INTERNAL_SYSCALL (name, err, nr, args);		\
-     if (result_var < 0)						\
-       {								\
-	 /* __syscall_error handles result_var <= -4096 corner case */	\
-	 extern long __syscall_error (long) attribute_hidden;		\
-	 result_var = __syscall_error (result_var);			\
-       }								\
-     result_var; })
+# define INLINE_SYSCALL(name, nr, args...)                              \
+    ({ unsigned long _sys_result = INTERNAL_SYSCALL (name, , nr, args); \
+        if (__builtin_expect (INTERNAL_SYSCALL_ERROR_P (_sys_result, ), 0)) \
+        {                                                               \
+            __set_errno (INTERNAL_SYSCALL_ERRNO (_sys_result, ));       \
+            _sys_result = (unsigned long) -1;                           \
+        }                                                               \
+        (long) _sys_result; })
 
 #define INTERNAL_SYSCALL_DECL(err) do { } while (0)
 
