@@ -1,5 +1,5 @@
 /* tc-riscv.h -- header file for tc-riscv.c.
-   Copyright 2011-2014 Free Software Foundation, Inc.
+   Copyright 2011-2015 Free Software Foundation, Inc.
 
    Contributed by Andrew Waterman (waterman@cs.berkeley.edu) at UC Berkeley.
    Based on MIPS target.
@@ -17,9 +17,8 @@
    GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with GAS; see the file COPYING.  If not, write to the Free
-   Software Foundation, 51 Franklin Street - Fifth Floor, Boston, MA
-   02110-1301, USA.  */
+   along with this program; see the file COPYING3. If not,
+   see <http://www.gnu.org/licenses/>.  */
 
 #ifndef TC_RISCV
 #define TC_RISCV
@@ -64,7 +63,7 @@ extern void riscv_init_after_args (void);
 #define md_parse_long_option(arg) riscv_parse_long_option (arg)
 extern int riscv_parse_long_option (const char *);
 
-/* Let the linker resolve all the relocs due to relaxation. */
+/* Let the linker resolve all the relocs due to relaxation.  */
 #define tc_fix_adjustable(fixp) 0
 #define md_allow_local_subtract(l,r,s) 0
 

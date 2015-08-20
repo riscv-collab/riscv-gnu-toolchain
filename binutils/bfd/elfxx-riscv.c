@@ -1,5 +1,5 @@
 /* RISC-V-specific support for ELF.
-   Copyright 2011-2014 Free Software Foundation, Inc.
+   Copyright 2011-2015 Free Software Foundation, Inc.
 
    Contributed by Andrew Waterman (waterman@cs.berkeley.edu) at UC Berkeley.
    Based on TILE-Gx and MIPS targets.
@@ -17,9 +17,8 @@
    GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with this program; if not, write to the Free Software
-   Foundation, Inc., 51 Franklin Street - Fifth Floor, Boston,
-   MA 02110-1301, USA.  */
+   along with this program; see the file COPYING3. If not,
+   see <http://www.gnu.org/licenses/>.  */
 
 #include "sysdep.h"
 #include "bfd.h"
@@ -227,7 +226,7 @@ static reloc_howto_type howto_table[] =
 	 "R_RISCV_BRANCH",	/* name */
 	 FALSE,			/* partial_inplace */
 	 0,			/* src_mask */
-	 ENCODE_SBTYPE_IMM(-1U),/* dst_mask */
+	 ENCODE_SBTYPE_IMM (-1U),/* dst_mask */
 	 TRUE),			/* pcrel_offset */
 
   /* 20-bit PC-relative jump offset.  */
@@ -245,7 +244,7 @@ static reloc_howto_type howto_table[] =
 	 "R_RISCV_JAL",		/* name */
 	 FALSE,			/* partial_inplace */
 	 0,			/* src_mask */
-	 ENCODE_UJTYPE_IMM(-1U),	/* dst_mask */
+	 ENCODE_UJTYPE_IMM (-1U),	/* dst_mask */
 	 TRUE),		/* pcrel_offset */
 
   /* 32-bit PC-relative function call (AUIPC/JALR).  */
@@ -260,7 +259,7 @@ static reloc_howto_type howto_table[] =
 	 "R_RISCV_CALL",	/* name */
 	 FALSE,			/* partial_inplace */
 	 0,			/* src_mask */
-	 ENCODE_UTYPE_IMM(-1U) | ((bfd_vma) ENCODE_ITYPE_IMM(-1U) << 32),	/* dst_mask */
+	 ENCODE_UTYPE_IMM (-1U) | ((bfd_vma) ENCODE_ITYPE_IMM (-1U) << 32),	/* dst_mask */
 	 TRUE),			/* pcrel_offset */
 
   /* 32-bit PC-relative function call (AUIPC/JALR).  */
@@ -275,7 +274,7 @@ static reloc_howto_type howto_table[] =
 	 "R_RISCV_CALL_PLT",	/* name */
 	 FALSE,			/* partial_inplace */
 	 0,			/* src_mask */
-	 ENCODE_UTYPE_IMM(-1U) | ((bfd_vma) ENCODE_ITYPE_IMM(-1U) << 32),	/* dst_mask */
+	 ENCODE_UTYPE_IMM (-1U) | ((bfd_vma) ENCODE_ITYPE_IMM (-1U) << 32),	/* dst_mask */
 	 TRUE),			/* pcrel_offset */
 
   /* High 20 bits of 32-bit PC-relative GOT access.  */
@@ -290,7 +289,7 @@ static reloc_howto_type howto_table[] =
 	 "R_RISCV_GOT_HI20",	/* name */
 	 FALSE,			/* partial_inplace */
 	 0,			/* src_mask */
-	 ENCODE_UTYPE_IMM(-1U),	/* dst_mask */
+	 ENCODE_UTYPE_IMM (-1U),	/* dst_mask */
 	 FALSE),		/* pcrel_offset */
 
   /* High 20 bits of 32-bit PC-relative TLS IE GOT access.  */
@@ -305,7 +304,7 @@ static reloc_howto_type howto_table[] =
 	 "R_RISCV_TLS_GOT_HI20",	/* name */
 	 FALSE,			/* partial_inplace */
 	 0,			/* src_mask */
-	 ENCODE_UTYPE_IMM(-1U),	/* dst_mask */
+	 ENCODE_UTYPE_IMM (-1U),	/* dst_mask */
 	 FALSE),		/* pcrel_offset */
 
   /* High 20 bits of 32-bit PC-relative TLS GD GOT reference.  */
@@ -320,7 +319,7 @@ static reloc_howto_type howto_table[] =
 	 "R_RISCV_TLS_GD_HI20",	/* name */
 	 FALSE,			/* partial_inplace */
 	 0,			/* src_mask */
-	 ENCODE_UTYPE_IMM(-1U),	/* dst_mask */
+	 ENCODE_UTYPE_IMM (-1U),	/* dst_mask */
 	 FALSE),		/* pcrel_offset */
 
   /* High 20 bits of 32-bit PC-relative reference.  */
@@ -335,7 +334,7 @@ static reloc_howto_type howto_table[] =
 	 "R_RISCV_PCREL_HI20",	/* name */
 	 FALSE,			/* partial_inplace */
 	 0,			/* src_mask */
-	 ENCODE_UTYPE_IMM(-1U),	/* dst_mask */
+	 ENCODE_UTYPE_IMM (-1U),	/* dst_mask */
 	 TRUE),			/* pcrel_offset */
 
   /* Low 12 bits of a 32-bit PC-relative load or add.  */
@@ -350,7 +349,7 @@ static reloc_howto_type howto_table[] =
 	 "R_RISCV_PCREL_LO12_I",/* name */
 	 FALSE,			/* partial_inplace */
 	 0,			/* src_mask */
-	 ENCODE_ITYPE_IMM(-1U),	/* dst_mask */
+	 ENCODE_ITYPE_IMM (-1U),	/* dst_mask */
 	 FALSE),		/* pcrel_offset */
 
   /* Low 12 bits of a 32-bit PC-relative store.  */
@@ -365,7 +364,7 @@ static reloc_howto_type howto_table[] =
 	 "R_RISCV_PCREL_LO12_S",/* name */
 	 FALSE,			/* partial_inplace */
 	 0,			/* src_mask */
-	 ENCODE_STYPE_IMM(-1U),	/* dst_mask */
+	 ENCODE_STYPE_IMM (-1U),	/* dst_mask */
 	 FALSE),		/* pcrel_offset */
 
   /* High 20 bits of 32-bit absolute address.  */
@@ -380,7 +379,7 @@ static reloc_howto_type howto_table[] =
 	 "R_RISCV_HI20",		/* name */
 	 FALSE,			/* partial_inplace */
 	 0,			/* src_mask */
-	 ENCODE_UTYPE_IMM(-1U),	/* dst_mask */
+	 ENCODE_UTYPE_IMM (-1U),	/* dst_mask */
 	 FALSE),		/* pcrel_offset */
 
   /* High 12 bits of 32-bit load or add.  */
@@ -395,7 +394,7 @@ static reloc_howto_type howto_table[] =
 	 "R_RISCV_LO12_I",	/* name */
 	 FALSE,			/* partial_inplace */
 	 0,			/* src_mask */
-	 ENCODE_ITYPE_IMM(-1U),	/* dst_mask */
+	 ENCODE_ITYPE_IMM (-1U),	/* dst_mask */
 	 FALSE),		/* pcrel_offset */
 
   /* High 12 bits of 32-bit store.  */
@@ -410,7 +409,7 @@ static reloc_howto_type howto_table[] =
 	 "R_RISCV_LO12_S",	/* name */
 	 FALSE,			/* partial_inplace */
 	 0,			/* src_mask */
-	 ENCODE_STYPE_IMM(-1U),	/* dst_mask */
+	 ENCODE_STYPE_IMM (-1U),	/* dst_mask */
 	 FALSE),		/* pcrel_offset */
 
   /* High 20 bits of TLS LE thread pointer offset.  */
@@ -425,7 +424,7 @@ static reloc_howto_type howto_table[] =
 	 "R_RISCV_TPREL_HI20",	/* name */
 	 TRUE,			/* partial_inplace */
 	 0,			/* src_mask */
-	 ENCODE_UTYPE_IMM(-1U),	/* dst_mask */
+	 ENCODE_UTYPE_IMM (-1U),	/* dst_mask */
 	 FALSE),		/* pcrel_offset */
 
   /* Low 12 bits of TLS LE thread pointer offset for loads and adds.  */
@@ -440,7 +439,7 @@ static reloc_howto_type howto_table[] =
 	 "R_RISCV_TPREL_LO12_I",/* name */
 	 FALSE,			/* partial_inplace */
 	 0,			/* src_mask */
-	 ENCODE_ITYPE_IMM(-1U),	/* dst_mask */
+	 ENCODE_ITYPE_IMM (-1U),	/* dst_mask */
 	 FALSE),		/* pcrel_offset */
 
   /* Low 12 bits of TLS LE thread pointer offset for stores.  */
@@ -455,7 +454,7 @@ static reloc_howto_type howto_table[] =
 	 "R_RISCV_TPREL_LO12_S",/* name */
 	 FALSE,			/* partial_inplace */
 	 0,			/* src_mask */
-	 ENCODE_STYPE_IMM(-1U),	/* dst_mask */
+	 ENCODE_STYPE_IMM (-1U),	/* dst_mask */
 	 FALSE),		/* pcrel_offset */
 
   /* TLS LE thread pointer usage.  */
@@ -652,7 +651,7 @@ static reloc_howto_type howto_table[] =
 	 "R_RISCV_RVC_BRANCH",	/* name */
 	 FALSE,			/* partial_inplace */
 	 0,			/* src_mask */
-	 ENCODE_RVC_B_IMM(-1U),	/* dst_mask */
+	 ENCODE_RVC_B_IMM (-1U),	/* dst_mask */
 	 TRUE),			/* pcrel_offset */
 
   /* 11-bit PC-relative jump offset.  */
@@ -670,7 +669,7 @@ static reloc_howto_type howto_table[] =
 	 "R_RISCV_RVC_JUMP",	/* name */
 	 FALSE,			/* partial_inplace */
 	 0,			/* src_mask */
-	 ENCODE_RVC_J_IMM(-1U),	/* dst_mask */
+	 ENCODE_RVC_J_IMM (-1U),	/* dst_mask */
 	 TRUE),		/* pcrel_offset */
 };
 
@@ -727,7 +726,7 @@ static const struct elf_reloc_map riscv_reloc_map[] =
 
 reloc_howto_type *
 riscv_reloc_type_lookup (bfd *abfd ATTRIBUTE_UNUSED,
-				 bfd_reloc_code_real_type code)
+			 bfd_reloc_code_real_type code)
 {
   unsigned int i;
 
@@ -741,7 +740,7 @@ riscv_reloc_type_lookup (bfd *abfd ATTRIBUTE_UNUSED,
 
 reloc_howto_type *
 riscv_reloc_name_lookup (bfd *abfd ATTRIBUTE_UNUSED,
-				 const char *r_name)
+			 const char *r_name)
 {
   unsigned int i;
 
@@ -755,9 +754,9 @@ riscv_reloc_name_lookup (bfd *abfd ATTRIBUTE_UNUSED,
 reloc_howto_type *
 riscv_elf_rtype_to_howto (unsigned int r_type)
 {
-  if ((unsigned int)r_type >= ARRAY_SIZE (howto_table))
+  if (r_type >= ARRAY_SIZE (howto_table))
     {
-      (*_bfd_error_handler)(_("unrecognized relocation (0x%x)"), r_type);
+      (*_bfd_error_handler) (_("unrecognized relocation (0x%x)"), r_type);
       bfd_set_error (bfd_error_bad_value);
       return NULL;
     }
