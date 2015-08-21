@@ -2099,13 +2099,13 @@ riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 			  BFD_ASSERT (! unresolved_reloc);
 			  bfd_put_NN (output_bfd,
 				      dtpoff (info, relocation),
-				      (htab->elf.sgot->contents + off
+				      (htab->elf.sgot->contents + off +
 				       RISCV_ELF_WORD_BYTES));
 			}
 		      else
 			{
 			  bfd_put_NN (output_bfd, 0,
-				      (htab->elf.sgot->contents + off
+				      (htab->elf.sgot->contents + off +
 				       RISCV_ELF_WORD_BYTES));
 			  outrel.r_info = ELFNN_R_INFO (indx, R_RISCV_TLS_DTPRELNN);
 			  outrel.r_offset += RISCV_ELF_WORD_BYTES;
@@ -2123,7 +2123,7 @@ riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 				  htab->elf.sgot->contents + off);
 		      bfd_put_NN (output_bfd,
 				  dtpoff (info, relocation),
-				  (htab->elf.sgot->contents + off
+				  (htab->elf.sgot->contents + off +
 				   RISCV_ELF_WORD_BYTES));
 		   }
 		}
