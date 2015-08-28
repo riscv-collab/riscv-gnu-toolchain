@@ -27,7 +27,7 @@ typedef unsigned long long __ino_t;
 #define __nlink_t_defined
 typedef unsigned int __nlink_t;
 
-#define __mode_t_defined
-typedef unsigned int __mode_t;
+#define __ssize_t_defined
+typedef long signed int _ssize_t;
 
 #endif
