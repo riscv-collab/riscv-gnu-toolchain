@@ -3437,23 +3437,23 @@ riscv_expand_prologue (void)
   if (size > 0)
     {
       if (SMALL_OPERAND (-size))
-	emit_insn (gen_add3_insn (stack_pointer_rtx, stack_pointer_rtx,
-				  GEN_INT (-size)));
+	{
+	  insn = gen_add3_insn (stack_pointer_rtx, stack_pointer_rtx,
+				GEN_INT (-size));
+	  RTX_FRAME_RELATED_P (emit_insn (insn)) = 1;
+	}
       else
 	{
 	  riscv_emit_move (RISCV_PROLOGUE_TEMP (Pmode), GEN_INT (-size));
 	  emit_insn (gen_add3_insn (stack_pointer_rtx,
 				    stack_pointer_rtx,
 				    RISCV_PROLOGUE_TEMP (Pmode)));
-	}
-    }
 
-  if (frame->total_size > 0)
-    {
-      /* Describe the effect of the instructions that adjusted sp.  */
-      insn = plus_constant (Pmode, stack_pointer_rtx, -frame->total_size);
-      insn = gen_rtx_SET (VOIDmode, stack_pointer_rtx, insn);
-      riscv_set_frame_expr (insn);
+	  /* Describe the effect of the previous instructions.  */
+	  insn = plus_constant (Pmode, stack_pointer_rtx, -size);
+	  insn = gen_rtx_SET (VOIDmode, stack_pointer_rtx, insn);
+	  riscv_set_frame_expr (insn);
+	}
     }
 }
 
