@@ -30,20 +30,21 @@ along with GCC; see the file COPYING3.  If not see
 #define TARGET_CPU_CPP_BUILTINS()					\
   do									\
     {									\
-      builtin_assert ("machine=riscv");                        	        \
+      builtin_assert ("machine=riscv");					\
 									\
       builtin_assert ("cpu=riscv");					\
-      builtin_define ("__riscv__");     				\
-      builtin_define ("__riscv");     					\
+      builtin_define ("__riscv__");					\
+      builtin_define ("__riscv");					\
       builtin_define ("_riscv");					\
+      builtin_define ("__riscv");					\
 									\
       if (TARGET_64BIT)							\
 	{								\
 	  builtin_define ("__riscv64");					\
-	  builtin_define ("_RISCV_SIM=_ABI64");			        \
+	  builtin_define ("_RISCV_SIM=_ABI64");				\
 	}								\
-      else						        	\
-	builtin_define ("_RISCV_SIM=_ABI32");			        \
+      else								\
+	builtin_define ("_RISCV_SIM=_ABI32");				\
 									\
       builtin_define ("_ABI32=1");					\
       builtin_define ("_ABI64=3");					\
@@ -54,10 +55,12 @@ along with GCC; see the file COPYING3.  If not see
       builtin_define_with_int_value ("_RISCV_SZPTR", POINTER_SIZE);	\
       builtin_define_with_int_value ("_RISCV_FPSET", 32);		\
 									\
-      if (TARGET_ATOMIC) {                                              \
-        builtin_define ("__riscv_atomic");                              \
-      }                                                                 \
-                                                                        \
+      if (TARGET_RVC)							\
+	builtin_define ("__riscv_compressed");				\
+									\
+      if (TARGET_ATOMIC)						\
+	builtin_define ("__riscv_atomic");				\
+									\
       /* These defines reflect the ABI in use, not whether the  	\
 	 FPU is directly accessible.  */				\
       if (TARGET_HARD_FLOAT_ABI) {					\
