@@ -54,7 +54,7 @@
 ;; Only use branch-on-bit sequences when the mask is not an ANDI immediate.
 (define_predicate "branch_on_bit_operand"
   (and (match_code "const_int")
-       (match_test "INTVAL (op) >= RISCV_IMM_BITS - 1")))
+       (match_test "INTVAL (op) >= IMM_BITS - 1")))
 
 ;; This is used for indexing into vectors, and hence only accepts const_int.
 (define_predicate "const_0_or_1_operand"

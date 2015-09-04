@@ -645,15 +645,14 @@ enum reg_class
 
 /* True if VALUE is a signed 16-bit number.  */
 
-#include "opcode-riscv.h"
 #define SMALL_OPERAND(VALUE) \
-  ((unsigned HOST_WIDE_INT) (VALUE) + RISCV_IMM_REACH/2 < RISCV_IMM_REACH)
+  ((unsigned HOST_WIDE_INT) (VALUE) + IMM_REACH/2 < IMM_REACH)
 
 /* True if VALUE can be loaded into a register using LUI.  */
 
-#define LUI_OPERAND(VALUE)					\
-  (((VALUE) | ((1UL<<31) - RISCV_IMM_REACH)) == ((1UL<<31) - RISCV_IMM_REACH) \
-   || ((VALUE) | ((1UL<<31) - RISCV_IMM_REACH)) + RISCV_IMM_REACH == 0)
+#define LUI_OPERAND(VALUE)						\
+  (((VALUE) | ((1UL<<31) - IMM_REACH)) == ((1UL<<31) - IMM_REACH)	\
+   || ((VALUE) | ((1UL<<31) - IMM_REACH)) + IMM_REACH == 0)
 
 /* Return a value X with the low 16 bits clear, and such that
    VALUE - X is a signed 16-bit value.  */
@@ -1113,3 +1112,17 @@ extern const char* riscv_hi_relocs[];
 
 #define ASM_PREFERRED_EH_DATA_FORMAT(CODE,GLOBAL) \
   (((GLOBAL) ? DW_EH_PE_indirect : 0) | DW_EH_PE_pcrel | DW_EH_PE_sdata4)
+
+/* ISA constants needed for code generation.  */
+#define OPCODE_LW    0x2003
+#define OPCODE_LD    0x3003
+#define OPCODE_AUIPC 0x17
+#define OPCODE_JALR  0x67
+#define SHIFT_RD  7
+#define SHIFT_RS1 15
+#define SHIFT_IMM 20
+#define IMM_BITS 12
+
+#define IMM_REACH (1LL << IMM_BITS)
+#define CONST_HIGH_PART(VALUE) (((VALUE) + (IMM_REACH/2)) & ~(IMM_REACH-1))
+#define CONST_LOW_PART(VALUE) ((VALUE) - CONST_HIGH_PART (VALUE))

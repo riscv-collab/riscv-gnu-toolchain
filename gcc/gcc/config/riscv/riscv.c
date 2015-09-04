@@ -120,7 +120,7 @@ along with GCC; see the file COPYING3.  If not see
 /* The maximum distance between the top of the stack frame and the
    value sp has when we save and restore registers.  This is set by the
    range  of load/store offsets and must also preserve stack alignment. */
-#define RISCV_MAX_FIRST_STACK_STEP (RISCV_IMM_REACH/2 - 16)
+#define RISCV_MAX_FIRST_STACK_STEP (IMM_REACH/2 - 16)
 
 /* True if INSN is a riscv.md pattern or asm statement.  */
 #define USEFUL_INSN_P(INSN)						\
@@ -408,7 +408,7 @@ static int
 riscv_build_integer_1 (struct riscv_integer_op *codes, HOST_WIDE_INT value,
 		       enum machine_mode mode)
 {
-  HOST_WIDE_INT low_part = RISCV_CONST_LOW_PART (value);
+  HOST_WIDE_INT low_part = CONST_LOW_PART (value);
   int cost = INT_MAX, alt_cost;
   struct riscv_integer_op alt_codes[RISCV_MAX_INTEGER_OPS];
 
@@ -1131,8 +1131,8 @@ riscv_add_offset (rtx temp, rtx reg, HOST_WIDE_INT offset)
       /* Leave OFFSET as a 16-bit offset and put the excess in HIGH.
          The addition inside the macro CONST_HIGH_PART may cause an
          overflow, so we need to force a sign-extension check.  */
-      high = gen_int_mode (RISCV_CONST_HIGH_PART (offset), Pmode);
-      offset = RISCV_CONST_LOW_PART (offset);
+      high = gen_int_mode (CONST_HIGH_PART (offset), Pmode);
+      offset = CONST_LOW_PART (offset);
       high = riscv_force_temporary (temp, high);
       reg = riscv_force_temporary (temp, gen_rtx_PLUS (Pmode, high, reg));
     }
@@ -4228,7 +4228,7 @@ static void
 riscv_trampoline_init (rtx m_tramp, tree fndecl, rtx chain_value)
 {
   rtx addr, end_addr, mem;
-  rtx trampoline[4];
+  uint32_t trampoline[4];
   unsigned int i;
   HOST_WIDE_INT static_chain_offset, target_function_offset;
 
@@ -4242,30 +4242,27 @@ riscv_trampoline_init (rtx m_tramp, tree fndecl, rtx chain_value)
   addr = force_reg (Pmode, XEXP (m_tramp, 0));
   end_addr = riscv_force_binary (Pmode, PLUS, addr, GEN_INT (TRAMPOLINE_CODE_SIZE));
 
-#define OP(X) gen_int_mode (X, SImode)
-#define MATCH_LREG ((Pmode) == DImode ? MATCH_LD : MATCH_LW)
-
   /* auipc   t0, 0
      l[wd]   t1, target_function_offset(t0)
-     l[wd]   $static_chain, static_chain_offset(t0)
+     l[wd]   t0, static_chain_offset(t0)
      jr      t1
   */
+  trampoline[0] = OPCODE_AUIPC | (STATIC_CHAIN_REGNUM << SHIFT_RD);
+  trampoline[1] = (Pmode == DImode ? OPCODE_LD : OPCODE_LW)
+		  | (RISCV_PROLOGUE_TEMP_REGNUM << SHIFT_RD)
+		  | (STATIC_CHAIN_REGNUM << SHIFT_RS1)
+		  | (target_function_offset << SHIFT_IMM);
+  trampoline[2] = (Pmode == DImode ? OPCODE_LD : OPCODE_LW)
+		  | (STATIC_CHAIN_REGNUM << SHIFT_RD)
+		  | (STATIC_CHAIN_REGNUM << SHIFT_RS1)
+		  | (static_chain_offset << SHIFT_IMM);
+  trampoline[3] = OPCODE_JALR | (RISCV_PROLOGUE_TEMP_REGNUM << SHIFT_RS1);
 
-  trampoline[0] = OP (RISCV_UTYPE (AUIPC, STATIC_CHAIN_REGNUM, 0));
-  trampoline[1] = OP (RISCV_ITYPE (LREG, RISCV_PROLOGUE_TEMP_REGNUM,
-		    STATIC_CHAIN_REGNUM, target_function_offset));
-  trampoline[2] = OP (RISCV_ITYPE (LREG, STATIC_CHAIN_REGNUM,
-		    STATIC_CHAIN_REGNUM, static_chain_offset));
-  trampoline[3] = OP (RISCV_ITYPE (JALR, 0, RISCV_PROLOGUE_TEMP_REGNUM, 0));
-
-#undef MATCH_LREG
-#undef OP
-
-  /* Copy the trampoline code.  Leave any padding uninitialized.  */
+  /* Copy the trampoline code.  */
   for (i = 0; i < ARRAY_SIZE (trampoline); i++)
     {
       mem = adjust_address (m_tramp, SImode, i * GET_MODE_SIZE (SImode));
-      riscv_emit_move (mem, trampoline[i]);
+      riscv_emit_move (mem, gen_int_mode (trampoline[i], SImode));
     }
 
   /* Set up the static chain pointer field.  */
@@ -4426,10 +4423,10 @@ riscv_lra_p (void)
 #define TARGET_ASM_SELECT_RTX_SECTION  riscv_elf_select_rtx_section
 
 #undef TARGET_MIN_ANCHOR_OFFSET
-#define TARGET_MIN_ANCHOR_OFFSET (-RISCV_IMM_REACH/2)
+#define TARGET_MIN_ANCHOR_OFFSET (-IMM_REACH/2)
 
 #undef TARGET_MAX_ANCHOR_OFFSET
-#define TARGET_MAX_ANCHOR_OFFSET (RISCV_IMM_REACH/2-1)
+#define TARGET_MAX_ANCHOR_OFFSET (IMM_REACH/2-1)
 
 #undef TARGET_LRA_P
 #define TARGET_LRA_P riscv_lra_p
