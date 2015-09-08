@@ -34,8 +34,6 @@ Software Foundation, 51 Franklin Street - Fifth Floor, Boston, MA 02110-1301, US
 #define OP_SH_CRS1S 7
 #define OP_MASK_CRS2S 0x7
 #define OP_SH_CRS2S 2
-#define OP_MASK_CRDS 0x7
-#define OP_SH_CRDS 10
 
 static const char rvc_rs1_regmap[8] = { 20, 21, 2, 3, 4, 5, 6, 7 };
 #define rvc_rd_regmap rvc_rs1_regmap

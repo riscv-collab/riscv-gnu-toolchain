@@ -217,10 +217,6 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
 	case 'C': /* RVC */
 	  switch (*++d)
 	    {
-	    case 'd': /* RD x8-x15 */
-	      print (info->stream, "%s",
-		     riscv_gpr_names[((l >> OP_SH_CRDS) & OP_MASK_CRDS) + 8]);
-	      break;
 	    case 's': /* RS1 x8-x15 */
 	    case 'w': /* RS1 x8-x15 */
 	      print (info->stream, "%s",
@@ -237,12 +233,12 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
 	      break;
 	    case 'c': /* RS1, constrained to equal sp */
 	      print (info->stream, "%s", riscv_gpr_names[X_SP]);
-	      continue;
+	      break;
 	    case 'T': /* RS2, nonzero */
 	    case 'V': /* RS2 */
 	      print (info->stream, "%s",
 		     riscv_gpr_names[(l >> OP_SH_CRS2) & OP_MASK_CRS2]);
-	      continue;
+	      break;
 	    case 'i':
 	      print (info->stream, "%d", (int)EXTRACT_RVC_SIMM3 (l));
 	      break;
@@ -290,6 +286,23 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
 	      break;
 	    case '<':
 	      print (info->stream, "0x%x", (int)EXTRACT_RVC_IMM (l) & 0x1f);
+	      break;
+	    }
+	  break;
+
+	case 'F': /* RVC floating-point */
+	  switch (*++d)
+	    {
+	    case 't': /* RS2 x8-x15 */
+	      print (info->stream, "%s",
+		     riscv_gpr_names[((l >> OP_SH_CRS2S) & OP_MASK_CRS2S) + 8]);
+	      break;
+	    case 'D': /* RD */
+	      print (info->stream, "%s", riscv_gpr_names[rd]);
+	      break;
+	    case 'V': /* RS2 */
+	      print (info->stream, "%s",
+		     riscv_gpr_names[(l >> OP_SH_CRS2) & OP_MASK_CRS2]);
 	      break;
 	    }
 	  break;
