@@ -1756,6 +1756,34 @@ riscv_output_move (rtx dest, rtx src)
   if (dbl_p && riscv_split_64bit_move_p (dest, src))
     return "#";
 
+  if (dest_code == REG && GP_REG_P (REGNO (dest)))
+    {
+      if (src_code == REG && FP_REG_P (REGNO (src)))
+	return dbl_p ? "fmv.x.d\t%0,%1" : "fmv.x.s\t%0,%1";
+
+      if (src_code == MEM)
+	switch (GET_MODE_SIZE (mode))
+	  {
+	  case 1: return "lbu\t%0,%1";
+	  case 2: return "lhu\t%0,%1";
+	  case 4: return "lw\t%0,%1";
+	  case 8: return "ld\t%0,%1";
+	  }
+
+      if (src_code == CONST_INT)
+	return "li\t%0,%1";
+
+      if (src_code == HIGH)
+	return "lui\t%0,%h1";
+
+      if (symbolic_operand (src, VOIDmode))
+	switch (riscv_classify_symbolic_expression (src))
+	  {
+	  case SYMBOL_GOT_DISP: return "la\t%0,%1";
+	  case SYMBOL_ABSOLUTE: return "lla\t%0,%1";
+	  default: gcc_unreachable();
+	  }
+    }
   if ((src_code == REG && GP_REG_P (REGNO (src)))
       || (src == CONST0_RTX (mode)))
     {
@@ -1782,37 +1810,6 @@ riscv_output_move (rtx dest, rtx src)
 	  case 2: return "sh\t%z1,%0";
 	  case 4: return "sw\t%z1,%0";
 	  case 8: return "sd\t%z1,%0";
-	  }
-    }
-  if (dest_code == REG && GP_REG_P (REGNO (dest)))
-    {
-      if (src_code == REG)
-	{
-	  if (FP_REG_P (REGNO (src)))
-	    return dbl_p ? "fmv.x.d\t%0,%1" : "fmv.x.s\t%0,%1";
-	}
-
-      if (src_code == MEM)
-	switch (GET_MODE_SIZE (mode))
-	  {
-	  case 1: return "lbu\t%0,%1";
-	  case 2: return "lhu\t%0,%1";
-	  case 4: return "lw\t%0,%1";
-	  case 8: return "ld\t%0,%1";
-	  }
-
-      if (src_code == CONST_INT)
-	return "li\t%0,%1";
-
-      if (src_code == HIGH)
-	return "lui\t%0,%h1";
-
-      if (symbolic_operand (src, VOIDmode))
-	switch (riscv_classify_symbolic_expression (src))
-	  {
-	  case SYMBOL_GOT_DISP: return "la\t%0,%1";
-	  case SYMBOL_ABSOLUTE: return "lla\t%0,%1";
-	  default: gcc_unreachable();
 	  }
     }
   if (src_code == REG && FP_REG_P (REGNO (src)))
