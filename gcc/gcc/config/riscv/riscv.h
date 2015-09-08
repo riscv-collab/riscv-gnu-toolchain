@@ -634,7 +634,7 @@ enum reg_class
   /* GPRs that can never be exposed to the register allocator.  */	\
   0, 2, 3, 4,								\
   /* Call-clobbered FPRs.  */						\
-  32, 33, 34, 35, 36, 37, 38, 39, 42, 43, 44, 45, 46, 47, 48, 49,	\
+  47, 46, 45, 44, 43, 42, 32, 33, 34, 35, 36, 37, 38, 39, 48, 49,	\
   60, 61, 62, 63,							\
   /* Call-saved FPRs.  */						\
   40, 41, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59,			\
