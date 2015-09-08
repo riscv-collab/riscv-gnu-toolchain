@@ -4281,7 +4281,8 @@ riscv_trampoline_init (rtx m_tramp, tree fndecl, rtx chain_value)
 /* Implement TARGET_FUNCTION_OK_FOR_SIBCALL.  */
 
 static bool
-riscv_function_ok_for_sibcall (tree decl, tree exp ATTRIBUTE_UNUSED)
+riscv_function_ok_for_sibcall (tree decl ATTRIBUTE_UNUSED,
+			       tree exp ATTRIBUTE_UNUSED)
 {
   if (TARGET_SAVE_RESTORE)
     {
