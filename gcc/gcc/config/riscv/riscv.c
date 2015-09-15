@@ -4219,6 +4219,18 @@ riscv_conditional_register_usage (void)
     }
 }
 
+/* Return a register priority for hard reg REGNO.  */
+static int
+riscv_register_priority (int regno)
+{
+  /* Favor x8-x15/f8-f15 to improve the odds of RVC instruction selection.  */
+  if (TARGET_RVC && (IN_RANGE (regno, GP_REG_FIRST + 8, GP_REG_FIRST + 15)
+		     || IN_RANGE (regno, FP_REG_FIRST + 8, FP_REG_FIRST + 15)))
+    return 1;
+
+  return 0;
+}
+
 /* Implement TARGET_TRAMPOLINE_INIT.  */
 
 static void
@@ -4428,6 +4440,9 @@ riscv_lra_p (void)
 
 #undef TARGET_LRA_P
 #define TARGET_LRA_P riscv_lra_p
+
+#undef TARGET_REGISTER_PRIORITY
+#define TARGET_REGISTER_PRIORITY riscv_register_priority
 
 struct gcc_target targetm = TARGET_INITIALIZER;
 
