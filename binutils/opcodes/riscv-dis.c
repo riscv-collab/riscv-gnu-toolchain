@@ -132,18 +132,16 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
 	  switch (*++d)
 	    {
 	    case 'd':
-	      (*info->fprintf_func) (info->stream, "%d", rd);
+	      print (info->stream, "%d", rd);
 	      break;
 	    case 's':
-	      (*info->fprintf_func) (info->stream, "%d", rs1);
+	      print (info->stream, "%d", rs1);
 	      break;
 	    case 't':
-	      (*info->fprintf_func)
-		( info->stream, "%d", (int)((l >> OP_SH_RS2) & OP_MASK_RS2));
+	      print (info->stream, "%d", (int) EXTRACT_OPERAND (RS2, l));
 	      break;
 	    case 'j':
-	      (*info->fprintf_func)
-		( info->stream, "%d", (int)((l >> OP_SH_CUSTOM_IMM) & OP_MASK_CUSTOM_IMM));
+	      print (info->stream, "%d", (int) EXTRACT_OPERAND (CUSTOM_IMM, l));
 	      break;
 	    }
 	  break;
@@ -154,12 +152,12 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
 	    case 's': /* RS1 x8-x15 */
 	    case 'w': /* RS1 x8-x15 */
 	      print (info->stream, "%s",
-		     riscv_gpr_names[((l >> OP_SH_CRS1S) & OP_MASK_CRS1S) + 8]);
+		     riscv_gpr_names[EXTRACT_OPERAND (CRS1S, l) + 8]);
 	      break;
 	    case 't': /* RS2 x8-x15 */
 	    case 'x': /* RS2 x8-x15 */
 	      print (info->stream, "%s",
-		     riscv_gpr_names[((l >> OP_SH_CRS2S) & OP_MASK_CRS2S) + 8]);
+		     riscv_gpr_names[EXTRACT_OPERAND (CRS2S, l) + 8]);
 	      break;
 	    case 'U': /* RS1, constrained to equal RD */
 	    case 'D': /* RS1 or RD, nonzero */
@@ -171,7 +169,7 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
 	    case 'T': /* RS2, nonzero */
 	    case 'V': /* RS2 */
 	      print (info->stream, "%s",
-		     riscv_gpr_names[(l >> OP_SH_CRS2) & OP_MASK_CRS2]);
+		     riscv_gpr_names[EXTRACT_OPERAND (CRS2, l)]);
 	      break;
 	    case 'i':
 	      print (info->stream, "%d", (int)EXTRACT_RVC_SIMM3 (l));
@@ -213,13 +211,13 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
 	      break;
 	    case 'u':
 	      print (info->stream, "0x%x",
-		     (int)(EXTRACT_RVC_IMM (l) & (RISCV_BIGIMM_REACH-1)));
+		     (int) (EXTRACT_RVC_IMM (l) & (RISCV_BIGIMM_REACH-1)));
 	      break;
 	    case '>':
-	      print (info->stream, "0x%x", (int)EXTRACT_RVC_IMM (l) & 0x3f);
+	      print (info->stream, "0x%x", (int) EXTRACT_RVC_IMM (l) & 0x3f);
 	      break;
 	    case '<':
-	      print (info->stream, "0x%x", (int)EXTRACT_RVC_IMM (l) & 0x1f);
+	      print (info->stream, "0x%x", (int) EXTRACT_RVC_IMM (l) & 0x1f);
 	      break;
 	    }
 	  break;
@@ -229,14 +227,14 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
 	    {
 	    case 't': /* RS2 x8-x15 */
 	      print (info->stream, "%s",
-		     riscv_gpr_names[((l >> OP_SH_CRS2S) & OP_MASK_CRS2S) + 8]);
+		     riscv_gpr_names[EXTRACT_OPERAND (CRS2S, l) + 8]);
 	      break;
 	    case 'D': /* RD */
 	      print (info->stream, "%s", riscv_gpr_names[rd]);
 	      break;
 	    case 'V': /* RS2 */
 	      print (info->stream, "%s",
-		     riscv_gpr_names[(l >> OP_SH_CRS2) & OP_MASK_CRS2]);
+		     riscv_gpr_names[EXTRACT_OPERAND (CRS2, l)]);
 	      break;
 	    }
 	  break;
@@ -246,7 +244,7 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
 	case ')':
 	case '[':
 	case ']':
-	  (*info->fprintf_func) (info->stream, "%c", *d);
+	  print (info->stream, "%c", *d);
 	  break;
 
 	case '0':
@@ -257,32 +255,32 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
 
 	case 'b':
 	case 's':
-	  (*info->fprintf_func) (info->stream, "%s", riscv_gpr_names[rs1]);
+	  print (info->stream, "%s", riscv_gpr_names[rs1]);
 	  break;
 
 	case 't':
-	  (*info->fprintf_func) (info->stream, "%s",
-				 riscv_gpr_names[(l >> OP_SH_RS2) & OP_MASK_RS2]);
+	  print (info->stream, "%s",
+		 riscv_gpr_names[EXTRACT_OPERAND (RS2, l)]);
 	  break;
 
 	case 'u':
-	  (*info->fprintf_func) (info->stream, "0x%x",
-				 (unsigned)EXTRACT_UTYPE_IMM (l) >> RISCV_IMM_BITS);
+	  print (info->stream, "0x%x",
+		 (unsigned) EXTRACT_UTYPE_IMM (l) >> RISCV_IMM_BITS);
 	  break;
 
 	case 'm':
-	  arg_print(info, (l >> OP_SH_RM) & OP_MASK_RM,
-		    riscv_rm, ARRAY_SIZE (riscv_rm));
+	  arg_print (info, EXTRACT_OPERAND (RM, l),
+		     riscv_rm, ARRAY_SIZE (riscv_rm));
 	  break;
 
 	case 'P':
-	  arg_print(info, (l >> OP_SH_PRED) & OP_MASK_PRED,
-		    riscv_pred_succ, ARRAY_SIZE (riscv_pred_succ));
+	  arg_print (info, EXTRACT_OPERAND (PRED, l),
+		     riscv_pred_succ, ARRAY_SIZE (riscv_pred_succ));
 	  break;
 
 	case 'Q':
-	  arg_print(info, (l >> OP_SH_SUCC) & OP_MASK_SUCC,
-		    riscv_pred_succ, ARRAY_SIZE (riscv_pred_succ));
+	  arg_print (info, EXTRACT_OPERAND (SUCC, l),
+		     riscv_pred_succ, ARRAY_SIZE (riscv_pred_succ));
 	  break;
 
 	case 'o':
@@ -290,12 +288,12 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
 	case 'j':
 	  if ((l & MASK_ADDI) == MATCH_ADDI || (l & MASK_JALR) == MATCH_JALR)
 	    maybe_print_address (pd, rs1, EXTRACT_ITYPE_IMM (l));
-	  (*info->fprintf_func) (info->stream, "%d", (int)EXTRACT_ITYPE_IMM (l));
+	  print (info->stream, "%d", (int) EXTRACT_ITYPE_IMM (l));
 	  break;
 
 	case 'q':
 	  maybe_print_address (pd, rs1, EXTRACT_STYPE_IMM (l));
-	  (*info->fprintf_func) (info->stream, "%d", (int)EXTRACT_STYPE_IMM (l));
+	  print (info->stream, "%d", (int) EXTRACT_STYPE_IMM (l));
 	  break;
 
 	case 'a':
@@ -313,46 +311,42 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
 	    pd->hi_addr[rd] = pc + EXTRACT_UTYPE_IMM (l);
 	  else if ((l & MASK_LUI) == MATCH_LUI)
 	    pd->hi_addr[rd] = EXTRACT_UTYPE_IMM (l);
-	  (*info->fprintf_func) (info->stream, "%s", riscv_gpr_names[rd]);
+	  print (info->stream, "%s", riscv_gpr_names[rd]);
 	  break;
 
 	case 'z':
-	  (*info->fprintf_func) (info->stream, "%s", riscv_gpr_names[0]);
+	  print (info->stream, "%s", riscv_gpr_names[0]);
 	  break;
 
 	case '>':
-	  (*info->fprintf_func) (info->stream, "0x%x",
-				 (unsigned)((l >> OP_SH_SHAMT) & OP_MASK_SHAMT));
+	  print (info->stream, "0x%x", (int) EXTRACT_OPERAND (SHAMT, l));
 	  break;
 
 	case '<':
-	  (*info->fprintf_func) (info->stream, "0x%x",
-				 (unsigned)((l >> OP_SH_SHAMTW) & OP_MASK_SHAMTW));
+	  print (info->stream, "0x%x", (int) EXTRACT_OPERAND (SHAMTW, l));
 	  break;
 
 	case 'S':
 	case 'U':
-	  (*info->fprintf_func) (info->stream, "%s", riscv_fpr_names[rs1]);
+	  print (info->stream, "%s", riscv_fpr_names[rs1]);
 	  break;
 
 	case 'T':
-	  (*info->fprintf_func) (info->stream, "%s",
-				 riscv_fpr_names[(l >> OP_SH_RS2) & OP_MASK_RS2]);
+	  print (info->stream, "%s", riscv_fpr_names[EXTRACT_OPERAND (RS2, l)]);
 	  break;
 
 	case 'D':
-	  (*info->fprintf_func) (info->stream, "%s", riscv_fpr_names[rd]);
+	  print (info->stream, "%s", riscv_fpr_names[rd]);
 	  break;
 
 	case 'R':
-	  (*info->fprintf_func) (info->stream, "%s",
-				 riscv_fpr_names[(l >> OP_SH_RS3) & OP_MASK_RS3]);
+	  print (info->stream, "%s", riscv_fpr_names[EXTRACT_OPERAND (RS3, l)]);
 	  break;
 
 	case 'E':
 	  {
 	    const char* csr_name = NULL;
-	    unsigned int csr = (l >> OP_SH_CSR) & OP_MASK_CSR;
+	    unsigned int csr = EXTRACT_OPERAND (CSR, l);
 	    switch (csr)
 	      {
 	      #define DECLARE_CSR(name, num) case num: csr_name = #name; break;
@@ -360,21 +354,20 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
 	      #undef DECLARE_CSR
 	      }
 	    if (csr_name)
-	      (*info->fprintf_func) (info->stream, "%s", csr_name);
+	      print (info->stream, "%s", csr_name);
 	    else
-	      (*info->fprintf_func) (info->stream, "0x%x", csr);
+	      print (info->stream, "0x%x", csr);
 	    break;
 	  }
 
 	case 'Z':
-	  (*info->fprintf_func) (info->stream, "%d", rs1);
+	  print (info->stream, "%d", rs1);
 	  break;
 
 	default:
 	  /* xgettext:c-format */
-	  (*info->fprintf_func) (info->stream,
-				 _("# internal error, undefined modifier (%c)"),
-				 *d);
+	  print (info->stream, _("# internal error, undefined modifier (%c)"),
+		 *d);
 	  return;
 	}
     }
@@ -394,7 +387,7 @@ riscv_disassemble_insn (bfd_vma memaddr, insn_t word, disassemble_info *info)
   struct riscv_private_data *pd;
   int insnlen;
 
-#define OP_HASH_IDX(i) ((i) & (riscv_insn_length (i) == 2 ? 0x3 : 0x7f))
+#define OP_HASH_IDX(i) ((i) & (riscv_insn_length (i) == 2 ? 0x3 : OP_MASK_OP))
 
   /* Build a hash table to shorten the search time.  */
   if (! init)
@@ -455,27 +448,39 @@ riscv_disassemble_insn (bfd_vma memaddr, insn_t word, disassemble_info *info)
 
       for (; op < &riscv_opcodes[NUMOPCODES]; op++)
 	{
-	  if ((op->match_func) (op, word)
-	      && !(no_aliases && (op->pinfo & INSN_ALIAS))
-	      && !(op->subset[0] == 'X' && extension != NULL
-		   && strcmp (op->subset, extension))
-	      && !(isdigit(op->subset[0]) && atoi(op->subset) != xlen))
+	  /* Does the opcode match?  */
+	  if (! (op->match_func) (op, word))
+	    continue;
+	  /* Is this a pseudo-instruction and may we print it as such?  */
+	  if (no_aliases && (op->pinfo & INSN_ALIAS))
+	    continue;
+	  /* Is this instruction for an ISA extension and does it match the
+	     extension for which the object was compiled?  */
+	  if (extension != NULL && op->subset[0] == 'X')
+	    if (strcmp (op->subset, extension) != 0)
+	      continue;
+	  /* Is this instruction restricted to a certain value of XLEN?  */
+	  if (isdigit (op->subset[0]) && atoi (op->subset) != xlen)
+	    continue;
+
+	  /* It's a match.  */
+	  (*info->fprintf_func) (info->stream, "%s", op->name);
+	  print_insn_args (op->args, word, memaddr, info);
+
+	  /* Try to disassemble multi-instruction addressing sequences.  */
+	  if (pd->print_addr != (bfd_vma)-1)
 	    {
-	      (*info->fprintf_func) (info->stream, "%s", op->name);
-	      print_insn_args (op->args, word, memaddr, info);
-	      if (pd->print_addr != (bfd_vma)-1)
-		{
-		  info->target = pd->print_addr;
-		  (*info->fprintf_func) (info->stream, " # ");
-		  (*info->print_address_func) (info->target, info);
-		  pd->print_addr = -1;
-		}
-	      return insnlen;
+	      info->target = pd->print_addr;
+	      (*info->fprintf_func) (info->stream, " # ");
+	      (*info->print_address_func) (info->target, info);
+	      pd->print_addr = -1;
 	    }
+
+	  return insnlen;
 	}
     }
 
-  /* Handle undefined instructions.  */
+  /* We did not find a match, so just print the instruction bits.  */
   info->insn_type = dis_noninsn;
   (*info->fprintf_func) (info->stream, "0x%llx", (unsigned long long)word);
   return insnlen;
@@ -484,7 +489,7 @@ riscv_disassemble_insn (bfd_vma memaddr, insn_t word, disassemble_info *info)
 int
 print_insn_riscv (bfd_vma memaddr, struct disassemble_info *info)
 {
-  uint16_t i2;
+  bfd_byte packet[2];
   insn_t insn = 0;
   bfd_vma n;
   int status;
@@ -501,7 +506,7 @@ print_insn_riscv (bfd_vma memaddr, struct disassemble_info *info)
   /* Instructions are a sequence of 2-byte packets in little-endian order.  */
   for (n = 0; n < sizeof (insn) && n < riscv_insn_length (insn); n += 2)
     {
-      status = (*info->read_memory_func) (memaddr + n, (bfd_byte*)&i2, 2, info);
+      status = (*info->read_memory_func) (memaddr + n, packet, 2, info);
       if (status != 0)
 	{
 	  /* Don't fail just because we fell off the end.  */
@@ -511,8 +516,7 @@ print_insn_riscv (bfd_vma memaddr, struct disassemble_info *info)
 	  return status;
 	}
 
-      i2 = bfd_getl16 (&i2);
-      insn |= (insn_t)i2 << (8 * n);
+      insn |= ((insn_t) bfd_getl16 (packet)) << (8 * n);
     }
 
   return riscv_disassemble_insn (memaddr, insn, info);
