@@ -250,8 +250,6 @@ static const char * const riscv_pred_succ[16] = {
 
 #define NGPR 32
 #define NFPR 32
-#define NVGPR 32
-#define NVFPR 32
 
 #define RISCV_JUMP_BITS RISCV_BIGIMM_BITS
 #define RISCV_JUMP_ALIGN_BITS 1
@@ -352,8 +350,6 @@ extern const char * const riscv_gpr_names_numeric[NGPR];
 extern const char * const riscv_gpr_names_abi[NGPR];
 extern const char * const riscv_fpr_names_numeric[NFPR];
 extern const char * const riscv_fpr_names_abi[NFPR];
-extern const char * const riscv_vec_gpr_names[NVGPR];
-extern const char * const riscv_vec_fpr_names[NVFPR];
 
 extern const struct riscv_opcode riscv_builtin_opcodes[];
 extern const int bfd_riscv_num_builtin_opcodes;
