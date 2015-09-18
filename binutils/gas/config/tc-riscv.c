@@ -731,18 +731,6 @@ append_insn (struct riscv_cl_insn *ip, expressionS *address_expr,
 	ip->fixp = fix_new_exp (ip->frag, ip->where,
 				bfd_get_reloc_size (howto),
 				address_expr, FALSE, reloc_type);
-
-	/* These relocations can have an addend that won't fit in
-	   4 octets for 64bit assembly.  */
-	if (xlen == 64
-	    && ! howto->partial_inplace
-	    && (reloc_type == BFD_RELOC_32
-		|| reloc_type == BFD_RELOC_64
-		|| reloc_type == BFD_RELOC_CTOR
-		|| reloc_type == BFD_RELOC_RISCV_HI20
-		|| reloc_type == BFD_RELOC_RISCV_LO12_I
-		|| reloc_type == BFD_RELOC_RISCV_LO12_S))
-	  ip->fixp->fx_no_overflow = 1;
     }
 
 append:
