@@ -276,7 +276,8 @@ static reloc_howto_type howto_table[] =
 	 "R_RISCV_CALL_PLT",		/* name */
 	 FALSE,				/* partial_inplace */
 	 0,				/* src_mask */
-	 ENCODE_UTYPE_IMM (-1U) | ((bfd_vma) ENCODE_ITYPE_IMM (-1U) << 32),				/* dst_mask */
+	 ENCODE_UTYPE_IMM (-1U) | ((bfd_vma) ENCODE_ITYPE_IMM (-1U) << 32),
+					/* dst_mask */
 	 TRUE),				/* pcrel_offset */
 
   /* High 20 bits of 32-bit PC-relative GOT access.  */

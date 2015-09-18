@@ -33,8 +33,6 @@ struct expressionS;
 #define TARGET_ARCH bfd_arch_riscv
 
 #define WORKING_DOT_WORD	1
-#define OLD_FLOAT_READS
-#define REPEAT_CONS_EXPRESSIONS
 #define LOCAL_LABELS_FB 1
 
 /* Symbols named FAKE_LABEL_NAME are emitted when generating DWARF, so make
