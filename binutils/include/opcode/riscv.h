@@ -211,30 +211,6 @@ static const char * const riscv_pred_succ[16] = {
 #define OP_MASK_RL		0x1
 #define OP_SH_RL		25
 
-#define OP_MASK_VRD		0x1f
-#define OP_SH_VRD		7
-#define OP_MASK_VRS		0x1f
-#define OP_SH_VRS		15
-#define OP_MASK_VRT		0x1f
-#define OP_SH_VRT		20
-#define OP_MASK_VRR		0x1f
-#define OP_SH_VRR		27
-
-#define OP_MASK_VFD		0x1f
-#define OP_SH_VFD		7
-#define OP_MASK_VFS		0x1f
-#define OP_SH_VFS		15
-#define OP_MASK_VFT		0x1f
-#define OP_SH_VFT		20
-#define OP_MASK_VFR		0x1f
-#define OP_SH_VFR		27
-
-#define OP_MASK_IMMNGPR		0x3f
-#define OP_SH_IMMNGPR		20
-#define OP_MASK_IMMNFPR		0x3f
-#define OP_SH_IMMNFPR		26
-#define OP_MASK_IMMSEGNELM	0x7
-#define OP_SH_IMMSEGNELM	29
 #define OP_MASK_CUSTOM_IMM	0x7f
 #define OP_SH_CUSTOM_IMM	25
 #define OP_MASK_CSR		0xfff
@@ -353,7 +329,6 @@ enum
   M_CALL,
   M_J,
   M_LI,
-  M_VF,
   M_NUM_MACROS
 };
 

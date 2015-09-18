@@ -238,6 +238,7 @@ const char EXP_CHARS[] = "eE";
 /* or    0d1.2345e12 */
 const char FLT_CHARS[] = "rRsSfFdDxXpP";
 
+/* Macros for encoding relaxation state for RVC branches and far jumps.  */
 #define RELAX_BRANCH_ENCODE(uncond, rvc, length)	\
   ((relax_substateT) 					\
    (0xc0000000						\
@@ -254,11 +255,6 @@ const char FLT_CHARS[] = "rRsSfFdDxXpP";
   (((x) &~ (offsetT) 0x7fffffff) == 0					\
    || (((x) &~ (offsetT) 0x7fffffff) == ~ (offsetT) 0x7fffffff))
 
-#define IS_SEXT_NBIT_NUM(x,n) \
-  ({ int64_t __tmp = (x); \
-     __tmp = (__tmp << (64 - (n))) >> (64 - (n)); \
-     __tmp == (x); })
-
 /* Is the given value a zero-extended 32-bit value?  Or a negated one?  */
 #define IS_ZEXT_32BIT_NUM(x)						\
   (((x) &~ (offsetT) 0xffffffff) == 0					\
@@ -272,14 +268,6 @@ const char FLT_CHARS[] = "rRsSfFdDxXpP";
 /* Determine if an instruction matches an opcode.  */
 #define OPCODE_MATCHES(OPCODE, OP) \
   (((OPCODE) & MASK_##OP) == MATCH_##OP)
-
-#define INSN_MATCHES(INSN, OP) \
-  (((INSN).insn_opcode & MASK_##OP) == MATCH_##OP)
-
-/* Prototypes for static functions.  */
-
-#define internalError()							\
-    as_fatal (_("internal Error, line %d, %s"), __LINE__, __FILE__)
 
 static char *expr_end;
 
@@ -493,7 +481,8 @@ validate_riscv_insn (const struct riscv_opcode *opc)
   const char *p = opc->args;
   char c;
   insn_t used_bits = opc->mask;
-  insn_t required_bits = (uint64_t)-1 >> (64 - 8 * riscv_insn_length (opc->match));
+  int insn_width = 8 * riscv_insn_length (opc->match);
+  insn_t required_bits = ~0ULL >> (64 - insn_width);
 
   if ((used_bits & opc->match) != (opc->match & required_bits))
     {
@@ -661,8 +650,8 @@ md_begin (void)
 #include "opcode/riscv-opc.h"
 #undef DECLARE_CSR
 
-  /* set the default alignment for the text section (2**2) */
-  record_alignment (text_section, 2);
+  /* Set the default alignment for the text section.  */
+  record_alignment (text_section, riscv_opts.rvc ? 1 : 2);
 }
 
 /* Output an instruction.  IP is the instruction information.
@@ -703,9 +692,11 @@ append_insn (struct riscv_cl_insn *ip, expressionS *address_expr,
 	      goto append;
 
 	    case BFD_RELOC_RISCV_HI20:
-	      ip->insn_opcode |= ENCODE_UTYPE_IMM (
-		RISCV_CONST_HIGH_PART (address_expr->X_add_number));
-	      goto append;
+	      {
+		insn_t imm = RISCV_CONST_HIGH_PART (address_expr->X_add_number);
+		ip->insn_opcode |= ENCODE_UTYPE_IMM (imm);
+		goto append;
+	      }
 
 	    case BFD_RELOC_RISCV_LO12_S:
 	      ip->insn_opcode |= ENCODE_STYPE_IMM (address_expr->X_add_number);
@@ -803,7 +794,7 @@ macro_build (expressionS *ep, const char *name, const char *fmt, ...)
 	case ',':
 	  continue;
 	default:
-	  internalError ();
+	  as_fatal (_("internal error: invalid macro"));
 	}
       break;
     }
@@ -824,6 +815,19 @@ normalize_constant_expr (expressionS *ex)
       && IS_ZEXT_32BIT_NUM (ex->X_add_number))
     ex->X_add_number = (((ex->X_add_number & 0xffffffff) ^ 0x80000000)
 			- 0x80000000);
+}
+
+/* Warn if an expression is not a constant.  */
+
+static void
+check_absolute_expr (struct riscv_cl_insn *ip, expressionS *ex)
+{
+  if (ex->X_op == O_big)
+    as_bad (_("unsupported large constant"));
+  else if (ex->X_op != O_constant)
+    as_bad (_("Instruction %s requires absolute expression"),
+	    ip->insn_mo->name);
+  normalize_constant_expr (ex);
 }
 
 static symbolS *
@@ -872,19 +876,6 @@ riscv_call (int destreg, int tempreg, expressionS *ep,
 {
   macro_build (ep, "auipc", "d,u", tempreg, reloc);
   macro_build (NULL, "jalr", "d,s", destreg, tempreg);
-}
-
-/* Warn if an expression is not a constant.  */
-
-static void
-check_absolute_expr (struct riscv_cl_insn *ip, expressionS *ex)
-{
-  if (ex->X_op == O_big)
-    as_bad (_("unsupported large constant"));
-  else if (ex->X_op != O_constant)
-    as_bad (_("Instruction %s requires absolute expression"),
-	    ip->insn_mo->name);
-  normalize_constant_expr (ex);
 }
 
 /* Load an integer constant into a register.  */
@@ -1044,11 +1035,6 @@ macro (struct riscv_cl_insn *ip, expressionS *imm_expr,
     case M_FSD:
       pcrel_store (rs2, rs1, imm_expr, "fsd",
 		   BFD_RELOC_RISCV_PCREL_HI20, BFD_RELOC_RISCV_PCREL_LO12_S);
-      break;
-
-    case M_VF:
-      pcrel_access (0, rs1, imm_expr, "vf", "s,s,q",
-		    BFD_RELOC_RISCV_PCREL_HI20, BFD_RELOC_RISCV_PCREL_LO12_S);
       break;
 
     case M_CALL:
@@ -1392,42 +1378,48 @@ rvc_imm_done:
 		      || imm_expr->X_op != O_constant
 		      || !VALID_RVC_LWSP_IMM (imm_expr->X_add_number))
 		    break;
-		  ip->insn_opcode |= ENCODE_RVC_LWSP_IMM (imm_expr->X_add_number);
+		  ip->insn_opcode |=
+		    ENCODE_RVC_LWSP_IMM (imm_expr->X_add_number);
 		  goto rvc_imm_done;
 		case 'n':
 		  if (my_getSmallExpression (imm_expr, imm_reloc, s, p)
 		      || imm_expr->X_op != O_constant
 		      || !VALID_RVC_LDSP_IMM (imm_expr->X_add_number))
 		    break;
-		  ip->insn_opcode |= ENCODE_RVC_LDSP_IMM (imm_expr->X_add_number);
+		  ip->insn_opcode |=
+		    ENCODE_RVC_LDSP_IMM (imm_expr->X_add_number);
 		  goto rvc_imm_done;
 		case 'K':
 		  if (my_getSmallExpression (imm_expr, imm_reloc, s, p)
 		      || imm_expr->X_op != O_constant
 		      || !VALID_RVC_ADDI4SPN_IMM (imm_expr->X_add_number))
 		    break;
-		  ip->insn_opcode |= ENCODE_RVC_ADDI4SPN_IMM (imm_expr->X_add_number);
+		  ip->insn_opcode |=
+		    ENCODE_RVC_ADDI4SPN_IMM (imm_expr->X_add_number);
 		  goto rvc_imm_done;
 		case 'L':
 		  if (my_getSmallExpression (imm_expr, imm_reloc, s, p)
 		      || imm_expr->X_op != O_constant
 		      || !VALID_RVC_ADDI16SP_IMM (imm_expr->X_add_number))
 		    break;
-		  ip->insn_opcode |= ENCODE_RVC_ADDI16SP_IMM (imm_expr->X_add_number);
+		  ip->insn_opcode |=
+		    ENCODE_RVC_ADDI16SP_IMM (imm_expr->X_add_number);
 		  goto rvc_imm_done;
 		case 'M':
 		  if (my_getSmallExpression (imm_expr, imm_reloc, s, p)
 		      || imm_expr->X_op != O_constant
 		      || !VALID_RVC_SWSP_IMM (imm_expr->X_add_number))
 		    break;
-		  ip->insn_opcode |= ENCODE_RVC_SWSP_IMM (imm_expr->X_add_number);
+		  ip->insn_opcode |=
+		    ENCODE_RVC_SWSP_IMM (imm_expr->X_add_number);
 		  goto rvc_imm_done;
 		case 'N':
 		  if (my_getSmallExpression (imm_expr, imm_reloc, s, p)
 		      || imm_expr->X_op != O_constant
 		      || !VALID_RVC_SDSP_IMM (imm_expr->X_add_number))
 		    break;
-		  ip->insn_opcode |= ENCODE_RVC_SDSP_IMM (imm_expr->X_add_number);
+		  ip->insn_opcode |=
+		    ENCODE_RVC_SDSP_IMM (imm_expr->X_add_number);
 		  goto rvc_imm_done;
 		case 'u':
 		  p = percent_op_utype;
@@ -1449,8 +1441,8 @@ rvc_lui:
 		      || (int32_t)imm_expr->X_add_number
 			  != imm_expr->X_add_number)
 		    break;
-		  imm_expr->X_add_number
-		    = (uint32_t)imm_expr->X_add_number >> RISCV_IMM_BITS;
+		  imm_expr->X_add_number =
+		    ((uint32_t) imm_expr->X_add_number) >> RISCV_IMM_BITS;
 		  goto rvc_lui;
 		case 'p':
 		  goto branch;
@@ -1724,8 +1716,7 @@ jump:
 	      continue;
 
 	    default:
-	      as_bad (_("bad char = '%c'\n"), *args);
-	      internalError ();
+	      as_fatal (_("internal error: bad argument type %c"), *args);
 	    }
 	  break;
 	}
@@ -1930,17 +1921,25 @@ md_apply_fix (fixS *fixP, valueT *valP, segT seg ATTRIBUTE_UNUSED)
 	  fixP->fx_subsy = NULL;
 
 	  if (fixP->fx_r_type == BFD_RELOC_64)
-	    fixP->fx_r_type = BFD_RELOC_RISCV_ADD64,
-	    fixP->fx_next->fx_r_type = BFD_RELOC_RISCV_SUB64;
+	    {
+	      fixP->fx_r_type = BFD_RELOC_RISCV_ADD64;
+	      fixP->fx_next->fx_r_type = BFD_RELOC_RISCV_SUB64;
+	    }
 	  else if (fixP->fx_r_type == BFD_RELOC_32)
-	    fixP->fx_r_type = BFD_RELOC_RISCV_ADD32,
-	    fixP->fx_next->fx_r_type = BFD_RELOC_RISCV_SUB32;
+	    {
+	      fixP->fx_r_type = BFD_RELOC_RISCV_ADD32;
+	      fixP->fx_next->fx_r_type = BFD_RELOC_RISCV_SUB32;
+	    }
 	  else if (fixP->fx_r_type == BFD_RELOC_16)
-	    fixP->fx_r_type = BFD_RELOC_RISCV_ADD16,
-	    fixP->fx_next->fx_r_type = BFD_RELOC_RISCV_SUB16;
+	    {
+	      fixP->fx_r_type = BFD_RELOC_RISCV_ADD16;
+	      fixP->fx_next->fx_r_type = BFD_RELOC_RISCV_SUB16;
+	    }
 	  else
-	    fixP->fx_r_type = BFD_RELOC_RISCV_ADD8,
-	    fixP->fx_next->fx_r_type = BFD_RELOC_RISCV_SUB8;
+	    {
+	      fixP->fx_r_type = BFD_RELOC_RISCV_ADD8;
+	      fixP->fx_next->fx_r_type = BFD_RELOC_RISCV_SUB8;
+	    }
 	}
       /* fall through */
 
@@ -1960,8 +1959,9 @@ md_apply_fix (fixS *fixP, valueT *valP, segT seg ATTRIBUTE_UNUSED)
       if (fixP->fx_addsy)
 	{
 	  /* Fill in a tentative value to improve objdump readability.  */
-	  bfd_vma delta = ENCODE_UJTYPE_IMM (S_GET_VALUE (fixP->fx_addsy) + *valP - md_pcrel_from (fixP));
-	  bfd_putl32 (bfd_getl32 (buf) | delta, buf);
+	  bfd_vma target = S_GET_VALUE (fixP->fx_addsy) + *valP;
+	  bfd_vma delta = target - md_pcrel_from (fixP);
+	  bfd_putl32 (bfd_getl32 (buf) | ENCODE_UJTYPE_IMM (delta), buf);
 	}
       break;
 
@@ -1969,8 +1969,9 @@ md_apply_fix (fixS *fixP, valueT *valP, segT seg ATTRIBUTE_UNUSED)
       if (fixP->fx_addsy)
 	{
 	  /* Fill in a tentative value to improve objdump readability.  */
-	  bfd_vma delta = ENCODE_SBTYPE_IMM (S_GET_VALUE (fixP->fx_addsy) + *valP - md_pcrel_from (fixP));
-	  bfd_putl32 (bfd_getl32 (buf) | delta, buf);
+	  bfd_vma target = S_GET_VALUE (fixP->fx_addsy) + *valP;
+	  bfd_vma delta = target - md_pcrel_from (fixP);
+	  bfd_putl32 (bfd_getl32 (buf) | ENCODE_SBTYPE_IMM (delta), buf);
 	}
       break;
 
@@ -1978,8 +1979,9 @@ md_apply_fix (fixS *fixP, valueT *valP, segT seg ATTRIBUTE_UNUSED)
       if (fixP->fx_addsy)
 	{
 	  /* Fill in a tentative value to improve objdump readability.  */
-	  bfd_vma delta = ENCODE_RVC_B_IMM (S_GET_VALUE (fixP->fx_addsy) + *valP - md_pcrel_from (fixP));
-	  bfd_putl16 (bfd_getl16 (buf) | delta, buf);
+	  bfd_vma target = S_GET_VALUE (fixP->fx_addsy) + *valP;
+	  bfd_vma delta = target - md_pcrel_from (fixP);
+	  bfd_putl16 (bfd_getl16 (buf) | ENCODE_RVC_B_IMM (delta), buf);
 	}
       break;
 
@@ -1987,8 +1989,9 @@ md_apply_fix (fixS *fixP, valueT *valP, segT seg ATTRIBUTE_UNUSED)
       if (fixP->fx_addsy)
 	{
 	  /* Fill in a tentative value to improve objdump readability.  */
-	  bfd_vma delta = ENCODE_RVC_J_IMM (S_GET_VALUE (fixP->fx_addsy) + *valP - md_pcrel_from (fixP));
-	  bfd_putl16 (bfd_getl16 (buf) | delta, buf);
+	  bfd_vma target = S_GET_VALUE (fixP->fx_addsy) + *valP;
+	  bfd_vma delta = target - md_pcrel_from (fixP);
+	  bfd_putl16 (bfd_getl16 (buf) | ENCODE_RVC_J_IMM (delta), buf);
 	}
       break;
 
@@ -2002,7 +2005,7 @@ md_apply_fix (fixS *fixP, valueT *valP, segT seg ATTRIBUTE_UNUSED)
     default:
       /* We ignore generic BFD relocations we don't know about.  */
       if (bfd_reloc_type_lookup (stdoutput, fixP->fx_r_type) != NULL)
-	internalError ();
+	as_fatal (_("internal error: bad relocation #%d"), fixP->fx_r_type);
     }
 }
 
@@ -2132,7 +2135,8 @@ s_align (int bytes_p)
       fill_value_specified = 1;
     }
 
-  if (!fill_value_specified && subseg_text_p (now_seg)
+  if (!fill_value_specified
+      && subseg_text_p (now_seg)
       && bytes > min_text_alignment)
     {
       /* Emit the worst-case NOP string.  The linker will delete any

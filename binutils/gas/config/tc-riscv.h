@@ -36,6 +36,10 @@ struct expressionS;
 #define OLD_FLOAT_READS
 #define REPEAT_CONS_EXPRESSIONS
 #define LOCAL_LABELS_FB 1
+
+/* Symbols named FAKE_LABEL_NAME are emitted when generating DWARF, so make
+   sure FAKE_LABEL_NAME is printable.  It still must be distinct from any
+   real label name.  So, append a space, which other labels can't contain.  */
 #define FAKE_LABEL_NAME ".L0 "
 
 #define md_relax_frag(segment, fragp, stretch) \
@@ -46,9 +50,8 @@ extern int riscv_relax_frag (asection *, struct frag *, long);
 #define md_undefined_symbol(name)	(0)
 #define md_operand(x)
 
+/* FIXME: it is unclear if this is used, or if it is even correct.  */
 #define MAX_MEM_FOR_RS_ALIGN_CODE  (1 + 2)
-
-#define TC_SYMFIELD_TYPE int
 
 /* The ISA of the target may change based on command-line arguments.  */
 #define TARGET_FORMAT riscv_target_format()
