@@ -134,56 +134,64 @@ riscv_set_arch (const char *arg)
      is supported in this case).
 
      FIXME: Version numbers are not supported yet.  */
-  const char *subsets = "IMAFDC";
+  char *uppercase = xstrdup (arg);
+  char *p = uppercase;
+  const char *all_subsets = "IMAFDC";
   const char *extension = NULL;
-  const char *p;
   int rvc = 0;
+  int i;
 
-  for (p = arg; *p; p++)
-    if (!ISLOWER (*p) || strchr (subsets, TOUPPER (*p)) == NULL)
-      break;
+  for (i = 0; uppercase[i]; i++)
+    uppercase[i] = TOUPPER (uppercase[i]);
 
-  if (!*p)
-    {
-      /* Legal all-lowercase name.  */
-      for (p = arg; *p; p++)
-	{
-	  char subset[2] = {TOUPPER (*p), 0};
-	  riscv_add_subset (subset);
-	}
-      return;
-    }
-
-  if (strncmp (arg, "RV32", 4) == 0)
+  if (strncmp (p, "RV32", 4) == 0)
     {
       xlen = 32;
-      arg += 4;
+      p += 4;
     }
-  else if (strncmp (arg, "RV64", 4) == 0)
+  else if (strncmp (p, "RV64", 4) == 0)
     {
       xlen = 64;
-      arg += 4;
+      p += 4;
     }
-  else if (strncmp (arg, "RV", 2) == 0)
-    arg += 2;
+  else if (strncmp (p, "RV", 2) == 0)
+    p += 2;
 
-  if (*arg && *arg != 'I')
-    as_fatal ("`I' must be the first ISA subset name specified (got %c)", *arg);
+  switch (*p)
+    {
+      case 'I':
+	break;
 
-  for (p = arg; *p; )
+      case 'G':
+	p++;
+	/* Fall through.  */
+
+      case '\0':
+	for (i = 0; all_subsets[i] != '\0'; i++)
+	  {
+	    const char subset[] = {all_subsets[i], '\0'};
+	    riscv_add_subset (subset);
+	  }
+	break;
+
+      default:
+	as_fatal ("`I' must be the first ISA subset name specified (got %c)",
+		  *p);
+    }
+
+  while (*p)
     {
       if (*p == 'X')
 	{
 	  char *subset = xstrdup (p), *q = subset;
 
-	  do
-	    q++;
-	  while (ISLOWER (*q));
-	  *q = 0;
+	  while (*++q != '\0' && *q != '_')
+	    ;
+	  *q = '\0';
 
 	  if (extension)
-	    as_bad ("only one eXtension is supported (found %s and %s)",
-		    extension, subset);
+	    as_fatal ("only one eXtension is supported (found %s and %s)",
+		      extension, subset);
 	  extension = subset;
 	  EF_SET_RISCV_EXT (elf_flags, riscv_elf_name_to_flag (subset));
 
@@ -191,12 +199,15 @@ riscv_set_arch (const char *arg)
 	  p += strlen (subset);
 	  free (subset);
 	}
-      else if (strchr (subsets, *p) != NULL)
+      else if (*p == '_')
+	p++;
+      else if ((all_subsets = strchr (all_subsets, *p)) != NULL)
 	{
-	  char subset[2] = {*p, 0};
+	  const char subset[] = {*p, 0};
 	  riscv_add_subset (subset);
 	  if (*p == 'C')
 	    rvc = 1;
+	  all_subsets++;
 	  p++;
 	}
       else
@@ -209,6 +220,8 @@ riscv_set_arch (const char *arg)
   else
     /* Add RVC anyway.  -m[no-]rvc toggles its availability.  */
     riscv_add_subset ("C");
+
+  free (uppercase);
 }
 
 /* handle of the OPCODE hash table */
