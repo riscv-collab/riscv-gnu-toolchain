@@ -2449,7 +2449,9 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
 
   if (htab->elf.sgotplt)
     {
-      if (bfd_is_abs_section (htab->elf.sgotplt->output_section))
+      asection *output_section = htab->elf.sgotplt->output_section;
+
+      if (bfd_is_abs_section (output_section))
 	{
 	  (*_bfd_error_handler)
 	    (_("discarded output section: `%A'"), htab->elf.sgotplt);
@@ -2465,12 +2467,13 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
 		      htab->elf.sgotplt->contents + GOT_ENTRY_SIZE);
 	}
 
-      elf_section_data (htab->elf.sgotplt->output_section)->this_hdr.sh_entsize =
-	GOT_ENTRY_SIZE;
+      elf_section_data (output_section)->this_hdr.sh_entsize = GOT_ENTRY_SIZE;
     }
 
   if (htab->elf.sgot)
     {
+      asection *output_section = htab->elf.sgot->output_section;
+
       if (htab->elf.sgot->size > 0)
 	{
 	  /* Set the first entry in the global offset table to the address of
@@ -2479,8 +2482,7 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
 	  bfd_put_NN (output_bfd, val, htab->elf.sgot->contents);
 	}
 
-      elf_section_data (htab->elf.sgot->output_section)->this_hdr.sh_entsize =
-	GOT_ENTRY_SIZE;
+      elf_section_data (output_section)->this_hdr.sh_entsize = GOT_ENTRY_SIZE;
     }
 
   return TRUE;
