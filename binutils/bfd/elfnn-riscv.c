@@ -185,7 +185,7 @@ riscv_elf_got_plt_val (bfd_vma plt_index, struct bfd_link_info *info)
 /* Generate a PLT header.  */
 
 static void
-riscv_make_plt0_entry (bfd_vma gotplt_addr, bfd_vma addr, uint32_t *entry)
+riscv_make_plt_header (bfd_vma gotplt_addr, bfd_vma addr, uint32_t *entry)
 {
   /* auipc  t2, %hi(.got.plt)
      sub    t1, t1, t3               # shifted .got.plt offset + hdr size + 12
@@ -206,7 +206,7 @@ riscv_make_plt0_entry (bfd_vma gotplt_addr, bfd_vma addr, uint32_t *entry)
   entry[7] = RISCV_ITYPE (JALR, 0, X_T3, 0);
 }
 
-/* The format of subsequent PLT entries.  */
+/* Generate a PLT entry.  */
 
 static void
 riscv_make_plt_entry (bfd_vma got_address, bfd_vma addr, uint32_t *entry)
@@ -2433,7 +2433,7 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
 	{
 	  int i;
 	  uint32_t plt_header[PLT_HEADER_INSNS];
-	  riscv_make_plt0_entry (sec_addr (htab->elf.sgotplt),
+	  riscv_make_plt_header (sec_addr (htab->elf.sgotplt),
 				 sec_addr (splt), plt_header);
 
 	  for (i = 0; i < PLT_HEADER_INSNS; i++)
