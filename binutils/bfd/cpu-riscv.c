@@ -73,4 +73,4 @@ static const bfd_arch_info_type arch_info_struct[] =
 /* The default architecture is riscv:rv64.  */
 
 const bfd_arch_info_type bfd_riscv_arch =
-N (64, 64, 0, "riscv", TRUE, &arch_info_struct[0]);
+  N (64, 64, 0, "riscv", TRUE, &arch_info_struct[0]);
