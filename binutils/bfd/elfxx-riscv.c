@@ -657,20 +657,20 @@ static reloc_howto_type howto_table[] =
 	 TRUE),			/* pcrel_offset */
 
   /* 11-bit PC-relative jump offset.  */
-  HOWTO (R_RISCV_RVC_JUMP,	/* type */
-	 0,			/* rightshift */
-	 2,			/* size (0 = byte, 1 = short, 2 = long) */
-	 32,			/* bitsize */
-	 TRUE,			/* pc_relative */
-	 0,			/* bitpos */
-	 complain_overflow_dont, /* complain_on_overflow */
-				/* This needs complex overflow
-				   detection, because the upper 36
-				   bits must match the PC + 4.  */
-	 bfd_elf_generic_reloc,	/* special_function */
-	 "R_RISCV_RVC_JUMP",	/* name */
-	 FALSE,			/* partial_inplace */
-	 0,			/* src_mask */
+  HOWTO (R_RISCV_RVC_JUMP,		/* type */
+	 0,				/* rightshift */
+	 2,				/* size */
+	 32,				/* bitsize */
+	 TRUE,				/* pc_relative */
+	 0,				/* bitpos */
+	 complain_overflow_dont,	/* complain_on_overflow */
+					/* This needs complex overflow
+					   detection, because the upper 36
+					   bits must match the PC + 4.  */
+	 bfd_elf_generic_reloc,		/* special_function */
+	 "R_RISCV_RVC_JUMP",		/* name */
+	 FALSE,				/* partial_inplace */
+	 0,				/* src_mask */
 	 ENCODE_RVC_J_IMM (-1U),	/* dst_mask */
 	 TRUE),		/* pcrel_offset */
 };
