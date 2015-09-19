@@ -246,7 +246,7 @@ static reloc_howto_type howto_table[] =
 	 FALSE,				/* partial_inplace */
 	 0,				/* src_mask */
 	 ENCODE_UJTYPE_IMM (-1U),	/* dst_mask */
-	 TRUE),		/* pcrel_offset */
+	 TRUE),				/* pcrel_offset */
 
   /* 32-bit PC-relative function call (AUIPC/JALR).  */
   HOWTO (R_RISCV_CALL,		/* type */
