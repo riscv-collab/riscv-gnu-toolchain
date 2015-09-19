@@ -26,20 +26,6 @@ Software Foundation, 51 Franklin Street - Fifth Floor, Boston, MA 02110-1301, US
 #include <stdlib.h>
 #include <stdint.h>
 
-/* RVC fields. */
-
-#define OP_MASK_CRS2 0x1f
-#define OP_SH_CRS2 2
-#define OP_MASK_CRS1S 0x7
-#define OP_SH_CRS1S 7
-#define OP_MASK_CRS2S 0x7
-#define OP_SH_CRS2S 2
-
-static const char rvc_rs1_regmap[8] = { 20, 21, 2, 3, 4, 5, 6, 7 };
-#define rvc_rd_regmap rvc_rs1_regmap
-#define rvc_rs2b_regmap rvc_rs1_regmap
-static const char rvc_rs2_regmap[8] = { 20, 21, 2, 3, 4, 5, 6, 0 };
-
 typedef uint64_t insn_t;
 
 static inline unsigned int riscv_insn_length (insn_t insn)
@@ -238,6 +224,17 @@ static const char * const riscv_pred_succ[16] = {
 #define OP_SH_CUSTOM_IMM	25
 #define OP_MASK_CSR		0xfff
 #define OP_SH_CSR		20
+
+/* RVC fields.  */
+
+#define OP_MASK_CRS2 0x1f
+#define OP_SH_CRS2 2
+#define OP_MASK_CRS1S 0x7
+#define OP_SH_CRS1S 7
+#define OP_MASK_CRS2S 0x7
+#define OP_SH_CRS2S 2
+
+/* ABI names for selected x-registers.  */
 
 #define X_RA 1
 #define X_SP 2
