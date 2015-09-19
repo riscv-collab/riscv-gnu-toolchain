@@ -385,17 +385,17 @@ static reloc_howto_type howto_table[] =
 	 FALSE),		/* pcrel_offset */
 
   /* High 12 bits of 32-bit load or add.  */
-  HOWTO (R_RISCV_LO12_I,	/* type */
-	 0,			/* rightshift */
-	 2,			/* size (0 = byte, 1 = short, 2 = long) */
-	 32,			/* bitsize */
-	 FALSE,			/* pc_relative */
-	 0,			/* bitpos */
-	 complain_overflow_dont, /* complain_on_overflow */
-	 bfd_elf_generic_reloc,	/* special_function */
-	 "R_RISCV_LO12_I",	/* name */
-	 FALSE,			/* partial_inplace */
-	 0,			/* src_mask */
+  HOWTO (R_RISCV_LO12_I,		/* type */
+	 0,				/* rightshift */
+	 2,				/* size */
+	 32,				/* bitsize */
+	 FALSE,				/* pc_relative */
+	 0,				/* bitpos */
+	 complain_overflow_dont,	/* complain_on_overflow */
+	 bfd_elf_generic_reloc,		/* special_function */
+	 "R_RISCV_LO12_I",		/* name */
+	 FALSE,				/* partial_inplace */
+	 0,				/* src_mask */
 	 ENCODE_ITYPE_IMM (-1U),	/* dst_mask */
 	 FALSE),		/* pcrel_offset */
 
