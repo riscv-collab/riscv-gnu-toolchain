@@ -216,19 +216,19 @@ static reloc_howto_type howto_table[] =
   EMPTY_HOWTO (15),
 
   /* 12-bit PC-relative branch offset.  */
-  HOWTO (R_RISCV_BRANCH,	/* type */
-	 0,			/* rightshift */
-	 2,			/* size (0 = byte, 1 = short, 2 = long) */
-	 32,			/* bitsize */
-	 TRUE,			/* pc_relative */
-	 0,			/* bitpos */
-	 complain_overflow_signed, /* complain_on_overflow */
-	 bfd_elf_generic_reloc,	/* special_function */
-	 "R_RISCV_BRANCH",	/* name */
-	 FALSE,			/* partial_inplace */
-	 0,			/* src_mask */
-	 ENCODE_SBTYPE_IMM (-1U),/* dst_mask */
-	 TRUE),			/* pcrel_offset */
+  HOWTO (R_RISCV_BRANCH,		/* type */
+	 0,				/* rightshift */
+	 2,				/* size */
+	 32,				/* bitsize */
+	 TRUE,				/* pc_relative */
+	 0,				/* bitpos */
+	 complain_overflow_signed,	/* complain_on_overflow */
+	 bfd_elf_generic_reloc,		/* special_function */
+	 "R_RISCV_BRANCH",		/* name */
+	 FALSE,				/* partial_inplace */
+	 0,				/* src_mask */
+	 ENCODE_SBTYPE_IMM (-1U),	/* dst_mask */
+	 TRUE),				/* pcrel_offset */
 
   /* 20-bit PC-relative jump offset.  */
   HOWTO (R_RISCV_JAL,		/* type */
