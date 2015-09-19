@@ -739,8 +739,7 @@ riscv_reloc_type_lookup (bfd *abfd ATTRIBUTE_UNUSED,
 }
 
 reloc_howto_type *
-riscv_reloc_name_lookup (bfd *abfd ATTRIBUTE_UNUSED,
-			 const char *r_name)
+riscv_reloc_name_lookup (bfd *abfd ATTRIBUTE_UNUSED, const char *r_name)
 {
   unsigned int i;
 
