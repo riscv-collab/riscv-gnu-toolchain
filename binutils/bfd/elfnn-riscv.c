@@ -182,7 +182,7 @@ riscv_elf_got_plt_val (bfd_vma plt_index, struct bfd_link_info *info)
 # define MATCH_LREG MATCH_LD
 #endif
 
-/* The format of the first PLT entry.  */
+/* Generate a PLT header.  */
 
 static void
 riscv_make_plt0_entry (bfd_vma gotplt_addr, bfd_vma addr, uint32_t *entry)
@@ -585,7 +585,7 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	case R_RISCV_RVC_BRANCH:
 	case R_RISCV_RVC_JUMP:
 	case R_RISCV_PCREL_HI20:
-	  /* In shared libs, these relocs are known to bind locally.  */
+	  /* In shared libraries, these relocs are known to bind locally.  */
 	  if (info->shared)
 	    break;
 	  goto static_reloc;
@@ -610,6 +610,7 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	  /* Fall through.  */
 
 	static_reloc:
+	  /* This reloc might not bind locally.  */
 	  if (h != NULL)
 	    h->non_got_ref = 1;
 
@@ -1194,8 +1195,6 @@ readonly_dynrelocs (struct elf_link_hash_entry *h, void *inf)
       if (s != NULL && (s->flags & SEC_READONLY) != 0)
 	{
 	  ((struct bfd_link_info *) inf)->flags |= DF_TEXTREL;
-
-	  /* Short-circuit the traversal.  */
 	  return FALSE;
 	}
     }
@@ -1846,8 +1845,8 @@ riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 
 	      off = local_got_offsets[r_symndx];
 
-	      /* The offset must always be a multiple of 8 on 64-bit.
-		 We use the least significant bit to record
+	      /* The offset must always be a multiple of the word size.
+		 So, we can use the least significant bit to record
 		 whether we have already processed this entry.  */
 	      if ((off & 1) != 0)
 		off &= ~1;
