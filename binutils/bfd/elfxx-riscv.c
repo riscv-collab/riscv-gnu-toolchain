@@ -520,19 +520,19 @@ static reloc_howto_type howto_table[] =
 	 FALSE),			/* pcrel_offset */
 
   /* 64-bit in-place addition, for local label subtraction.  */
-  HOWTO (R_RISCV_ADD64,		/* type */
-	 0,			/* rightshift */
-	 4,			/* size (0 = byte, 1 = short, 2 = long) */
-	 64,			/* bitsize */
-	 FALSE,			/* pc_relative */
-	 0,			/* bitpos */
-	 complain_overflow_dont, /* complain_on_overflow */
-	 bfd_elf_generic_reloc,	/* special_function */
-	 "R_RISCV_ADD64",	/* name */
-	 FALSE,			/* partial_inplace */
-	 0,			/* src_mask */
-	 MINUS_ONE,		/* dst_mask */
-	 FALSE),		/* pcrel_offset */
+  HOWTO (R_RISCV_ADD64,			/* type */
+	 0,				/* rightshift */
+	 4,				/* size */
+	 64,				/* bitsize */
+	 FALSE,				/* pc_relative */
+	 0,				/* bitpos */
+	 complain_overflow_dont,	/* complain_on_overflow */
+	 bfd_elf_generic_reloc,		/* special_function */
+	 "R_RISCV_ADD64",		/* name */
+	 FALSE,				/* partial_inplace */
+	 0,				/* src_mask */
+	 MINUS_ONE,			/* dst_mask */
+	 FALSE),			/* pcrel_offset */
 
   /* 8-bit in-place addition, for local label subtraction.  */
   HOWTO (R_RISCV_SUB8,		/* type */
