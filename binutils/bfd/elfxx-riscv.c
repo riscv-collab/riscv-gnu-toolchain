@@ -249,19 +249,20 @@ static reloc_howto_type howto_table[] =
 	 TRUE),				/* pcrel_offset */
 
   /* 32-bit PC-relative function call (AUIPC/JALR).  */
-  HOWTO (R_RISCV_CALL,		/* type */
-	 0,			/* rightshift */
-	 2,			/* size (0 = byte, 1 = short, 2 = long) */
-	 64,			/* bitsize */
-	 TRUE,			/* pc_relative */
-	 0,			/* bitpos */
-	 complain_overflow_dont, /* complain_on_overflow */
-	 bfd_elf_generic_reloc,	/* special_function */
-	 "R_RISCV_CALL",	/* name */
-	 FALSE,			/* partial_inplace */
-	 0,			/* src_mask */
-	 ENCODE_UTYPE_IMM (-1U) | ((bfd_vma) ENCODE_ITYPE_IMM (-1U) << 32),	/* dst_mask */
-	 TRUE),			/* pcrel_offset */
+  HOWTO (R_RISCV_CALL,			/* type */
+	 0,				/* rightshift */
+	 2,				/* size */
+	 64,				/* bitsize */
+	 TRUE,				/* pc_relative */
+	 0,				/* bitpos */
+	 complain_overflow_dont,	/* complain_on_overflow */
+	 bfd_elf_generic_reloc,		/* special_function */
+	 "R_RISCV_CALL",		/* name */
+	 FALSE,				/* partial_inplace */
+	 0,				/* src_mask */
+	 ENCODE_UTYPE_IMM (-1U) | ((bfd_vma) ENCODE_ITYPE_IMM (-1U) << 32),
+					/* dst_mask */
+	 TRUE),				/* pcrel_offset */
 
   /* 32-bit PC-relative function call (AUIPC/JALR).  */
   HOWTO (R_RISCV_CALL_PLT,	/* type */
