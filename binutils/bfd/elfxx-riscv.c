@@ -595,19 +595,19 @@ static reloc_howto_type howto_table[] =
 	 FALSE),			/* pcrel_offset */
 
   /* GNU extension to record C++ vtable hierarchy */
-  HOWTO (R_RISCV_GNU_VTINHERIT, /* type */
-	 0,			/* rightshift */
-	 4,			/* size (0 = byte, 1 = short, 2 = long) */
-	 0,			/* bitsize */
-	 FALSE,			/* pc_relative */
-	 0,			/* bitpos */
-	 complain_overflow_dont,/* complain_on_overflow */
-	 NULL,			/* special_function */
-	 "R_RISCV_GNU_VTINHERIT", /* name */
-	 FALSE,			/* partial_inplace */
-	 0,			/* src_mask */
-	 0,			/* dst_mask */
-	 FALSE),		/* pcrel_offset */
+  HOWTO (R_RISCV_GNU_VTINHERIT,		/* type */
+	 0,				/* rightshift */
+	 4,				/* size */
+	 0,				/* bitsize */
+	 FALSE,				/* pc_relative */
+	 0,				/* bitpos */
+	 complain_overflow_dont,	/* complain_on_overflow */
+	 NULL,				/* special_function */
+	 "R_RISCV_GNU_VTINHERIT",	/* name */
+	 FALSE,				/* partial_inplace */
+	 0,				/* src_mask */
+	 0,				/* dst_mask */
+	 FALSE),			/* pcrel_offset */
 
   /* GNU extension to record C++ vtable member usage */
   HOWTO (R_RISCV_GNU_VTENTRY,	/* type */
