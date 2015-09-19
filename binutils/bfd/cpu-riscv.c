@@ -24,9 +24,6 @@
 #include "bfd.h"
 #include "libbfd.h"
 
-static const bfd_arch_info_type *riscv_compatible
-  (const bfd_arch_info_type *, const bfd_arch_info_type *);
-
 /* This routine is provided two arch_infos and returns an arch_info
    that is compatible with both, or NULL if none exists.  */
 
