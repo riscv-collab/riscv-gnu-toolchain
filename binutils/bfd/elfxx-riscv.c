@@ -642,17 +642,17 @@ static reloc_howto_type howto_table[] =
 	 TRUE),				/* pcrel_offset */
 
   /* 8-bit PC-relative branch offset.  */
-  HOWTO (R_RISCV_RVC_BRANCH,	/* type */
-	 0,			/* rightshift */
-	 2,			/* size (0 = byte, 1 = short, 2 = long) */
-	 32,			/* bitsize */
-	 TRUE,			/* pc_relative */
-	 0,			/* bitpos */
-	 complain_overflow_signed, /* complain_on_overflow */
-	 bfd_elf_generic_reloc,	/* special_function */
-	 "R_RISCV_RVC_BRANCH",	/* name */
-	 FALSE,			/* partial_inplace */
-	 0,			/* src_mask */
+  HOWTO (R_RISCV_RVC_BRANCH,		/* type */
+	 0,				/* rightshift */
+	 2,				/* size */
+	 32,				/* bitsize */
+	 TRUE,				/* pc_relative */
+	 0,				/* bitpos */
+	 complain_overflow_signed,	/* complain_on_overflow */
+	 bfd_elf_generic_reloc,		/* special_function */
+	 "R_RISCV_RVC_BRANCH",		/* name */
+	 FALSE,				/* partial_inplace */
+	 0,				/* src_mask */
 	 ENCODE_RVC_B_IMM (-1U),	/* dst_mask */
 	 TRUE),			/* pcrel_offset */
 
