@@ -304,10 +304,10 @@ static reloc_howto_type howto_table[] =
 	 complain_overflow_dont,	/* complain_on_overflow */
 	 bfd_elf_generic_reloc,		/* special_function */
 	 "R_RISCV_TLS_GOT_HI20",	/* name */
-	 FALSE,			/* partial_inplace */
-	 0,			/* src_mask */
+	 FALSE,				/* partial_inplace */
+	 0,				/* src_mask */
 	 ENCODE_UTYPE_IMM (-1U),	/* dst_mask */
-	 FALSE),		/* pcrel_offset */
+	 FALSE),			/* pcrel_offset */
 
   /* High 20 bits of 32-bit PC-relative TLS GD GOT reference.  */
   HOWTO (R_RISCV_TLS_GD_HI20,		/* type */
@@ -322,7 +322,7 @@ static reloc_howto_type howto_table[] =
 	 FALSE,				/* partial_inplace */
 	 0,				/* src_mask */
 	 ENCODE_UTYPE_IMM (-1U),	/* dst_mask */
-	 FALSE),		/* pcrel_offset */
+	 FALSE),			/* pcrel_offset */
 
   /* High 20 bits of 32-bit PC-relative reference.  */
   HOWTO (R_RISCV_PCREL_HI20,		/* type */
@@ -337,7 +337,7 @@ static reloc_howto_type howto_table[] =
 	 FALSE,				/* partial_inplace */
 	 0,				/* src_mask */
 	 ENCODE_UTYPE_IMM (-1U),	/* dst_mask */
-	 TRUE),			/* pcrel_offset */
+	 TRUE),				/* pcrel_offset */
 
   /* Low 12 bits of a 32-bit PC-relative load or add.  */
   HOWTO (R_RISCV_PCREL_LO12_I,		/* type */
@@ -352,7 +352,7 @@ static reloc_howto_type howto_table[] =
 	 FALSE,				/* partial_inplace */
 	 0,				/* src_mask */
 	 ENCODE_ITYPE_IMM (-1U),	/* dst_mask */
-	 FALSE),		/* pcrel_offset */
+	 FALSE),			/* pcrel_offset */
 
   /* Low 12 bits of a 32-bit PC-relative store.  */
   HOWTO (R_RISCV_PCREL_LO12_S,		/* type */
@@ -367,7 +367,7 @@ static reloc_howto_type howto_table[] =
 	 FALSE,				/* partial_inplace */
 	 0,				/* src_mask */
 	 ENCODE_STYPE_IMM (-1U),	/* dst_mask */
-	 FALSE),		/* pcrel_offset */
+	 FALSE),			/* pcrel_offset */
 
   /* High 20 bits of 32-bit absolute address.  */
   HOWTO (R_RISCV_HI20,			/* type */
@@ -379,10 +379,10 @@ static reloc_howto_type howto_table[] =
 	 complain_overflow_dont,	/* complain_on_overflow */
 	 bfd_elf_generic_reloc,		/* special_function */
 	 "R_RISCV_HI20",		/* name */
-	 FALSE,			/* partial_inplace */
-	 0,			/* src_mask */
+	 FALSE,				/* partial_inplace */
+	 0,				/* src_mask */
 	 ENCODE_UTYPE_IMM (-1U),	/* dst_mask */
-	 FALSE),		/* pcrel_offset */
+	 FALSE),			/* pcrel_offset */
 
   /* High 12 bits of 32-bit load or add.  */
   HOWTO (R_RISCV_LO12_I,		/* type */
@@ -397,7 +397,7 @@ static reloc_howto_type howto_table[] =
 	 FALSE,				/* partial_inplace */
 	 0,				/* src_mask */
 	 ENCODE_ITYPE_IMM (-1U),	/* dst_mask */
-	 FALSE),		/* pcrel_offset */
+	 FALSE),			/* pcrel_offset */
 
   /* High 12 bits of 32-bit store.  */
   HOWTO (R_RISCV_LO12_S,		/* type */
@@ -412,7 +412,7 @@ static reloc_howto_type howto_table[] =
 	 FALSE,				/* partial_inplace */
 	 0,				/* src_mask */
 	 ENCODE_STYPE_IMM (-1U),	/* dst_mask */
-	 FALSE),		/* pcrel_offset */
+	 FALSE),			/* pcrel_offset */
 
   /* High 20 bits of TLS LE thread pointer offset.  */
   HOWTO (R_RISCV_TPREL_HI20,		/* type */
@@ -427,7 +427,7 @@ static reloc_howto_type howto_table[] =
 	 TRUE,				/* partial_inplace */
 	 0,				/* src_mask */
 	 ENCODE_UTYPE_IMM (-1U),	/* dst_mask */
-	 FALSE),		/* pcrel_offset */
+	 FALSE),			/* pcrel_offset */
 
   /* Low 12 bits of TLS LE thread pointer offset for loads and adds.  */
   HOWTO (R_RISCV_TPREL_LO12_I,		/* type */
@@ -442,7 +442,7 @@ static reloc_howto_type howto_table[] =
 	 FALSE,				/* partial_inplace */
 	 0,				/* src_mask */
 	 ENCODE_ITYPE_IMM (-1U),	/* dst_mask */
-	 FALSE),		/* pcrel_offset */
+	 FALSE),			/* pcrel_offset */
 
   /* Low 12 bits of TLS LE thread pointer offset for stores.  */
   HOWTO (R_RISCV_TPREL_LO12_S,		/* type */
@@ -457,7 +457,7 @@ static reloc_howto_type howto_table[] =
 	 FALSE,				/* partial_inplace */
 	 0,				/* src_mask */
 	 ENCODE_STYPE_IMM (-1U),	/* dst_mask */
-	 FALSE),		/* pcrel_offset */
+	 FALSE),			/* pcrel_offset */
 
   /* TLS LE thread pointer usage.  */
   HOWTO (R_RISCV_TPREL_ADD,		/* type */
@@ -654,7 +654,7 @@ static reloc_howto_type howto_table[] =
 	 FALSE,				/* partial_inplace */
 	 0,				/* src_mask */
 	 ENCODE_RVC_B_IMM (-1U),	/* dst_mask */
-	 TRUE),			/* pcrel_offset */
+	 TRUE),				/* pcrel_offset */
 
   /* 11-bit PC-relative jump offset.  */
   HOWTO (R_RISCV_RVC_JUMP,		/* type */
@@ -672,7 +672,7 @@ static reloc_howto_type howto_table[] =
 	 FALSE,				/* partial_inplace */
 	 0,				/* src_mask */
 	 ENCODE_RVC_J_IMM (-1U),	/* dst_mask */
-	 TRUE),		/* pcrel_offset */
+	 TRUE),				/* pcrel_offset */
 };
 
 /* A mapping from BFD reloc types to RISC-V ELF reloc types.  */
