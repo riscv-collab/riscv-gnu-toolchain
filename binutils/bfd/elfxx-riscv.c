@@ -370,14 +370,14 @@ static reloc_howto_type howto_table[] =
 	 FALSE),		/* pcrel_offset */
 
   /* High 20 bits of 32-bit absolute address.  */
-  HOWTO (R_RISCV_HI20,		/* type */
-	 0,			/* rightshift */
-	 2,			/* size (0 = byte, 1 = short, 2 = long) */
-	 32,			/* bitsize */
-	 FALSE,			/* pc_relative */
-	 0,			/* bitpos */
-	 complain_overflow_dont, /* complain_on_overflow */
-	 bfd_elf_generic_reloc,	/* special_function */
+  HOWTO (R_RISCV_HI20,			/* type */
+	 0,				/* rightshift */
+	 2,				/* size */
+	 32,				/* bitsize */
+	 FALSE,				/* pc_relative */
+	 0,				/* bitpos */
+	 complain_overflow_dont,	/* complain_on_overflow */
+	 bfd_elf_generic_reloc,		/* special_function */
 	 "R_RISCV_HI20",		/* name */
 	 FALSE,			/* partial_inplace */
 	 0,			/* src_mask */
