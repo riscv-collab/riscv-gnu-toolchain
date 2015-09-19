@@ -182,11 +182,14 @@ riscv_elf_got_plt_val (bfd_vma plt_index, struct bfd_link_info *info)
 # define MATCH_LREG MATCH_LD
 #endif
 
-/* The format of the first PLT entry.  */
+/* Generate a PLT header.  */
 
 static void
-riscv_make_plt0_entry (bfd_vma gotplt_addr, bfd_vma addr, uint32_t *entry)
+riscv_make_plt_header (bfd_vma gotplt_addr, bfd_vma addr, uint32_t *entry)
 {
+  bfd_vma gotplt_offset_high = RISCV_PCREL_HIGH_PART (gotplt_addr, addr);
+  bfd_vma gotplt_offset_low = RISCV_PCREL_LOW_PART (gotplt_addr, addr);
+
   /* auipc  t2, %hi(.got.plt)
      sub    t1, t1, t3               # shifted .got.plt offset + hdr size + 12
      l[w|d] t3, %lo(.got.plt)(t2)    # _dl_runtime_resolve
@@ -196,28 +199,28 @@ riscv_make_plt0_entry (bfd_vma gotplt_addr, bfd_vma addr, uint32_t *entry)
      l[w|d] t0, PTRSIZE(t0)          # link map
      jr     t3 */
 
-  entry[0] = RISCV_UTYPE (AUIPC, X_T2, RISCV_PCREL_HIGH_PART (gotplt_addr, addr));
+  entry[0] = RISCV_UTYPE (AUIPC, X_T2, gotplt_offset_high);
   entry[1] = RISCV_RTYPE (SUB, X_T1, X_T1, X_T3);
-  entry[2] = RISCV_ITYPE (LREG, X_T3, X_T2, RISCV_PCREL_LOW_PART (gotplt_addr, addr));
+  entry[2] = RISCV_ITYPE (LREG, X_T3, X_T2, gotplt_offset_low);
   entry[3] = RISCV_ITYPE (ADDI, X_T1, X_T1, -(PLT_HEADER_SIZE + 12));
-  entry[4] = RISCV_ITYPE (ADDI, X_T0, X_T2, RISCV_PCREL_LOW_PART (gotplt_addr, addr));
+  entry[4] = RISCV_ITYPE (ADDI, X_T0, X_T2, gotplt_offset_low);
   entry[5] = RISCV_ITYPE (SRLI, X_T1, X_T1, 4 - RISCV_ELF_LOG_WORD_BYTES);
   entry[6] = RISCV_ITYPE (LREG, X_T0, X_T0, RISCV_ELF_WORD_BYTES);
   entry[7] = RISCV_ITYPE (JALR, 0, X_T3, 0);
 }
 
-/* The format of subsequent PLT entries.  */
+/* Generate a PLT entry.  */
 
 static void
-riscv_make_plt_entry (bfd_vma got_address, bfd_vma addr, uint32_t *entry)
+riscv_make_plt_entry (bfd_vma got, bfd_vma addr, uint32_t *entry)
 {
   /* auipc  t3, %hi(.got.plt entry)
      l[w|d] t3, %lo(.got.plt entry)(t3)
      jalr   t1, t3
      nop */
 
-  entry[0] = RISCV_UTYPE (AUIPC, X_T3, RISCV_PCREL_HIGH_PART (got_address, addr));
-  entry[1] = RISCV_ITYPE (LREG,  X_T3, X_T3, RISCV_PCREL_LOW_PART(got_address, addr));
+  entry[0] = RISCV_UTYPE (AUIPC, X_T3, RISCV_PCREL_HIGH_PART (got, addr));
+  entry[1] = RISCV_ITYPE (LREG,  X_T3, X_T3, RISCV_PCREL_LOW_PART(got, addr));
   entry[2] = RISCV_ITYPE (JALR, X_T1, X_T3, 0);
   entry[3] = RISCV_NOP;
 }
@@ -585,7 +588,7 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	case R_RISCV_RVC_BRANCH:
 	case R_RISCV_RVC_JUMP:
 	case R_RISCV_PCREL_HI20:
-	  /* In shared libs, these relocs are known to bind locally.  */
+	  /* In shared libraries, these relocs are known to bind locally.  */
 	  if (info->shared)
 	    break;
 	  goto static_reloc;
@@ -610,6 +613,7 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	  /* Fall through.  */
 
 	static_reloc:
+	  /* This reloc might not bind locally.  */
 	  if (h != NULL)
 	    h->non_got_ref = 1;
 
@@ -1194,8 +1198,6 @@ readonly_dynrelocs (struct elf_link_hash_entry *h, void *inf)
       if (s != NULL && (s->flags & SEC_READONLY) != 0)
 	{
 	  ((struct bfd_link_info *) inf)->flags |= DF_TEXTREL;
-
-	  /* Short-circuit the traversal.  */
 	  return FALSE;
 	}
     }
@@ -1480,6 +1482,8 @@ perform_relocation (const reloc_howto_type *howto,
     case R_RISCV_GOT_HI20:
     case R_RISCV_TLS_GOT_HI20:
     case R_RISCV_TLS_GD_HI20:
+      if (!VALID_UTYPE_IMM (RISCV_CONST_HIGH_PART (value)))
+	return bfd_reloc_overflow;
       value = ENCODE_UTYPE_IMM (RISCV_CONST_HIGH_PART (value));
       break;
 
@@ -1846,8 +1850,8 @@ riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 
 	      off = local_got_offsets[r_symndx];
 
-	      /* The offset must always be a multiple of 8 on 64-bit.
-		 We use the least significant bit to record
+	      /* The offset must always be a multiple of the word size.
+		 So, we can use the least significant bit to record
 		 whether we have already processed this entry.  */
 	      if ((off & 1) != 0)
 		off &= ~1;
@@ -2434,7 +2438,7 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
 	{
 	  int i;
 	  uint32_t plt_header[PLT_HEADER_INSNS];
-	  riscv_make_plt0_entry (sec_addr (htab->elf.sgotplt),
+	  riscv_make_plt_header (sec_addr (htab->elf.sgotplt),
 				 sec_addr (splt), plt_header);
 
 	  for (i = 0; i < PLT_HEADER_INSNS; i++)
@@ -2447,7 +2451,9 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
 
   if (htab->elf.sgotplt)
     {
-      if (bfd_is_abs_section (htab->elf.sgotplt->output_section))
+      asection *output_section = htab->elf.sgotplt->output_section;
+
+      if (bfd_is_abs_section (output_section))
 	{
 	  (*_bfd_error_handler)
 	    (_("discarded output section: `%A'"), htab->elf.sgotplt);
@@ -2463,12 +2469,13 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
 		      htab->elf.sgotplt->contents + GOT_ENTRY_SIZE);
 	}
 
-      elf_section_data (htab->elf.sgotplt->output_section)->this_hdr.sh_entsize =
-	GOT_ENTRY_SIZE;
+      elf_section_data (output_section)->this_hdr.sh_entsize = GOT_ENTRY_SIZE;
     }
 
   if (htab->elf.sgot)
     {
+      asection *output_section = htab->elf.sgot->output_section;
+
       if (htab->elf.sgot->size > 0)
 	{
 	  /* Set the first entry in the global offset table to the address of
@@ -2477,8 +2484,7 @@ riscv_elf_finish_dynamic_sections (bfd *output_bfd,
 	  bfd_put_NN (output_bfd, val, htab->elf.sgot->contents);
 	}
 
-      elf_section_data (htab->elf.sgot->output_section)->this_hdr.sh_entsize =
-	GOT_ENTRY_SIZE;
+      elf_section_data (output_section)->this_hdr.sh_entsize = GOT_ENTRY_SIZE;
     }
 
   return TRUE;

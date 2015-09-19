@@ -26,25 +26,11 @@ Software Foundation, 51 Franklin Street - Fifth Floor, Boston, MA 02110-1301, US
 #include <stdlib.h>
 #include <stdint.h>
 
-/* RVC fields. */
-
-#define OP_MASK_CRS2 0x1f
-#define OP_SH_CRS2 2
-#define OP_MASK_CRS1S 0x7
-#define OP_SH_CRS1S 7
-#define OP_MASK_CRS2S 0x7
-#define OP_SH_CRS2S 2
-
-static const char rvc_rs1_regmap[8] = { 20, 21, 2, 3, 4, 5, 6, 7 };
-#define rvc_rd_regmap rvc_rs1_regmap
-#define rvc_rs2b_regmap rvc_rs1_regmap
-static const char rvc_rs2_regmap[8] = { 20, 21, 2, 3, 4, 5, 6, 0 };
-
 typedef uint64_t insn_t;
 
 static inline unsigned int riscv_insn_length (insn_t insn)
 {
-  if ((insn & 0x3) != 3) /* RVC.  */
+  if ((insn & 0x3) != 0x3) /* RVC.  */
     return 2;
   if ((insn & 0x1f) != 0x1f) /* Base ISA and extensions in 32-bit space.  */
     return 4;
@@ -183,7 +169,22 @@ static const char * const riscv_pred_succ[16] = {
 #define RISCV_PCREL_HIGH_PART(VALUE, PC) RISCV_CONST_HIGH_PART((VALUE) - (PC))
 #define RISCV_PCREL_LOW_PART(VALUE, PC) RISCV_CONST_LOW_PART((VALUE) - (PC))
 
-/* RV fields */
+#define RISCV_JUMP_BITS RISCV_BIGIMM_BITS
+#define RISCV_JUMP_ALIGN_BITS 1
+#define RISCV_JUMP_ALIGN (1 << RISCV_JUMP_ALIGN_BITS)
+#define RISCV_JUMP_REACH ((1ULL << RISCV_JUMP_BITS) * RISCV_JUMP_ALIGN)
+
+#define RISCV_IMM_BITS 12
+#define RISCV_BIGIMM_BITS (32 - RISCV_IMM_BITS)
+#define RISCV_IMM_REACH (1LL << RISCV_IMM_BITS)
+#define RISCV_BIGIMM_REACH (1LL << RISCV_BIGIMM_BITS)
+#define RISCV_RVC_IMM_REACH (1LL << 6)
+#define RISCV_BRANCH_BITS RISCV_IMM_BITS
+#define RISCV_BRANCH_ALIGN_BITS RISCV_JUMP_ALIGN_BITS
+#define RISCV_BRANCH_ALIGN (1 << RISCV_BRANCH_ALIGN_BITS)
+#define RISCV_BRANCH_REACH (RISCV_IMM_REACH * RISCV_BRANCH_ALIGN)
+
+/* RV fields.  */
 
 #define OP_MASK_OP		0x7f
 #define OP_SH_OP		0
@@ -210,34 +211,21 @@ static const char * const riscv_pred_succ[16] = {
 #define OP_MASK_RL		0x1
 #define OP_SH_RL		25
 
-#define OP_MASK_VRD		0x1f
-#define OP_SH_VRD		7
-#define OP_MASK_VRS		0x1f
-#define OP_SH_VRS		15
-#define OP_MASK_VRT		0x1f
-#define OP_SH_VRT		20
-#define OP_MASK_VRR		0x1f
-#define OP_SH_VRR		27
-
-#define OP_MASK_VFD		0x1f
-#define OP_SH_VFD		7
-#define OP_MASK_VFS		0x1f
-#define OP_SH_VFS		15
-#define OP_MASK_VFT		0x1f
-#define OP_SH_VFT		20
-#define OP_MASK_VFR		0x1f
-#define OP_SH_VFR		27
-
-#define OP_MASK_IMMNGPR		0x3f
-#define OP_SH_IMMNGPR		20
-#define OP_MASK_IMMNFPR		0x3f
-#define OP_SH_IMMNFPR		26
-#define OP_MASK_IMMSEGNELM	0x7
-#define OP_SH_IMMSEGNELM	29
 #define OP_MASK_CUSTOM_IMM	0x7f
 #define OP_SH_CUSTOM_IMM	25
 #define OP_MASK_CSR		0xfff
 #define OP_SH_CSR		20
+
+/* RVC fields.  */
+
+#define OP_MASK_CRS2 0x1f
+#define OP_SH_CRS2 2
+#define OP_MASK_CRS1S 0x7
+#define OP_SH_CRS1S 7
+#define OP_MASK_CRS2S 0x7
+#define OP_SH_CRS2S 2
+
+/* ABI names for selected x-registers.  */
 
 #define X_RA 1
 #define X_SP 2
@@ -250,23 +238,21 @@ static const char * const riscv_pred_succ[16] = {
 
 #define NGPR 32
 #define NFPR 32
-#define NVGPR 32
-#define NVFPR 32
 
-#define RISCV_JUMP_BITS RISCV_BIGIMM_BITS
-#define RISCV_JUMP_ALIGN_BITS 1
-#define RISCV_JUMP_ALIGN (1 << RISCV_JUMP_ALIGN_BITS)
-#define RISCV_JUMP_REACH ((1ULL << RISCV_JUMP_BITS) * RISCV_JUMP_ALIGN)
+/* Replace bits MASK << SHIFT of STRUCT with the equivalent bits in
+   VALUE << SHIFT.  VALUE is evaluated exactly once.  */
+#define INSERT_BITS(STRUCT, VALUE, MASK, SHIFT) \
+  (STRUCT) = (((STRUCT) & ~((insn_t)(MASK) << (SHIFT))) \
+	      | ((insn_t)((VALUE) & (MASK)) << (SHIFT)))
 
-#define RISCV_IMM_BITS 12
-#define RISCV_BIGIMM_BITS (32 - RISCV_IMM_BITS)
-#define RISCV_IMM_REACH (1LL << RISCV_IMM_BITS)
-#define RISCV_BIGIMM_REACH (1LL << RISCV_BIGIMM_BITS)
-#define RISCV_RVC_IMM_REACH (1LL << 6)
-#define RISCV_BRANCH_BITS RISCV_IMM_BITS
-#define RISCV_BRANCH_ALIGN_BITS RISCV_JUMP_ALIGN_BITS
-#define RISCV_BRANCH_ALIGN (1 << RISCV_BRANCH_ALIGN_BITS)
-#define RISCV_BRANCH_REACH (RISCV_IMM_REACH * RISCV_BRANCH_ALIGN)
+/* Extract bits MASK << SHIFT from STRUCT and shift them right
+   SHIFT places.  */
+#define EXTRACT_BITS(STRUCT, MASK, SHIFT) \
+  (((STRUCT) >> (SHIFT)) & (MASK))
+
+/* Extract the operand given by FIELD from integer INSN.  */
+#define EXTRACT_OPERAND(FIELD, INSN) \
+  EXTRACT_BITS ((INSN), OP_MASK_##FIELD, OP_SH_##FIELD)
 
 /* This structure holds information for a particular instruction.  */
 
@@ -343,7 +329,6 @@ enum
   M_CALL,
   M_J,
   M_LI,
-  M_VF,
   M_NUM_MACROS
 };
 
@@ -352,8 +337,6 @@ extern const char * const riscv_gpr_names_numeric[NGPR];
 extern const char * const riscv_gpr_names_abi[NGPR];
 extern const char * const riscv_fpr_names_numeric[NFPR];
 extern const char * const riscv_fpr_names_abi[NFPR];
-extern const char * const riscv_vec_gpr_names[NVGPR];
-extern const char * const riscv_vec_fpr_names[NVFPR];
 
 extern const struct riscv_opcode riscv_builtin_opcodes[];
 extern const int bfd_riscv_num_builtin_opcodes;

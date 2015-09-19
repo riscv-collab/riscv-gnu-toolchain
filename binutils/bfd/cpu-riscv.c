@@ -24,11 +24,8 @@
 #include "bfd.h"
 #include "libbfd.h"
 
-static const bfd_arch_info_type *riscv_compatible
-  (const bfd_arch_info_type *, const bfd_arch_info_type *);
-
-/* The default routine tests bits_per_word, which is wrong on RISC-V, as
-   RISC-V word size doesn't correlate with reloc size.  */
+/* This routine is provided two arch_infos and returns an arch_info
+   that is compatible with both, or NULL if none exists.  */
 
 static const bfd_arch_info_type *
 riscv_compatible (const bfd_arch_info_type *a, const bfd_arch_info_type *b)
@@ -76,4 +73,4 @@ static const bfd_arch_info_type arch_info_struct[] =
 /* The default architecture is riscv:rv64.  */
 
 const bfd_arch_info_type bfd_riscv_arch =
-N (64, 64, 0, "riscv", TRUE, &arch_info_struct[0]);
+  N (64, 64, 0, "riscv", TRUE, &arch_info_struct[0]);
