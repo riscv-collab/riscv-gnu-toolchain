@@ -431,19 +431,13 @@ riscv_disassemble_insn (bfd_vma memaddr, insn_t word, disassemble_info *info)
   op = riscv_hash[OP_HASH_IDX (word)];
   if (op != NULL)
     {
-      const char *extension = NULL;
       int xlen = 0;
 
       /* The incoming section might not always be complete.  */
       if (info->section != NULL)
 	{
 	  Elf_Internal_Ehdr *ehdr = elf_elfheader (info->section->owner);
-	  unsigned int e_flags = ehdr->e_flags;
-	  extension = riscv_elf_flag_to_name (EF_GET_RISCV_EXT (e_flags));
-
-	  xlen = 32;
-	  if (ehdr->e_ident[EI_CLASS] == ELFCLASS64)
-	    xlen = 64;
+	  xlen = ehdr->e_ident[EI_CLASS] == ELFCLASS64 ? 64 : 32;
 	}
 
       for (; op < &riscv_opcodes[NUMOPCODES]; op++)
@@ -454,11 +448,6 @@ riscv_disassemble_insn (bfd_vma memaddr, insn_t word, disassemble_info *info)
 	  /* Is this a pseudo-instruction and may we print it as such?  */
 	  if (no_aliases && (op->pinfo & INSN_ALIAS))
 	    continue;
-	  /* Is this instruction for an ISA extension and does it match the
-	     extension for which the object was compiled?  */
-	  if (extension != NULL && op->subset[0] == 'X')
-	    if (strcmp (op->subset, extension) != 0)
-	      continue;
 	  /* Is this instruction restricted to a certain value of XLEN?  */
 	  if (isdigit (op->subset[0]) && atoi (op->subset) != xlen)
 	    continue;

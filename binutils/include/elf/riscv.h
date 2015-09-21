@@ -83,59 +83,7 @@ END_RELOC_NUMBERS (R_RISCV_max)
 /* File may contain compressed instructions.  */
 #define EF_RISCV_RVC 0x0001
 
-/* Custom flag definitions.  */
-
-#define EF_RISCV_EXT_MASK 0xffff
-#define EF_RISCV_EXT_SH 16
-#define E_RISCV_EXT_Xcustom 0x0000
-#define E_RISCV_EXT_RESERVED 0xffff
-
-#define EF_GET_RISCV_EXT(x) \
-  ((x >> EF_RISCV_EXT_SH) & EF_RISCV_EXT_MASK)
-
-#define EF_SET_RISCV_EXT(x, ext) \
-  do { x |= ((ext & EF_RISCV_EXT_MASK) << EF_RISCV_EXT_SH); } while (0)
-
-#define EF_IS_RISCV_EXT_Xcustom(x) \
-  (EF_GET_RISCV_EXT(x) == E_RISCV_EXT_Xcustom)
-
-/* A mapping from extension names to elf flags  */
-
-struct riscv_extension_entry
-{
-  const char* name;
-  unsigned int flag;
-};
-
-static const struct riscv_extension_entry riscv_extension_map[] =
-{
-  {"Xcustom", E_RISCV_EXT_Xcustom},
-};
-
-/* Given an extension name, return an elf flag.  */
-
-static inline const char *riscv_elf_flag_to_name (unsigned int flag)
-{
-  unsigned int i;
-
-  for (i = 0; i < ARRAY_SIZE (riscv_extension_map); ++i)
-    if (riscv_extension_map[i].flag == flag)
-      return riscv_extension_map[i].name;
-
-  return NULL;
-}
-
-/* Given an elf flag, return an extension name.  */
-
-static inline unsigned int riscv_elf_name_to_flag (const char *name)
-{
-  unsigned int i;
-
-  for (i = 0; i < ARRAY_SIZE (riscv_extension_map); ++i)
-    if (strcmp (riscv_extension_map[i].name, name) == 0)
-      return riscv_extension_map[i].flag;
-
-  return E_RISCV_EXT_Xcustom;
-}
+/* File uses the soft-float calling convention.  */
+#define EF_RISCV_SOFT_FLOAT 0x0002
 
 #endif /* _ELF_RISCV_H */

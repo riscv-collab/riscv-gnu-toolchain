@@ -65,7 +65,7 @@ unsigned xlen = 0; /* width of an x-register */
 #define LOAD_ADDRESS_INSN (xlen == 64 ? "ld" : "lw")
 #define ADD32_INSN (xlen == 64 ? "addiw" : "addi")
 
-unsigned elf_flags = 0;
+static unsigned elf_flags = 0;
 
 /* This is the set of options which the .option pseudo-op may modify.  */
 
@@ -80,6 +80,15 @@ static struct riscv_set_options riscv_opts =
   0,	/* pic */
   0,	/* rvc */
 };
+
+static void
+riscv_set_rvc (bfd_boolean rvc_value)
+{
+  if (rvc_value)
+    elf_flags |= EF_RISCV_RVC;
+
+  riscv_opts.rvc = rvc_value;
+}
 
 struct riscv_subset
 {
@@ -193,8 +202,6 @@ riscv_set_arch (const char *arg)
 	    as_fatal ("only one eXtension is supported (found %s and %s)",
 		      extension, subset);
 	  extension = subset;
-	  EF_SET_RISCV_EXT (elf_flags, riscv_elf_name_to_flag (subset));
-
 	  riscv_add_subset (subset);
 	  p += strlen (subset);
 	  free (subset);
@@ -216,7 +223,7 @@ riscv_set_arch (const char *arg)
 
   if (rvc)
     /* Override -m[no-]rvc setting if C was explicitly listed.  */
-    riscv_opts.rvc = 1;
+    riscv_set_rvc (TRUE);
   else
     /* Add RVC anyway.  -m[no-]rvc toggles its availability.  */
     riscv_add_subset ("C");
@@ -1775,6 +1782,8 @@ enum options
     OPTION_MARCH,
     OPTION_PIC,
     OPTION_NO_PIC,
+    OPTION_MSOFT_FLOAT,
+    OPTION_MHARD_FLOAT,
     OPTION_MRVC,
     OPTION_MNO_RVC,
     OPTION_END_OF_ENUM
@@ -1790,6 +1799,8 @@ struct option md_longopts[] =
   {"fno-pic", no_argument, NULL, OPTION_NO_PIC},
   {"mrvc", no_argument, NULL, OPTION_MRVC},
   {"mno-rvc", no_argument, NULL, OPTION_MNO_RVC},
+  {"msoft-float", no_argument, NULL, OPTION_MSOFT_FLOAT},
+  {"mhard-float", no_argument, NULL, OPTION_MHARD_FLOAT},
 
   {NULL, no_argument, NULL, 0}
 };
@@ -1801,11 +1812,19 @@ md_parse_option (int c, char *arg)
   switch (c)
     {
     case OPTION_MRVC:
-      riscv_opts.rvc = 1;
+      riscv_set_rvc (TRUE);
       break;
 
     case OPTION_MNO_RVC:
-      riscv_opts.rvc = 0;
+      riscv_set_rvc (FALSE);
+      break;
+
+    case OPTION_MSOFT_FLOAT:
+      elf_flags |= EF_RISCV_SOFT_FLOAT;
+      break;
+
+    case OPTION_MHARD_FLOAT:
+      elf_flags &= ~EF_RISCV_SOFT_FLOAT;
       break;
 
     case OPTION_M32:
@@ -1850,9 +1869,6 @@ riscv_after_parse_args (void)
       else
 	as_bad ("unknown default architecture `%s'", default_arch);
     }
-
-  if (riscv_opts.rvc)
-    elf_flags |= EF_RISCV_RVC;
 }
 
 void
@@ -2033,9 +2049,9 @@ s_riscv_option (int x ATTRIBUTE_UNUSED)
   *input_line_pointer = '\0';
 
   if (strcmp (name, "rvc") == 0)
-    riscv_opts.rvc = 1;
+    riscv_set_rvc (TRUE);
   else if (strcmp (name, "norvc") == 0)
-    riscv_opts.rvc = 0;
+    riscv_set_rvc (FALSE);
   else if (strcmp (name, "push") == 0)
     {
       struct riscv_option_stack *s;

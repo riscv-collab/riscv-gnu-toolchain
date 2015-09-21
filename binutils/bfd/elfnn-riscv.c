@@ -2518,22 +2518,14 @@ riscv_reloc_type_class (const struct bfd_link_info *info ATTRIBUTE_UNUSED,
     }
 }
 
-/* Return true if bfd machine EXTENSION is an extension of machine BASE.  */
-
-static bfd_boolean
-riscv_mach_extends_p (unsigned long base, unsigned long extension)
-{
-  return extension == base;
-}
-
 /* Merge backend specific data from an object file to the output
    object file when linking.  */
 
 static bfd_boolean
 _bfd_riscv_elf_merge_private_bfd_data (bfd *ibfd, bfd *obfd)
 {
-  flagword old_flags;
-  flagword new_flags;
+  flagword new_flags = elf_elfheader (ibfd)->e_flags;
+  flagword old_flags = elf_elfheader (obfd)->e_flags;
 
   if (!is_riscv_elf (ibfd) || !is_riscv_elf (obfd))
     return TRUE;
@@ -2549,60 +2541,23 @@ _bfd_riscv_elf_merge_private_bfd_data (bfd *ibfd, bfd *obfd)
   if (!_bfd_elf_merge_object_attributes (ibfd, obfd))
     return FALSE;
 
-  new_flags = elf_elfheader (ibfd)->e_flags;
-  old_flags = elf_elfheader (obfd)->e_flags;
-
   if (! elf_flags_init (obfd))
     {
       elf_flags_init (obfd) = TRUE;
       elf_elfheader (obfd)->e_flags = new_flags;
-      elf_elfheader (obfd)->e_ident[EI_CLASS]
-	= elf_elfheader (ibfd)->e_ident[EI_CLASS];
-
-      if (bfd_get_arch (obfd) == bfd_get_arch (ibfd)
-	  && (bfd_get_arch_info (obfd)->the_default
-	      || riscv_mach_extends_p (bfd_get_mach (obfd),
-				       bfd_get_mach (ibfd))))
-	{
-	  if (! bfd_set_arch_mach (obfd, bfd_get_arch (ibfd),
-				   bfd_get_mach (ibfd)))
-	    return FALSE;
-	}
-
       return TRUE;
     }
 
-  /* Check flag compatibility.  */
-
-  if (new_flags == old_flags)
-    return TRUE;
-
-  /* Don't link RV32 and RV64.  */
-  if (elf_elfheader (ibfd)->e_ident[EI_CLASS]
-      != elf_elfheader (obfd)->e_ident[EI_CLASS])
+  /* Disallow linking soft-float and hard-float.  */
+  if ((old_flags ^ new_flags) & EF_RISCV_SOFT_FLOAT)
     {
       (*_bfd_error_handler)
-	(_("%B: ELF class mismatch: can't link 32- and 64-bit modules"), ibfd);
+	(_("%B: can't link hard-float modules with soft-float modules"), ibfd);
       goto fail;
     }
 
-  /* Warn about any other mismatches.  */
-  if (new_flags != old_flags)
-    {
-      if (!EF_IS_RISCV_EXT_Xcustom (new_flags) &&
-	  !EF_IS_RISCV_EXT_Xcustom (old_flags))
-	{
-	  (*_bfd_error_handler)
-	    (_("%B: uses different e_flags (0x%lx) fields than previous "
-	       "modules (0x%lx)"),
-	     ibfd, (unsigned long) new_flags,
-	     (unsigned long) old_flags);
-	  goto fail;
-	}
-      else if (EF_IS_RISCV_EXT_Xcustom (new_flags))
-	EF_SET_RISCV_EXT (elf_elfheader (obfd)->e_flags,
-			  EF_GET_RISCV_EXT (old_flags));
-    }
+  /* Allow linking RVC and non-RVC, and keep the RVC flag.  */
+  elf_elfheader (obfd)->e_flags |= new_flags & EF_RISCV_RVC;
 
   return TRUE;
 
