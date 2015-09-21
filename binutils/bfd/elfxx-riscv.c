@@ -39,7 +39,7 @@ static reloc_howto_type howto_table[] =
   /* No relocation.  */
   HOWTO (R_RISCV_NONE,			/* type */
 	 0,				/* rightshift */
-	 0,				/* size */
+	 3,				/* size */
 	 0,				/* bitsize */
 	 FALSE,				/* pc_relative */
 	 0,				/* bitpos */
