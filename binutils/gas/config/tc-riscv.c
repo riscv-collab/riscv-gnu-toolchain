@@ -101,26 +101,23 @@ struct riscv_subset
 
 static struct riscv_subset *riscv_subsets;
 
-static int
+static bfd_boolean
 riscv_subset_supports (const char *feature)
 {
   struct riscv_subset *s;
-  bfd_boolean rv64_insn = !strncmp (feature, "64", 2);
+  char *p;
+  unsigned xlen_required = strtoul (feature, &p, 10);
 
-  if (rv64_insn || !strncmp (feature, "32", 2))
-    {
-      if ((xlen == 64) != rv64_insn)
-	return 0;
-      feature += 2;
-    }
+  if (xlen_required && xlen != xlen_required)
+    return FALSE;
 
   for (s = riscv_subsets; s != NULL; s = s->next)
-    if (strcmp (s->name, feature) == 0)
+    if (strcmp (s->name, p) == 0)
       /* FIXME: once we support version numbers:
 	 return major == s->version_major && minor <= s->version_minor; */
-      return 1;
+      return TRUE;
 
-  return 0;
+  return FALSE;
 }
 
 static void
@@ -134,15 +131,13 @@ riscv_add_subset (const char *subset)
   riscv_subsets = s;
 }
 
+/* Set which ISA and extensions are available.  Formally, ISA strings must
+   begin with RV32 or RV64, but we allow the prefix to be omitted.
+
+   FIXME: Version numbers are not supported yet.  */
 static void
 riscv_set_arch (const char *arg)
 {
-  /* Formally, ISA subset names begin with RV, RV32, or RV64, but we allow the
-     prefix to be omitted.  We also allow all-lowercase names if version
-     numbers and eXtensions are omitted (i.e. only some combination of imafd
-     is supported in this case).
-
-     FIXME: Version numbers are not supported yet.  */
   char *uppercase = xstrdup (arg);
   char *p = uppercase;
   const char *all_subsets = "IMAFDC";
