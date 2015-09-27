@@ -2988,7 +2988,7 @@ riscv_elf_select_rtx_section (enum machine_mode mode, rtx x,
       if (strncmp (s->named.name, ".rodata.cst", strlen (".rodata.cst")) == 0)
 	{
 	  /* Rename .rodata.cst* to .srodata.cst*. */
-	  char name[32];
+	  char *name = (char *) alloca (strlen (s->named.name) + 2);
 	  sprintf (name, ".s%s", s->named.name + 1);
 	  return get_section (name, s->named.common.flags, NULL);
 	}
