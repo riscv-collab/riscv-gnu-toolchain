@@ -523,31 +523,31 @@ validate_riscv_insn (const struct riscv_opcode *opc)
       case 'C': /* RVC */
 	switch (c = *p++)
 	  {
-	  case 's': USE_BITS (OP_MASK_CRS1S, OP_SH_CRS1S); break;
-	  case 't': USE_BITS (OP_MASK_CRS2S, OP_SH_CRS2S); break;
-	  case 'w': break; /* RS1S, constrained to equal RD */
-	  case 'x': break; /* RS1S, constrained to equal RD */
-	  case 'D': USE_BITS (OP_MASK_RD, OP_SH_RD); break;
-	  case 'T': USE_BITS (OP_MASK_CRS2, OP_SH_CRS2); break;
-	  case 'V': USE_BITS (OP_MASK_CRS2, OP_SH_CRS2); break;
+	  case 'a': used_bits |= ENCODE_RVC_J_IMM(-1U); break;
 	  case 'c': break; /* RS1, constrained to equal sp */
-	  case 'U': break; /* RS2, constrained to equal RD */
-	  case '<': used_bits |= ENCODE_RVC_IMM(-1U); break;
-	  case '>': used_bits |= ENCODE_RVC_IMM(-1U); break;
 	  case 'i': used_bits |= ENCODE_RVC_SIMM3(-1U); break;
 	  case 'j': used_bits |= ENCODE_RVC_IMM(-1U); break;
 	  case 'k': used_bits |= ENCODE_RVC_LW_IMM(-1U); break;
 	  case 'l': used_bits |= ENCODE_RVC_LD_IMM(-1U); break;
 	  case 'm': used_bits |= ENCODE_RVC_LWSP_IMM(-1U); break;
 	  case 'n': used_bits |= ENCODE_RVC_LDSP_IMM(-1U); break;
+	  case 'p': used_bits |= ENCODE_RVC_B_IMM(-1U); break;
+	  case 's': USE_BITS (OP_MASK_CRS1S, OP_SH_CRS1S); break;
+	  case 't': USE_BITS (OP_MASK_CRS2S, OP_SH_CRS2S); break;
+	  case 'u': used_bits |= ENCODE_RVC_IMM(-1U); break;
+	  case 'v': used_bits |= ENCODE_RVC_IMM(-1U); break;
+	  case 'w': break; /* RS1S, constrained to equal RD */
+	  case 'x': break; /* RS2S, constrained to equal RD */
+	  case 'D': USE_BITS (OP_MASK_RD, OP_SH_RD); break;
 	  case 'K': used_bits |= ENCODE_RVC_ADDI4SPN_IMM(-1U); break;
 	  case 'L': used_bits |= ENCODE_RVC_ADDI16SP_IMM(-1U); break;
 	  case 'M': used_bits |= ENCODE_RVC_SWSP_IMM(-1U); break;
 	  case 'N': used_bits |= ENCODE_RVC_SDSP_IMM(-1U); break;
-	  case 'u': used_bits |= ENCODE_RVC_IMM(-1U); break;
-	  case 'v': used_bits |= ENCODE_RVC_IMM(-1U); break;
-	  case 'a': used_bits |= ENCODE_RVC_J_IMM(-1U); break;
-	  case 'p': used_bits |= ENCODE_RVC_B_IMM(-1U); break;
+	  case 'T': USE_BITS (OP_MASK_CRS2, OP_SH_CRS2); break;
+	  case 'U': break; /* RS1, constrained to equal RD */
+	  case 'V': USE_BITS (OP_MASK_CRS2, OP_SH_CRS2); break;
+	  case '<': used_bits |= ENCODE_RVC_IMM(-1U); break;
+	  case '>': used_bits |= ENCODE_RVC_IMM(-1U); break;
 	  default:
 	    as_bad (_("internal: bad RISC-V opcode (unknown operand type `C%c'): %s %s"),
 		    c, opc->name, opc->args);
