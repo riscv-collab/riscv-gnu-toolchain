@@ -388,6 +388,8 @@ relaxed_branch_length (fragS *fragp, asection *sec, int update)
 	length = 2;
       else if ((bfd_vma)(val + RISCV_BRANCH_REACH/2) < RISCV_BRANCH_REACH)
 	length = 4;
+      else if (!jump && rvc)
+	length = 6;
     }
 
   if (update)
@@ -2269,6 +2271,15 @@ md_convert_frag_branch (fragS *fragp)
 	    bfd_putl32 (insn, buf);
 	    break;
 
+	  case 6:
+	    /* Invert the branch condition.  Branch over the jump.  */
+	    insn = bfd_getl16 (buf);
+	    insn ^= MATCH_C_BEQZ ^ MATCH_C_BNEZ;
+	    insn |= ENCODE_RVC_B_IMM (6);
+	    bfd_putl16 (insn, buf);
+	    buf += 2;
+	    goto jump;
+
 	  case 2:
 	    /* Just keep the RVC branch.  */
 	    reloc = RELAX_BRANCH_UNCOND (fragp->fr_subtype)
@@ -2295,6 +2306,7 @@ md_convert_frag_branch (fragS *fragp)
       md_number_to_chars ((char *) buf, insn, 4);
       buf += 4;
 
+jump:
       /* Jump to the target.  */
       fixp = fix_new_exp (fragp, buf - (bfd_byte *)fragp->fr_literal,
 			  4, &exp, FALSE, BFD_RELOC_RISCV_JMP);
