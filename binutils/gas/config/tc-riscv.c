@@ -533,6 +533,7 @@ validate_riscv_insn (const struct riscv_opcode *opc)
 	  case 'l': used_bits |= ENCODE_RVC_LD_IMM(-1U); break;
 	  case 'm': used_bits |= ENCODE_RVC_LWSP_IMM(-1U); break;
 	  case 'n': used_bits |= ENCODE_RVC_LDSP_IMM(-1U); break;
+	  case 'o': used_bits |= ENCODE_RVC_LB_IMM(-1U); break;
 	  case 'p': used_bits |= ENCODE_RVC_B_IMM(-1U); break;
 	  case 's': USE_BITS (OP_MASK_CRS1S, OP_SH_CRS1S); break;
 	  case 't': USE_BITS (OP_MASK_CRS2S, OP_SH_CRS2S); break;
@@ -1394,10 +1395,18 @@ rvc_imm_done:
 		  ip->insn_opcode |=
 		    ENCODE_RVC_LDSP_IMM (imm_expr->X_add_number);
 		  goto rvc_imm_done;
+		case 'o':
+		  if (my_getSmallExpression (imm_expr, imm_reloc, s, p)
+		      || imm_expr->X_op != O_constant
+		      || !VALID_RVC_LB_IMM (imm_expr->X_add_number))
+		    break;
+		  ip->insn_opcode |= ENCODE_RVC_LB_IMM (imm_expr->X_add_number);
+		  goto rvc_imm_done;
 		case 'K':
 		  if (my_getSmallExpression (imm_expr, imm_reloc, s, p)
 		      || imm_expr->X_op != O_constant
-		      || !VALID_RVC_ADDI4SPN_IMM (imm_expr->X_add_number))
+		      || !VALID_RVC_ADDI4SPN_IMM (imm_expr->X_add_number)
+		      || imm_expr->X_add_number == 0)
 		    break;
 		  ip->insn_opcode |=
 		    ENCODE_RVC_ADDI4SPN_IMM (imm_expr->X_add_number);

@@ -189,6 +189,9 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
 	    case 'n':
 	      print (info->stream, "%d", (int)EXTRACT_RVC_LDSP_IMM (l));
 	      break;
+	    case 'o':
+	      print (info->stream, "%d", (int)EXTRACT_RVC_LB_IMM (l));
+	      break;
 	    case 'K':
 	      print (info->stream, "%d", (int)EXTRACT_RVC_ADDI4SPN_IMM (l));
 	      break;

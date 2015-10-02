@@ -77,6 +77,8 @@ static const char * const riscv_pred_succ[16] = {
   ((RV_X(x, 6, 1) << 2) | (RV_X(x, 5, 1) << 3) | (RV_X(x, 11, 2) << 4) | (RV_X(x, 7, 4) << 6))
 #define EXTRACT_RVC_ADDI16SP_IMM(x) \
   ((RV_X(x, 6, 1) << 4) | (RV_X(x, 5, 1) << 5) | (RV_X(x, 2, 3) << 6) | (-RV_X(x, 12, 1) << 9))
+#define EXTRACT_RVC_LB_IMM(x) \
+  ((RV_X(x, 5, 2) << 1) | (RV_X(x, 10, 2) << 3) | (RV_X(x, 12, 1) << 0))
 #define EXTRACT_RVC_LW_IMM(x) \
   ((RV_X(x, 6, 1) << 2) | (RV_X(x, 10, 3) << 3) | (RV_X(x, 5, 1) << 6))
 #define EXTRACT_RVC_LD_IMM(x) \
@@ -112,6 +114,8 @@ static const char * const riscv_pred_succ[16] = {
   ((RV_X(x, 2, 1) << 6) | (RV_X(x, 3, 1) << 5) | (RV_X(x, 4, 2) << 11) | (RV_X(x, 6, 4) << 7))
 #define ENCODE_RVC_ADDI16SP_IMM(x) \
   ((RV_X(x, 4, 1) << 6) | (RV_X(x, 5, 1) << 5) | (RV_X(x, 6, 3) << 2) | (RV_X(x, 9, 1) << 12))
+#define ENCODE_RVC_LB_IMM(x) \
+  ((RV_X(x, 1, 2) << 5) | (RV_X(x, 3, 2) << 10) | (RV_X(x, 0, 1) << 12))
 #define ENCODE_RVC_LW_IMM(x) \
   ((RV_X(x, 2, 1) << 6) | (RV_X(x, 3, 3) << 10) | (RV_X(x, 6, 1) << 5))
 #define ENCODE_RVC_LD_IMM(x) \
@@ -138,6 +142,7 @@ static const char * const riscv_pred_succ[16] = {
 #define VALID_RVC_SIMM3(x) (EXTRACT_RVC_SIMM3(ENCODE_RVC_SIMM3(x)) == (x))
 #define VALID_RVC_ADDI4SPN_IMM(x) (EXTRACT_RVC_ADDI4SPN_IMM(ENCODE_RVC_ADDI4SPN_IMM(x)) == (x))
 #define VALID_RVC_ADDI16SP_IMM(x) (EXTRACT_RVC_ADDI16SP_IMM(ENCODE_RVC_ADDI16SP_IMM(x)) == (x))
+#define VALID_RVC_LB_IMM(x) (EXTRACT_RVC_LB_IMM(ENCODE_RVC_LB_IMM(x)) == (x))
 #define VALID_RVC_LW_IMM(x) (EXTRACT_RVC_LW_IMM(ENCODE_RVC_LW_IMM(x)) == (x))
 #define VALID_RVC_LD_IMM(x) (EXTRACT_RVC_LD_IMM(ENCODE_RVC_LD_IMM(x)) == (x))
 #define VALID_RVC_LWSP_IMM(x) (EXTRACT_RVC_LWSP_IMM(ENCODE_RVC_LWSP_IMM(x)) == (x))
