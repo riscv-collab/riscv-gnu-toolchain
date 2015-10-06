@@ -533,7 +533,6 @@ validate_riscv_insn (const struct riscv_opcode *opc)
 	  case 'l': used_bits |= ENCODE_RVC_LD_IMM(-1U); break;
 	  case 'm': used_bits |= ENCODE_RVC_LWSP_IMM(-1U); break;
 	  case 'n': used_bits |= ENCODE_RVC_LDSP_IMM(-1U); break;
-	  case 'o': used_bits |= ENCODE_RVC_LB_IMM(-1U); break;
 	  case 'p': used_bits |= ENCODE_RVC_B_IMM(-1U); break;
 	  case 's': USE_BITS (OP_MASK_CRS1S, OP_SH_CRS1S); break;
 	  case 't': USE_BITS (OP_MASK_CRS2S, OP_SH_CRS2S); break;
@@ -541,30 +540,18 @@ validate_riscv_insn (const struct riscv_opcode *opc)
 	  case 'v': used_bits |= ENCODE_RVC_IMM(-1U); break;
 	  case 'w': break; /* RS1S, constrained to equal RD */
 	  case 'x': break; /* RS2S, constrained to equal RD */
-	  case 'D': USE_BITS (OP_MASK_RD, OP_SH_RD); break;
 	  case 'K': used_bits |= ENCODE_RVC_ADDI4SPN_IMM(-1U); break;
 	  case 'L': used_bits |= ENCODE_RVC_ADDI16SP_IMM(-1U); break;
 	  case 'M': used_bits |= ENCODE_RVC_SWSP_IMM(-1U); break;
 	  case 'N': used_bits |= ENCODE_RVC_SDSP_IMM(-1U); break;
-	  case 'T': USE_BITS (OP_MASK_CRS2, OP_SH_CRS2); break;
 	  case 'U': break; /* RS1, constrained to equal RD */
 	  case 'V': USE_BITS (OP_MASK_CRS2, OP_SH_CRS2); break;
 	  case '<': used_bits |= ENCODE_RVC_IMM(-1U); break;
 	  case '>': used_bits |= ENCODE_RVC_IMM(-1U); break;
+	  case 'T': USE_BITS (OP_MASK_CRS2, OP_SH_CRS2); break;
+	  case 'D': USE_BITS (OP_MASK_CRS2S, OP_SH_CRS2S); break;
 	  default:
 	    as_bad (_("internal: bad RISC-V opcode (unknown operand type `C%c'): %s %s"),
-		    c, opc->name, opc->args);
-	    return 0;
-	  }
-	break;
-      case 'F': /* RVC floating-point */
-	switch (c = *p++)
-	  {
-	  case 'D': USE_BITS (OP_MASK_RD, OP_SH_RD); break;
-	  case 'V': USE_BITS (OP_MASK_CRS2, OP_SH_CRS2); break;
-	  case 't': USE_BITS (OP_MASK_CRS2S, OP_SH_CRS2S); break;
-	  default:
-	    as_bad (_("internal: bad RISC-V opcode (unknown operand type `F%c'): %s %s"),
 		    c, opc->name, opc->args);
 	    return 0;
 	  }
@@ -1239,45 +1226,47 @@ riscv_ip (char *str, struct riscv_cl_insn *ip, expressionS *imm_expr,
 	  switch (*args)
 	    {
 	    case '\0':		/* end of args */
-	      if (insn->pinfo != INSN_MACRO
-		  && riscv_insn_length (insn->match) == 2
-		  && !riscv_opts.rvc)
-		break;
-	      if (*s == '\0')
+	      if (insn->pinfo != INSN_MACRO)
 		{
-		  error = NULL;
-		  goto out;
+		  if (!insn->match_func (insn, ip->insn_opcode))
+		    break;
+		  if (riscv_insn_length (insn->match) == 2 && !riscv_opts.rvc)
+		    break;
 		}
-	      break;
+	      if (*s != '\0')
+		break;
+	      /* Successful assembly.  */
+	      error = NULL;
+	      goto out;
 	    /* Xcustom */
 	    case '^':
-	    {
-	      unsigned long max = OP_MASK_RD;
-	      my_getExpression (imm_expr, s);
-	      check_absolute_expr (ip, imm_expr);
-	      switch (*++args)
-		{
-		case 'j':
-		  max = OP_MASK_CUSTOM_IMM;
-		  INSERT_OPERAND (CUSTOM_IMM, *ip, imm_expr->X_add_number);
-		  break;
-		case 'd':
-		  INSERT_OPERAND (RD, *ip, imm_expr->X_add_number);
-		  break;
-		case 's':
-		  INSERT_OPERAND (RS1, *ip, imm_expr->X_add_number);
-		  break;
-		case 't':
-		  INSERT_OPERAND (RS2, *ip, imm_expr->X_add_number);
-		  break;
-		}
-	      imm_expr->X_op = O_absent;
-	      s = expr_end;
-	      if ((unsigned long) imm_expr->X_add_number > max)
+	      {
+		unsigned long max = OP_MASK_RD;
+		my_getExpression (imm_expr, s);
+		check_absolute_expr (ip, imm_expr);
+		switch (*++args)
+		  {
+		  case 'j':
+		    max = OP_MASK_CUSTOM_IMM;
+		    INSERT_OPERAND (CUSTOM_IMM, *ip, imm_expr->X_add_number);
+		    break;
+		  case 'd':
+		    INSERT_OPERAND (RD, *ip, imm_expr->X_add_number);
+		    break;
+		  case 's':
+		    INSERT_OPERAND (RS1, *ip, imm_expr->X_add_number);
+		    break;
+		  case 't':
+		    INSERT_OPERAND (RS2, *ip, imm_expr->X_add_number);
+		    break;
+		  }
+		imm_expr->X_op = O_absent;
+		s = expr_end;
+		if ((unsigned long) imm_expr->X_add_number > max)
 		  as_warn ("Bad custom immediate (%lu), must be at most %lu",
 			   (unsigned long)imm_expr->X_add_number, max);
-	      continue;
-	    }
+		continue;
+	      }
 
 	    case 'C': /* RVC */
 	      switch (*++args)
@@ -1304,20 +1293,10 @@ riscv_ip (char *str, struct riscv_cl_insn *ip, expressionS *imm_expr,
 		      || EXTRACT_OPERAND (CRS2S, ip->insn_opcode) + 8 != regno)
 		    break;
 		  continue;
-		case 'D': /* RD, nonzero */
-		  if (!reg_lookup (&s, RCLASS_GPR, &regno) || regno == 0)
-		    break;
-		  INSERT_OPERAND (RD, *ip, regno);
-		  continue;
 		case 'U': /* RS1, constrained to equal RD */
 		  if (!reg_lookup (&s, RCLASS_GPR, &regno)
 		      || EXTRACT_OPERAND (RD, ip->insn_opcode) != regno)
 		    break;
-		  continue;
-		case 'T': /* RS2, nonzero */
-		  if (!reg_lookup (&s, RCLASS_GPR, &regno) || regno == 0)
-		    break;
-		  INSERT_OPERAND (CRS2, *ip, regno);
 		  continue;
 		case 'V': /* RS2 */
 		  if (!reg_lookup (&s, RCLASS_GPR, &regno))
@@ -1395,13 +1374,6 @@ rvc_imm_done:
 		  ip->insn_opcode |=
 		    ENCODE_RVC_LDSP_IMM (imm_expr->X_add_number);
 		  goto rvc_imm_done;
-		case 'o':
-		  if (my_getSmallExpression (imm_expr, imm_reloc, s, p)
-		      || imm_expr->X_op != O_constant
-		      || !VALID_RVC_LB_IMM (imm_expr->X_add_number))
-		    break;
-		  ip->insn_opcode |= ENCODE_RVC_LB_IMM (imm_expr->X_add_number);
-		  goto rvc_imm_done;
 		case 'K':
 		  if (my_getSmallExpression (imm_expr, imm_reloc, s, p)
 		      || imm_expr->X_op != O_constant
@@ -1462,32 +1434,19 @@ rvc_lui:
 		  goto branch;
 		case 'a':
 		  goto jump;
-		default:
-		  as_bad (_("bad RVC field specifier 'C%c'\n"), *args);
-		}
-	      break;
-
-	    case 'F': /* RVC floating-point */
-	      switch (*++args)
-		{
-		case 't': /* RS2 x8-x15 */
+		case 'D': /* floating-point RS2 x8-x15 */
 		  if (!reg_lookup (&s, RCLASS_FPR, &regno)
 		      || !(regno >= 8 && regno <= 15))
 		    break;
 		  INSERT_OPERAND (CRS2S, *ip, regno % 8);
 		  continue;
-		case 'D': /* RD */
-		  if (!reg_lookup (&s, RCLASS_FPR, &regno))
-		    break;
-		  INSERT_OPERAND (RD, *ip, regno);
-		  continue;
-		case 'V': /* RS2 */
+		case 'T': /* floating-point RS2 */
 		  if (!reg_lookup (&s, RCLASS_FPR, &regno))
 		    break;
 		  INSERT_OPERAND (CRS2, *ip, regno);
 		  continue;
 		default:
-		  as_bad (_("bad RVC field specifier 'F%c'\n"), *args);
+		  as_bad (_("bad RVC field specifier 'C%c'\n"), *args);
 		}
 	      break;
 
