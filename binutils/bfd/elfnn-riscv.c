@@ -1531,6 +1531,12 @@ perform_relocation (const reloc_howto_type *howto,
       value = ENCODE_RVC_J_IMM (value);
       break;
 
+    case R_RISCV_RVC_LUI:
+      if (!VALID_RVC_LUI_IMM (RISCV_CONST_HIGH_PART (value)))
+	return bfd_reloc_overflow;
+      value = ENCODE_RVC_LUI_IMM (RISCV_CONST_HIGH_PART (value));
+      break;
+
     case R_RISCV_32:
     case R_RISCV_64:
     case R_RISCV_ADD8:
@@ -1800,9 +1806,10 @@ riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 	  /* These require nothing of us at all.  */
 	  continue;
 
+	case R_RISCV_HI20:
 	case R_RISCV_BRANCH:
 	case R_RISCV_RVC_BRANCH:
-	case R_RISCV_HI20:
+	case R_RISCV_RVC_LUI:
 	  /* These require no special handling beyond perform_relocation.  */
 	  break;
 
@@ -2712,19 +2719,42 @@ _bfd_riscv_relax_lui (bfd *abfd, asection *sec,
 		      bfd_vma symval,
 		      bfd_boolean *again)
 {
+  bfd_byte *contents = elf_section_data (sec)->this_hdr.contents;
   bfd_vma gp = riscv_global_pointer_value (link_info);
+  int use_rvc = elf_elfheader (abfd)->e_flags & EF_RISCV_RVC;
 
-  /* Bail out if this symbol isn't in range of either gp or x0.  */
-  if (!VALID_ITYPE_IMM (symval - gp) && !(symval < RISCV_IMM_REACH/2))
-    return TRUE;
-
-  /* We can delete the unnecessary AUIPC. The corresponding LO12 reloc
-     will be converted to GPREL during relocation.  */
   BFD_ASSERT (rel->r_offset + 4 <= sec->size);
-  rel->r_info = ELFNN_R_INFO (0, R_RISCV_NONE);
 
-  *again = TRUE;
-  return riscv_relax_delete_bytes (abfd, sec, rel->r_offset, 4);
+  /* Is the reference in range of x0 or gp?  */
+  if (VALID_ITYPE_IMM (symval - gp) || (symval < RISCV_IMM_REACH/2))
+    {
+      /* We can delete the unnecessary AUIPC. The corresponding LO12 reloc
+         will be converted to gp- or x0-relative during relocation.  */
+      rel->r_info = ELFNN_R_INFO (0, R_RISCV_NONE);
+
+      *again = TRUE;
+      return riscv_relax_delete_bytes (abfd, sec, rel->r_offset, 4);
+    }
+
+  /* Can we relax LUI to C.LUI?  Alignment might move the section forward;
+     account for this assuming page alignment at worst.  */
+  if (use_rvc
+      && VALID_RVC_LUI_IMM (RISCV_CONST_HIGH_PART (symval))
+      && VALID_RVC_LUI_IMM (RISCV_CONST_HIGH_PART (symval + ELF_MAXPAGESIZE)))
+    {
+      /* Replace LUI with C.LUI.  */
+      bfd_vma lui = bfd_get_32 (abfd, contents + rel->r_offset);
+      lui = (lui & (OP_MASK_RD << OP_SH_RD)) | MATCH_C_LUI;
+      bfd_put_32 (abfd, lui, contents + rel->r_offset);
+
+      /* Replace the R_RISCV_HI20 reloc.  */
+      rel->r_info = ELFNN_R_INFO (ELFNN_R_SYM (rel->r_info), R_RISCV_RVC_LUI);
+
+      *again = TRUE;
+      return riscv_relax_delete_bytes (abfd, sec, rel->r_offset + 2, 2);
+    }
+
+  return TRUE;
 }
 
 /* Relax non-PIC TLS references.  */

@@ -71,6 +71,8 @@ static const char * const riscv_pred_succ[16] = {
   ((RV_X(x, 21, 10) << 1) | (RV_X(x, 20, 1) << 11) | (RV_X(x, 12, 8) << 12) | (RV_IMM_SIGN(x) << 20))
 #define EXTRACT_RVC_IMM(x) \
   (RV_X(x, 2, 5) | (-RV_X(x, 12, 1) << 5))
+#define EXTRACT_RVC_LUI_IMM(x) \
+  (EXTRACT_RVC_IMM (x) << RISCV_IMM_BITS)
 #define EXTRACT_RVC_SIMM3(x) \
   (RV_X(x, 10, 2) | (-RV_X(x, 12, 1) << 2))
 #define EXTRACT_RVC_ADDI4SPN_IMM(x) \
@@ -106,6 +108,8 @@ static const char * const riscv_pred_succ[16] = {
   ((RV_X(x, 1, 10) << 21) | (RV_X(x, 11, 1) << 20) | (RV_X(x, 12, 8) << 12) | (RV_X(x, 20, 1) << 31))
 #define ENCODE_RVC_IMM(x) \
   ((RV_X(x, 0, 5) << 2) | (RV_X(x, 5, 1) << 12))
+#define ENCODE_RVC_LUI_IMM(x) \
+  ENCODE_RVC_IMM ((x) >> RISCV_IMM_BITS)
 #define ENCODE_RVC_SIMM3(x) \
   (RV_X(x, 0, 3) << 10)
 #define ENCODE_RVC_ADDI4SPN_IMM(x) \
@@ -135,6 +139,7 @@ static const char * const riscv_pred_succ[16] = {
 #define VALID_UTYPE_IMM(x) (EXTRACT_UTYPE_IMM(ENCODE_UTYPE_IMM(x)) == (x))
 #define VALID_UJTYPE_IMM(x) (EXTRACT_UJTYPE_IMM(ENCODE_UJTYPE_IMM(x)) == (x))
 #define VALID_RVC_IMM(x) (EXTRACT_RVC_IMM(ENCODE_RVC_IMM(x)) == (x))
+#define VALID_RVC_LUI_IMM(x) (EXTRACT_RVC_LUI_IMM(ENCODE_RVC_LUI_IMM(x)) == (x))
 #define VALID_RVC_SIMM3(x) (EXTRACT_RVC_SIMM3(ENCODE_RVC_SIMM3(x)) == (x))
 #define VALID_RVC_ADDI4SPN_IMM(x) (EXTRACT_RVC_ADDI4SPN_IMM(ENCODE_RVC_ADDI4SPN_IMM(x)) == (x))
 #define VALID_RVC_ADDI16SP_IMM(x) (EXTRACT_RVC_ADDI16SP_IMM(ENCODE_RVC_ADDI16SP_IMM(x)) == (x))
