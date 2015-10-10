@@ -300,6 +300,8 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
 	    pd->hi_addr[rd] = pc + EXTRACT_UTYPE_IMM (l);
 	  else if ((l & MASK_LUI) == MATCH_LUI)
 	    pd->hi_addr[rd] = EXTRACT_UTYPE_IMM (l);
+	  else if ((l & MASK_C_LUI) == MATCH_C_LUI)
+	    pd->hi_addr[rd] = EXTRACT_RVC_LUI_IMM (l);
 	  print (info->stream, "%s", riscv_gpr_names[rd]);
 	  break;
 
