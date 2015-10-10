@@ -45,7 +45,8 @@
    __libc_start_main wants this in a5.  */
 
 ENTRY(ENTRY_POINT)
-	lla   gp, _gp
+1:	auipc gp, %pcrel_hi(_gp)
+	addi  gp, gp, %pcrel_lo(1b)
 	move  a5, a0  /* rtld_fini */
 	lla   a0, main
 	REG_L a1, 0(sp)      /* argc */
