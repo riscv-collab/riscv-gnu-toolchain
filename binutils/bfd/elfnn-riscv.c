@@ -1488,12 +1488,14 @@ perform_relocation (const reloc_howto_type *howto,
       break;
 
     case R_RISCV_LO12_I:
+    case R_RISCV_GPREL_I:
     case R_RISCV_TPREL_LO12_I:
     case R_RISCV_PCREL_LO12_I:
       value = ENCODE_ITYPE_IMM (value);
       break;
 
     case R_RISCV_LO12_S:
+    case R_RISCV_GPREL_S:
     case R_RISCV_TPREL_LO12_S:
     case R_RISCV_PCREL_LO12_S:
       value = ENCODE_STYPE_IMM (value);
@@ -1810,6 +1812,8 @@ riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 	case R_RISCV_BRANCH:
 	case R_RISCV_RVC_BRANCH:
 	case R_RISCV_RVC_LUI:
+	case R_RISCV_LO12_I:
+	case R_RISCV_LO12_S:
 	  /* These require no special handling beyond perform_relocation.  */
 	  break;
 
@@ -1943,8 +1947,8 @@ riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 	    }
 	  break;
 
-	case R_RISCV_LO12_I:
-	case R_RISCV_LO12_S:
+	case R_RISCV_GPREL_I:
+	case R_RISCV_GPREL_S:
 	  {
 	    bfd_vma gp = riscv_global_pointer_value (info);
 	    bfd_boolean x0_base = VALID_ITYPE_IMM (relocation + rel->r_addend);
@@ -1960,6 +1964,8 @@ riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 		  }
 		bfd_put_32 (input_bfd, insn, contents + rel->r_offset);
 	      }
+	    else
+	      r = bfd_reloc_overflow;
 	    break;
 	  }
 
@@ -2712,8 +2718,7 @@ _bfd_riscv_relax_call (bfd *abfd, asection *sec, asection *sym_sec,
 /* Relax non-PIC global variable references.  */
 
 static bfd_boolean
-_bfd_riscv_relax_lui (bfd *abfd, asection *sec,
-		      asection *sym_sec ATTRIBUTE_UNUSED,
+_bfd_riscv_relax_lui (bfd *abfd, asection *sec, asection *sym_sec,
 		      struct bfd_link_info *link_info,
 		      Elf_Internal_Rela *rel,
 		      bfd_vma symval,
@@ -2723,22 +2728,41 @@ _bfd_riscv_relax_lui (bfd *abfd, asection *sec,
   bfd_vma gp = riscv_global_pointer_value (link_info);
   int use_rvc = elf_elfheader (abfd)->e_flags & EF_RISCV_RVC;
 
+  /* Mergeable symbols might later move out of range.  */
+  if (sym_sec->flags & SEC_MERGE)
+    return TRUE;
+
   BFD_ASSERT (rel->r_offset + 4 <= sec->size);
 
   /* Is the reference in range of x0 or gp?  */
-  if (VALID_ITYPE_IMM (symval - gp) || (symval < RISCV_IMM_REACH/2))
+  if (VALID_ITYPE_IMM (symval) || VALID_ITYPE_IMM (symval - gp))
     {
-      /* We can delete the unnecessary AUIPC. The corresponding LO12 reloc
-         will be converted to gp- or x0-relative during relocation.  */
-      rel->r_info = ELFNN_R_INFO (0, R_RISCV_NONE);
+      unsigned sym = ELFNN_R_SYM (rel->r_info);
+      switch (ELFNN_R_TYPE (rel->r_info))
+	{
+	case R_RISCV_LO12_I:
+	  rel->r_info = ELFNN_R_INFO (sym, R_RISCV_GPREL_I);
+	  return TRUE;
 
-      *again = TRUE;
-      return riscv_relax_delete_bytes (abfd, sec, rel->r_offset, 4);
+	case R_RISCV_LO12_S:
+	  rel->r_info = ELFNN_R_INFO (sym, R_RISCV_GPREL_S);
+	  return TRUE;
+
+	case R_RISCV_HI20:
+	  /* We can delete the unnecessary LUI and reloc.  */
+	  rel->r_info = ELFNN_R_INFO (0, R_RISCV_NONE);
+	  *again = TRUE;
+	  return riscv_relax_delete_bytes (abfd, sec, rel->r_offset, 4);
+
+	default:
+	  abort ();
+	}
     }
 
   /* Can we relax LUI to C.LUI?  Alignment might move the section forward;
      account for this assuming page alignment at worst.  */
   if (use_rvc
+      && ELFNN_R_TYPE (rel->r_info) == R_RISCV_HI20
       && VALID_RVC_LUI_IMM (RISCV_CONST_HIGH_PART (symval))
       && VALID_RVC_LUI_IMM (RISCV_CONST_HIGH_PART (symval + ELF_MAXPAGESIZE)))
     {
@@ -2870,7 +2894,9 @@ _bfd_riscv_relax_section (bfd *abfd, asection *sec,
 	{
 	  if (type == R_RISCV_CALL || type == R_RISCV_CALL_PLT)
 	    relax_func = _bfd_riscv_relax_call;
-	  else if (type == R_RISCV_HI20)
+	  else if (type == R_RISCV_HI20
+		   || type == R_RISCV_LO12_I
+		   || type == R_RISCV_LO12_S)
 	    relax_func = _bfd_riscv_relax_lui;
 	  else if (type == R_RISCV_TPREL_HI20 || type == R_RISCV_TPREL_ADD)
 	    relax_func = _bfd_riscv_relax_tls_le;
@@ -2929,8 +2955,6 @@ _bfd_riscv_relax_section (bfd *abfd, asection *sec,
 
 	  if (h->plt.offset != MINUS_ONE)
 	    symval = sec_addr (htab->elf.splt) + h->plt.offset;
-	  else if (h->root.type == bfd_link_hash_undefweak)
-	    symval = 0;
 	  else if (h->root.u.def.section->output_section == NULL
 		   || (h->root.type != bfd_link_hash_defined
 		       && h->root.type != bfd_link_hash_defweak))
