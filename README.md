@@ -27,6 +27,9 @@ executing the following command should suffice:
 
     $ sudo apt-get install autoconf automake autotools-dev libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo patchutils
 
+On Fedora 22 OS, executing the following command should suffice:
+    $ sudo yum install autoconf automake autotools-devel libmpc-devel mpfr-devel gmp-devel gawk  bison flex texinfo patchutils gcc 
+
 On Mac OS, the source and build directories must live in a case-sensitive file
 system.  The simplest approach is to create and mount a new disk image with
 that property.  Make sure that the mount point does not contain spaces.
