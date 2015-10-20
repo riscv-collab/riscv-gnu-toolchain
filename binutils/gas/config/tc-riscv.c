@@ -937,18 +937,12 @@ macro (struct riscv_cl_insn *ip, expressionS *imm_expr,
 
       if (imm_expr->X_op == O_constant)
 	load_const (rd, imm_expr);
-      else if (riscv_opts.pic && mask == M_LA) /* Global symbol in PIC */
+      else if (riscv_opts.pic && mask == M_LA) /* Global PIC symbol */
 	pcrel_load (rd, rd, imm_expr, LOAD_ADDRESS_INSN,
 		    BFD_RELOC_RISCV_GOT_HI20, BFD_RELOC_RISCV_PCREL_LO12_I);
-      else if (riscv_opts.pic) /* Local symbol in PIC */
+      else /* Local PIC symbol, or any non-PIC symbol */
 	pcrel_load (rd, rd, imm_expr, "addi",
 		    BFD_RELOC_RISCV_PCREL_HI20, BFD_RELOC_RISCV_PCREL_LO12_I);
-      else /* Any symbol in non-PIC */
-	{
-	  macro_build (imm_expr, "lui", "d,u", rd, BFD_RELOC_RISCV_HI20);
-	  macro_build (imm_expr, "addi", "d,s,j", rd, rd,
-		       BFD_RELOC_RISCV_LO12_I);
-	}
       break;
 
     case M_LA_TLS_GD:
