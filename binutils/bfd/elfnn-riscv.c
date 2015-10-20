@@ -2766,8 +2766,11 @@ _bfd_riscv_relax_lui (bfd *abfd, asection *sec, asection *sym_sec,
       && VALID_RVC_LUI_IMM (RISCV_CONST_HIGH_PART (symval))
       && VALID_RVC_LUI_IMM (RISCV_CONST_HIGH_PART (symval + ELF_MAXPAGESIZE)))
     {
-      /* Replace LUI with C.LUI.  */
+      /* Replace LUI with C.LUI if legal (i.e., rd != x2/sp).  */
       bfd_vma lui = bfd_get_32 (abfd, contents + rel->r_offset);
+      if (((lui >> OP_SH_RD) & OP_MASK_RD) == X_SP)
+	return TRUE;
+
       lui = (lui & (OP_MASK_RD << OP_SH_RD)) | MATCH_C_LUI;
       bfd_put_32 (abfd, lui, contents + rel->r_offset);
 
