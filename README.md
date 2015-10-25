@@ -12,7 +12,8 @@ executing the following command should suffice:
 
     $ sudo apt-get install autoconf automake autotools-dev curl libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo gperf libtool patchutils
 
-On Fedora 22 OS, executing the following command should suffice:
+On Fedora/CentOS/RHEL OS, executing the following command should suffice:
+
     $ sudo yum install autoconf automake autotools-devel libmpc-devel mpfr-devel gmp-devel gawk  bison flex texinfo patchutils gcc 
 
 On Mac OS, the source and build directories must live in a case-sensitive file
