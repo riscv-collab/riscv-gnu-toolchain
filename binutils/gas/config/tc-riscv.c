@@ -112,7 +112,7 @@ riscv_subset_supports (const char *feature)
     return FALSE;
 
   for (s = riscv_subsets; s != NULL; s = s->next)
-    if (strcmp (s->name, p) == 0)
+    if (strcasecmp (s->name, p) == 0)
       /* FIXME: once we support version numbers:
 	 return major == s->version_major && minor <= s->version_minor; */
       return TRUE;
