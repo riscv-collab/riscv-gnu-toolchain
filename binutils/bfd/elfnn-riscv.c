@@ -973,9 +973,9 @@ riscv_elf_adjust_dynamic_symbol (struct bfd_link_info *info,
     }
 
   if (eh->tls_type & ~GOT_NORMAL)
-    return _bfd_elf_adjust_dynamic_copy (h, htab->sdyntdata);
+    return _bfd_elf_adjust_dynamic_copy (info, h, htab->sdyntdata);
 
-  return _bfd_elf_adjust_dynamic_copy (h, htab->sdynbss);
+  return _bfd_elf_adjust_dynamic_copy (info, h, htab->sdynbss);
 }
 
 /* Allocate space in .plt, .got and associated reloc sections for
