@@ -42,6 +42,27 @@
   [(set (match_dup 3)
 	(match_op_dup:SI 4 [(match_dup 1) (match_dup 2)]))])
 
+;; Simplify (unsigned long)(unsigned int)a << const
+(define_peephole2
+  [(set (match_operand:DI 0 "register_operand")
+	(ashift:DI (match_operand:DI 1 "register_operand")
+		   (match_operand 2 "const_int_operand")))
+   (set (match_operand:DI 3 "register_operand")
+	(lshiftrt:DI (match_dup 0) (match_dup 2)))
+   (set (match_operand:DI 4 "register_operand")
+	(ashift:DI (match_dup 3) (match_operand 5 "const_int_operand")))]
+  "TARGET_64BIT
+   && INTVAL (operands[5]) < INTVAL (operands[2])
+   && (REGNO (operands[3]) == REGNO (operands[4])
+       || peep2_reg_dead_p (3, operands[3]))"
+  [(set (match_dup 0)
+	(ashift:DI (match_dup 1) (match_dup 2)))
+   (set (match_dup 4)
+	(lshiftrt:DI (match_dup 0) (match_operand 5)))]
+{
+  operands[5] = GEN_INT (INTVAL (operands[2]) - INTVAL (operands[5]));
+})
+
 ;; Simplify PIC loads to static variables.
 ;; These will go away once we figure out how to emit auipc discretely.
 (define_insn "*local_pic_load<mode>"
