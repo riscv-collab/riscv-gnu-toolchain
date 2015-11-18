@@ -1482,7 +1482,7 @@ perform_relocation (const reloc_howto_type *howto,
     case R_RISCV_GOT_HI20:
     case R_RISCV_TLS_GOT_HI20:
     case R_RISCV_TLS_GD_HI20:
-      if (!VALID_UTYPE_IMM (RISCV_CONST_HIGH_PART (value)))
+      if (ARCH_SIZE > 32 && !VALID_UTYPE_IMM (RISCV_CONST_HIGH_PART (value)))
 	return bfd_reloc_overflow;
       value = ENCODE_UTYPE_IMM (RISCV_CONST_HIGH_PART (value));
       break;
@@ -1503,7 +1503,7 @@ perform_relocation (const reloc_howto_type *howto,
 
     case R_RISCV_CALL:
     case R_RISCV_CALL_PLT:
-      if (!VALID_UTYPE_IMM (RISCV_CONST_HIGH_PART (value)))
+      if (ARCH_SIZE > 32 && !VALID_UTYPE_IMM (RISCV_CONST_HIGH_PART (value)))
 	return bfd_reloc_overflow;
       value = ENCODE_UTYPE_IMM (RISCV_CONST_HIGH_PART (value))
 	      | (ENCODE_ITYPE_IMM (value) << 32);
