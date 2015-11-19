@@ -109,10 +109,8 @@
 ;; call		unconditional call
 ;; load		load instruction(s)
 ;; fpload	floating point load
-;; fpidxload    floating point indexed load
 ;; store	store instruction(s)
 ;; fpstore	floating point store
-;; fpidxstore	floating point indexed store
 ;; mtc		transfer to coprocessor
 ;; mfc		transfer from coprocessor
 ;; const	load constant
@@ -135,7 +133,7 @@
 ;; nop		no operation
 ;; ghost	an instruction that produces no real code
 (define_attr "type"
-  "unknown,branch,jump,call,load,fpload,fpidxload,store,fpstore,fpidxstore,
+  "unknown,branch,jump,call,load,fpload,store,fpstore,
    mtc,mfc,const,arith,logical,shift,slt,imul,idiv,move,fmove,fadd,fmul,
    fmadd,fdiv,fcmp,fcvt,fsqrt,multi,nop,ghost"
   (cond [(eq_attr "jal" "!unset") (const_string "call")
@@ -383,28 +381,11 @@
 			(plus "add")
 			(minus "sub")])
 
-;; Pipeline descriptions.
-;;
-;; generic.md provides a fallback for processors without a specific
-;; pipeline description.  It is derived from the old define_function_unit
-;; version and uses the "alu" and "imuldiv" units declared below.
-;;
-;; Some of the processor-specific files are also derived from old
-;; define_function_unit descriptions and simply override the parts of
-;; generic.md that don't apply.  The other processor-specific files
-;; are self-contained.
-(define_automaton "alu,imuldiv")
-
-(define_cpu_unit "alu" "alu")
-(define_cpu_unit "imuldiv" "imuldiv")
-
 ;; Ghost instructions produce no real code and introduce no hazards.
 ;; They exist purely to express an effect on dataflow.
 (define_insn_reservation "ghost" 0
   (eq_attr "type" "ghost")
   "nothing")
-
-(include "generic.md")
 
 ;;
 ;;  ....................
@@ -2034,6 +2015,7 @@
 {
   if (GET_CODE (operands[1]) != NE)
     return "f%C1.<fmt>\t%0,%2,%3";
+  return "#";
 }
   ""
   [(set (match_dup 0) (eq:SI (match_dup 2) (match_dup 3)))
@@ -2453,3 +2435,4 @@
 
 (include "sync.md")
 (include "peephole.md")
+(include "generic.md")

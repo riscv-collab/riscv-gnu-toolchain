@@ -301,7 +301,6 @@ struct riscv_tune_info
   unsigned short int_div[2];
   unsigned short issue_rate;
   unsigned short branch_cost;
-  unsigned short fp_to_int_cost;
   unsigned short memory_cost;
 };
 
@@ -363,7 +362,6 @@ static const struct riscv_tune_info rocket_tune_info = {
   {COSTS_N_INSNS (6), COSTS_N_INSNS (6)},	/* int_div */
   1,						/* issue_rate */
   3,						/* branch_cost */
-  COSTS_N_INSNS (2),				/* fp_to_int_cost */
   5						/* memory_cost */
 };
 
@@ -376,7 +374,6 @@ static const struct riscv_tune_info optimize_size_tune_info = {
   {COSTS_N_INSNS (1), COSTS_N_INSNS (1)},	/* int_div */
   1,						/* issue_rate */
   1,						/* branch_cost */
-  COSTS_N_INSNS (1),				/* fp_to_int_cost */
   1						/* memory_cost */
 };
 
@@ -3655,28 +3652,6 @@ riscv_canonicalize_move_class (reg_class_t rclass)
   return rclass;
 }
 
-/* Implement TARGET_REGISTER_MOVE_COST.  Return 0 for classes that are the
-   maximum of the move costs for subclasses; regclass will work out
-   the maximum for us.  */
-
-static int
-riscv_register_move_cost (enum machine_mode mode ATTRIBUTE_UNUSED,
-			 reg_class_t from, reg_class_t to)
-{
-  from = riscv_canonicalize_move_class (from);
-  to = riscv_canonicalize_move_class (to);
-
-  if ((from == GENERAL_REGS && to == GENERAL_REGS)
-      || (from == GENERAL_REGS && to == FP_REGS)
-      || (from == FP_REGS && to == FP_REGS))
-    return COSTS_N_INSNS (1);
-
-  if (from == FP_REGS && to == GENERAL_REGS)
-    return tune_info->fp_to_int_cost;
-
-  return 0;
-}
-
 /* Implement TARGET_MEMORY_MOVE_COST.  */
 
 static int
@@ -3750,18 +3725,6 @@ riscv_scalar_mode_supported_p (enum machine_mode mode)
     return true;
 
   return default_scalar_mode_supported_p (mode);
-}
-
-/* Implement TARGET_SCHED_ADJUST_COST.  We assume that anti and output
-   dependencies have no cost. */
-
-static int
-riscv_adjust_cost (rtx_insn *insn ATTRIBUTE_UNUSED, rtx link,
-		   rtx_insn *dep ATTRIBUTE_UNUSED, int cost)
-{
-  if (REG_NOTE_KIND (link) != 0)
-    return 0;
-  return cost;
 }
 
 /* Return the number of instructions that can be issued per cycle.  */
@@ -4325,16 +4288,12 @@ riscv_lra_p (void)
 #undef TARGET_LEGITIMIZE_ADDRESS
 #define TARGET_LEGITIMIZE_ADDRESS riscv_legitimize_address
 
-#undef TARGET_SCHED_ADJUST_COST
-#define TARGET_SCHED_ADJUST_COST riscv_adjust_cost
 #undef TARGET_SCHED_ISSUE_RATE
 #define TARGET_SCHED_ISSUE_RATE riscv_issue_rate
 
 #undef TARGET_FUNCTION_OK_FOR_SIBCALL
 #define TARGET_FUNCTION_OK_FOR_SIBCALL riscv_function_ok_for_sibcall
 
-#undef TARGET_REGISTER_MOVE_COST
-#define TARGET_REGISTER_MOVE_COST riscv_register_move_cost
 #undef TARGET_MEMORY_MOVE_COST
 #define TARGET_MEMORY_MOVE_COST riscv_memory_move_cost
 #undef TARGET_RTX_COSTS
