@@ -2025,13 +2025,20 @@
   DONE;
 })
 
-(define_insn "cstore<mode>4"
-   [(set (match_operand:SI 0 "register_operand" "=r")
-        (match_operator:SI 1 "fp_order_operator"
+(define_insn_and_split "cstore<mode>4"
+  [(set (match_operand:SI 0 "register_operand" "=r")
+	(match_operator:SI 1 "fp_order_operator"
 	      [(match_operand:SCALARF 2 "register_operand" "f")
 	       (match_operand:SCALARF 3 "register_operand" "f")]))]
   "TARGET_HARD_FLOAT"
-  "f%C1.<fmt>\t%0,%2,%3"
+{
+  if (GET_CODE (operands[1]) != NE)
+    return "f%C1.<fmt>\t%0,%2,%3";
+}
+  ""
+  [(set (match_dup 0) (eq:SI (match_dup 2) (match_dup 3)))
+   (set (match_dup 0) (eq:SI (match_dup 0) (const_int 0)))]
+  ""
   [(set_attr "type" "fcmp")
    (set_attr "mode" "<UNITMODE>")])
 

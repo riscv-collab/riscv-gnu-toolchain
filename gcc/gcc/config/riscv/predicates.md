@@ -181,7 +181,4 @@
   (match_code "eq,ne,lt,ltu,le,leu,ge,geu,gt,gtu"))
 
 (define_predicate "fp_order_operator"
-  (match_code "eq,lt,le,gt,ge"))
-
-(define_predicate "fp_unorder_operator"
-  (match_code "ordered,unordered"))
+  (match_code "eq,ne,lt,le,gt,ge"))
