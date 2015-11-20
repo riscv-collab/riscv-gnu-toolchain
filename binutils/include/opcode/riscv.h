@@ -288,16 +288,8 @@ struct riscv_opcode
   unsigned long pinfo;
 };
 
-#define INSN_WRITE_GPR_D	0x00000001
-#define INSN_WRITE_GPR_RA	0x00000004
-#define INSN_WRITE_FPR_D	0x00000008
-#define INSN_READ_GPR_S		0x00000040
-#define INSN_READ_GPR_T		0x00000080
-#define INSN_READ_FPR_S		0x00000100
-#define INSN_READ_FPR_T		0x00000200
-#define INSN_READ_FPR_R		0x00000400
-/* Instruction is a simple alias (I.E. "move" for daddu/addu/or).  */
-#define	INSN_ALIAS		0x00001000
+/* Instruction is a simple alias (e.g. "mv" for "addi").  */
+#define	INSN_ALIAS		0x00000001
 /* Instruction is actually a macro.  It should be ignored by the
    disassembler, and requires special treatment by the assembler.  */
 #define INSN_MACRO		0xffffffff
