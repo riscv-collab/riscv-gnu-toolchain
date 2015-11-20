@@ -201,6 +201,8 @@
 
 	  (eq_attr "got" "load") (const_int 8)
 
+	  (eq_attr "type" "fcmp") (const_int 8)
+
 	  ;; SHIFT_SHIFTs are decomposed into two separate instructions.
 	  (eq_attr "move_type" "shift_shift")
 		(const_int 8)
@@ -1991,21 +1993,17 @@
   DONE;
 })
 
-(define_insn_and_split "cstore<mode>4"
-  [(set (match_operand:SI 0 "register_operand" "=r")
-	(match_operator:SI 1 "fp_order_operator"
+(define_insn "cstore<mode>4"
+   [(set (match_operand:SI 0 "register_operand" "=r")
+        (match_operator:SI 1 "fp_order_operator"
 	      [(match_operand:SCALARF 2 "register_operand" "f")
 	       (match_operand:SCALARF 3 "register_operand" "f")]))]
   "TARGET_HARD_FLOAT"
 {
-  if (GET_CODE (operands[1]) != NE)
-    return "f%C1.<fmt>\t%0,%2,%3";
-  return "#";
+  if (GET_CODE (operands[1]) == NE)
+    return "feq.<fmt>\t%0,%2,%3; seqz %0, %0";
+  return "f%C1.<fmt>\t%0,%2,%3";
 }
-  ""
-  [(set (match_dup 0) (eq:SI (match_dup 2) (match_dup 3)))
-   (set (match_dup 0) (eq:SI (match_dup 0) (const_int 0)))]
-  ""
   [(set_attr "type" "fcmp")
    (set_attr "mode" "<UNITMODE>")])
 
