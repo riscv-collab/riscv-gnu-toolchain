@@ -1607,6 +1607,9 @@ rvc_lui:
 	    case 'A':
 	      my_getExpression (imm_expr, s);
 	      normalize_constant_expr (imm_expr);
+	      /* The 'A' format specifier must be a symbol. */
+	      if (imm_expr->X_op != O_symbol)
+	        break;
 	      *imm_reloc = BFD_RELOC_32;
 	      s = expr_end;
 	      continue;
