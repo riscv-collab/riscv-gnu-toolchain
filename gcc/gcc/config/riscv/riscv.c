@@ -3563,6 +3563,15 @@ riscv_can_use_return_insn (void)
   return reload_completed && cfun->machine->frame.total_size == 0;
 }
 
+/* Implement TARGET_REGISTER_MOVE_COST.  */
+
+static int
+riscv_register_move_cost (enum machine_mode mode,
+			  reg_class_t from, reg_class_t to)
+{
+  return SECONDARY_MEMORY_NEEDED (from, to, mode) ? 8 : 2;
+}
+
 /* Return true if register REGNO can store a value of mode MODE.
    The result of this function is cached in riscv_hard_regno_mode_ok.  */
 
@@ -4294,6 +4303,8 @@ riscv_lra_p (void)
 #undef TARGET_FUNCTION_OK_FOR_SIBCALL
 #define TARGET_FUNCTION_OK_FOR_SIBCALL riscv_function_ok_for_sibcall
 
+#undef TARGET_REGISTER_MOVE_COST
+#define TARGET_REGISTER_MOVE_COST riscv_register_move_cost
 #undef TARGET_MEMORY_MOVE_COST
 #define TARGET_MEMORY_MOVE_COST riscv_memory_move_cost
 #undef TARGET_RTX_COSTS
