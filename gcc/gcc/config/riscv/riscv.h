@@ -254,10 +254,6 @@ along with GCC; see the file COPYING3.  If not see
 /* We currently require both or neither of the `F' and `D' extensions. */
 #define UNITS_PER_FPREG 8
 
-/* If FP regs aren't wide enough for a given FP argument, it is passed in
-   integer registers. */
-#define MIN_FPRS_PER_FMT 1
-
 /* The largest size of value that can be held in floating-point
    registers and moved with a single instruction.  */
 #define UNITS_PER_HWFPVALUE \
@@ -390,11 +386,11 @@ along with GCC; see the file COPYING3.  If not see
    Extensions of pointers to word_mode must be signed.  */
 #define POINTERS_EXTEND_UNSIGNED false
 
-/* RV32 double-precision FP <-> integer moves go through memory */
-#define SECONDARY_MEMORY_NEEDED(CLASS1,CLASS2,MODE) \
- (!TARGET_64BIT && GET_MODE_SIZE (MODE) == 8 && \
-   (((CLASS1) == FP_REGS && (CLASS2) != FP_REGS) \
-   || ((CLASS2) == FP_REGS && (CLASS1) != FP_REGS)))
+/* When floating-point registers are wider than integer ones, moves between
+   them must go through memory.  */
+#define SECONDARY_MEMORY_NEEDED(CLASS1,CLASS2,MODE)	\
+  (GET_MODE_SIZE (MODE) > UNITS_PER_WORD		\
+   && ((CLASS1) == FP_REGS) != ((CLASS2) == FP_REGS))
 
 /* Define if loading short immediate values into registers sign extends.  */
 #define SHORT_IMMEDIATES_SIGN_EXTEND
@@ -515,10 +511,7 @@ along with GCC; see the file COPYING3.  If not see
    the frame pointer, the EH stack adjustment, or the EH data registers. */
 
 #define RISCV_PROLOGUE_TEMP_REGNUM (GP_TEMP_FIRST + 1)
-#define RISCV_EPILOGUE_TEMP_REGNUM RISCV_PROLOGUE_TEMP_REGNUM
-
 #define RISCV_PROLOGUE_TEMP(MODE) gen_rtx_REG (MODE, RISCV_PROLOGUE_TEMP_REGNUM)
-#define RISCV_EPILOGUE_TEMP(MODE) gen_rtx_REG (MODE, RISCV_EPILOGUE_TEMP_REGNUM)
 
 #define FUNCTION_PROFILER(STREAM, LABELNO)	\
 {						\
@@ -644,7 +637,7 @@ enum reg_class
   64, 65								\
 }
 
-/* True if VALUE is a signed 16-bit number.  */
+/* True if VALUE is a signed 12-bit number.  */
 
 #define SMALL_OPERAND(VALUE) \
   ((unsigned HOST_WIDE_INT) (VALUE) + IMM_REACH/2 < IMM_REACH)
@@ -654,29 +647,6 @@ enum reg_class
 #define LUI_OPERAND(VALUE)						\
   (((VALUE) | ((1UL<<31) - IMM_REACH)) == ((1UL<<31) - IMM_REACH)	\
    || ((VALUE) | ((1UL<<31) - IMM_REACH)) + IMM_REACH == 0)
-
-/* Return a value X with the low 16 bits clear, and such that
-   VALUE - X is a signed 16-bit value.  */
-
-#define SMALL_INT(X) SMALL_OPERAND (INTVAL (X))
-#define LUI_INT(X) LUI_OPERAND (INTVAL (X))
-
-/* The HI and LO registers can only be reloaded via the general
-   registers.  Condition code registers can only be loaded to the
-   general registers, and from the floating point registers.  */
-
-#define SECONDARY_INPUT_RELOAD_CLASS(CLASS, MODE, X)			\
-  riscv_secondary_reload_class (CLASS, MODE, X, true)
-#define SECONDARY_OUTPUT_RELOAD_CLASS(CLASS, MODE, X)			\
-  riscv_secondary_reload_class (CLASS, MODE, X, false)
-
-/* Return the maximum number of consecutive registers
-   needed to represent mode MODE in a register of class CLASS.  */
-
-#define CLASS_MAX_NREGS(CLASS, MODE) riscv_class_max_nregs (CLASS, MODE)
-
-/* It is undefined to interpret an FP register in a different format than
-   that which it was created to be. */
 
 #define CANNOT_CHANGE_MODE_CLASS(FROM, TO, CLASS) \
   reg_classes_intersect_p (FP_REGS, CLASS)

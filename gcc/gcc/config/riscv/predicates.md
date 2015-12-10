@@ -77,7 +77,7 @@
 
   /* Otherwise check whether the constant can be loaded in a single
      instruction.  */
-  return !LUI_INT (op) && !SMALL_INT (op);
+  return !LUI_OPERAND (INTVAL (op)) && !SMALL_OPERAND (INTVAL (op));
 })
 
 (define_predicate "move_operand"
