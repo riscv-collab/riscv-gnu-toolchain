@@ -4167,12 +4167,6 @@ riscv_function_ok_for_sibcall (tree decl ATTRIBUTE_UNUSED,
   return true;
 }
 
-static bool
-riscv_lra_p (void)
-{
-  return riscv_lra_flag;
-}
-
 /* Initialize the GCC target structure.  */
 #undef TARGET_ASM_ALIGNED_HI_OP
 #define TARGET_ASM_ALIGNED_HI_OP "\t.half\t"
@@ -4302,7 +4296,7 @@ riscv_lra_p (void)
 #define TARGET_MAX_ANCHOR_OFFSET (IMM_REACH/2-1)
 
 #undef TARGET_LRA_P
-#define TARGET_LRA_P riscv_lra_p
+#define TARGET_LRA_P hook_bool_void_true
 
 #undef TARGET_REGISTER_PRIORITY
 #define TARGET_REGISTER_PRIORITY riscv_register_priority
