@@ -11,8 +11,8 @@ __muldi3:
   mv     a2, a0
   li     a0, 0
 .L1:
-  slli   a3, a1, _RISCV_SZPTR-1
-  bgez   a3, .L2
+  andi   a3, a1, 1
+  beqz   a3, .L2
   add    a0, a0, a2
 .L2:
   srli   a1, a1, 1
