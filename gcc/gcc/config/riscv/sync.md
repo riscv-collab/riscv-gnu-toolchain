@@ -55,12 +55,15 @@
   switch (INTVAL (operands[1]))
     {
     case MEMMODEL_SEQ_CST:
+    case MEMMODEL_SYNC_SEQ_CST:
     case MEMMODEL_ACQ_REL:
       return "fence rw,rw";
     case MEMMODEL_ACQUIRE:
+    case MEMMODEL_SYNC_ACQUIRE:
     case MEMMODEL_CONSUME:
       return "fence r,rw";
     case MEMMODEL_RELEASE:
+    case MEMMODEL_SYNC_RELEASE:
       return "fence rw,w";
     default:
       gcc_unreachable();
