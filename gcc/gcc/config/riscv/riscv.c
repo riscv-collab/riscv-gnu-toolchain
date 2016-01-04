@@ -2825,15 +2825,20 @@ riscv_memory_model_suffix (enum memmodel model)
     {
       case MEMMODEL_ACQ_REL:
       case MEMMODEL_SEQ_CST:
+      case MEMMODEL_SYNC_SEQ_CST:
 	return ".sc";
       case MEMMODEL_ACQUIRE:
       case MEMMODEL_CONSUME:
+      case MEMMODEL_SYNC_ACQUIRE:
 	return ".aq";
       case MEMMODEL_RELEASE:
+      case MEMMODEL_SYNC_RELEASE:
 	return ".rl";
       case MEMMODEL_RELAXED:
 	return "";
-      default: gcc_unreachable();
+      default:
+        fprintf(stderr, "riscv_memory_model_suffix(%ld)\n", model);
+        gcc_unreachable();
     }
 }
 
