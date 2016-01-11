@@ -16,9 +16,13 @@ On Fedora/CentOS/RHEL OS, executing the following command should suffice:
 
     $ sudo yum install autoconf automake autotools-devel libmpc-devel mpfr-devel gmp-devel gawk  bison flex texinfo patchutils gcc 
 
-On Mac OS, the source and build directories must live in a case-sensitive file
+On OS X, you can use [Homebrew](http://brew.sh) to install the dependencies:
+
+    $ brew install gawk gnu-sed gmp mpfr libmpc isl
+
+To build the glibc (Linux) on OS X, you will need to build within a case-sensitive file
 system.  The simplest approach is to create and mount a new disk image with
-that property.  Make sure that the mount point does not contain spaces.
+a case sensitive format.  Make sure that the mount point does not contain spaces. This is not necessary to build newlib or gcc itself on OS X.
 
 This process will start by downloading about 200 MiB of upstream sources, then
 will patch, build, and install the toolchain.  If a local cache of the
