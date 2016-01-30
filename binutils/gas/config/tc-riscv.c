@@ -881,7 +881,11 @@ load_const (int reg, expressionS *ep)
   lower.X_add_number = (int32_t) ep->X_add_number << (32-shift) >> (32-shift);
   upper.X_add_number -= lower.X_add_number;
 
-  gas_assert (ep->X_op == O_constant);
+  if (ep->X_op != O_constant)
+    {
+      as_bad (_("unsupported large constant"));
+      return;
+    }
 
   if (xlen > 32 && !IS_SEXT_32BIT_NUM(ep->X_add_number))
     {
