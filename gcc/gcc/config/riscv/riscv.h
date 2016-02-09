@@ -53,7 +53,6 @@ along with GCC; see the file COPYING3.  If not see
       builtin_define_with_int_value ("_RISCV_SZINT", INT_TYPE_SIZE);	\
       builtin_define_with_int_value ("_RISCV_SZLONG", LONG_TYPE_SIZE);	\
       builtin_define_with_int_value ("_RISCV_SZPTR", POINTER_SIZE);	\
-      builtin_define_with_int_value ("_RISCV_FPSET", 32);		\
 									\
       if (TARGET_RVC)							\
 	builtin_define ("__riscv_compressed");				\
@@ -61,46 +60,24 @@ along with GCC; see the file COPYING3.  If not see
       if (TARGET_ATOMIC)						\
 	builtin_define ("__riscv_atomic");				\
 									\
-      /* These defines reflect the ABI in use, not whether the  	\
-	 FPU is directly accessible.  */				\
-      if (TARGET_HARD_FLOAT_ABI) {					\
-	builtin_define ("__riscv_hard_float");				\
-	if (TARGET_FDIV) {						\
-	  builtin_define ("__riscv_fdiv");				\
-	  builtin_define ("__riscv_fsqrt");				\
+      if (TARGET_MULDIV)						\
+	builtin_define ("__riscv_muldiv");				\
+									\
+      if (TARGET_HARD_FLOAT_ABI)					\
+	{								\
+	  builtin_define ("__riscv_hard_float");			\
+	  if (TARGET_FDIV)						\
+	    {								\
+	      builtin_define ("__riscv_fdiv");				\
+	      builtin_define ("__riscv_fsqrt");				\
+	    }								\
 	}								\
-      } else								\
+      else								\
 	builtin_define ("__riscv_soft_float");				\
 									\
       /* The base RISC-V ISA is always little-endian. */		\
-      builtin_define_std ("RISCVEL");					\
       builtin_define ("_RISCVEL");					\
 									\
-      /* Macros dependent on the C dialect.  */				\
-      if (preprocessing_asm_p ())					\
-	{								\
-	  builtin_define_std ("LANGUAGE_ASSEMBLY");			\
-	  builtin_define ("_LANGUAGE_ASSEMBLY");			\
-	}								\
-      else if (c_dialect_cxx ())					\
-	{								\
-	  builtin_define ("_LANGUAGE_C_PLUS_PLUS");			\
-	  builtin_define ("__LANGUAGE_C_PLUS_PLUS");			\
-	  builtin_define ("__LANGUAGE_C_PLUS_PLUS__");			\
-	}								\
-      else								\
-	{								\
-	  builtin_define_std ("LANGUAGE_C");				\
-	  builtin_define ("_LANGUAGE_C");				\
-	}								\
-      if (c_dialect_objc ())						\
-	{								\
-	  builtin_define ("_LANGUAGE_OBJECTIVE_C");			\
-	  builtin_define ("__LANGUAGE_OBJECTIVE_C");			\
-	  /* Bizarre, but needed at least for Irix.  */			\
-	  builtin_define_std ("LANGUAGE_C");				\
-	  builtin_define ("_LANGUAGE_C");				\
-	}								\
       if (riscv_cmodel == CM_MEDANY)					\
 	builtin_define ("_RISCV_CMODEL_MEDANY");			\
     }									\
