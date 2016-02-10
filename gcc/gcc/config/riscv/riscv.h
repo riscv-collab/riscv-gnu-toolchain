@@ -76,7 +76,7 @@ along with GCC; see the file COPYING3.  If not see
 	builtin_define ("__riscv_soft_float");				\
 									\
       /* The base RISC-V ISA is always little-endian. */		\
-      builtin_define ("_RISCVEL");					\
+      builtin_define_std ("RISCVEL");					\
 									\
       if (riscv_cmodel == CM_MEDANY)					\
 	builtin_define ("_RISCV_CMODEL_MEDANY");			\
