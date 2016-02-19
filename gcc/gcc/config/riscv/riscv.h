@@ -44,7 +44,10 @@ along with GCC; see the file COPYING3.  If not see
 	  builtin_define ("_RISCV_SIM=_ABI64");				\
 	}								\
       else								\
-	builtin_define ("_RISCV_SIM=_ABI32");				\
+	{								\
+	  builtin_define ("__riscv32");					\
+	  builtin_define ("_RISCV_SIM=_ABI32");				\
+	}								\
 									\
       builtin_define ("_ABI32=1");					\
       builtin_define ("_ABI64=3");					\
