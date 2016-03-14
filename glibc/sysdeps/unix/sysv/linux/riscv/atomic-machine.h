@@ -1,5 +1,5 @@
-/* Low-level functions for atomic operations. Mips version.
-   Copyright (C) 2005 Free Software Foundation, Inc.
+/* Low-level functions for atomic operations. RISC-V version.
+   Copyright (C) 2014-2016 Free Software Foundation, Inc.
    This file is part of the GNU C Library.
 
    The GNU C Library is free software; you can redistribute it and/or
@@ -20,7 +20,7 @@
 #ifndef _LINUX_RISCV_BITS_ATOMIC_H
 #define _LINUX_RISCV_BITS_ATOMIC_H 1
 
-#include_next <bits/atomic.h>
+#include_next <atomic-machine.h>
 
 #ifndef __riscv_atomic
 
