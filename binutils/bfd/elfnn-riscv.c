@@ -365,7 +365,7 @@ riscv_elf_create_dynamic_sections (bfd *dynobj,
     return FALSE;
 
   htab->sdynbss = bfd_get_linker_section (dynobj, ".dynbss");
-  if (!info->shared)
+  if (!bfd_link_pic (info))
     {
       htab->srelbss = bfd_get_linker_section (dynobj, ".rela.bss");
       htab->sdyntdata =
@@ -374,7 +374,7 @@ riscv_elf_create_dynamic_sections (bfd *dynobj,
     }
 
   if (!htab->elf.splt || !htab->elf.srelplt || !htab->sdynbss
-      || (!info->shared && (!htab->srelbss || !htab->sdyntdata)))
+      || (!bfd_link_pic (info) && (!htab->srelbss || !htab->sdyntdata)))
     abort ();
 
   return TRUE;
@@ -506,7 +506,7 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
   const Elf_Internal_Rela *rel;
   asection *sreloc = NULL;
 
-  if (info->relocatable)
+  if (bfd_link_relocatable (info))
     return TRUE;
 
   htab = riscv_elf_hash_table (info);
@@ -555,7 +555,7 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	  break;
 
 	case R_RISCV_TLS_GOT_HI20:
-	  if (info->shared)
+	  if (bfd_link_pic (info))
 	    info->flags |= DF_STATIC_TLS;
 	  if (!riscv_elf_record_got_reference (abfd, info, h, r_symndx)
 	      || !riscv_elf_record_tls_type (abfd, h, r_symndx, GOT_TLS_IE))
@@ -589,19 +589,19 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	case R_RISCV_RVC_JUMP:
 	case R_RISCV_PCREL_HI20:
 	  /* In shared libraries, these relocs are known to bind locally.  */
-	  if (info->shared)
+	  if (bfd_link_pic (info))
 	    break;
 	  goto static_reloc;
 
 	case R_RISCV_TPREL_HI20:
-	  if (!info->executable)
+	  if (!bfd_link_executable (info))
 	    return bad_static_reloc (abfd, r_type, h);
 	  if (h != NULL)
 	    riscv_elf_record_tls_type (abfd, h, r_symndx, GOT_TLS_LE);
 	  goto static_reloc;
 
 	case R_RISCV_HI20:
-	  if (info->shared)
+	  if (bfd_link_pic (info))
 	    return bad_static_reloc (abfd, r_type, h);
 	  /* Fall through.  */
 
@@ -617,7 +617,7 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	  if (h != NULL)
 	    h->non_got_ref = 1;
 
-	  if (h != NULL && !info->shared)
+	  if (h != NULL && !bfd_link_pic (info))
 	    {
 	      /* We may need a .plt entry if the function this reloc
 		 refers to is in a shared lib.  */
@@ -645,14 +645,14 @@ riscv_elf_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	     may need to keep relocations for symbols satisfied by a
 	     dynamic library if we manage to avoid copy relocs for the
 	     symbol.  */
-	  if ((info->shared
+	  if ((bfd_link_pic (info)
 	       && (sec->flags & SEC_ALLOC) != 0
 	       && (! riscv_elf_rtype_to_howto (r_type)->pc_relative
 		   || (h != NULL
 		       && (! info->symbolic
 			   || h->root.type == bfd_link_hash_defweak
 			   || !h->def_regular))))
-	      || (!info->shared
+	      || (!bfd_link_pic (info)
 		  && (sec->flags & SEC_ALLOC) != 0
 		  && h != NULL
 		  && (h->root.type == bfd_link_hash_defweak
@@ -768,7 +768,7 @@ riscv_elf_gc_sweep_hook (bfd *abfd, struct bfd_link_info *info,
   struct elf_link_hash_entry **sym_hashes = elf_sym_hashes (abfd);
   bfd_signed_vma *local_got_refcounts = elf_local_got_refcounts (abfd);
 
-  if (info->relocatable)
+  if (bfd_link_relocatable (info))
     return TRUE;
 
   elf_section_data (sec)->local_dynrel = NULL;
@@ -829,7 +829,7 @@ riscv_elf_gc_sweep_hook (bfd *abfd, struct bfd_link_info *info,
 	case R_RISCV_JAL:
 	case R_RISCV_RVC_BRANCH:
 	case R_RISCV_RVC_JUMP:
-	  if (info->shared)
+	  if (bfd_link_pic (info))
 	    break;
 	  /* Fall through.  */
 
@@ -921,7 +921,7 @@ riscv_elf_adjust_dynamic_symbol (struct bfd_link_info *info,
      only references to the symbol are via the global offset table.
      For such cases we need not do anything here; the relocations will
      be handled correctly by relocate_section.  */
-  if (info->shared)
+  if (bfd_link_pic (info))
     return TRUE;
 
   /* If there are no references to this symbol that do not use the
@@ -1008,7 +1008,7 @@ allocate_dynrelocs (struct elf_link_hash_entry *h, void *inf)
 	    return FALSE;
 	}
 
-      if (WILL_CALL_FINISH_DYNAMIC_SYMBOL (1, info->shared, h))
+      if (WILL_CALL_FINISH_DYNAMIC_SYMBOL (1, bfd_link_pic (info), h))
 	{
 	  asection *s = htab->elf.splt;
 
@@ -1031,7 +1031,7 @@ allocate_dynrelocs (struct elf_link_hash_entry *h, void *inf)
 	     location in the .plt.  This is required to make function
 	     pointers compare as equal between the normal executable and
 	     the shared library.  */
-	  if (! info->shared
+	  if (! bfd_link_pic (info)
 	      && !h->def_regular)
 	    {
 	      h->root.u.def.section = s;
@@ -1087,7 +1087,7 @@ allocate_dynrelocs (struct elf_link_hash_entry *h, void *inf)
       else
 	{
 	  s->size += RISCV_ELF_WORD_BYTES;
-	  if (WILL_CALL_FINISH_DYNAMIC_SYMBOL (dyn, info->shared, h))
+	  if (WILL_CALL_FINISH_DYNAMIC_SYMBOL (dyn, bfd_link_pic (info), h))
 	    htab->elf.srelgot->size += sizeof (ElfNN_External_Rela);
 	}
     }
@@ -1104,7 +1104,7 @@ allocate_dynrelocs (struct elf_link_hash_entry *h, void *inf)
      space for pc-relative relocs that have become local due to symbol
      visibility changes.  */
 
-  if (info->shared)
+  if (bfd_link_pic (info))
     {
       if (SYMBOL_CALLS_LOCAL (info, h))
 	{
@@ -1220,7 +1220,7 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
   if (elf_hash_table (info)->dynamic_sections_created)
     {
       /* Set the contents of the .interp section to the interpreter.  */
-      if (info->executable)
+      if (bfd_link_executable (info) && !info->nointerp)
 	{
 	  s = bfd_get_linker_section (dynobj, ".interp");
 	  BFD_ASSERT (s != NULL);
@@ -1285,7 +1285,7 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
 	      s->size += RISCV_ELF_WORD_BYTES;
 	      if (*local_tls_type & GOT_TLS_GD)
 		s->size += RISCV_ELF_WORD_BYTES;
-	      if (info->shared
+	      if (bfd_link_pic (info)
 		  || (*local_tls_type & (GOT_TLS_GD | GOT_TLS_IE)))
 		srel->size += sizeof (ElfNN_External_Rela);
 	    }
@@ -1385,7 +1385,7 @@ riscv_elf_size_dynamic_sections (bfd *output_bfd, struct bfd_link_info *info)
 #define add_dynamic_entry(TAG, VAL) \
   _bfd_elf_add_dynamic_entry (info, TAG, VAL)
 
-      if (info->executable)
+      if (bfd_link_executable (info))
 	{
 	  if (!add_dynamic_entry (DT_DEBUG, 0))
 	    return FALSE;
@@ -1785,7 +1785,7 @@ riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 	RELOC_AGAINST_DISCARDED_SECTION (info, input_bfd, input_section,
 					 rel, 1, relend, howto, 0, contents);
 
-      if (info->relocatable)
+      if (bfd_link_relocatable (info))
 	continue;
 
       if (h != NULL)
@@ -1820,15 +1820,15 @@ riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 	case R_RISCV_GOT_HI20:
 	  if (h != NULL)
 	    {
-	      bfd_boolean dyn;
+	      bfd_boolean dyn, pic;
 
 	      off = h->got.offset;
 	      BFD_ASSERT (off != (bfd_vma) -1);
 	      dyn = elf_hash_table (info)->dynamic_sections_created;
+	      pic = bfd_link_pic (info);
 
-	      if (! WILL_CALL_FINISH_DYNAMIC_SYMBOL (dyn, info->shared, h)
-		  || (info->shared
-		      && SYMBOL_REFERENCES_LOCAL (info, h)))
+	      if (! WILL_CALL_FINISH_DYNAMIC_SYMBOL (dyn, pic, h)
+		  || (pic && SYMBOL_REFERENCES_LOCAL (info, h)))
 		{
 		  /* This is actually a static link, or it is a
 		     -Bsymbolic link and the symbol is defined
@@ -1868,7 +1868,7 @@ riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 		off &= ~1;
 	      else
 		{
-		  if (info->shared)
+		  if (bfd_link_pic (info))
 		    {
 		      asection *s;
 		      Elf_Internal_Rela outrel;
@@ -1922,7 +1922,7 @@ riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 	case R_RISCV_CALL:
 	case R_RISCV_JAL:
 	case R_RISCV_RVC_JUMP:
-	  if (info->shared && h != NULL && h->plt.offset != MINUS_ONE)
+	  if (bfd_link_pic (info) && h != NULL && h->plt.offset != MINUS_ONE)
 	    {
 	      /* Refer to the PLT entry.  */
 	      relocation = sec_addr (htab->elf.splt) + h->plt.offset;
@@ -1994,13 +1994,13 @@ riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 	  if ((input_section->flags & SEC_ALLOC) == 0)
 	    break;
 
-	  if ((info->shared
+	  if ((bfd_link_pic (info)
 	       && (h == NULL
 		   || ELF_ST_VISIBILITY (h->other) == STV_DEFAULT
 		   || h->root.type != bfd_link_hash_undefweak)
 	       && (! howto->pc_relative
 		   || !SYMBOL_CALLS_LOCAL (info, h)))
-	      || (!info->shared
+	      || (!bfd_link_pic (info)
 		  && h != NULL
 		  && h->dynindx != -1
 		  && !h->non_got_ref
@@ -2026,7 +2026,7 @@ riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 	      if (skip_dynamic_relocation)
 		memset (&outrel, 0, sizeof outrel);
 	      else if (h != NULL && h->dynindx != -1
-		       && !(info->shared
+		       && !(bfd_link_pic (info)
 			    && SYMBOLIC_BIND (info, h)
 			    && h->def_regular))
 		{
@@ -2082,20 +2082,18 @@ riscv_elf_relocate_section (bfd *output_bfd, struct bfd_link_info *info,
 
 	      if (h != NULL)
 		{
-		  bfd_boolean dyn;
+		  bfd_boolean dyn, pic;
 		  dyn = htab->elf.dynamic_sections_created;
+		  pic = bfd_link_pic (info);
 
-		  if (WILL_CALL_FINISH_DYNAMIC_SYMBOL (dyn, info->shared, h)
-		      && (!info->shared
-			  || !SYMBOL_REFERENCES_LOCAL (info, h)))
-		  {
+		  if (WILL_CALL_FINISH_DYNAMIC_SYMBOL (dyn, pic, h)
+		      && (!pic || !SYMBOL_REFERENCES_LOCAL (info, h)))
 		    indx = h->dynindx;
-		  }
 		}
 
 	      /* The GOT entries have not been initialized yet.  Do it
 	         now, and emit any relocations.  */
-	      if ((info->shared || indx != 0)
+	      if ((bfd_link_pic (info) || indx != 0)
 		  && (h == NULL
 		      || ELF_ST_VISIBILITY (h->other) == STV_DEFAULT
 		      || h->root.type != bfd_link_hash_undefweak))
@@ -2334,7 +2332,7 @@ riscv_elf_finish_dynamic_symbol (bfd *output_bfd,
 	 the symbol was forced to be local because of a version file.
 	 The entry in the global offset table will already have been
 	 initialized in the relocate_section function.  */
-      if (info->shared
+      if (bfd_link_pic (info)
 	  && (info->symbolic || h->dynindx == -1)
 	  && h->def_regular)
 	{
@@ -2674,7 +2672,7 @@ _bfd_riscv_relax_call (bfd *abfd, asection *sec, asection *sym_sec,
     foff += (foff < 0 ? -ELF_MAXPAGESIZE : ELF_MAXPAGESIZE);
 
   /* See if this function call can be shortened.  */
-  if (!VALID_UJTYPE_IMM (foff) && !(!link_info->shared && near_zero))
+  if (!VALID_UJTYPE_IMM (foff) && !(!bfd_link_pic (link_info) && near_zero))
     return TRUE;
 
   /* Shorten the function call.  */
@@ -2869,7 +2867,7 @@ _bfd_riscv_relax_section (bfd *abfd, asection *sec,
 
   *again = FALSE;
 
-  if (info->relocatable
+  if (bfd_link_relocatable (info)
       || sec->sec_flg0
       || (sec->flags & SEC_RELOC) == 0
       || sec->reloc_count == 0
