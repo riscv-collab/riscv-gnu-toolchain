@@ -106,7 +106,7 @@ maybe_print_address (struct riscv_private_data *pd, int base_reg, int offset)
     }
   else if (base_reg == X_GP && pd->gp != (bfd_vma)-1)
     pd->print_addr = pd->gp + offset;
-  else if (base_reg == X_TP)
+  else if (base_reg == X_TP || base_reg == 0)
     pd->print_addr = offset;
 }
 
@@ -275,7 +275,8 @@ print_insn_args (const char *d, insn_t l, bfd_vma pc, disassemble_info *info)
 	case 'o':
 	  maybe_print_address (pd, rs1, EXTRACT_ITYPE_IMM (l));
 	case 'j':
-	  if ((l & MASK_ADDI) == MATCH_ADDI || (l & MASK_JALR) == MATCH_JALR)
+	  if (((l & MASK_ADDI) == MATCH_ADDI && rs1 != 0)
+	      || (l & MASK_JALR) == MATCH_JALR)
 	    maybe_print_address (pd, rs1, EXTRACT_ITYPE_IMM (l));
 	  print (info->stream, "%d", (int) EXTRACT_ITYPE_IMM (l));
 	  break;
