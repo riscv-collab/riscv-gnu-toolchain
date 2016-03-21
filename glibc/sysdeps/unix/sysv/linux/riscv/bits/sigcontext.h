@@ -26,8 +26,8 @@
 struct sigcontext {
   /* gregs[0] holds the program counter. */
   unsigned long gregs[32];
-  double fpregs[32];
-  unsigned long fsr;
+  unsigned long long fpregs[32];
+  unsigned int fsr;
 };
 
 #endif

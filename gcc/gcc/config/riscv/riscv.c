@@ -120,7 +120,7 @@ along with GCC; see the file COPYING3.  If not see
 /* The maximum distance between the top of the stack frame and the
    value sp has when we save and restore registers.  This is set by the
    range  of load/store offsets and must also preserve stack alignment. */
-#define RISCV_MAX_FIRST_STACK_STEP (RISCV_IMM_REACH/2 - 16)
+#define RISCV_MAX_FIRST_STACK_STEP (IMM_REACH/2 - 16)
 
 /* True if INSN is a riscv.md pattern or asm statement.  */
 #define USEFUL_INSN_P(INSN)						\
@@ -301,7 +301,6 @@ struct riscv_tune_info
   unsigned short int_div[2];
   unsigned short issue_rate;
   unsigned short branch_cost;
-  unsigned short fp_to_int_cost;
   unsigned short memory_cost;
 };
 
@@ -363,7 +362,6 @@ static const struct riscv_tune_info rocket_tune_info = {
   {COSTS_N_INSNS (6), COSTS_N_INSNS (6)},	/* int_div */
   1,						/* issue_rate */
   3,						/* branch_cost */
-  COSTS_N_INSNS (2),				/* fp_to_int_cost */
   5						/* memory_cost */
 };
 
@@ -376,7 +374,6 @@ static const struct riscv_tune_info optimize_size_tune_info = {
   {COSTS_N_INSNS (1), COSTS_N_INSNS (1)},	/* int_div */
   1,						/* issue_rate */
   1,						/* branch_cost */
-  COSTS_N_INSNS (1),				/* fp_to_int_cost */
   1						/* memory_cost */
 };
 
@@ -408,7 +405,7 @@ static int
 riscv_build_integer_1 (struct riscv_integer_op *codes, HOST_WIDE_INT value,
 		       enum machine_mode mode)
 {
-  HOST_WIDE_INT low_part = RISCV_CONST_LOW_PART (value);
+  HOST_WIDE_INT low_part = CONST_LOW_PART (value);
   int cost = INT_MAX, alt_cost;
   struct riscv_integer_op alt_codes[RISCV_MAX_INTEGER_OPS];
 
@@ -626,13 +623,13 @@ riscv_symbolic_constant_p (rtx x, enum riscv_symbol_type *symbol_type)
 static int riscv_symbol_insns (enum riscv_symbol_type type)
 {
   switch (type)
-  {
+    {
     case SYMBOL_TLS: return 0; /* Depends on the TLS model. */
     case SYMBOL_ABSOLUTE: return 2; /* LUI + the reference itself */
     case SYMBOL_TLS_LE: return 3; /* LUI + ADD TP + the reference itself */
     case SYMBOL_GOT_DISP: return 3; /* AUIPC + LD GOT + the reference itself */
     default: gcc_unreachable();
-  }
+    }
 }
 
 /* Implement TARGET_LEGITIMATE_CONSTANT_P.  */
@@ -661,7 +658,7 @@ riscv_cannot_force_const_mem (enum machine_mode mode ATTRIBUTE_UNUSED, rtx x)
     {
       /* As an optimization, don't spill symbolic constants that are as
 	 cheap to rematerialize as to access in the constant pool.  */
-      if (SMALL_INT (offset) && riscv_symbol_insns (type) > 0)
+      if (SMALL_OPERAND (INTVAL (offset)) && riscv_symbol_insns (type) > 0)
 	return true;
 
       /* As an optimization, avoid needlessly generate dynamic relocations.  */
@@ -803,7 +800,7 @@ riscv_classify_address (struct riscv_address_info *info, rtx x,
       /* Small-integer addresses don't occur very often, but they
 	 are legitimate if $0 is a valid base register.  */
       info->type = ADDRESS_CONST_INT;
-      return SMALL_INT (x);
+      return SMALL_OPERAND (INTVAL (x));
 
     default:
       return false;
@@ -882,25 +879,13 @@ riscv_const_insns (rtx x)
       if (riscv_symbolic_constant_p (x, &symbol_type))
 	return riscv_symbol_insns (symbol_type);
 
-      /* Otherwise try splitting the constant into a base and offset.
-	 If the offset is a 16-bit value, we can load the base address
-	 into a register and then use (D)ADDIU to add in the offset.
-	 If the offset is larger, we can load the base and offset
-	 into separate registers and add them together with (D)ADDU.
-	 However, the latter is only possible before reload; during
-	 and after reload, we must have the option of forcing the
-	 constant into the pool instead.  */
+      /* Otherwise try splitting the constant into a base and offset.  */
       split_const (x, &x, &offset);
       if (offset != 0)
 	{
 	  int n = riscv_const_insns (x);
 	  if (n != 0)
-	    {
-	      if (SMALL_INT (offset))
-		return n + 1;
-	      else if (!targetm.cannot_force_const_mem (GET_MODE (x), x))
-		return n + 1 + riscv_integer_cost (INTVAL (offset));
-	    }
+	    return n + riscv_integer_cost (INTVAL (offset));
 	}
       return 0;
 
@@ -1131,8 +1116,8 @@ riscv_add_offset (rtx temp, rtx reg, HOST_WIDE_INT offset)
       /* Leave OFFSET as a 16-bit offset and put the excess in HIGH.
          The addition inside the macro CONST_HIGH_PART may cause an
          overflow, so we need to force a sign-extension check.  */
-      high = gen_int_mode (RISCV_CONST_HIGH_PART (offset), Pmode);
-      offset = RISCV_CONST_LOW_PART (offset);
+      high = gen_int_mode (CONST_HIGH_PART (offset), Pmode);
+      offset = CONST_LOW_PART (offset);
       high = riscv_force_temporary (temp, high);
       reg = riscv_force_temporary (temp, gen_rtx_PLUS (Pmode, high, reg));
     }
@@ -1756,6 +1741,34 @@ riscv_output_move (rtx dest, rtx src)
   if (dbl_p && riscv_split_64bit_move_p (dest, src))
     return "#";
 
+  if (dest_code == REG && GP_REG_P (REGNO (dest)))
+    {
+      if (src_code == REG && FP_REG_P (REGNO (src)))
+	return dbl_p ? "fmv.x.d\t%0,%1" : "fmv.x.s\t%0,%1";
+
+      if (src_code == MEM)
+	switch (GET_MODE_SIZE (mode))
+	  {
+	  case 1: return "lbu\t%0,%1";
+	  case 2: return "lhu\t%0,%1";
+	  case 4: return "lw\t%0,%1";
+	  case 8: return "ld\t%0,%1";
+	  }
+
+      if (src_code == CONST_INT)
+	return "li\t%0,%1";
+
+      if (src_code == HIGH)
+	return "lui\t%0,%h1";
+
+      if (symbolic_operand (src, VOIDmode))
+	switch (riscv_classify_symbolic_expression (src))
+	  {
+	  case SYMBOL_GOT_DISP: return "la\t%0,%1";
+	  case SYMBOL_ABSOLUTE: return "lla\t%0,%1";
+	  default: gcc_unreachable();
+	  }
+    }
   if ((src_code == REG && GP_REG_P (REGNO (src)))
       || (src == CONST0_RTX (mode)))
     {
@@ -1782,37 +1795,6 @@ riscv_output_move (rtx dest, rtx src)
 	  case 2: return "sh\t%z1,%0";
 	  case 4: return "sw\t%z1,%0";
 	  case 8: return "sd\t%z1,%0";
-	  }
-    }
-  if (dest_code == REG && GP_REG_P (REGNO (dest)))
-    {
-      if (src_code == REG)
-	{
-	  if (FP_REG_P (REGNO (src)))
-	    return dbl_p ? "fmv.x.d\t%0,%1" : "fmv.x.s\t%0,%1";
-	}
-
-      if (src_code == MEM)
-	switch (GET_MODE_SIZE (mode))
-	  {
-	  case 1: return "lbu\t%0,%1";
-	  case 2: return "lhu\t%0,%1";
-	  case 4: return "lw\t%0,%1";
-	  case 8: return "ld\t%0,%1";
-	  }
-
-      if (src_code == CONST_INT)
-	return "li\t%0,%1";
-
-      if (src_code == HIGH)
-	return "lui\t%0,%h1";
-
-      if (symbolic_operand (src, VOIDmode))
-	switch (riscv_classify_symbolic_expression (src))
-	  {
-	  case SYMBOL_GOT_DISP: return "la\t%0,%1";
-	  case SYMBOL_ABSOLUTE: return "lla\t%0,%1";
-	  default: gcc_unreachable();
 	  }
     }
   if (src_code == REG && FP_REG_P (REGNO (src)))
@@ -2610,7 +2592,7 @@ riscv_expand_call (bool sibcall_p, rtx result, rtx addr, rtx args_size)
 
   if (!call_insn_operand (addr, VOIDmode))
     {
-      rtx reg = RISCV_EPILOGUE_TEMP (Pmode);
+      rtx reg = RISCV_PROLOGUE_TEMP (Pmode);
       riscv_emit_move (reg, addr);
       addr = reg;
     }
@@ -2843,15 +2825,20 @@ riscv_memory_model_suffix (enum memmodel model)
     {
       case MEMMODEL_ACQ_REL:
       case MEMMODEL_SEQ_CST:
+      case MEMMODEL_SYNC_SEQ_CST:
 	return ".sc";
       case MEMMODEL_ACQUIRE:
       case MEMMODEL_CONSUME:
+      case MEMMODEL_SYNC_ACQUIRE:
 	return ".aq";
       case MEMMODEL_RELEASE:
+      case MEMMODEL_SYNC_RELEASE:
 	return ".rl";
       case MEMMODEL_RELAXED:
 	return "";
-      default: gcc_unreachable();
+      default:
+        fprintf(stderr, "riscv_memory_model_suffix(%ld)\n", model);
+        gcc_unreachable();
     }
 }
 
@@ -2991,7 +2978,7 @@ riscv_elf_select_rtx_section (enum machine_mode mode, rtx x,
       if (strncmp (s->named.name, ".rodata.cst", strlen (".rodata.cst")) == 0)
 	{
 	  /* Rename .rodata.cst* to .srodata.cst*. */
-	  char name[32];
+	  char *name = (char *) alloca (strlen (s->named.name) + 2);
 	  sprintf (name, ".s%s", s->named.name + 1);
 	  return get_section (name, s->named.common.flags, NULL);
 	}
@@ -3154,7 +3141,7 @@ riscv_compute_frame_info (void)
       frame->mask |= 1 << (regno - GP_REG_FIRST), num_x_saved++;
 
   /* Find out which FPRs we need to save.  This loop must iterate over
-     the same space as its companion in riscv_for_each_saved_gpr_and_fpr.  */
+     the same space as its companion in riscv_for_each_saved_reg.  */
   if (TARGET_HARD_FLOAT)
     for (regno = FP_REG_FIRST; regno <= FP_REG_LAST; regno++)
       if (riscv_save_reg_p (regno))
@@ -3287,8 +3274,7 @@ riscv_save_restore_reg (enum machine_mode mode, int regno,
    of the frame.  */
 
 static void
-riscv_for_each_saved_gpr_and_fpr (HOST_WIDE_INT sp_offset,
-				 riscv_save_restore_fn fn)
+riscv_for_each_saved_reg (HOST_WIDE_INT sp_offset, riscv_save_restore_fn fn)
 {
   HOST_WIDE_INT offset;
   int regno;
@@ -3313,49 +3299,21 @@ riscv_for_each_saved_gpr_and_fpr (HOST_WIDE_INT sp_offset,
       }
 }
 
-/* Emit a move from SRC to DEST, given that one of them is a register
-   save slot and that the other is a register.  TEMP is a temporary
-   GPR of the same mode that is available if need be.  */
-
-static void
-riscv_emit_save_slot_move (rtx dest, rtx src, rtx temp)
-{
-  unsigned int regno;
-  rtx mem;
-  enum reg_class rclass;
-
-  if (REG_P (src))
-    {
-      regno = REGNO (src);
-      mem = dest;
-    }
-  else
-    {
-      regno = REGNO (dest);
-      mem = src;
-    }
-
-  rclass = riscv_secondary_reload_class (REGNO_REG_CLASS (regno),
-					 GET_MODE (mem), mem, mem == src);
-
-  if (rclass == NO_REGS)
-    riscv_emit_move (dest, src);
-  else
-    {
-      gcc_assert (!reg_overlap_mentioned_p (dest, temp));
-      riscv_emit_move (temp, src);
-      riscv_emit_move (dest, temp);
-    }
-  if (MEM_P (dest))
-    riscv_set_frame_expr (riscv_frame_set (dest, src));
-}
-
 /* Save register REG to MEM.  Make the instruction frame-related.  */
 
 static void
 riscv_save_reg (rtx reg, rtx mem)
 {
-  riscv_emit_save_slot_move (mem, reg, RISCV_PROLOGUE_TEMP (GET_MODE (reg)));
+  riscv_emit_move (mem, reg);
+  riscv_set_frame_expr (riscv_frame_set (mem, reg));
+}
+
+/* Restore register REG from MEM.  */
+
+static void
+riscv_restore_reg (rtx reg, rtx mem)
+{
+  riscv_emit_move (reg, mem);
 }
 
 /* Return the code to invoke the GPR save routine.  */
@@ -3420,7 +3378,7 @@ riscv_expand_prologue (void)
 			    GEN_INT (-step1));
       RTX_FRAME_RELATED_P (emit_insn (insn)) = 1;
       size -= step1;
-      riscv_for_each_saved_gpr_and_fpr (size, riscv_save_reg);
+      riscv_for_each_saved_reg (size, riscv_save_reg);
     }
 
   frame->mask = mask; /* Undo the above fib.  */
@@ -3437,32 +3395,24 @@ riscv_expand_prologue (void)
   if (size > 0)
     {
       if (SMALL_OPERAND (-size))
-	emit_insn (gen_add3_insn (stack_pointer_rtx, stack_pointer_rtx,
-				  GEN_INT (-size)));
+	{
+	  insn = gen_add3_insn (stack_pointer_rtx, stack_pointer_rtx,
+				GEN_INT (-size));
+	  RTX_FRAME_RELATED_P (emit_insn (insn)) = 1;
+	}
       else
 	{
 	  riscv_emit_move (RISCV_PROLOGUE_TEMP (Pmode), GEN_INT (-size));
 	  emit_insn (gen_add3_insn (stack_pointer_rtx,
 				    stack_pointer_rtx,
 				    RISCV_PROLOGUE_TEMP (Pmode)));
+
+	  /* Describe the effect of the previous instructions.  */
+	  insn = plus_constant (Pmode, stack_pointer_rtx, -size);
+	  insn = gen_rtx_SET (VOIDmode, stack_pointer_rtx, insn);
+	  riscv_set_frame_expr (insn);
 	}
     }
-
-  if (frame->total_size > 0)
-    {
-      /* Describe the effect of the instructions that adjusted sp.  */
-      insn = plus_constant (Pmode, stack_pointer_rtx, -frame->total_size);
-      insn = gen_rtx_SET (VOIDmode, stack_pointer_rtx, insn);
-      riscv_set_frame_expr (insn);
-    }
-}
-
-/* Emit instructions to restore register REG from slot MEM.  */
-
-static void
-riscv_restore_reg (rtx reg, rtx mem)
-{
-  riscv_emit_save_slot_move (reg, mem, RISCV_EPILOGUE_TEMP (GET_MODE (reg)));
 }
 
 /* Expand an "epilogue" or "sibcall_epilogue" pattern; SIBCALL_P
@@ -3493,13 +3443,14 @@ riscv_expand_epilogue (bool sibcall_p)
   if (cfun->calls_alloca)
     {
       rtx adjust = GEN_INT (-frame->hard_frame_pointer_offset);
-      if (!SMALL_INT (adjust))
+      if (!SMALL_OPERAND (INTVAL (adjust)))
 	{
-	  riscv_emit_move (RISCV_EPILOGUE_TEMP (Pmode), adjust);
-	  adjust = RISCV_EPILOGUE_TEMP (Pmode);
+	  riscv_emit_move (RISCV_PROLOGUE_TEMP (Pmode), adjust);
+	  adjust = RISCV_PROLOGUE_TEMP (Pmode);
 	}
 
-      emit_insn (gen_add3_insn (stack_pointer_rtx, hard_frame_pointer_rtx, adjust));
+      emit_insn (gen_add3_insn (stack_pointer_rtx, hard_frame_pointer_rtx,
+				adjust));
     }
 
   /* If we need to restore registers, deallocate as much stack as
@@ -3517,8 +3468,8 @@ riscv_expand_epilogue (bool sibcall_p)
       rtx adjust = GEN_INT (step1);
       if (!SMALL_OPERAND (step1))
 	{
-	  riscv_emit_move (RISCV_EPILOGUE_TEMP (Pmode), adjust);
-	  adjust = RISCV_EPILOGUE_TEMP (Pmode);
+	  riscv_emit_move (RISCV_PROLOGUE_TEMP (Pmode), adjust);
+	  adjust = RISCV_PROLOGUE_TEMP (Pmode);
 	}
 
       emit_insn (gen_add3_insn (stack_pointer_rtx, stack_pointer_rtx, adjust));
@@ -3528,8 +3479,7 @@ riscv_expand_epilogue (bool sibcall_p)
     frame->mask = 0; /* Temporarily fib that we need not save GPRs.  */
 
   /* Restore the registers.  */
-  riscv_for_each_saved_gpr_and_fpr (frame->total_size - step2,
-				    riscv_restore_reg);
+  riscv_for_each_saved_reg (frame->total_size - step2, riscv_restore_reg);
 
   if (use_restore_libcall)
     {
@@ -3567,6 +3517,15 @@ bool
 riscv_can_use_return_insn (void)
 {
   return reload_completed && cfun->machine->frame.total_size == 0;
+}
+
+/* Implement TARGET_REGISTER_MOVE_COST.  */
+
+static int
+riscv_register_move_cost (enum machine_mode mode,
+			  reg_class_t from, reg_class_t to)
+{
+  return SECONDARY_MEMORY_NEEDED (from, to, mode) ? 8 : 2;
 }
 
 /* Return true if register REGNO can store a value of mode MODE.
@@ -3615,25 +3574,18 @@ riscv_hard_regno_nregs (int regno, enum machine_mode mode)
   return (GET_MODE_SIZE (mode) + UNITS_PER_WORD - 1) / UNITS_PER_WORD;
 }
 
-/* Implement CLASS_MAX_NREGS, taking the maximum of the cases
-   in riscv_hard_regno_nregs.  */
+/* Implement CLASS_MAX_NREGS.  */
 
-int
-riscv_class_max_nregs (enum reg_class rclass, enum machine_mode mode)
+static unsigned char
+riscv_class_max_nregs (reg_class_t rclass, enum machine_mode mode)
 {
-  int size;
-  HARD_REG_SET left;
+  if (reg_class_subset_p (FP_REGS, rclass))
+    return riscv_hard_regno_nregs (FP_REG_FIRST, mode);
 
-  size = 0x8000;
-  COPY_HARD_REG_SET (left, reg_class_contents[(int) rclass]);
-  if (hard_reg_set_intersect_p (left, reg_class_contents[(int) FP_REGS]))
-    {
-      size = MIN (size, UNITS_PER_FPREG);
-      AND_COMPL_HARD_REG_SET (left, reg_class_contents[(int) FP_REGS]);
-    }
-  if (!hard_reg_set_empty_p (left))
-    size = MIN (size, UNITS_PER_WORD);
-  return (GET_MODE_SIZE (mode) + size - 1) / size;
+  if (reg_class_subset_p (GR_REGS, rclass))
+    return riscv_hard_regno_nregs (GP_REG_FIRST, mode);
+
+  return 0;
 }
 
 /* Implement TARGET_PREFERRED_RELOAD_CLASS.  */
@@ -3646,40 +3598,6 @@ riscv_preferred_reload_class (rtx x ATTRIBUTE_UNUSED, reg_class_t rclass)
 	 rclass;
 }
 
-/* RCLASS is a class involved in a REGISTER_MOVE_COST calculation.
-   Return a "canonical" class to represent it in later calculations.  */
-
-static reg_class_t
-riscv_canonicalize_move_class (reg_class_t rclass)
-{
-  if (reg_class_subset_p (rclass, GENERAL_REGS))
-    rclass = GENERAL_REGS;
-
-  return rclass;
-}
-
-/* Implement TARGET_REGISTER_MOVE_COST.  Return 0 for classes that are the
-   maximum of the move costs for subclasses; regclass will work out
-   the maximum for us.  */
-
-static int
-riscv_register_move_cost (enum machine_mode mode ATTRIBUTE_UNUSED,
-			 reg_class_t from, reg_class_t to)
-{
-  from = riscv_canonicalize_move_class (from);
-  to = riscv_canonicalize_move_class (to);
-
-  if ((from == GENERAL_REGS && to == GENERAL_REGS)
-      || (from == GENERAL_REGS && to == FP_REGS)
-      || (from == FP_REGS && to == FP_REGS))
-    return COSTS_N_INSNS (1);
-
-  if (from == FP_REGS && to == GENERAL_REGS)
-    return tune_info->fp_to_int_cost;
-
-  return 0;
-}
-
 /* Implement TARGET_MEMORY_MOVE_COST.  */
 
 static int
@@ -3688,48 +3606,6 @@ riscv_memory_move_cost (enum machine_mode mode, reg_class_t rclass, bool in)
   return (tune_info->memory_cost
 	  + memory_move_secondary_cost (mode, rclass, in));
 } 
-
-/* Return the register class required for a secondary register when
-   copying between one of the registers in RCLASS and value X, which
-   has mode MODE.  X is the source of the move if IN_P, otherwise it
-   is the destination.  Return NO_REGS if no secondary register is
-   needed.  */
-
-enum reg_class
-riscv_secondary_reload_class (enum reg_class rclass,
-			     enum machine_mode mode, rtx x,
-			     bool in_p ATTRIBUTE_UNUSED)
-{
-  int regno;
-
-  regno = true_regnum (x);
-
-  if (reg_class_subset_p (rclass, FP_REGS))
-    {
-      if (MEM_P (x) && (GET_MODE_SIZE (mode) == 4 || GET_MODE_SIZE (mode) == 8))
-	/* We can use flw/fld/fsw/fsd. */
-	return NO_REGS;
-
-      if (GP_REG_P (regno) || x == CONST0_RTX (mode))
-	/* We can use fmv or go through memory when mode > Pmode. */
-	return NO_REGS;
-
-      if (CONSTANT_P (x) && !targetm.cannot_force_const_mem (mode, x))
-	/* We can force the constant to memory and use flw/fld. */
-	return NO_REGS;
-
-      if (FP_REG_P (regno))
-	/* We can use fmv.fmt. */
-	return NO_REGS;
-
-      /* Otherwise, we need to reload through an integer register.  */
-      return GR_REGS;
-    }
-  if (FP_REG_P (regno))
-    return reg_class_subset_p (rclass, GR_REGS) ? NO_REGS : GR_REGS;
-
-  return NO_REGS;
-}
 
 /* Implement TARGET_MODE_REP_EXTENDED.  */
 
@@ -3753,18 +3629,6 @@ riscv_scalar_mode_supported_p (enum machine_mode mode)
     return true;
 
   return default_scalar_mode_supported_p (mode);
-}
-
-/* Implement TARGET_SCHED_ADJUST_COST.  We assume that anti and output
-   dependencies have no cost. */
-
-static int
-riscv_adjust_cost (rtx_insn *insn ATTRIBUTE_UNUSED, rtx link,
-		   rtx_insn *dep ATTRIBUTE_UNUSED, int cost)
-{
-  if (REG_NOTE_KIND (link) != 0)
-    return 0;
-  return cost;
 }
 
 /* Return the number of instructions that can be issued per cycle.  */
@@ -4222,13 +4086,25 @@ riscv_conditional_register_usage (void)
     }
 }
 
+/* Return a register priority for hard reg REGNO.  */
+static int
+riscv_register_priority (int regno)
+{
+  /* Favor x8-x15/f8-f15 to improve the odds of RVC instruction selection.  */
+  if (TARGET_RVC && (IN_RANGE (regno, GP_REG_FIRST + 8, GP_REG_FIRST + 15)
+		     || IN_RANGE (regno, FP_REG_FIRST + 8, FP_REG_FIRST + 15)))
+    return 1;
+
+  return 0;
+}
+
 /* Implement TARGET_TRAMPOLINE_INIT.  */
 
 static void
 riscv_trampoline_init (rtx m_tramp, tree fndecl, rtx chain_value)
 {
   rtx addr, end_addr, mem;
-  rtx trampoline[4];
+  uint32_t trampoline[4];
   unsigned int i;
   HOST_WIDE_INT static_chain_offset, target_function_offset;
 
@@ -4242,30 +4118,27 @@ riscv_trampoline_init (rtx m_tramp, tree fndecl, rtx chain_value)
   addr = force_reg (Pmode, XEXP (m_tramp, 0));
   end_addr = riscv_force_binary (Pmode, PLUS, addr, GEN_INT (TRAMPOLINE_CODE_SIZE));
 
-#define OP(X) gen_int_mode (X, SImode)
-#define MATCH_LREG ((Pmode) == DImode ? MATCH_LD : MATCH_LW)
-
   /* auipc   t0, 0
      l[wd]   t1, target_function_offset(t0)
-     l[wd]   $static_chain, static_chain_offset(t0)
+     l[wd]   t0, static_chain_offset(t0)
      jr      t1
   */
+  trampoline[0] = OPCODE_AUIPC | (STATIC_CHAIN_REGNUM << SHIFT_RD);
+  trampoline[1] = (Pmode == DImode ? OPCODE_LD : OPCODE_LW)
+		  | (RISCV_PROLOGUE_TEMP_REGNUM << SHIFT_RD)
+		  | (STATIC_CHAIN_REGNUM << SHIFT_RS1)
+		  | (target_function_offset << SHIFT_IMM);
+  trampoline[2] = (Pmode == DImode ? OPCODE_LD : OPCODE_LW)
+		  | (STATIC_CHAIN_REGNUM << SHIFT_RD)
+		  | (STATIC_CHAIN_REGNUM << SHIFT_RS1)
+		  | (static_chain_offset << SHIFT_IMM);
+  trampoline[3] = OPCODE_JALR | (RISCV_PROLOGUE_TEMP_REGNUM << SHIFT_RS1);
 
-  trampoline[0] = OP (RISCV_UTYPE (AUIPC, STATIC_CHAIN_REGNUM, 0));
-  trampoline[1] = OP (RISCV_ITYPE (LREG, RISCV_PROLOGUE_TEMP_REGNUM,
-		    STATIC_CHAIN_REGNUM, target_function_offset));
-  trampoline[2] = OP (RISCV_ITYPE (LREG, STATIC_CHAIN_REGNUM,
-		    STATIC_CHAIN_REGNUM, static_chain_offset));
-  trampoline[3] = OP (RISCV_ITYPE (JALR, 0, RISCV_PROLOGUE_TEMP_REGNUM, 0));
-
-#undef MATCH_LREG
-#undef OP
-
-  /* Copy the trampoline code.  Leave any padding uninitialized.  */
+  /* Copy the trampoline code.  */
   for (i = 0; i < ARRAY_SIZE (trampoline); i++)
     {
       mem = adjust_address (m_tramp, SImode, i * GET_MODE_SIZE (SImode));
-      riscv_emit_move (mem, trampoline[i]);
+      riscv_emit_move (mem, gen_int_mode (trampoline[i], SImode));
     }
 
   /* Set up the static chain pointer field.  */
@@ -4284,7 +4157,8 @@ riscv_trampoline_init (rtx m_tramp, tree fndecl, rtx chain_value)
 /* Implement TARGET_FUNCTION_OK_FOR_SIBCALL.  */
 
 static bool
-riscv_function_ok_for_sibcall (tree decl, tree exp ATTRIBUTE_UNUSED)
+riscv_function_ok_for_sibcall (tree decl ATTRIBUTE_UNUSED,
+			       tree exp ATTRIBUTE_UNUSED)
 {
   if (TARGET_SAVE_RESTORE)
     {
@@ -4296,12 +4170,6 @@ riscv_function_ok_for_sibcall (tree decl, tree exp ATTRIBUTE_UNUSED)
     }
 
   return true;
-}
-
-static bool
-riscv_lra_p (void)
-{
-  return riscv_lra_flag;
 }
 
 /* Initialize the GCC target structure.  */
@@ -4318,8 +4186,6 @@ riscv_lra_p (void)
 #undef TARGET_LEGITIMIZE_ADDRESS
 #define TARGET_LEGITIMIZE_ADDRESS riscv_legitimize_address
 
-#undef TARGET_SCHED_ADJUST_COST
-#define TARGET_SCHED_ADJUST_COST riscv_adjust_cost
 #undef TARGET_SCHED_ISSUE_RATE
 #define TARGET_SCHED_ISSUE_RATE riscv_issue_rate
 
@@ -4416,6 +4282,9 @@ riscv_lra_p (void)
 #undef TARGET_CONDITIONAL_REGISTER_USAGE
 #define TARGET_CONDITIONAL_REGISTER_USAGE riscv_conditional_register_usage
 
+#undef TARGET_CLASS_MAX_NREGS
+#define TARGET_CLASS_MAX_NREGS riscv_class_max_nregs
+
 #undef TARGET_TRAMPOLINE_INIT
 #define TARGET_TRAMPOLINE_INIT riscv_trampoline_init
 
@@ -4426,13 +4295,16 @@ riscv_lra_p (void)
 #define TARGET_ASM_SELECT_RTX_SECTION  riscv_elf_select_rtx_section
 
 #undef TARGET_MIN_ANCHOR_OFFSET
-#define TARGET_MIN_ANCHOR_OFFSET (-RISCV_IMM_REACH/2)
+#define TARGET_MIN_ANCHOR_OFFSET (-IMM_REACH/2)
 
 #undef TARGET_MAX_ANCHOR_OFFSET
-#define TARGET_MAX_ANCHOR_OFFSET (RISCV_IMM_REACH/2-1)
+#define TARGET_MAX_ANCHOR_OFFSET (IMM_REACH/2-1)
 
 #undef TARGET_LRA_P
-#define TARGET_LRA_P riscv_lra_p
+#define TARGET_LRA_P hook_bool_void_true
+
+#undef TARGET_REGISTER_PRIORITY
+#define TARGET_REGISTER_PRIORITY riscv_register_priority
 
 struct gcc_target targetm = TARGET_INITIALIZER;
 

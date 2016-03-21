@@ -54,7 +54,7 @@
 ;; Only use branch-on-bit sequences when the mask is not an ANDI immediate.
 (define_predicate "branch_on_bit_operand"
   (and (match_code "const_int")
-       (match_test "INTVAL (op) >= RISCV_IMM_BITS - 1")))
+       (match_test "INTVAL (op) >= IMM_BITS - 1")))
 
 ;; This is used for indexing into vectors, and hence only accepts const_int.
 (define_predicate "const_0_or_1_operand"
@@ -77,7 +77,7 @@
 
   /* Otherwise check whether the constant can be loaded in a single
      instruction.  */
-  return !LUI_INT (op) && !SMALL_INT (op);
+  return !LUI_OPERAND (INTVAL (op)) && !SMALL_OPERAND (INTVAL (op));
 })
 
 (define_predicate "move_operand"
@@ -181,7 +181,4 @@
   (match_code "eq,ne,lt,ltu,le,leu,ge,geu,gt,gtu"))
 
 (define_predicate "fp_order_operator"
-  (match_code "eq,lt,le,gt,ge"))
-
-(define_predicate "fp_unorder_operator"
-  (match_code "ordered,unordered"))
+  (match_code "eq,ne,lt,le,gt,ge"))

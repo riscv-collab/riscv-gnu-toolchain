@@ -5,31 +5,24 @@ This is the RISC-V C and C++ cross-compiler. It supports two build modes:
 a generic ELF/Newlib toolchain and a more sophisticated Linux-ELF/glibc
 toolchain.
 
-Author
-------
-
-Andrew Waterman
-
-Contributors
-------------
-
-- Yunsup Lee
-- Quan Nguyen
-- Albert Ou
-- Darius Rad
-- Matt Thomas
-- ultraembedded (github id)
-
 ### Prerequisites
 
 Several standard packages are needed to build the toolchain.  On Ubuntu,
 executing the following command should suffice:
 
-    $ sudo apt-get install autoconf automake autotools-dev curl libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo gperf libtool patchutils
+    $ sudo apt-get install autoconf automake autotools-dev curl libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo gperf libtool patchutils bc
 
-On Mac OS, the source and build directories must live in a case-sensitive file
+On Fedora/CentOS/RHEL OS, executing the following command should suffice:
+
+    $ sudo yum install autoconf automake autotools-devel libmpc-devel mpfr-devel gmp-devel gawk  bison flex texinfo patchutils gcc 
+
+On OS X, you can use [Homebrew](http://brew.sh) to install the dependencies:
+
+    $ brew install gawk gnu-sed gmp mpfr libmpc isl
+
+To build the glibc (Linux) on OS X, you will need to build within a case-sensitive file
 system.  The simplest approach is to create and mount a new disk image with
-that property.  Make sure that the mount point does not contain spaces.
+a case sensitive format.  Make sure that the mount point does not contain spaces. This is not necessary to build newlib or gcc itself on OS X.
 
 This process will start by downloading about 200 MiB of upstream sources, then
 will patch, build, and install the toolchain.  If a local cache of the

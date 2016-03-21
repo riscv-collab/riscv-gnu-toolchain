@@ -39,20 +39,8 @@ extern fpu_control_t __fpu_control;
 
 #else /* __riscv_soft_float */
 
-/* rounding control */
-#define _FPU_RC_NEAREST 0x0
-#define _FPU_RC_ZERO    0x1
-#define _FPU_RC_DOWN    0x2
-#define _FPU_RC_UP      0x3
-
-#define _FPU_RESERVED   0    /* No reserved bits in FSR */
-
-/* The fdlibm code requires strict IEEE double precision arithmetic,
-   and no interrupts for exceptions, rounding to nearest.  */
-
+#define _FPU_RESERVED 0
 #define _FPU_DEFAULT  0
-
-/* IEEE:  same as above */
 #define _FPU_IEEE     _FPU_DEFAULT
 
 /* Type of the control word.  */

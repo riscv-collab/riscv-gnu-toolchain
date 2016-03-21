@@ -8,7 +8,7 @@
 #ifndef _BITS_STRING_H
 #define _BITS_STRING_H	1
 
-#define _STRING_ARCH_unaligned   0
+#define _STRING_INLINE_unaligned   0
 
 #if defined(__GNUC__) && !defined(__cplusplus)
 

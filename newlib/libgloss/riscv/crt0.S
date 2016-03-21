@@ -5,7 +5,9 @@
   .text
   .global _start
 _start:
-  la      gp, _gp                 # Initialize global pointer
+  # Initialize global pointer
+1:auipc gp, %pcrel_hi(_gp)
+  addi  gp, gp, %pcrel_lo(1b)
 
 # clear the bss segment
   la      t0, _fbss

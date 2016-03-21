@@ -89,7 +89,7 @@ AC_SUBST(glibc_configure_flags,--without-fp)])
 
 AC_ARG_ENABLE(multilib,
 	[AS_HELP_STRING([--enable-multilib],
-		[build multilib glibc (32 and 64 bit) @<:@--disable-multilib@:>@])],
+		[build both RV32 and RV64 runtime libraries @<:@--disable-multilib@:>@])],
 	[],
 	[enable_multilib=no]
 	)

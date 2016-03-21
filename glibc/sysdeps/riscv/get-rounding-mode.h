@@ -1,5 +1,7 @@
-/* bits/ipctypes.h -- Define some types used by SysV IPC/MSG/SHM.  MIPS version
-   Copyright (C) 2002 Free Software Foundation, Inc.
+/* Determine floating-point rounding mode within libc.  RISC-V version.
+
+   Copyright (C) 2015 Free Software Foundation, Inc.
+
    This file is part of the GNU C Library.
 
    The GNU C Library is free software; you can redistribute it and/or
@@ -13,20 +15,24 @@
    Lesser General Public License for more details.
 
    You should have received a copy of the GNU Lesser General Public
-   License along with the GNU C Library; if not, write to the Free
-   Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-   02111-1307 USA.  */
+   License along with the GNU C Library; if not, see
+   <http://www.gnu.org/licenses/>.  */
 
-/*
- * Never include <bits/ipctypes.h> directly.
- */
+#ifndef _RISCV_GET_ROUNDING_MODE_H
+#define _RISCV_GET_ROUNDING_MODE_H
 
-#ifndef _BITS_IPCTYPES_H
-#define _BITS_IPCTYPES_H	1
+#include <fenv.h>
+#include <fpu_control.h>
 
-#include <bits/types.h>
+/* Return the floating-point rounding mode.  */
 
-typedef __SLONG32_TYPE __ipc_pid_t;
+static inline int
+get_rounding_mode (void)
+{
+  fpu_control_t fpcr;
 
+  _FPU_GETROUND (fpcr);
+  return fpcr;
+}
 
-#endif /* bits/ipctypes.h */
+#endif /* get-rounding-mode.h */

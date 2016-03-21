@@ -13,21 +13,25 @@ typedef unsigned int __uid_t;
 typedef unsigned int __gid_t;
 
 #define __off_t_defined
-typedef long long _off_t;
+typedef long _off_t;
 
 #define __fpos_t_defined
 typedef unsigned long long _fpos_t;
 
 #define __time_t_defined
-typedef unsigned long long time_t;
+typedef long time_t;
 
 #define __ino_t_defined
-typedef unsigned long long __ino_t;
+typedef unsigned long __ino_t;
 
 #define __nlink_t_defined
 typedef unsigned int __nlink_t;
 
-#define __mode_t_defined
-typedef unsigned int __mode_t;
+#define __ssize_t_defined
+typedef long signed int _ssize_t;
+
+typedef int blksize_t;
+
+typedef long blkcnt_t;
 
 #endif

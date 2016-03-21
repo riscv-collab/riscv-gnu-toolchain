@@ -1,7 +1,7 @@
 /* riscv.h.  RISC-V opcode list for GDB, the GNU debugger.
    Copyright 2011
    Free Software Foundation, Inc.
-   Contributed by Andrew Waterman 
+   Contributed by Andrew Waterman
 
 This file is part of GDB, GAS, and the GNU binutils.
 
@@ -26,53 +26,37 @@ Software Foundation, 51 Franklin Street - Fifth Floor, Boston, MA 02110-1301, US
 #include <stdlib.h>
 #include <stdint.h>
 
-/* RVC fields */
-
-#define OP_MASK_CRS2 0x1f
-#define OP_SH_CRS2 2
-#define OP_MASK_CRS1S 0x7
-#define OP_SH_CRS1S 7
-#define OP_MASK_CRS2S 0x7
-#define OP_SH_CRS2S 2
-#define OP_MASK_CRDS 0x7
-#define OP_SH_CRDS 10
-
-static const char rvc_rs1_regmap[8] = { 20, 21, 2, 3, 4, 5, 6, 7 };
-#define rvc_rd_regmap rvc_rs1_regmap
-#define rvc_rs2b_regmap rvc_rs1_regmap
-static const char rvc_rs2_regmap[8] = { 20, 21, 2, 3, 4, 5, 6, 0 };
-
 typedef uint64_t insn_t;
 
 static inline unsigned int riscv_insn_length (insn_t insn)
 {
-  if ((insn & 0x3) != 3) /* RVC */
+  if ((insn & 0x3) != 0x3) /* RVC.  */
     return 2;
-  if ((insn & 0x1f) != 0x1f) /* base ISA and extensions in 32-bit space */
+  if ((insn & 0x1f) != 0x1f) /* Base ISA and extensions in 32-bit space.  */
     return 4;
-  if ((insn & 0x3f) == 0x1f) /* 48-bit extensions */
+  if ((insn & 0x3f) == 0x1f) /* 48-bit extensions.  */
     return 6;
-  if ((insn & 0x7f) == 0x3f) /* 64-bit extensions */
+  if ((insn & 0x7f) == 0x3f) /* 64-bit extensions.  */
     return 8;
-  /* longer instructions not supported at the moment */
+  /* Longer instructions not supported at the moment.  */
   return 2;
 }
 
 static const char * const riscv_rm[8] = {
   "rne", "rtz", "rdn", "rup", "rmm", 0, 0, "dyn"
 };
-static const char* const riscv_pred_succ[16] = {
+static const char * const riscv_pred_succ[16] = {
   0,   "w",  "r",  "rw",  "o",  "ow",  "or",  "orw",
   "i", "iw", "ir", "irw", "io", "iow", "ior", "iorw",
 };
 
 #define RVC_JUMP_BITS 11
-#define RVC_JUMP_REACH ((1ULL<<RVC_JUMP_BITS)*RISCV_JUMP_ALIGN)
+#define RVC_JUMP_REACH ((1ULL << RVC_JUMP_BITS) * RISCV_JUMP_ALIGN)
 
 #define RVC_BRANCH_BITS 8
-#define RVC_BRANCH_REACH ((1ULL<<RVC_BRANCH_BITS)*RISCV_BRANCH_ALIGN)
+#define RVC_BRANCH_REACH ((1ULL << RVC_BRANCH_BITS) * RISCV_BRANCH_ALIGN)
 
-#define RV_X(x, s, n) (((x) >> (s)) & ((1<<(n))-1))
+#define RV_X(x, s, n) (((x) >> (s)) & ((1 << (n)) - 1))
 #define RV_IMM_SIGN(x) (-(((x) >> 31) & 1))
 
 #define EXTRACT_ITYPE_IMM(x) \
@@ -87,12 +71,14 @@ static const char* const riscv_pred_succ[16] = {
   ((RV_X(x, 21, 10) << 1) | (RV_X(x, 20, 1) << 11) | (RV_X(x, 12, 8) << 12) | (RV_IMM_SIGN(x) << 20))
 #define EXTRACT_RVC_IMM(x) \
   (RV_X(x, 2, 5) | (-RV_X(x, 12, 1) << 5))
+#define EXTRACT_RVC_LUI_IMM(x) \
+  (EXTRACT_RVC_IMM (x) << RISCV_IMM_BITS)
 #define EXTRACT_RVC_SIMM3(x) \
   (RV_X(x, 10, 2) | (-RV_X(x, 12, 1) << 2))
 #define EXTRACT_RVC_ADDI4SPN_IMM(x) \
   ((RV_X(x, 6, 1) << 2) | (RV_X(x, 5, 1) << 3) | (RV_X(x, 11, 2) << 4) | (RV_X(x, 7, 4) << 6))
 #define EXTRACT_RVC_ADDI16SP_IMM(x) \
-  ((RV_X(x, 6, 1) << 4) | (RV_X(x, 5, 1) << 5) | (RV_X(x, 2, 3) << 6) | (-RV_X(x, 12, 1) << 9))
+  ((RV_X(x, 6, 1) << 4) | (RV_X(x, 2, 1) << 5) | (RV_X(x, 5, 1) << 6) | (RV_X(x, 3, 2) << 7) | (-RV_X(x, 12, 1) << 9))
 #define EXTRACT_RVC_LW_IMM(x) \
   ((RV_X(x, 6, 1) << 2) | (RV_X(x, 10, 3) << 3) | (RV_X(x, 5, 1) << 6))
 #define EXTRACT_RVC_LD_IMM(x) \
@@ -106,9 +92,9 @@ static const char* const riscv_pred_succ[16] = {
 #define EXTRACT_RVC_SDSP_IMM(x) \
   ((RV_X(x, 10, 3) << 3) | (RV_X(x, 7, 3) << 6))
 #define EXTRACT_RVC_B_IMM(x) \
-  ((RV_X(x, 3, 4) << 1) | (RV_X(x, 2, 1) << 5) | (RV_X(x, 10, 2) << 6) | (-RV_X(x, 12, 1) << 8))
+  ((RV_X(x, 3, 2) << 1) | (RV_X(x, 10, 2) << 3) | (RV_X(x, 2, 1) << 5) | (RV_X(x, 5, 2) << 6) | (-RV_X(x, 12, 1) << 8))
 #define EXTRACT_RVC_J_IMM(x) \
-  ((RV_X(x, 3, 4) << 1) | (RV_X(x, 2, 1) << 5) | (RV_X(x, 7, 5) << 6) | (-RV_X(x, 12, 1) << 11))
+  ((RV_X(x, 3, 3) << 1) | (RV_X(x, 11, 1) << 4) | (RV_X(x, 2, 1) << 5) | (RV_X(x, 7, 1) << 6) | (RV_X(x, 6, 1) << 7) | (RV_X(x, 9, 2) << 8) | (RV_X(x, 8, 1) << 10) | (-RV_X(x, 12, 1) << 11))
 
 #define ENCODE_ITYPE_IMM(x) \
   (RV_X(x, 0, 12) << 20)
@@ -122,12 +108,14 @@ static const char* const riscv_pred_succ[16] = {
   ((RV_X(x, 1, 10) << 21) | (RV_X(x, 11, 1) << 20) | (RV_X(x, 12, 8) << 12) | (RV_X(x, 20, 1) << 31))
 #define ENCODE_RVC_IMM(x) \
   ((RV_X(x, 0, 5) << 2) | (RV_X(x, 5, 1) << 12))
+#define ENCODE_RVC_LUI_IMM(x) \
+  ENCODE_RVC_IMM ((x) >> RISCV_IMM_BITS)
 #define ENCODE_RVC_SIMM3(x) \
   (RV_X(x, 0, 3) << 10)
 #define ENCODE_RVC_ADDI4SPN_IMM(x) \
   ((RV_X(x, 2, 1) << 6) | (RV_X(x, 3, 1) << 5) | (RV_X(x, 4, 2) << 11) | (RV_X(x, 6, 4) << 7))
 #define ENCODE_RVC_ADDI16SP_IMM(x) \
-  ((RV_X(x, 4, 1) << 6) | (RV_X(x, 5, 1) << 5) | (RV_X(x, 6, 3) << 2) | (RV_X(x, 9, 1) << 12))
+  ((RV_X(x, 4, 1) << 6) | (RV_X(x, 5, 1) << 2) | (RV_X(x, 6, 1) << 5) | (RV_X(x, 7, 2) << 3) | (RV_X(x, 9, 1) << 12))
 #define ENCODE_RVC_LW_IMM(x) \
   ((RV_X(x, 2, 1) << 6) | (RV_X(x, 3, 3) << 10) | (RV_X(x, 6, 1) << 5))
 #define ENCODE_RVC_LD_IMM(x) \
@@ -141,9 +129,9 @@ static const char* const riscv_pred_succ[16] = {
 #define ENCODE_RVC_SDSP_IMM(x) \
   ((RV_X(x, 3, 3) << 10) | (RV_X(x, 6, 3) << 7))
 #define ENCODE_RVC_B_IMM(x) \
-  ((RV_X(x, 1, 4) << 3) | (RV_X(x, 5, 1) << 2) | (RV_X(x, 6, 3) << 10))
+  ((RV_X(x, 1, 2) << 3) | (RV_X(x, 3, 2) << 10) | (RV_X(x, 5, 1) << 2) | (RV_X(x, 6, 2) << 5) | (RV_X(x, 8, 1) << 12))
 #define ENCODE_RVC_J_IMM(x) \
-  ((RV_X(x, 1, 4) << 3) | (RV_X(x, 5, 1) << 2) | (RV_X(x, 6, 6) << 7))
+  ((RV_X(x, 1, 3) << 3) | (RV_X(x, 4, 1) << 11) | (RV_X(x, 5, 1) << 2) | (RV_X(x, 6, 1) << 7) | (RV_X(x, 7, 1) << 6) | (RV_X(x, 8, 2) << 9) | (RV_X(x, 10, 1) << 8) | (RV_X(x, 11, 1) << 12))
 
 #define VALID_ITYPE_IMM(x) (EXTRACT_ITYPE_IMM(ENCODE_ITYPE_IMM(x)) == (x))
 #define VALID_STYPE_IMM(x) (EXTRACT_STYPE_IMM(ENCODE_STYPE_IMM(x)) == (x))
@@ -151,6 +139,7 @@ static const char* const riscv_pred_succ[16] = {
 #define VALID_UTYPE_IMM(x) (EXTRACT_UTYPE_IMM(ENCODE_UTYPE_IMM(x)) == (x))
 #define VALID_UJTYPE_IMM(x) (EXTRACT_UJTYPE_IMM(ENCODE_UJTYPE_IMM(x)) == (x))
 #define VALID_RVC_IMM(x) (EXTRACT_RVC_IMM(ENCODE_RVC_IMM(x)) == (x))
+#define VALID_RVC_LUI_IMM(x) (EXTRACT_RVC_LUI_IMM(ENCODE_RVC_LUI_IMM(x)) == (x))
 #define VALID_RVC_SIMM3(x) (EXTRACT_RVC_SIMM3(ENCODE_RVC_SIMM3(x)) == (x))
 #define VALID_RVC_ADDI4SPN_IMM(x) (EXTRACT_RVC_ADDI4SPN_IMM(ENCODE_RVC_ADDI4SPN_IMM(x)) == (x))
 #define VALID_RVC_ADDI16SP_IMM(x) (EXTRACT_RVC_ADDI16SP_IMM(ENCODE_RVC_ADDI16SP_IMM(x)) == (x))
@@ -185,7 +174,22 @@ static const char* const riscv_pred_succ[16] = {
 #define RISCV_PCREL_HIGH_PART(VALUE, PC) RISCV_CONST_HIGH_PART((VALUE) - (PC))
 #define RISCV_PCREL_LOW_PART(VALUE, PC) RISCV_CONST_LOW_PART((VALUE) - (PC))
 
-/* RV fields */
+#define RISCV_JUMP_BITS RISCV_BIGIMM_BITS
+#define RISCV_JUMP_ALIGN_BITS 1
+#define RISCV_JUMP_ALIGN (1 << RISCV_JUMP_ALIGN_BITS)
+#define RISCV_JUMP_REACH ((1ULL << RISCV_JUMP_BITS) * RISCV_JUMP_ALIGN)
+
+#define RISCV_IMM_BITS 12
+#define RISCV_BIGIMM_BITS (32 - RISCV_IMM_BITS)
+#define RISCV_IMM_REACH (1LL << RISCV_IMM_BITS)
+#define RISCV_BIGIMM_REACH (1LL << RISCV_BIGIMM_BITS)
+#define RISCV_RVC_IMM_REACH (1LL << 6)
+#define RISCV_BRANCH_BITS RISCV_IMM_BITS
+#define RISCV_BRANCH_ALIGN_BITS RISCV_JUMP_ALIGN_BITS
+#define RISCV_BRANCH_ALIGN (1 << RISCV_BRANCH_ALIGN_BITS)
+#define RISCV_BRANCH_REACH (RISCV_IMM_REACH * RISCV_BRANCH_ALIGN)
+
+/* RV fields.  */
 
 #define OP_MASK_OP		0x7f
 #define OP_SH_OP		0
@@ -212,34 +216,21 @@ static const char* const riscv_pred_succ[16] = {
 #define OP_MASK_RL		0x1
 #define OP_SH_RL		25
 
-#define OP_MASK_VRD		0x1f
-#define OP_SH_VRD		7
-#define OP_MASK_VRS		0x1f
-#define OP_SH_VRS		15
-#define OP_MASK_VRT		0x1f
-#define OP_SH_VRT		20
-#define OP_MASK_VRR		0x1f
-#define OP_SH_VRR		27
+#define OP_MASK_CUSTOM_IMM	0x7f
+#define OP_SH_CUSTOM_IMM	25
+#define OP_MASK_CSR		0xfff
+#define OP_SH_CSR		20
 
-#define OP_MASK_VFD		0x1f
-#define OP_SH_VFD		7
-#define OP_MASK_VFS		0x1f
-#define OP_SH_VFS		15
-#define OP_MASK_VFT		0x1f
-#define OP_SH_VFT		20
-#define OP_MASK_VFR		0x1f
-#define OP_SH_VFR		27
+/* RVC fields.  */
 
-#define OP_MASK_IMMNGPR         0x3f
-#define OP_SH_IMMNGPR           20
-#define OP_MASK_IMMNFPR         0x3f
-#define OP_SH_IMMNFPR           26
-#define OP_MASK_IMMSEGNELM      0x7
-#define OP_SH_IMMSEGNELM        29
-#define OP_MASK_CUSTOM_IMM      0x7f
-#define OP_SH_CUSTOM_IMM        25
-#define OP_MASK_CSR             0xfff
-#define OP_SH_CSR               20
+#define OP_MASK_CRS2 0x1f
+#define OP_SH_CRS2 2
+#define OP_MASK_CRS1S 0x7
+#define OP_SH_CRS1S 7
+#define OP_MASK_CRS2S 0x7
+#define OP_SH_CRS2S 2
+
+/* ABI names for selected x-registers.  */
 
 #define X_RA 1
 #define X_SP 2
@@ -252,23 +243,21 @@ static const char* const riscv_pred_succ[16] = {
 
 #define NGPR 32
 #define NFPR 32
-#define NVGPR 32
-#define NVFPR 32
 
-#define RISCV_JUMP_BITS RISCV_BIGIMM_BITS
-#define RISCV_JUMP_ALIGN_BITS 1
-#define RISCV_JUMP_ALIGN (1 << RISCV_JUMP_ALIGN_BITS)
-#define RISCV_JUMP_REACH ((1ULL<<RISCV_JUMP_BITS)*RISCV_JUMP_ALIGN)
+/* Replace bits MASK << SHIFT of STRUCT with the equivalent bits in
+   VALUE << SHIFT.  VALUE is evaluated exactly once.  */
+#define INSERT_BITS(STRUCT, VALUE, MASK, SHIFT) \
+  (STRUCT) = (((STRUCT) & ~((insn_t)(MASK) << (SHIFT))) \
+	      | ((insn_t)((VALUE) & (MASK)) << (SHIFT)))
 
-#define RISCV_IMM_BITS 12
-#define RISCV_BIGIMM_BITS (32-RISCV_IMM_BITS)
-#define RISCV_IMM_REACH (1LL<<RISCV_IMM_BITS)
-#define RISCV_BIGIMM_REACH (1LL<<RISCV_BIGIMM_BITS)
-#define RISCV_RVC_IMM_REACH (1LL<<6)
-#define RISCV_BRANCH_BITS RISCV_IMM_BITS
-#define RISCV_BRANCH_ALIGN_BITS RISCV_JUMP_ALIGN_BITS
-#define RISCV_BRANCH_ALIGN (1 << RISCV_BRANCH_ALIGN_BITS)
-#define RISCV_BRANCH_REACH (RISCV_IMM_REACH*RISCV_BRANCH_ALIGN)
+/* Extract bits MASK << SHIFT from STRUCT and shift them right
+   SHIFT places.  */
+#define EXTRACT_BITS(STRUCT, MASK, SHIFT) \
+  (((STRUCT) >> (SHIFT)) & (MASK))
+
+/* Extract the operand given by FIELD from integer INSN.  */
+#define EXTRACT_OPERAND(FIELD, INSN) \
+  EXTRACT_BITS ((INSN), OP_MASK_##FIELD, OP_SH_##FIELD)
 
 /* This structure holds information for a particular instruction.  */
 
@@ -276,7 +265,7 @@ struct riscv_opcode
 {
   /* The name of the instruction.  */
   const char *name;
-  /* The ISA subset name (I, M, A, F, D, Xextension). */
+  /* The ISA subset name (I, M, A, F, D, Xextension).  */
   const char *subset;
   /* A string describing the arguments for this instruction.  */
   const char *args;
@@ -291,27 +280,19 @@ struct riscv_opcode
      INSN_MACRO, then this field is the macro identifier.  */
   insn_t mask;
   /* A function to determine if a word corresponds to this instruction.
-     Usually, this computes ((word & mask) == match). */
-  int (*match_func)(const struct riscv_opcode *op, insn_t word);
+     Usually, this computes ((word & mask) == match).  */
+  int (*match_func) (const struct riscv_opcode *op, insn_t word);
   /* For a macro, this is INSN_MACRO.  Otherwise, it is a collection
      of bits describing the instruction, notably any relevant hazard
      information.  */
   unsigned long pinfo;
 };
 
-#define INSN_WRITE_GPR_D            0x00000001
-#define INSN_WRITE_GPR_RA           0x00000004
-#define INSN_WRITE_FPR_D            0x00000008
-#define INSN_READ_GPR_S             0x00000040
-#define INSN_READ_GPR_T             0x00000080
-#define INSN_READ_FPR_S             0x00000100
-#define INSN_READ_FPR_T             0x00000200
-#define INSN_READ_FPR_R        	    0x00000400
-/* Instruction is a simple alias (I.E. "move" for daddu/addu/or) */
-#define	INSN_ALIAS		    0x00001000
+/* Instruction is a simple alias (e.g. "mv" for "addi").  */
+#define	INSN_ALIAS		0x00000001
 /* Instruction is actually a macro.  It should be ignored by the
    disassembler, and requires special treatment by the assembler.  */
-#define INSN_MACRO                  0xffffffff
+#define INSN_MACRO		0xffffffff
 
 /* This is a list of macro expanded instructions.
 
@@ -345,7 +326,6 @@ enum
   M_CALL,
   M_J,
   M_LI,
-  M_VF,
   M_NUM_MACROS
 };
 
@@ -354,8 +334,6 @@ extern const char * const riscv_gpr_names_numeric[NGPR];
 extern const char * const riscv_gpr_names_abi[NGPR];
 extern const char * const riscv_fpr_names_numeric[NFPR];
 extern const char * const riscv_fpr_names_abi[NFPR];
-extern const char * const riscv_vec_gpr_names[NVGPR];
-extern const char * const riscv_vec_fpr_names[NVFPR];
 
 extern const struct riscv_opcode riscv_builtin_opcodes[];
 extern const int bfd_riscv_num_builtin_opcodes;

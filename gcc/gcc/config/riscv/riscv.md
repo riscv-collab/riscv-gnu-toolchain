@@ -64,11 +64,6 @@
 (define_attr "got" "unset,xgot_high,load"
   (const_string "unset"))
 
-;; For jal instructions, this attribute is DIRECT when the target address
-;; is symbolic and INDIRECT when it is a register.
-(define_attr "jal" "unset,direct,indirect"
-  (const_string "unset"))
-
 ;; Classification of moves, extensions and truncations.  Most values
 ;; are as for "type" (see below) but there are also the following
 ;; move-specific values:
@@ -83,9 +78,6 @@
 (define_attr "move_type"
   "unknown,load,fpload,store,fpstore,mtc,mfc,move,fmove,
    const,logical,arith,andi,shift_shift"
-  (const_string "unknown"))
-
-(define_attr "alu_type" "unknown,add,sub,and,or,xor"
   (const_string "unknown"))
 
 ;; Main data type used by the insn
@@ -109,10 +101,8 @@
 ;; call		unconditional call
 ;; load		load instruction(s)
 ;; fpload	floating point load
-;; fpidxload    floating point indexed load
 ;; store	store instruction(s)
 ;; fpstore	floating point store
-;; fpidxstore	floating point indexed store
 ;; mtc		transfer to coprocessor
 ;; mfc		transfer from coprocessor
 ;; const	load constant
@@ -135,15 +125,10 @@
 ;; nop		no operation
 ;; ghost	an instruction that produces no real code
 (define_attr "type"
-  "unknown,branch,jump,call,load,fpload,fpidxload,store,fpstore,fpidxstore,
+  "unknown,branch,jump,call,load,fpload,store,fpstore,
    mtc,mfc,const,arith,logical,shift,slt,imul,idiv,move,fmove,fadd,fmul,
    fmadd,fdiv,fcmp,fcvt,fsqrt,multi,nop,ghost"
-  (cond [(eq_attr "jal" "!unset") (const_string "call")
-	 (eq_attr "got" "load") (const_string "load")
-
-	 (eq_attr "alu_type" "add,sub") (const_string "arith")
-
-	 (eq_attr "alu_type" "and,or,xor") (const_string "logical")
+  (cond [(eq_attr "got" "load") (const_string "load")
 
 	 ;; If a doubleword move uses these expensive instructions,
 	 ;; it is usually better to schedule them in the same way
@@ -209,14 +194,14 @@
 	  ;;   auipc t0, %pcrel_hi(target)
 	  ;;   jalr  ra, t0, %lo(target)
 	  ;; The linker will relax these into JAL when appropriate.
-	  (eq_attr "type" "call")
-	  (const_int 8)
+	  (eq_attr "type" "call") (const_int 8)
 
 	  ;; "Ghost" instructions occupy no space.
-	  (eq_attr "type" "ghost")
-	  (const_int 0)
+	  (eq_attr "type" "ghost") (const_int 0)
 
 	  (eq_attr "got" "load") (const_int 8)
+
+	  (eq_attr "type" "fcmp") (const_int 8)
 
 	  ;; SHIFT_SHIFTs are decomposed into two separate instructions.
 	  (eq_attr "move_type" "shift_shift")
@@ -383,28 +368,11 @@
 			(plus "add")
 			(minus "sub")])
 
-;; Pipeline descriptions.
-;;
-;; generic.md provides a fallback for processors without a specific
-;; pipeline description.  It is derived from the old define_function_unit
-;; version and uses the "alu" and "imuldiv" units declared below.
-;;
-;; Some of the processor-specific files are also derived from old
-;; define_function_unit descriptions and simply override the parts of
-;; generic.md that don't apply.  The other processor-specific files
-;; are self-contained.
-(define_automaton "alu,imuldiv")
-
-(define_cpu_unit "alu" "alu")
-(define_cpu_unit "imuldiv" "imuldiv")
-
 ;; Ghost instructions produce no real code and introduce no hazards.
 ;; They exist purely to express an effect on dataflow.
 (define_insn_reservation "ghost" 0
   (eq_attr "type" "ghost")
   "nothing")
-
-(include "generic.md")
 
 ;;
 ;;  ....................
@@ -1455,7 +1423,7 @@
 		  (match_operand:P 2 "immediate_operand" "")))]
   ""
   "add\t%0,%1,%R2"
-  [(set_attr "alu_type" "add")
+  [(set_attr "type" "arith")
    (set_attr "mode" "<MODE>")])
 
 ;; Allow combine to split complex const_int load sequences, using operand 2
@@ -2031,7 +1999,11 @@
 	      [(match_operand:SCALARF 2 "register_operand" "f")
 	       (match_operand:SCALARF 3 "register_operand" "f")]))]
   "TARGET_HARD_FLOAT"
-  "f%C1.<fmt>\t%0,%2,%3"
+{
+  if (GET_CODE (operands[1]) == NE)
+    return "feq.<fmt>\t%0,%2,%3; seqz %0, %0";
+  return "f%C1.<fmt>\t%0,%2,%3";
+}
   [(set_attr "type" "fcmp")
    (set_attr "mode" "<UNITMODE>")])
 
@@ -2350,7 +2322,7 @@
   { return REG_P (operands[0]) ? "jalr\t%0"
 	   : absolute_symbolic_operand (operands[0], VOIDmode) ? "call\t%0"
 	   : "call\t%0@"; }
-  [(set_attr "jal" "indirect,direct")])
+  [(set_attr "type" "call")])
 
 (define_expand "call_value"
   [(parallel [(set (match_operand 0 "")
@@ -2373,7 +2345,7 @@
   { return REG_P (operands[1]) ? "jalr\t%1"
 	   : absolute_symbolic_operand (operands[1], VOIDmode) ? "call\t%1"
 	   : "call\t%1@"; }
-  [(set_attr "jal" "indirect,direct")])
+  [(set_attr "type" "call")])
 
 ;; See comment for call_internal.
 (define_insn "call_value_multiple_internal"
@@ -2388,7 +2360,7 @@
   { return REG_P (operands[1]) ? "jalr\t%1"
 	   : absolute_symbolic_operand (operands[1], VOIDmode) ? "call\t%1"
 	   : "call\t%1@"; }
-  [(set_attr "jal" "indirect,direct")])
+  [(set_attr "type" "call")])
 
 ;; Call subroutine returning any type.
 
@@ -2446,3 +2418,4 @@
 
 (include "sync.md")
 (include "peephole.md")
+(include "generic.md")
