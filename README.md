@@ -14,7 +14,7 @@ executing the following command should suffice:
 
 On Fedora/CentOS/RHEL OS, executing the following command should suffice:
 
-    $ sudo yum install autoconf automake autotools-devel libmpc-devel mpfr-devel gmp-devel gawk  bison flex texinfo patchutils gcc 
+    $ sudo yum install autoconf automake libmpc-devel mpfr-devel gmp-devel gawk  bison flex texinfo patchutils gcc gcc-c++
 
 On OS X, you can use [Homebrew](http://brew.sh) to install the dependencies:
 
