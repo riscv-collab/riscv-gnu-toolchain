@@ -125,7 +125,7 @@ riscv_add_subset (const char *subset)
 {
   struct riscv_subset *s = xmalloc (sizeof *s);
   s->name = xstrdup (subset);
-  s->version_major = 1;
+  s->version_major = 2;
   s->version_minor = 0;
   s->next = riscv_subsets;
   riscv_subsets = s;
