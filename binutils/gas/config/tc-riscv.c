@@ -1390,7 +1390,8 @@ rvc_imm_done:
 		case 'L':
 		  if (my_getSmallExpression (imm_expr, imm_reloc, s, p)
 		      || imm_expr->X_op != O_constant
-		      || !VALID_RVC_ADDI16SP_IMM (imm_expr->X_add_number))
+		      || !VALID_RVC_ADDI16SP_IMM (imm_expr->X_add_number)
+		      || imm_expr->X_add_number == 0)
 		    break;
 		  ip->insn_opcode |=
 		    ENCODE_RVC_ADDI16SP_IMM (imm_expr->X_add_number);
