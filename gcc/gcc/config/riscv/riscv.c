@@ -2837,7 +2837,6 @@ riscv_memory_model_suffix (enum memmodel model)
       case MEMMODEL_RELAXED:
 	return "";
       default:
-        fprintf(stderr, "riscv_memory_model_suffix(%ld)\n", model);
         gcc_unreachable();
     }
 }
