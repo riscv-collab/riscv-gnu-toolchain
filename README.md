@@ -30,6 +30,11 @@ upstream sources exists in $(DISTDIR), it will be used; the default location
 is /var/cache/distfiles.  Your computer will need about 8 GiB of disk space to
 complete the process.
 
+### Installation (FreeBSD)
+
+    ./configure --prefix=/opt/riscv
+    gmake freebsd
+
 ### Installation (Newlib)
 
 To build the Newlib cross-compiler, pick an install path.  If you choose,

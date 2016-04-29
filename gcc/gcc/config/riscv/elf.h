@@ -18,6 +18,14 @@ You should have received a copy of the GNU General Public License
 along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
+/*
+ * Temporary FreeBSD hack
+ */
+#define TARGET_OS_CPP_BUILTINS()                                \
+  do {                                                          \
+    builtin_define_with_int_value ("__FreeBSD__", 11);          \
+  } while (0)
+
 /* Leave the linker script to choose the appropriate libraries.  */
 #undef  LIB_SPEC
 #define LIB_SPEC ""
