@@ -35,7 +35,7 @@ along with GCC; see the file COPYING3.  If not see
 #undef SUBTARGET_CPP_SPEC
 #define SUBTARGET_CPP_SPEC "%{posix:-D_POSIX_SOURCE} %{pthread:-D_REENTRANT}"
 
-#define GLIBC_DYNAMIC_LINKER "/lib/ld.so.1"
+#define GLIBC_DYNAMIC_LINKER "/lib/ld-linux-riscv32ifd_ilp32.so.1"
 
 /* Borrowed from sparc/linux.h */
 #undef LINK_SPEC

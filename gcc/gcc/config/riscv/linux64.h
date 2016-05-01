@@ -27,8 +27,8 @@ along with GCC; see the file COPYING3.  If not see
 %{!shared: \
   %{profile:-lc_p} %{!profile:-lc}}"
 
-#define GLIBC_DYNAMIC_LINKER32 "/lib32/ld.so.1"
-#define GLIBC_DYNAMIC_LINKER64 "/lib/ld.so.1"
+#define GLIBC_DYNAMIC_LINKER32 "/lib/ld-linux-riscv64ifd_ilp32.so.1"
+#define GLIBC_DYNAMIC_LINKER64 "/lib/ld-linux-riscv64ifd_lp64.so.1"
 
 #undef LINK_SPEC
 #define LINK_SPEC "\
