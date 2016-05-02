@@ -80,6 +80,9 @@ along with GCC; see the file COPYING3.  If not see
 #include "cfgcleanup.h"
 #include "predict.h"
 #include "basic-block.h"
+#include "bitmap.h"
+#include "regset.h"
+#include "df.h"
 #include "sched-int.h"
 #include "tree-ssa-alias.h"
 #include "internal-fn.h"
@@ -89,7 +92,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "is-a.h"
 #include "gimple.h"
 #include "gimplify.h"
-#include "bitmap.h"
 #include "diagnostic.h"
 #include "target-globals.h"
 #include "opts.h"
@@ -957,7 +959,7 @@ riscv_emit_move (rtx dest, rtx src)
 static void
 riscv_emit_binary (enum rtx_code code, rtx target, rtx op0, rtx op1)
 {
-  emit_insn (gen_rtx_SET (VOIDmode, target,
+  emit_insn (gen_rtx_SET (target,
 			  gen_rtx_fmt_ee (code, GET_MODE (target), op0, op1)));
 }
 
@@ -1271,7 +1273,7 @@ riscv_move_integer (rtx temp, rtx dest, HOST_WIDE_INT value)
         {
           if (!can_create_pseudo_p ())
             {
-              emit_insn (gen_rtx_SET (VOIDmode, temp, x));
+              emit_insn (gen_rtx_SET (temp, x));
               x = temp;
             }
           else
@@ -1281,7 +1283,7 @@ riscv_move_integer (rtx temp, rtx dest, HOST_WIDE_INT value)
         }
     }
 
-  emit_insn (gen_rtx_SET (VOIDmode, dest, x));
+  emit_insn (gen_rtx_SET (dest, x));
 }
 
 /* Subroutine of riscv_legitimize_move.  Move constant SRC into register
@@ -1303,7 +1305,7 @@ riscv_legitimize_const_move (enum machine_mode mode, rtx dest, rtx src)
   /* Split moves of symbolic constants into high/low pairs.  */
   if (riscv_split_symbol (dest, src, MAX_MACHINE_MODE, &src))
     {
-      emit_insn (gen_rtx_SET (VOIDmode, dest, src));
+      emit_insn (gen_rtx_SET (dest, src));
       return;
     }
 
@@ -1453,10 +1455,10 @@ riscv_zero_extend_cost (enum machine_mode mode, rtx op)
 /* Implement TARGET_RTX_COSTS.  */
 
 static bool
-riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
+riscv_rtx_costs (rtx x, machine_mode mode, int outer_code, int opno ATTRIBUTE_UNUSED,
 		 int *total, bool speed)
 {
-  enum machine_mode mode = GET_MODE (x);
+  int code = GET_CODE(x);
   bool float_mode_p = FLOAT_MODE_P (mode);
   int cost;
 
@@ -1515,7 +1517,7 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
       return false;
 
     case LO_SUM:
-      *total = set_src_cost (XEXP (x, 0), speed);
+      *total = set_src_cost (XEXP (x, 0), mode, speed);
       return true;
 
     case LT:
@@ -1551,17 +1553,17 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
 	  if (GET_CODE (op0) == MULT && GET_CODE (XEXP (op0, 0)) == NEG)
 	    {
 	      *total = (tune_info->fp_mul[mode == DFmode]
-			+ set_src_cost (XEXP (XEXP (op0, 0), 0), speed)
-			+ set_src_cost (XEXP (op0, 1), speed)
-			+ set_src_cost (op1, speed));
+			+ set_src_cost (XEXP (XEXP (op0, 0), 0), mode, speed)
+			+ set_src_cost (XEXP (op0, 1), mode, speed)
+			+ set_src_cost (op1, mode, speed));
 	      return true;
 	    }
 	  if (GET_CODE (op1) == MULT)
 	    {
 	      *total = (tune_info->fp_mul[mode == DFmode]
-			+ set_src_cost (op0, speed)
-			+ set_src_cost (XEXP (op1, 0), speed)
-			+ set_src_cost (XEXP (op1, 1), speed));
+			+ set_src_cost (op0, mode, speed)
+			+ set_src_cost (XEXP (op1, 0), mode, speed)
+			+ set_src_cost (XEXP (op1, 1), mode, speed));
 	      return true;
 	    }
 	}
@@ -1586,9 +1588,9 @@ riscv_rtx_costs (rtx x, int code, int outer_code, int opno ATTRIBUTE_UNUSED,
 	      && GET_CODE (XEXP (op, 0)) == MULT)
 	    {
 	      *total = (tune_info->fp_mul[mode == DFmode]
-			+ set_src_cost (XEXP (XEXP (op, 0), 0), speed)
-			+ set_src_cost (XEXP (XEXP (op, 0), 1), speed)
-			+ set_src_cost (XEXP (op, 1), speed));
+			+ set_src_cost (XEXP (XEXP (op, 0), 0), mode, speed)
+			+ set_src_cost (XEXP (XEXP (op, 0), 1), mode, speed)
+			+ set_src_cost (XEXP (op, 1), mode, speed));
 	      return true;
 	    }
 	}
@@ -2853,6 +2855,7 @@ riscv_memory_model_suffix (enum memmodel model)
 static void
 riscv_print_operand (FILE *file, rtx op, int letter)
 {
+  enum machine_mode mode = GET_MODE(op);
   enum rtx_code code;
 
   gcc_assert (op);
@@ -2894,7 +2897,7 @@ riscv_print_operand (FILE *file, rtx op, int letter)
 	  else if (letter && letter != 'z')
 	    output_operand_lossage ("invalid use of '%%%c'", letter);
 	  else
-	    output_address (XEXP (op, 0));
+	    output_address (mode, XEXP (op, 0));
 	  break;
 
 	default:
@@ -2912,7 +2915,7 @@ riscv_print_operand (FILE *file, rtx op, int letter)
 /* Implement TARGET_PRINT_OPERAND_ADDRESS.  */
 
 static void
-riscv_print_operand_address (FILE *file, rtx x)
+riscv_print_operand_address (FILE *file, machine_mode mode ATTRIBUTE_UNUSED, rtx x)
 {
   struct riscv_address_info addr;
 
@@ -3034,7 +3037,7 @@ riscv_frame_set (rtx mem, rtx reg)
 {
   rtx set;
 
-  set = gen_rtx_SET (VOIDmode, mem, reg);
+  set = gen_rtx_SET (mem, reg);
   RTX_FRAME_RELATED_P (set) = 1;
 
   return set;
@@ -3408,7 +3411,7 @@ riscv_expand_prologue (void)
 
 	  /* Describe the effect of the previous instructions.  */
 	  insn = plus_constant (Pmode, stack_pointer_rtx, -size);
-	  insn = gen_rtx_SET (VOIDmode, stack_pointer_rtx, insn);
+	  insn = gen_rtx_SET (stack_pointer_rtx, insn);
 	  riscv_set_frame_expr (insn);
 	}
     }
