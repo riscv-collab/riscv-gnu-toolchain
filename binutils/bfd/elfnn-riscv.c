@@ -41,10 +41,10 @@
 #define RISCV_ELF_WORD_BYTES (1 << RISCV_ELF_LOG_WORD_BYTES)
 
 /* The name of the dynamic interpreter.  This is put in the .interp
-   section.  */
+   section.  GCC always overrides these paths.  */
 
-#define ELF64_DYNAMIC_INTERPRETER "/lib/ld.so.1"
-#define ELF32_DYNAMIC_INTERPRETER "/lib32/ld.so.1"
+#define ELF64_DYNAMIC_INTERPRETER "/lib/ld-linux-riscv64ifd_lp64.so.1"
+#define ELF32_DYNAMIC_INTERPRETER "/lib/ld-linux-riscv32ifd_ilp32.so.1"
 
 #define ELF_ARCH			bfd_arch_riscv
 #define ELF_TARGET_ID			RISCV_ELF_DATA
