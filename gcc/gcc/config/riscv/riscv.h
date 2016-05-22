@@ -1017,7 +1017,7 @@ while (0)
 
 /* The maximum number of bytes that can be copied by one iteration of
    a movmemsi loop; see riscv_block_move_loop.  */
-#define RISCV_MAX_MOVE_BYTES_PER_LOOP_ITER (UNITS_PER_WORD * 4)
+#define RISCV_MAX_MOVE_BYTES_PER_LOOP_ITER 32
 
 /* The maximum number of bytes that can be copied by a straight-line
    implementation of movmemsi; see riscv_block_move_straight.  We want
