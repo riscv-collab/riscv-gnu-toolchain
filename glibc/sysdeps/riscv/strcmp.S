@@ -54,10 +54,18 @@ ENTRY(strcmp)
   .endm
 
 .Lloop:
-  # examine full words
+  # examine full words at a time, favoring strings of a couple dozen chars
+#ifdef __riscv32
+  check_one_word 0 5
+  check_one_word 1 5
+  check_one_word 2 5
+  check_one_word 3 5
+  check_one_word 4 5
+#else
   check_one_word 0 3
   check_one_word 1 3
   check_one_word 2 3
+#endif
   # backwards branch to .Lloop contained above
 
 .Lmismatch:
@@ -108,9 +116,17 @@ ENTRY(strcmp)
   ret
 
   # cases in which a null byte was detected
-  foundnull 0, 3
-  foundnull 1, 3
-  foundnull 2, 3
+#ifdef __riscv32
+  foundnull 0 5
+  foundnull 1 5
+  foundnull 2 5
+  foundnull 3 5
+  foundnull 4 5
+#else
+  foundnull 0 3
+  foundnull 1 3
+  foundnull 2 3
+#endif
 
 END(strcmp)
 
