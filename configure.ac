@@ -2,6 +2,7 @@ AC_INIT(riscv-toolchain, 1.0)
 
 AC_PROG_CC
 AC_PROG_FGREP
+AC_PROG_GREP
 
 AC_PATH_PROG([BASH], [bash],
 	[AC_MSG_ERROR([bash not found])])
@@ -56,13 +57,6 @@ AC_ARG_WITH(xlen,
 	AC_SUBST(XLEN, 64)
 	)
 
-AC_ARG_WITH(arch,
-	[AS_HELP_STRING([--with-arch=IMAFD],
-		[Sets the base RISC-V ISA, defaults to IMAFD])],
-	AC_SUBST(WITH_ARCH, --with-arch=$withval),
-	AC_SUBST(WITH_ARCH,)
-	)
-
 AC_ARG_ENABLE(atomic,
 	[AS_HELP_STRING([--disable-atomic],
 		[disable use of atomic memory instructions in glibc @<:@--enable-atomic@:>@])],
@@ -70,16 +64,45 @@ AC_ARG_ENABLE(atomic,
 	[enable_atomic=yes]
 	)
 
-AS_IF([test "x$enable_atomic" != xno],
-        [],
-	[AC_SUBST(atomic_cflags,-mno-atomic)])
-
 AC_ARG_ENABLE(float,
 	[AS_HELP_STRING([--disable-float],
 		[use software floating point in glibc @<:@--enable-float@:>@])],
 	[],
 	[enable_float=yes]
 	)
+
+AC_DEFUN([MATCH_PATTERN], [echo "$1" | $GREP -qE "$2"])
+
+AC_DEFUN([GENERATE_EXTENSION],
+	[AS_IF([MATCH_PATTERN([$1], [^RV(32|64).*$2])],
+		[$3=yes],
+		[$3=no])]
+	)
+
+AC_DEFUN([PARSE_EXTENSIONS],
+	[GENERATE_EXTENSION([$1], A, enable_atomic)
+	 GENERATE_EXTENSION([$1], F, enable_float)]
+	)
+
+AC_DEFUN([PARSE_BASE_ARCH],
+	[AS_IF([MATCH_PATTERN([$1], [^RV32])],
+		AC_SUBST(XLEN, 32))
+	 AS_IF([MATCH_PATTERN([$1], [^RV64])],
+		AC_SUBST(XLEN, 64))]
+	)
+
+AC_ARG_WITH(arch,
+	[AS_HELP_STRING([--with-arch=RV64IMAFD],
+		[Sets the base RISC-V ISA, defaults to RV64IMAFD])],
+	[PARSE_BASE_ARCH([$withval])
+	 PARSE_EXTENSIONS([$withval])
+	 AC_SUBST(WITH_ARCH, --with-arch=$withval)],
+	[]
+	)
+
+AS_IF([test "x$enable_atomic" != xno],
+        [],
+	[AC_SUBST(atomic_cflags,-mno-atomic)])
 
 AS_IF([test "x$enable_float" != xno],
 	    [AC_SUBST(float_cflags,-mhard-float)dnl
