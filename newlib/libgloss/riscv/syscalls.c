@@ -445,7 +445,7 @@ void* sbrk(ptrdiff_t incr)
     return (void*)-1;
 
   heap_end += incr;
-  return heap_end - incr;
+  return (void*)(heap_end - incr);
 }
 
 //------------------------------------------------------------------------
