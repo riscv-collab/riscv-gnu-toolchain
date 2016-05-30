@@ -19,8 +19,7 @@
 #include <sysdeps/generic/ldconfig.h>
 
 #define SYSDEP_KNOWN_INTERPRETER_NAMES \
-  { "/lib/ld-linux-riscv64ifd_ilp32.so.1", FLAG_ELF_LIBC6 }, \
-  { "/lib/ld-linux-riscv64ifd_lp64.so.1", FLAG_ELF_LIBC6 }, \
+  { "/lib/ld-linux-riscv32ifd_ilp32.so.1", FLAG_ELF_LIBC6 }, \
   { "/lib32/ld.so.1", FLAG_ELF_LIBC6 }, \
   { "/lib/ld.so.1", FLAG_ELF_LIBC6 },
 #define SYSDEP_KNOWN_LIBRARY_NAMES \
