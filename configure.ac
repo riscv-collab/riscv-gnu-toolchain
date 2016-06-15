@@ -33,7 +33,7 @@ AS_IF([test x"$need_gcc_external_libraries" != xno],
 AC_PATH_PROG([CURL], [curl], [no])
 AC_PATH_PROG([WGET], [wget], [no])
 AC_PATH_PROG([FTP], [ftp], [no])
-AS_IF([test x"$CURL" != xno], [FETCHER="$CURL -L -o - --ftp-pasv"],
+AS_IF([test x"$CURL" != xno], [FETCHER="$CURL -L -o - --ftp-pasv --retry 10"],
 	[test x"$WGET" != xno], [FETCHER="$WGET -O -"],
 	[test x"$FTP" != xno], [FETCHER="$FTP -o - -p"],
 	[AC_MSG_ERROR([no file transfer utility found])])
