@@ -5,6 +5,20 @@ This is the RISC-V C and C++ cross-compiler. It supports two build modes:
 a generic ELF/Newlib toolchain and a more sophisticated Linux-ELF/glibc
 toolchain.
 
+###  Getting the sources
+
+This repository uses submodules. You need the --recursive option to fetch the submodules automatically
+
+    $ git clone --recursive https://github.com/riscv/riscv-gnu-toolchain
+    
+Alternatively :
+
+    $ git clone https://github.com/riscv/riscv-gnu-toolchain
+    $ cd riscv-gnu-toolchain
+    $ git submodule update --init --recursive
+    
+    
+
 ### Prerequisites
 
 Several standard packages are needed to build the toolchain.  On Ubuntu,
