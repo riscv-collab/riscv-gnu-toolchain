@@ -1,0 +1,203 @@
+# Copyright (C) 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2001
+# 2002, 2003, 2005, 2006, 2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+#
+# This file is part of DejaGnu.
+#
+# DejaGnu is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# DejaGnu is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with DejaGnu; if not, write to the Free Software Foundation,
+# Inc., 51 Franklin Street - Fifth Floor, Boston, MA 02110-1301, USA.
+
+# This file was written by Rob Savoye <rob@welcomehome.org>.
+
+# A hairy pattern to recognize text.
+set text "\[- A-Za-z0-9\.\;\"\_\:\'\`\(\)\!\#\=\+\?\&\*<>]"
+
+set SIZE size
+if { [which $SIZE] == 0 } {
+    perror "Can't find $SIZE."
+}
+
+# Get the size of the various section in OBJECT.
+proc exe_size {object} {
+    global SIZE
+
+    # Make sure size exists
+    if { [which $SIZE] == 0 } {
+	return [list "-1" "Can't find $SIZE."]
+    } else {
+	verbose "Using $SIZE for \"size\" program." 2
+    }
+    set status [catch "exec $SIZE -V" output]
+    if {[regexp "GNU size" $output] == 0} {
+	perror "Need GNU size from the binutils" 0
+	return [list "-1" "Need GNU size."]
+    }
+
+    # Get the object size. We pass -x, to force hex output
+    verbose "Getting the object file size for $object" 2
+    set status [catch "exec $SIZE -x $object" output]
+    verbose -log "Size of $object is\n$output" 2
+
+    # Remove the header line from the size output. This currently only
+    # works with GNU size
+    regsub "text.*filename\[\r\n\]*" $output "" output
+
+    # look for the size of the .text section
+    regexp "\[\r\n\]*0x\[0-9a-fA-F\]*" $output text
+    regsub "\[\r\n\]*0x\[0-9a-fA-F\]*\[ \t\]*" $output "" output
+
+    # look for the size of the .data section
+    regexp "0x\[0-9a-fA-F\]*\[ \t\]*" $output data
+    regsub "0x\[0-9a-fA-F\]*\[ \t\]*" $output "" output
+
+    # Values returns as hex
+    return [list $text $data]
+}
+
+# Run the host's native compiler, not the cross one. Filter out the
+# warnings and other extraneous stuff.
+#    Returns:
+#	A "" (empty) string if everything worked, or the
+#       output if there was a problem.
+#
+proc host_compile {compline} {
+    global INCLUDES
+    global LIBS
+    global CXX, CC
+
+    # execute the compiler
+    verbose "Compiling for the host using: $CC $INCLUDES $LIBS $compline" 2
+    set status [catch "exec $CC $INCLUDES $LIBS $compline" comp_output]
+    verbose "Compiler returned $comp_output" 2
+
+    # prune common warnings and other stuff we can safely ignore
+    set comp_output [prune_warnings $comp_output]
+
+    # Trim multiple CR/LF pairs out to keep things consistent
+    regsub "^\[\r\n\]+" $comp_output "" comp_output
+
+    # if we got a compiler error, log it
+    if { [lindex $status 0] != 0 } {
+	verbose -log "compiler exited with status [lindex $status 0]"
+    }
+    if { [lindex $status 1] != "" } {
+	verbose -log "output is:\n[lindex $status 1]" 2
+    }
+
+    # return the filtered output
+    return ${comp_output}
+}
+
+# Execute the executable file, and analyse the output for the test
+# state keywords.
+#    Returns:
+#	A "" (empty) string if everything worked, or an error message
+#	if there was a problem.
+#
+proc host_execute {args} {
+    global text
+
+    set timeoutmsg "Timed out: Never got started, "
+    set timeout 100
+    set file all
+    set timetol 0
+    set arguments ""
+
+    if { [llength $args] == 0} {
+	set executable $args
+    } else {
+	set executable [string trimleft [lindex [split $args " "] 0] "\{"]
+	set params [string trimleft [lindex [split $args " "] 1] "\{"]
+	set params [string trimright $params "\}"]
+    }
+
+    verbose "The executable is $executable" 2
+    if {![file exists ${executable}]} {
+	perror "The executable, \"$executable\" is missing" 0
+	return "No source file found"
+    }
+
+    # spawn the executable and look for the DejaGnu output messages from the
+    # test case.
+    # spawn -noecho -open [open "|./${executable}" "r"]
+    spawn -noecho "./${executable}" ${params}
+    set prefix "\[^\r\n\]*"
+    expect {
+	-re "^$prefix\[0-9\]\[0-9\]:..:..:${text}*\r\n" {
+	    regsub "\[\n\r\t\]*NOTE: $text\r\n" $expect_out(0,string) "" output
+	    verbose "$output" 3
+	    set timetol 0
+	    exp_continue
+	}
+	-re "^$prefix\tNOTE:${text}*" {
+	    regsub "\[\n\r\t\]*NOTE: $text\r\n" $expect_out(0,string) "" output
+	    set output [string range $output 6 end]
+	    verbose "$output" 2
+	    set timetol 0
+	    exp_continue
+	}
+	-re "^$prefix\tPASSED:${text}*" {
+	    regsub "\[\n\r\t\]*PASSED: $text\r\n" $expect_out(0,string) "" output
+	    set output [string range $output 8 end]
+	    pass "$output"
+	    set timetol 0
+	    exp_continue
+	}
+	-re "^$prefix\tFAILED:${text}*" {
+	    regsub "\[\n\r\t\]*FAILED: $text\r\n" $expect_out(0,string) "" output
+	    set output [string range $output 8 end]
+	    fail "$output"
+	    set timetol 0
+	    exp_continue
+	}
+	-re "^$prefix\tUNTESTED:${text}*" {
+	    regsub "\[\n\r\t\]*TESTED: $text\r\n" $expect_out(0,string) "" output
+	    set output [string range $output 8 end]
+	    untested "$output"
+	    set timetol 0
+	    exp_continue
+	}
+	-re "^$prefix\tUNRESOLVED:${text}*" {
+	    regsub "\[\n\r\t\]*UNRESOLVED: $text\r\n" $expect_out(0,string) "" output
+	    set output [string range $output 8 end]
+	    unresolved "$output"
+	    set timetol 0
+	    exp_continue
+	}
+	-re "^Totals" {
+	    verbose "All done" 2
+	}
+	eof {
+	    #	    unresolved "${executable} died prematurely"
+	    #	    catch close
+	    #	    return "${executable} died prematurely"
+	}
+	timeout {
+	    warning "Timed out executing test case"
+	    if { $timetol <= 2 } {
+		incr timetol
+		exp_continue
+	    } else {
+		catch close
+		return "Timed out executing test case"
+	    }
+	}
+	-re "^$prefix\r\n" {
+	    exp_continue
+	}
+    }
+
+    # force a close of the executable to be safe.
+    catch close
+    return ""
+}

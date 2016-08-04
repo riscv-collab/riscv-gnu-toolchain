@@ -1,0 +1,238 @@
+# Copyright (C) 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2001
+# 2002, 2003, 2005, 2006, 2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+#
+# This file is part of DejaGnu.
+#
+# DejaGnu is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# DejaGnu is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with DejaGnu; if not, write to the Free Software Foundation,
+# Inc., 51 Franklin Street - Fifth Floor, Boston, MA 02110-1301, USA.
+
+# Open an FTP connection to HOST.
+#
+proc ftp_open {host} {
+    set prompt "ftp>"
+    global board_info
+
+    if {[board_info $host exists name]} {
+	set host [board_info $host name]
+    }
+
+    if {[board_info $host exists ftp_fileid]} {
+	return [board_info $host ftp_fileid]
+    }
+
+    if {[board_info $host exists hostname]} {
+	set remotehost [board_info $host hostname]
+    } else {
+	set remotehost $host
+    }
+
+    # LoseQVT tends to get stuck sometimes; we'll loop around a few million
+    # times when it gets a "connection refused".
+    set spawn_id -1
+    set count 3
+    while {$spawn_id < 0 && $count >= 0} {
+	spawn ftp -n $remotehost
+	expect {
+	    -i $spawn_id -re ".*220.*$prompt" { }
+	    -i $spawn_id -re ".*Connection refused.*$prompt" {
+		sleep 2
+		send "open $remotehost\n"
+		exp_continue
+	    }
+	    -i $spawn_id default {
+		close -i $spawn_id
+		wait -i $spawn_id
+		set spawn_id -1
+	    }
+	}
+	incr count -1
+    }
+    if {$spawn_id < 0} {
+	return -1
+    }
+    set board_info($host,ftp_fileid) $spawn_id
+    if {[board_info $host exists ftp_username]} {
+	if {[board_info $host exists ftp_password]} {
+	    set command "user [board_info $host ftp_username] [board_info $host ftp_password]\n"
+	} else {
+	    set command "user [board_info $host ftp_username]\n"
+	}
+	send "$command"
+	expect {
+	    -i $spawn_id -re ".*230.*$prompt" { }
+	    -i $spawn_id default {
+		close -i $spawn_id
+		wait -i $spawn_id
+		return -1
+	    }
+	}
+    }
+    set timeout 15
+    send -i $spawn_id "binary\n"
+    expect {
+	-i $spawn_id -re "200.*$prompt" { }
+	-i $spawn_id timeout {
+	    close -i $spawn_id
+	    wait -i $spawn_id
+	    return -1
+	}
+    }
+    if {[board_info $host exists ftp_directory]} {
+	send "cd [board_info $host ftp_directory]\n"
+	expect {
+	    -i $spawn_id -re "250.*$prompt" { }
+	    -i $spawn_id default {
+		close -i $spawn_id
+		wait -i $spawn_id
+		return -1
+	    }
+	}
+    }
+
+    if {[board_info $host exists ftp_no_passive]} {
+	send "passive\n"
+	expect {
+	    -i $spawn_id -re "Passive mode off.*$prompt" { }
+	    -i $spawn_id -re "Passive mode on.*$prompt" {
+		send "passive\n"
+		exp_continue
+	    }
+	    -i $spawn_id -re ".*$prompt" { }
+	}
+    }
+
+    set board_info($host,ftp_fileid) $spawn_id
+    return $spawn_id
+}
+
+# Fetch REMOTEFILE from HOST and store it as LOCALFILE.
+#
+proc ftp_upload {host remotefile localfile} {
+    set prompt "ftp>"
+
+    verbose "ftping $remotefile from $host to $localfile"
+    set timeout 15
+    set spawn_id [ftp_open $host]
+    if {$spawn_id < 0} {
+	return ""
+    }
+    set loop 1
+
+    while {$loop} {
+	send -i $spawn_id "get $remotefile $localfile\n"
+	expect {
+	    -i $spawn_id -re ".*Too many open files.*$prompt" {
+		ftp_close $host
+	    }
+	    -i $spawn_id -re ".*No such file or directory.*$prompt" {
+		set loop 0
+		set remotefile ""
+	    }
+	    -i $spawn_id -re "(^|\[\r\n\])226.*$prompt" {set loop 0}
+	    -i $spawn_id -re "(^|\[\r\n\])\[0-9\]\[0-9\]\[0-9\].*$prompt" {
+		set loop 0
+		set remotefile ""
+	    }
+	    -i $spawn_id default {
+		ftp_close $host
+	    }
+	}
+	if {$loop} {
+	    set spawn_id [ftp_open $host]
+	    if {$spawn_id < 0} {
+		return ""
+	    }
+	}
+    }
+    return $localfile
+}
+
+# Download LOCALFILE to HOST as REMOTEFILE.
+#
+proc ftp_download {host localfile remotefile} {
+    set prompt "ftp>"
+
+    verbose "putting $localfile $remotefile"
+
+    if {[board_info $host exists hostname]} {
+	set remotehost [board_info $host hostname]
+    } else {
+	set remotehost $host
+    }
+
+    set spawn_id [ftp_open $host]
+    if {$spawn_id < 0} {
+	return ""
+    }
+    set loop 1
+
+    while {$loop} {
+	send -i $spawn_id "put $localfile $remotefile\n"
+	expect {
+	    -i $spawn_id -re ".*Too many open files.*$prompt" {
+		ftp_close $host
+	    }
+	    -i $spawn_id -re ".*No such file or directory.*$prompt" {
+		set loop 0
+		set remotefile ""
+	    }
+	    -re "(^|\[\r\n\])150.*connection for (.*) \[(\]\[0-9.,\]+\\)\[\r\n\]" {
+		set remotefile $expect_out(2,string)
+		exp_continue
+	    }
+	    -i $spawn_id -re "(^|\[\r\n\])226.*$prompt" {
+		set loop 0
+	    }
+	    -i $spawn_id -re "Timeout.*$prompt" {
+		ftp_close $host
+	    }
+	    -i $spawn_id -re "(^|\[\r\n\])\[0-9\]\[0-9\]\[0-9\].*$prompt" {
+		set loop 0
+		set remotefile ""
+	    }
+	    -i $spawn_id default {
+		ftp_close $host
+	    }
+	}
+	if {$loop} {
+	    set spawn_id [ftp_open $host]
+	    if {$spawn_id < 0} {
+		return ""
+	    }
+	}
+    }
+    return $remotefile
+}
+
+# Close the FTP connection to HOST.
+#
+proc ftp_close {host} {
+    global board_info
+
+    if {[board_info $host exists name]} {
+	set host [board_info $host name]
+    }
+
+    if {![board_info $host exists ftp_fileid]} {
+	return ""
+    }
+
+    set spawn_id [board_info $host ftp_fileid]
+    unset board_info($host,ftp_fileid)
+
+    send -i $spawn_id "quit\n"
+    close -i $spawn_id
+    wait -i $spawn_id
+    return ""
+}

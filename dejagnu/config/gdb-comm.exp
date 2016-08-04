@@ -1,0 +1,570 @@
+# Copyright (C) 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2001
+# 2002, 2003, 2005, 2006, 2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+#
+# This file is part of DejaGnu.
+#
+# DejaGnu is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# DejaGnu is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with DejaGnu; if not, write to the Free Software Foundation,
+# Inc., 51 Franklin Street - Fifth Floor, Boston, MA 02110-1301, USA.
+
+# Note: some of this was cribbed from the gdb testsuite since we need
+# to use some pretty standard gdb features (breakpoints in particular).
+
+# Load up some standard junk.
+load_lib remote.exp
+
+if {![info exists board]} {
+    perror "$board must be set before loading gdb-comm"
+}
+
+# The number of times we've tried to download/execute this executable.
+set try_again 0
+
+#
+# Delete all breakpoints and verify that they were deleted.  If anything
+# goes wrong, return -1.
+#
+proc gdb_comm_delete_breakpoints {} {
+    global gdb_prompt
+
+    remote_send host "delete breakpoints\n"
+    remote_expect host 10 {
+	-re "Delete all breakpoints.*y or n. $" {
+	    remote_send host "y\n"
+	    exp_continue
+	}
+	-re ".*$gdb_prompt $" { }
+	timeout { perror "Delete all breakpoints (timeout)" ; return -1}
+    }
+    remote_send host "info breakpoints\n"
+    remote_expect host 10 {
+	-re "No breakpoints or watchpoints..*$gdb_prompt $" {}
+	-re ".*$gdb_prompt $" { perror "breakpoints not deleted" ; return -1}
+	timeout { perror "info breakpoints (timeout)" ; return -1}
+    }
+    return 0
+}
+
+#
+# Inform the debugger that we have a new exec file.
+# return a -1 if anything goes wrong, 0 on success.
+#
+proc gdb_comm_file_cmd { arg } {
+    global verbose
+    global loadpath
+    global loadfile
+    global GDB
+    global gdb_prompt
+    upvar timeout timeout
+
+    # The "file" command loads up a new symbol file for gdb, deal with
+    # the various messages it might spew out.
+    if {[is_remote host]} {
+	set arg [remote_download host $arg a.out]
+    }
+    remote_send host "file $arg\n"
+    remote_expect host 60 {
+        -re "Reading symbols from.*done.*$gdb_prompt $" {
+            verbose "\t\tLoaded $arg into the $GDB"
+            return 0
+        }
+        -re "has no symbol-table.*$gdb_prompt $" {
+            perror "$arg wasn't compiled with \"-g\""
+            return -1
+        }
+        -re "A program is being debugged already.*Kill it.*y or n. $" {
+            remote_send host "y\n"
+	    verbose "\t\tKilling previous program being debugged"
+            exp_continue
+        }
+        -re "Load new symbol table from \".*\".*y or n.*$" {
+            remote_send host "y\n"
+            remote_expect host 60 {
+                -re "Reading symbols from.*done.*$gdb_prompt $" {
+                    verbose "\t\tLoaded $arg with new symbol table into $GDB"
+                    return 0
+                }
+                timeout {
+                    perror "(timeout) Couldn't load $arg, other program already loaded."
+                    return -1
+                }
+            }
+	}
+        -re ".*No such file or directory.*$gdb_prompt $" {
+            perror "($arg) No such file or directory\n"
+            return -1
+        }
+        -re "$gdb_prompt $" {
+            perror "couldn't load $arg into $GDB."
+            return -1
+	}
+        timeout {
+            perror "couldn't load $arg into $GDB (timed out)."
+            return -1
+        }
+	eof {
+            # This is an attempt to detect a core dump, but seems not to
+            # work.  Perhaps we need to match .* followed by eof, in which
+            # expect does not seem to have a way to do that.
+            perror "couldn't load $arg into $GDB (end of file)."
+            return -1
+        }
+    }
+    return 0
+}
+
+# Disconnect from the target and forget that we have an executable. Returns
+# -1 on failure, 0 on success.
+
+proc gdb_comm_go_idle { } {
+    global gdb_prompt
+
+    if {![board_info host exists fileid]} {
+	return -1
+    }
+
+    remote_send host "target exec\n"
+    remote_expect host 10 {
+	-re "Kill it.*y or n.*$" {
+	    remote_send host "y\n"
+	    exp_continue
+	}
+	-re "No exec.* file now.*$gdb_prompt $" {
+	    return 0
+	}
+	default {
+	    remote_close host
+	    return -1
+	}
+    }
+}
+
+# Start GDB running with target DEST.
+proc gdb_comm_start { dest } {
+    global GDB
+    global gdb_prompt
+    global tool_root_dir
+
+    # The variable gdb_prompt is a regexp which matches the gdb prompt.  Set it
+    # if it is not already set.
+    if {![board_info $dest exists gdb_prompt]} then {
+	set gdb_prompt "\\(gdb\\)"
+    } else {
+	set gdb_prompt [board_info $dest gdb_prompt]
+    }
+    # Similarly for GDB.  Look in the object directory for gdb if we aren't
+    # provided with one.
+    if {![info exists GDB]} then {
+	set GDB "[lookfor_file ${tool_root_dir} gdb/gdb]"
+	if { $GDB == "" } {
+	    set GDB [transform gdb]
+	}
+    }
+    if {[board_info host exists gdb_opts]} {
+	set gdb_opts [board_info host gdb_opts]
+    } else {
+	set gdb_opts ""
+    }
+    # Start up gdb (no startfiles, no windows) and wait for a prompt.
+    remote_spawn host "$GDB $gdb_opts -nw -nx"
+    remote_expect host 60 {
+	-re ".*$gdb_prompt $" { }
+    }
+    remote_send host "set height 0\n"
+    remote_expect host 10 {
+	-re ".*$gdb_prompt $" {}
+    }
+    remote_send host "set width 0\n"
+    remote_expect host 10 {
+	-re ".*$gdb_prompt $" {}
+    }
+}
+
+# Add a breakpoint at function FUNCTION. We assume that GDB has already been
+# started.
+proc gdb_comm_add_breakpoint { function } {
+    global gdb_prompt
+
+    remote_send host "break $function\n"
+    remote_expect host 60 {
+	-re "Breakpoint.*$gdb_prompt $" { return "" }
+	-re "Function.*not defined.*$gdb_prompt $" { return "undef" }
+	-re "No symbol table.*$gdb_prompt $" { return "undef" }
+	-re ".*Make breakpoint pending.*\\\? \\(y or \\\[n\\\]\\) $" {
+	    remote_send host "y\n"
+	    return "maybe"
+	}
+	default {
+	    return "untested"
+	}
+    }
+}
+
+#
+# quit_gdb -- try to quit GDB gracefully
+#
+
+proc quit_gdb { } {
+    global gdb_prompt
+
+    set spawn_id [board_info host fileid]
+
+    if { $spawn_id != "" && $spawn_id > -1 } {
+	if { [remote_send host "quit\n"] == "" } {
+	    remote_expect host 10 {
+		-re ".*y or n.*$" {
+		    remote_send host "y\n"
+		    exp_continue
+		}
+		-re ".*\[*\]\[*\]\[*\].*EXIT code" { }
+		default { }
+	    }
+	}
+    }
+    if {![is_remote host]} {
+	remote_close host
+    }
+}
+
+proc gdb_comm_leave { } {
+    if {[is_remote host]} {
+	quit_gdb
+    } else {
+	gdb_comm_go_idle
+    }
+}
+#
+# gdb_comm_load -- load the program and execute it
+#
+# PROG is a full pathname to the file to load, no arguments.
+# Result is "untested", "pass", "fail", etc.
+#
+
+proc gdb_comm_load { dest prog args } {
+    global GDB
+    global GDBFLAGS
+    global gdb_prompt
+    global timeout
+    set argnames { "command-line arguments" "input file" "output file" }
+
+    for { set x 0 } { $x < [llength $args] } { incr x } {
+	if { [lindex $args $x] != "" } {
+	    return [list "unsupported" "no support for [lindex $argnames $x] on this target"]
+	}
+    }
+    # Make sure the file we're supposed to load really exists.
+    if {![file exists $prog]} then {
+	perror "$prog does not exist."
+        return [list "untested" ""]
+    }
+
+    if { [is_remote host] || ![board_info host exists fileid] } {
+	gdb_comm_start $dest
+    }
+
+    # Remove all breakpoints, then tell the debugger that we have
+    # new exec file.
+    if { [gdb_comm_delete_breakpoints] != 0 } {
+	gdb_comm_leave
+	return [gdb_comm_reload $dest $prog $args]
+    }
+    if { [gdb_comm_file_cmd $prog] != 0 } {
+	gdb_comm_leave
+	return [gdb_comm_reload $dest $prog $args]
+    }
+    if {[board_info $dest exists gdb_sect_offset]} {
+	set textoff [board_info $dest gdb_sect_offset]
+	remote_send host "sect .text $textoff\n"
+	remote_expect host 10 {
+	    -re "(0x\[0-9a-z]+) - 0x\[0-9a-z\]+ is \\.data" {
+		set dataoff $expect_out(1,string)
+		exp_continue
+	    }
+	    -re "(0x\[0-9a-z\]+) - 0x\[0-9a-z\]+ is \\.bss" {
+		set bssoff $expect_out(1,string)
+		exp_continue
+	    }
+	    -re "$gdb_prompt" { }
+	}
+	set dataoff [format 0x%x [expr {$dataoff + $textoff}]]
+	set bssoff [format 0x%x [expr {$bssoff + $textoff}]]
+	remote_send host "sect .data $dataoff\n"
+	remote_expect host 10 {
+	    -re "$gdb_prompt" { }
+	}
+	remote_send host "sect .bss $bssoff\n"
+	remote_expect host 10 {
+	    -re "$gdb_prompt" { }
+	}
+    }
+
+    set protocol [board_info $dest gdb_protocol]
+    if {[board_info $dest exists gdb_serial]} {
+	set targetname [board_info $dest gdb_serial]
+    } elseif {[board_info $dest exists netport]} {
+	set targetname [board_info $dest netport]
+    } else {
+	if {[board_info $dest exists serial]} {
+	    set targetname [board_info $dest serial]
+	} else {
+	    set targetname ""
+	}
+    }
+    if {[board_info $dest exists baud]} {
+	remote_send host "set remotebaud [board_info $dest baud]\n"
+	remote_expect host 10 {
+	    -re ".*$gdb_prompt $" {}
+	    default {
+		warning "failed setting baud rate"
+	    }
+	}
+    }
+    remote_send host "target $protocol $targetname\n"
+    remote_expect host 60 {
+	-re "Couldn.t establish conn.*$gdb_prompt $" {
+	    warning "Unable to connect to $targetname with GDB."
+	    quit_gdb
+	    return [gdb_comm_reload $dest $prog $args]
+	}
+	-re "Ending remote.*$gdb_prompt $" {
+	    warning "Unable to connect to $targetname with GDB."
+	    quit_gdb
+	    return [gdb_comm_reload $dest $prog $args]
+	}
+	-re "Remote target $protocol connected to.*$gdb_prompt $" { }
+	-re "Remote target $targetname connected to.*$gdb_prompt $" { }
+	-re "Connected to ARM RDI target.*$gdb_prompt $" { }
+	-re "Connected to the simulator.*$gdb_prompt $" { }
+	-re "Remote.*using $targetname.*$gdb_prompt $" { }
+	-re "$gdb_prompt $" {
+	    warning "Unable to connect to $targetname with GDB."
+	    quit_gdb
+	    return [gdb_comm_reload $dest $prog $args]
+	}
+	-re ".*RDI_open.*should reset target.*" {
+	    warning "RDI Open Failed"
+	    quit_gdb
+	    return [gdb_comm_reload $dest $prog $args]
+	}
+	default {
+	    warning "Unable to connect to $targetname with GDB."
+	    quit_gdb
+	    return [gdb_comm_reload $dest $prog $args]
+	}
+    }
+
+    if {[target_info exists gdb_init_command]} {
+	remote_send host "[target_info gdb_init_command]\n"
+	remote_expect host 10 {
+	    -re ".*$gdb_prompt $" { }
+	    default {
+		gdb_comm_leave
+		return [list "fail" ""]
+	    }
+	}
+    }
+    # Now download the executable to the target board.  If communications
+    # with the target are very slow the timeout might need to be increased.
+    if {[board_info $dest exists gdb_load_offset]} {
+	remote_send host "load $prog [board_info $dest gdb_load_offset]\n"
+    } else {
+	remote_send host "load\n"
+    }
+    remote_expect host 600 {
+	-re "text.*data.*$gdb_prompt $" { }
+	-re "data.*text.*$gdb_prompt $" { }
+	-re "$gdb_prompt $" {
+	    warning "Unable to send program to target board."
+	    gdb_comm_leave
+	    return [gdb_comm_reload $dest $prog $args]
+	}
+	default {
+	    warning "Unable to send program to target board."
+	    gdb_comm_leave
+	    return [gdb_comm_reload $dest $prog $args]
+	}
+    }
+
+    # Now set up breakpoints in exit, _exit, and abort.  These
+    # are used to determine if a c-torture test passed or failed.  More
+    # work would be necessary for things like the g++ testsuite which
+    # use printf to indicate pass/fail status.
+
+    if { [gdb_comm_add_breakpoint _exit] != "" } {
+	gdb_comm_add_breakpoint exit
+    }
+    gdb_comm_add_breakpoint abort
+
+    set output ""
+    
+    # Now start up the program and look for our magic breakpoints.
+    # And a whole lot of other magic stuff too.
+
+    if {[board_info $dest exists gdb_run_command]} {
+	remote_send host "[board_info $dest gdb_run_command]\n"
+    } else {
+	remote_send host "run\n"
+    }
+    # FIXME: The value 300 below should be a parameter.
+    if {[board_info $dest exists testcase_timeout]} {
+	set testcase_timeout [board_info $dest testcase_timeout]
+    } else {
+	set testcase_timeout 300
+    }
+    remote_expect host $testcase_timeout {
+	-re "Line.*Jump anyway.*.y or n.*" {
+	    remote_send host "y\n"
+	    exp_continue
+	}
+	-re "Continuing( at |\\.| with no signal\\.)\[^\r\n\]*\[\r\n\]" {
+	    exp_continue
+	}
+	-re ".*Start it from the beginning?.*y or n.*" {
+	    remote_send host "n\n"
+	    remote_expect host 10 {
+		-re ".*$gdb_prompt $" {
+		    remote_send host "signal 0\n"
+		    remote_expect host 10 {
+			-re "signal 0\[\r\n\]+" { exp_continue }
+			-re "Continuing(\\.| with no signal\\.)\[\r\n\]" {}
+		    }
+		}
+	    }
+	    exp_continue
+	}
+	-re "(run\[\r\n\]*|)Starting program: \[^\r\n\]*\[\r\n\]" {
+	    exp_continue
+	}
+	-re "$gdb_prompt (signal 0|continue)\[\r\n\]+Continuing(\\.| with no signal\\.)\[\r\n\]" {
+	    exp_continue
+	}
+	-re "(.*)Breakpoint.*exit.*=0.*$gdb_prompt $" {
+	    append output $expect_out(1,string)
+	    set result [check_for_board_status output]
+	    gdb_comm_leave
+	    if { $result > 0 } {
+		return [list "fail" $output]
+	    }
+	    return [list "pass" $output]
+	}
+	-re "(.*)Breakpoint.*exit.*=\[1-9\]\[0-9\]*.*$gdb_prompt $" {
+	    append output $expect_out(1,string)
+	    set result [check_for_board_status output]
+	    gdb_comm_leave
+	    if { $result == 0 } {
+		return [list "pass" $output]
+	    }
+	    if {[board_info $dest exists exit_statuses_bad]} {
+		return [list "pass" $output]
+	    }
+	    return [list "fail" $output]
+	}
+	-re "(.*)Breakpoint.*exit.*$gdb_prompt $" {
+	    append output $expect_out(1,string)
+	    set status [check_for_board_status output]
+	    gdb_comm_leave
+	    if { $status > 0 } {
+		return [list "fail" $output]
+	    }
+	    return [list "pass" $output]
+	}
+	-re "(.*)Breakpoint.*abort.*$gdb_prompt $" {
+	    append output $expect_out(1,string)
+	    check_for_board_status output
+	    gdb_comm_leave
+	    return [list "fail" $output]
+	}
+	-re "SIGTRAP.*$gdb_prompt $" {
+	    return [gdb_comm_reload $dest $prog $args]
+	}
+	-re "(.*)Program (received |terminated ).*$gdb_prompt $" {
+	    set output $expect_out(1,string)
+	    check_for_board_status output
+	    gdb_comm_leave
+	    remote_reboot $dest
+	    return [list "fail" $output]
+	}
+	-re "(.*)Program exited with code \[0-9\]+.*$gdb_prompt $" {
+	    set output $expect_out(1,string)
+	    set status [check_for_board_status output]
+	    gdb_comm_leave
+	    if { $status > 0 } {
+		return [list "fail" $output]
+	    }
+	    return [list "pass" $output]
+	}
+	default {
+	    gdb_comm_leave
+	    if {[board_info $dest exists unreliable]} {
+		if { [board_info $dest unreliable] > 0 } {
+		    global board_info
+		    set name [board_info $dest name]
+		    incr board_info($name,unreliable) -1
+		    set result [gdb_comm_reload $dest $prog $args]
+		    incr board_info($name,unreliable)
+		    return $result
+		}
+	    }
+	    return [list "fail" ""]
+	}
+    }
+    gdb_comm_leave
+    return [list "fail" ""]
+}
+
+# If we've tried less than 4 times to load PROG, reboot the target, restart GDB
+# and try again. Otherwise, return "untested".
+proc gdb_comm_reload { dest prog aargs } {
+    global try_again
+
+    # how many times have we done this?
+    set n_reloads [board_info $dest n_reloads]
+    if {$n_reloads == ""} {
+	set n_reloads 0
+    }
+
+    # increment it
+    global board_info
+    set name [board_info $dest name]
+    set board_info($dest,n_reloads) [expr {$n_reloads + 1}]
+
+    # how many times are we allowed to do this?
+    set max [board_info $dest max_reload_reboots]
+    if {$max == ""} {
+	set max 15
+    }
+
+    # if we've been doing this too much, something's very
+    # wrong.  just give up, to reduce stress on boards.
+    if {$max == $n_reloads} {
+	perror "Too many reboots.  Giving up."
+    }
+    if {$max <= $n_reloads} {
+	return {untested {}}
+    }
+
+    if { $try_again < 4 } {
+	global GDB
+	remote_reboot $dest
+	remote_close host
+	incr try_again
+	set result [eval remote_load \"$dest\" \"$prog\" $aargs]
+	set try_again 0
+	return "$result"
+    } else {
+	set try_again 0
+	return [list "untested" ""]
+    }
+}
+
+set_board_info protocol  "gdb_comm"

@@ -1,0 +1,638 @@
+# Copyright (C) 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2001
+# 2002, 2003, 2005, 2006, 2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+#
+# This file is part of DejaGnu.
+#
+# DejaGnu is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# DejaGnu is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with DejaGnu; if not, write to the Free Software Foundation,
+# Inc., 51 Franklin Street - Fifth Floor, Boston, MA 02110-1301, USA.
+
+# This file was written by Michael Snyder <msnyder@cygnus.com>.
+
+#
+# Stub remote run command.
+#
+
+proc gdb_stub_init { dest args } {
+    global gdb_prompt
+    global GDB
+    global tool_root_dir
+
+    if {![info exists GDB]} then {
+	set GDB "[lookfor_file ${tool_root_dir} gdb/gdb]"
+	if { $GDB == "" } {
+	    set GDB [transform gdb]
+	}
+    }
+
+    if {[board_info $dest exists gdb_prompt]} {
+	set gdb_prompt [board_info $dest gdb_prompt]
+    } else {
+	set gdb_prompt "\\(gdb\\)"
+    }
+
+    return 1
+}
+
+proc gdb_stub_restart { dest } {
+    global gdb_prompt
+    global GDB
+
+    gdb_stub_init $dest
+
+    for { set x 1 } { $x < 4 } {incr x} {
+	remote_close $dest
+	sleep 2
+	set command "$GDB -nw -nx"
+	if {[host_info exists gdb_opts]} {
+	    append command " [host_info gdb_opts]"
+	}
+	set spawn_id [remote_spawn host $command]
+	remote_expect host 30 {
+	    -re "$gdb_prompt" { }
+	}
+	if { $spawn_id >= 0 } {
+	    if {[board_info $dest exists baud]} {
+		remote_send host "set remotebaud [board_info $dest baud]\n"
+		remote_expect host 5 {
+		    -re "$gdb_prompt" { }
+		    default {
+			warning "Error setting baud rate."
+			return -1
+		    }
+		}
+	    }
+
+
+	    set value [gdb_stub_startup $dest]
+	    if { $value > 0 } {
+		break
+	    }
+	    verbose "got $value from gdb_stub_startup"
+	    remote_send host "quit\n"
+	}
+	remote_reboot $dest
+    }
+    if { ${x} < 4 } {
+	global board_info
+	set name [board_info $dest name]
+
+	set board_info($name,gdb_is_running) 1
+	return 1
+    } else {
+	return 0
+    }
+}
+
+proc gdb_stub_remote_check { dest } {
+    global gdb_prompt
+
+    if {[board_info $dest exists gdb_serial]} {
+	set serial [board_info $dest gdb_serial]
+    } elseif {[board_info $dest exists serial]} {
+	set serial [board_info $dest serial]
+    } else {
+	set serial [board_info $dest netport]
+    }
+    remote_send host "target remote $serial\n"
+    remote_expect host 10 {
+	-re "Couldn't establish connection.*$gdb_prompt" {
+	    return 0
+	}
+	-re "Remote debugging.*$gdb_prompt" {
+	    verbose "stub is already running"
+	    return 1
+	}
+	-re "$gdb_prompt" {
+	    return 0
+	}
+	timeout {
+	    remote_send host "\003"
+	    remote_expect host 10 {
+		-re "$gdb_prompt" { }
+	    }
+	    return 0
+	}
+	default {
+	    return 0
+	}
+    }
+}
+
+proc gdb_stub_startup { dest } {
+    global gdb_prompt
+    global GDB
+
+    set is_running_stub 0
+
+    if {[gdb_stub_remote_check $dest]} {
+	set is_running_stub 1
+    }
+
+    if {[board_info $dest exists serial]} {
+        set serial [board_info $dest serial]
+    } else {
+	set serial [board_info $dest netport]
+    }
+
+    if { ! $is_running_stub } {
+	set command "target [board_info $dest gdb_protocol] $serial\n"
+	remote_send host $command
+	remote_expect host 5 {
+	    -re "already.*y or n." {
+		remote_send host "y\n"
+		exp_continue
+	    }
+	    -re "appears to be alive.*$gdb_prompt" { }
+	    -re "Remote target.*connected to.*$gdb_prompt" { }
+	    default {
+		return -1
+	    }
+	}
+    }
+    if { $is_running_stub == 0 } {
+	global libdir
+
+	verbose "building loader"
+	set loader "loader"
+	if {![file exists $loader]} {
+	    if {[board_info $dest exists gdb_stub_offset]} {
+		set result [target_compile "${libdir}/stub-loader.c" $loader executable "libs=-Wl,-Ttext,[board_info $dest gdb_stub_offset]"]
+	    } else {
+		set result [target_compile "${libdir}/stub-loader.c" $loader executable "ldscript=[board_info $dest gdb_stub_ldscript]"]
+	    }
+	    verbose "result is $result"
+	    if {[is_remote host]} {
+		set loader [remote_download host $loader]
+	    }
+	}
+	remote_send host "file $loader\n"
+	remote_expect host 20 {
+	    -re "A program is being debug.*Kill it.*y or n. $" {
+		remote_send host "y\n"
+		exp_continue
+	    }
+	    -re "Load new symbol table.*y or n. $" {
+		remote_send host "y\n"
+		exp_continue
+	    }
+	    -re "Reading symbols from.*done..*$gdb_prompt $" {}
+	    -re "$gdb_prompt $" { warning "GDB couldn't find loader" }
+	    timeout {
+		warning "(timeout) read symbol file"
+		return -1
+	    }
+	}
+
+	if {[board_info $dest exists serial]} {
+	    set serial [board_info $dest serial]
+	} else {
+	    set serial [board_info $dest netport]
+	}
+	remote_send host "target [board_info $dest gdb_protocol] $serial\n"
+	remote_expect host 60 {
+	    -re "appears to be alive.*$gdb_prompt" { }
+	    -re "Remote target.*connected to.*$gdb_prompt" { }
+	    -re "$gdb_prompt" {
+		warning "Error reconnecting to stub."
+		return -1
+	    }
+	    default {
+		warning "Error reconnecting to stub."
+		return -1
+	    }
+	}
+
+	# We only send the offset if gdb_load_offset is set. Otherwise, we
+	# assume that sending the offset isn't needed.
+	if {[board_info $dest exists gdb_load_offset]} {
+	    remote_send host "load $loader [board_info $dest gdb_stub_offset]\n"
+	} else {
+	    remote_send host "load $loader\n"
+	}
+	verbose "Loading $loader into $GDB" 2
+	global verbose
+	set no_run_command 0
+	# FIXME: The value 1200 below should be a parameter.
+	remote_expect host 1200 {
+	    -re "Transfer rate:.*Switching to remote protocol.*Remote debugging" {
+		set no_run_command 1
+		remote_send host ""
+		sleep 2
+		remote_send host ""
+		sleep 1
+	    }
+	    -re "Loading.*Starting.*at.*$gdb_prompt $" {
+		verbose "Loaded $loader into $GDB" 1
+		set no_run_command 1
+	    }
+	    -re "Loading.*$gdb_prompt $" {
+		verbose "Loaded $loader into $GDB" 1
+	    }
+	    -re "$gdb_prompt $"     {
+		if $verbose>1 then {
+		    warning "GDB couldn't load."
+		}
+	    }
+	    timeout {
+		if $verbose>1 then {
+		    warning "Timed out trying to load $arg."
+		}
+	    }
+	}
+
+	if { ! $no_run_command } {
+	    remote_send host "run\n"
+	    remote_expect host 60 {
+		-re "A program is being debug.*Kill it.*y or n. $" {
+		    remote_send host "y\n"
+		    exp_continue
+		}
+		-re "The program being debugged .*y or n. $" {
+		    remote_send host "y\n"
+		    exp_continue
+		}
+		-re "Starting program:.*loader.*$" {
+		    verbose "Starting loader succeeded"
+		}
+		timeout {
+		    warning "(timeout) starting the loader"
+		    return -1
+		}
+		default {
+		    warning "error starting the loader"
+		}
+	    }
+	    sleep 2
+	    remote_send host ""
+	    sleep 1
+	    remote_send host ""
+	    verbose "Sent ^C^C"
+	    remote_expect host 30 {
+		-re "Give up .and stop debugging it.*$" {
+		    remote_send host "y\n"
+		    exp_continue
+		}
+		-re "$gdb_prompt $" {
+		    verbose "Running loader succeeded"
+		}
+		timeout {
+		    warning "(timeout) interrupting the loader"
+		    return -1
+		}
+		default {
+		    warning "error interrupting the loader"
+		}
+	    }
+	}
+	remote_send host "quit\n"
+	return [gdb_stub_restart $dest]
+    }
+    return 1
+}
+
+#
+# Delete all breakpoints and verify that they were deleted.  If anything
+# goes wrong we just exit.
+#
+proc gdb_stub_delete_breakpoints {} {
+    global gdb_prompt
+
+    remote_send host "delete breakpoints\n"
+    remote_expect host 10 {
+	-re "Delete all breakpoints.*y or n. $" {
+	    remote_send host "y\n"
+	    exp_continue
+	}
+	-re "$gdb_prompt $" { }
+	timeout { warning "Delete all breakpoints (timeout)" ; return -1}
+    }
+    remote_send host "info breakpoints\n"
+    remote_expect host 10 {
+	-re "No breakpoints or watchpoints..*$gdb_prompt $" {}
+	-re "$gdb_prompt $" { warning "breakpoints not deleted" ; return -1}
+	timeout { warning "info breakpoints (timeout)" ; return -1}
+    }
+    return 0
+}
+
+proc gdb_stub_go_idle { dest } {
+    gdb_stub_delete_breakpoints
+}
+
+proc gdb_stub_add_breakpoint { function args } {
+    global gdb_prompt
+
+    remote_send host "break $function\n"
+    remote_expect host 60 {
+	-re "Breakpoint (\[0-9\]+).*$gdb_prompt $" { return $expect_out(1,string) }
+	-re "Function.*not defined.*$gdb_prompt $" { return "undef" }
+	-re "No symbol table.*$gdb_prompt $" { return "undef" }
+	default {
+	    return "undef"
+	}
+    }
+}
+
+proc gdb_stub_start { dest } {
+    global gdb_prompt
+
+    set exit_brnum [gdb_stub_add_breakpoint _exit]
+    if { $exit_brnum == "undef" || [board_info $dest exists always_break_exit] } {
+	set exit_brnum [gdb_stub_add_breakpoint exit]
+    }
+    set abort_brnum [gdb_stub_add_breakpoint abort]
+
+    upvar #0 gdb_stub_info I
+    set I($dest,exit_brnum) $exit_brnum
+    set I($dest,abort_brnum) $abort_brnum
+
+    remote_send host "set \$fp=0\n"
+    remote_expect host 10 {
+	-re "$gdb_prompt" { }
+    }
+    # This is needed for the SparcLite. Whee.
+    if {[board_info $dest exists gdb,start_symbol]} {
+	set start_comm "jump *[board_info $dest gdb,start_symbol]\n"
+    } else {
+	set start_comm "jump *start\n"
+    }
+    remote_send host "break copyloop\n"
+    remote_expect host 10 {
+	-re "Breakpoint.*$gdb_prompt $" {
+	    set start_comm "continue\n"
+	}
+	-re "Function.*not defined.*$gdb_prompt $" { }
+	default { }
+    }
+    remote_send host $start_comm
+    remote_expect host 10 {
+	-re "y or n. $" {
+	    remote_send host "y\n"
+	    exp_continue
+	}
+	-re "Breakpoint.*in copyloop.*$gdb_prompt $" {
+	    remote_send host "jump relocd\n"
+	    exp_continue
+	}
+	-re "Continuing at.*\[\r\n\]" { }
+	default {
+	    return { "fail" "" }
+	}
+    }
+    return { "pass" "" }
+}
+
+proc gdb_stub_spawn { dest prog args } {
+    for { set x 0 } { $x < 3 } { incr x } {
+	if { [remote_ld $dest $prog] != 1 } {
+	    return [list "fail" "remote_ld failed"]
+	}
+	
+	set result [gdb_stub_start $dest]
+	if { [lindex $result 0] != "pass" } {
+	    remote_reboot target
+	} else {
+	    return 666;		# does anyone use this value?
+	}
+    }
+    return -1
+}
+
+proc gdb_stub_wait { dest timeout } {
+    global gdb_prompt
+
+
+    upvar #0 gdb_stub_info I
+    set exit_brnum $I($dest,exit_brnum)
+    set abort_brnum $I($dest,abort_brnum)
+
+    remote_expect host $timeout {
+	-re "Breakpoint.*exit.*=0.*$gdb_prompt $" {
+	    gdb_stub_go_idle $dest
+	    return [list 0 ""]
+	}
+	-re "Breakpoint.*exit.*=\[1-9\]\[0-9\]*.*$gdb_prompt $" {
+	    gdb_stub_go_idle $dest
+	    return [list 0 ""]
+	}
+	-re "Breakpoint.*exit.*$gdb_prompt $" {
+	    gdb_stub_go_idle $dest
+	    return [list 0 ""]
+	}
+	-re "Breakpoint.*abort.*$gdb_prompt $" {
+	    gdb_stub_go_idle $dest
+	    return [list 1 ""]
+	}
+        -re " EXIT code 0.*$gdb_prompt $" {
+            gdb_stub_go_idle $dest
+            return [list 0 ""]
+        }
+        -re " EXIT code \[1-9]\[0-9]*.*$gdb_prompt $" {
+            gdb_stub_go_idle $dest
+            return [list 0 ""]
+        }
+        -re " EXIT code 4242.*$gdb_prompt $" {
+            gdb_stub_go_idle $dest
+            return [list 1 ""]
+        }
+ 	-re "Program received.*$gdb_prompt $" {
+	    gdb_stub_go_idle $dest
+	    return [list 1 ""]
+	}
+	-re "Program exited.*$gdb_prompt $" {
+	    gdb_stub_go_idle $dest
+	    return [list 1 ""]
+	}
+	-re "Breakpoint $exit_brnum.*$gdb_prompt $" {
+	    gdb_stub_go_idle $dest
+	    return [list 0 ""]
+	}
+	-re "Breakpoint $abort_brnum.*$gdb_prompt $" {
+	    gdb_stub_go_idle $dest
+	    return [list 1 ""]
+	}
+	default {
+	    remote_close $dest
+	    remote_reboot $dest
+	    return [list -1 ""]
+	}
+    }
+    return [list -1 ""]
+}
+
+proc gdb_stub_load { dest prog args } {
+    global gdb_prompt
+    set argnames { "command-line arguments" "input file" "output file" }
+
+    for { set x 0 } { $x < [llength $args] } { incr x } {
+	if { [lindex $args $x] != "" } {
+	    return [list "unsupported" "no support for [lindex $argnames $x] on this target"]
+	}
+    }
+
+    set result [remote_spawn $dest $prog]
+
+    if { $result < 0 } {
+	return [list "fail" "remote_spawn failed"]
+    }
+
+    # FIXME: The value 120 should be a parameter.
+    set result [remote_wait $dest 120]
+    set status [lindex $result 0]
+    set output [lindex $result 1]
+
+    if { $status == 0 } {
+	return [list "pass" $output]
+    } elseif { $status > 0 } {
+	return [list "fail" $output]
+    } else {
+	global gdb_stub_retry
+
+	if {![info exists gdb_stub_retry]} {
+	    set gdb_stub_retry 1
+
+	    set result [eval gdb_stub_load \{$dest\} \{$prog\} $args]
+	    unset gdb_stub_retry
+	    return $result
+	} else {
+	    return [list "fail" $output]
+	}
+    }
+}
+
+
+#
+# gdb_stub_ld -- load PROG into the board
+#             Returns a 0 if there was an error,
+#                       1 if it loaded successfully.
+#
+proc gdb_stub_ld { dest prog } {
+    global gdb_prompt
+    global GDB
+
+    if {![board_info $dest exists gdb_is_running]} {
+	if {![gdb_stub_restart $dest]} {
+	    return 0
+	}
+    }
+
+    set loadfile [file tail $prog]
+    set loadpath [file dirname $prog]
+
+    remote_send host "file $prog\n"
+    remote_expect host 30 {
+	-re "A program is being debug.*Kill it.*y or n. $" {
+	    remote_send host "y\n"
+	    exp_continue
+	}
+        -re "Load new symbol table.*y or n. $" {
+	    remote_send host "y\n"
+	    exp_continue
+	}
+	-re "Reading symbols from.*done..*$gdb_prompt $" {}
+	-re "$gdb_prompt $" {
+	    # Hmmm...is retrying going to help? I kinda doubt it.
+	    warning "GDB couldn't read file"
+	    return [gdb_stub_retry_ld "$dest" "$prog"]
+	}
+	timeout {
+	    warning "(timeout) read symbol file"
+	    return [gdb_stub_retry_ld "$dest" "$prog"]
+	}
+    }
+
+    # just in case there are old breakpoints lying around.
+    gdb_stub_delete_breakpoints
+
+    if {[board_info $dest exists gdb_serial]} {
+	set serial [board_info $dest gdb_serial]
+    } elseif {[board_info $dest exists serial]} {
+	set serial [board_info $dest serial]
+    } else {
+	set serial [board_info $dest netport]
+    }
+
+    remote_send host "target remote $serial\n"
+    remote_expect host 60 {
+	-re "Kill it?.*y or n.*" {
+	    remote_send host "y\n"
+	    exp_continue
+	}
+	-re "$gdb_prompt $"	{
+	    verbose "Set remote target to $serial" 2
+	}
+	timeout {
+	    warning "Couldn't set remote target."
+	    return 0
+	}
+    }
+
+    if {[board_info $dest exists gdb_load_offset]} {
+	set offset "[board_info $dest gdb_load_offset]"
+    } else {
+	set offset ""
+    }
+    remote_send host "load $prog $offset\n"
+    verbose "Loading $prog into $GDB" 2
+    global verbose
+    remote_expect host 1200 {
+	-re "Loading.*$gdb_prompt $" {
+	    verbose "Loaded $prog into $GDB" 1
+	}
+	-re "$gdb_prompt $"     {
+	    if $verbose>1 then {
+		warning "GDB couldn't load."
+	    }
+	}
+	timeout {
+	    if $verbose>1 then {
+		perror "Timed out trying to load $prog."
+	    }
+	}
+    }
+    return 1
+}
+
+#
+# Retry the ld operation, but only once.
+#
+
+proc gdb_stub_retry_ld { dest prog } {
+    global gdb_stub_retry_ld
+
+    remote_reboot $dest
+    if {[info exists gdb_stub_retry_ld]} {
+	unset gdb_stub_retry_ld
+	return 0
+    } else {
+	set gdb_stub_retry_ld 1
+    }
+    gdb_stub_restart $dest
+    set status [gdb_stub_ld $dest $prog]
+    if {[info exists gdb_stub_retry_ld]} {
+	unset gdb_stub_retry_ld
+    }
+    return $status
+}
+
+proc gdb_stub_close { dest } {
+    global board_info
+    set name [board_info $dest name]
+    if {[info exists board_info($name,gdb_is_running)]} {
+	unset board_info($name,gdb_is_running)
+    }
+    return [remote_close host]
+}
+
+set_board_info protocol  "gdb_stub"

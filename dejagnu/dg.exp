@@ -1,0 +1,886 @@
+# `dg' general purpose testcase driver.
+
+# Copyright (C) 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2001
+# 2002, 2003, 2005, 2006, 2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+#
+# This file is part of DejaGnu.
+#
+# DejaGnu is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# DejaGnu is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with DejaGnu; if not, write to the Free Software Foundation,
+# Inc., 51 Franklin Street - Fifth Floor, Boston, MA 02110-1301, USA.
+
+# This file was written by Doug Evans (dje@cygnus.com).
+
+# This file is based on old-dejagnu.exp.  It is intended to be more extensible
+# without incurring the overhead that old-dejagnu.exp can.  All test framework
+# commands appear in the testcase as "{ dg-xxx args ... }".  We pull them out
+# with one grep, and then run the function(s) named by "dg-xxx".  When running
+# dg-xxx, the line number that it occurs on is always passed as the first
+# argument.  We also support different kinds of tools via callbacks.
+#
+# The currently supported options are:
+#
+# dg-prms-id N
+#	set prms_id to N
+#
+# dg-options "options ..." [{ target selector }]
+#	specify special options to pass to the tool (eg: compiler)
+#
+# dg-do do-what-keyword [{ target/xfail selector }]
+#	`do-what-keyword' is tool specific and is passed unchanged to
+#	${tool}-dg-test.  An example is gcc where `keyword' can be any of:
+#	preprocess | compile | assemble | link | run
+#	and will do one of: produce a .i, produce a .s, produce a .o,
+#	produce an a.out, or produce an a.out and run it (the default is
+#	'compile').
+#
+# dg-error regexp comment [{ target/xfail selector } [{.|0|linenum}]]
+#	indicate an error message <regexp> is expected on this line
+#	(the test fails if it doesn't occur)
+#	linenum=0 for general tool messages (eg: -V arg missing).
+#	"." means the current line.
+#
+# dg-warning regexp comment [{ target/xfail selector } [{.|0|linenum}]]
+#	indicate a warning message <regexp> is expected on this line
+#	(the test fails if it doesn't occur)
+#
+# dg-bogus regexp comment [{ target/xfail selector } [{.|0|linenum}]]
+#	indicate a bogus error message <regexp> used to occur here
+#	(the test fails if it does occur)
+#
+# dg-build regexp comment [{ target/xfail selector }]
+#	indicate the build use to fail for some reason
+#	(errors covered here include bad assembler generated, tool crashes,
+#	and link failures)
+#	(the test fails if it does occur)
+#
+# dg-excess-errors comment [{ target/xfail selector }]
+#	indicate excess errors are expected (any line)
+#	(this should only be used sparingly and temporarily)
+#
+# dg-output regexp [{ target selector }]
+#	indicate the expected output of the program is <regexp>
+#	(there may be multiple occurrences of this, they are concatenated)
+#
+# dg-final { tcl script }
+#	add some Tcl script to be run at the end
+#	(there may be multiple occurrences of this, they are concatenated)
+#	(unbalanced braces must be \-escaped)
+#
+# "{ target selector }" is a list of expressions that determine whether the
+# test succeeds or fails for a particular target, or in some cases whether the
+# option applies for a particular target.  If the case of `dg-do' it specifies
+# whether the testcase is even attempted on the specified target.
+#
+# The target selector is always optional.  The format is one of:
+#
+# { xfail *-*-* ... } - the test is expected to fail for the given targets
+# { target *-*-* ... } - the option only applies to the given targets
+#
+# At least one target must be specified, use *-*-* for "all targets".
+# At present it is not possible to specify both `xfail' and `target'.
+# "native" may be used in place of "*-*-*".
+#
+# Example:
+#
+#       [ ... some complicated code ... ]
+#	return a; /* { dg-build "fatal" "ran out of spill regs" { xfail i386-*-* } } */
+#
+# In this contrived example, the compiler used to crash on the "return
+# a;" for some target and it still does crash on i386-*-*.
+#
+# ??? It might be possible to add additional optional arguments by having
+# something like: { dg-error ".*syntax.*" "syntax error" { { foo 1 } ... } }
+#
+# Callbacks
+#
+# ${tool}-dg-test testfile do-what-keyword extra-flags
+#
+#	Run the test, be it compiler, assembler, or whatever.
+#
+# ${tool}-dg-prune target_triplet text
+#
+#	Optional callback to delete output from the tool that can occur
+#	even in successful ("pass") situations and interfere with output
+#	pattern matching.  This also gives the tool an opportunity to review
+#	the output and check for any conditions which indicate an "untested"
+#	or "unresolved" state.  An example is if a testcase is too big and
+#	fills all available ram (which can happen for 16 bit CPUs).  The
+#	result is either the pruned text or
+#	"::untested|unresolved|unsupported::message"
+#	(eg: "::unsupported::memory full").
+#
+# Notes:
+# 1) All runnable testcases must return 0 from main() for success.
+#    You can't rely on getting any return code from target boards, and the
+#    `exec' command says a program fails if it returns non-zero.
+#
+# Language independence is (theoretically) achieved by:
+#
+# 1) Using global $tool to indicate the language (eg: gcc, g++, gas, etc.).
+#    This should only be used to look up other objects.  We don't want to
+#    have to add code for each new language that is supported.  If this is
+#    done right, no code needs to be added here for each new language.
+#
+# 2) Passing tool options in as arguments.
+#
+#    Earlier versions of ${tool}_start (eg: gcc_start) would only take the name
+#    of the file to compile as an argument.  Newer versions accept a list of
+#    one or two elements, the second being a string of *all* options to pass
+#    to the tool.  We require this facility.
+#
+# 3) Callbacks.
+#
+# Try not to do anything else that makes life difficult.
+#
+# The normal way to write a testsuite is to have a .exp file containing:
+#
+# load_lib ${tool}-dg.exp
+# dg-init
+# dg-runtest [lsort [glob -nocomplain $srcdir/$subdir/foo*]] ...
+# dg-finish
+
+# Global state variables.
+# The defaults are for GCC.
+
+# The default do-what keyword.
+set dg-do-what-default compile
+
+# When dg-interpreter-batch-mode is 1, no execution test or excess error
+# tests are performed.
+set dg-interpreter-batch-mode 0
+
+# Line number format.  This is how line numbers appear in program output.
+set dg-linenum-format ":%d:"
+proc dg-format-linenum { linenum } {
+    global dg-linenum-format
+    return [format ${dg-linenum-format} $linenum]
+}
+
+# Useful subroutines.
+
+# dg-get-options -- pick out the dg-xxx options in a testcase
+#
+# PROG is the file name of the testcase.
+# The result is a list of options found.
+#
+# Example: For the following testcase:
+#
+# /* { dg-prms-id 1234 } */
+# int foo { return 0; } /* { dg-build fatal "some comment" } */
+#
+# we return:
+#
+# { dg-prms-id 1 1234 } { dg-build 2 fatal "some comment" }
+
+proc dg-get-options { prog } {
+    set result ""
+
+    set tmp [grep $prog "{\[ \t\]\+dg-\[-a-z\]\+\[ \t\]\+.*\[ \t\]\+}" line]
+    if {![string match "" $tmp]} {
+	foreach i $tmp {
+	    regexp "(\[0-9\]+)\[ \t\]+{\[ \t\]+(dg-\[-a-z\]+)\[ \t\]+(.*)\[ \t\]+}\[^\}\]*(\n|$)" $i i line cmd args
+	    append result " { $cmd $line $args }"
+	}
+    }
+    return $result
+}
+
+#
+# Process optional xfail/target arguments
+#
+# SELECTOR is "xfail target-triplet-1 ..." or "target target-triplet-1 ..."
+# `target-triplet' may be "native".
+# For xfail, the result is "F" (expected to Fail) if the current target is
+# affected, otherwise "P" (expected to Pass).
+# For target, the result is "S" (target is Selected) if the target is selected,
+# otherwise "N" (target is Not selected).
+#
+proc dg-process-target { selector } {
+    global target_triplet
+
+    set isnative [isnative]
+    set triplet_match 0
+
+    set selector [string trim $selector]
+    if {[regexp "^xfail " $selector]} {
+	set what xfail
+    } elseif {[regexp "^target " $selector]} {
+	set what target
+    } else {
+	# The use of error here and in other dg-xxx utilities is intentional.
+	# dg-test will catch them and do the right thing.
+	error "syntax error in target selector \"$selector\""
+    }
+
+    if {[regexp "^${what}( \[^ \]+-\[^ \]+-\[^ \]+| native)+$" $selector]} {
+	regsub "^${what} " $selector "" selector
+	foreach triplet $selector {
+	    if {[string match $triplet $target_triplet]} {
+		set triplet_match 1
+	    } elseif { $isnative && $triplet == "native" } {
+		set triplet_match 1
+	    }
+	}
+    } else {
+	error "syntax error in target selector \"$selector\""
+    }
+
+    if { $triplet_match } {
+	return [expr { $what == "xfail" ? "F" : "S" }]
+    } else {
+	return [expr { $what == "xfail" ? "P" : "N" }]
+    }
+}
+
+# Predefined user option handlers.
+# The line number is always the first element.
+# Note that each of these are varargs procs (they have an `args' argument).
+# Tests for optional arguments are coded with ">=" to simplify adding new ones.
+#
+proc dg-prms-id { args } {
+    global prms_id
+
+    if { [llength $args] > 2 } {
+	error "[lindex $args 0]: too many arguments"
+    }
+
+    set prms_id [lindex $args 1]
+}
+
+# Set tool options
+#
+# Different options can be used for different targets by having multiple
+# instances, selecting a different target each time.  Since options are
+# processed in order, put the default value first.  Subsequent occurrences
+# will override previous ones.
+#
+proc dg-options { args } {
+    upvar dg-extra-tool-flags extra-tool-flags
+
+    if { [llength $args] > 3 } {
+	error "[lindex $args 0]: too many arguments"
+    }
+
+    if { [llength $args] >= 3 } {
+	switch -- [dg-process-target [lindex $args 2]] {
+	    "S" { set extra-tool-flags [lindex $args 1] }
+	    "N" { }
+	    "F" { error "[lindex $args 0]: `xfail' not allowed here" }
+	    "P" { error "[lindex $args 0]: `xfail' not allowed here" }
+	}
+    } else {
+	set extra-tool-flags [lindex $args 1]
+    }
+}
+
+# Record what to do (compile/run/etc.)
+#
+# Multiple instances are supported (since we don't support target and xfail
+# selectors on one line), though it doesn't make much sense to change the
+# compile/assemble/link/run field.  Nor does it make any sense to have
+# multiple lines of target selectors (use one line).
+#
+proc dg-do { args } {
+    upvar dg-do-what do-what
+
+    if { [llength $args] > 3 } {
+	error "[lindex $args 0]: too many arguments"
+    }
+
+    set doaction [lindex $args 1]
+    set selected [lindex ${do-what} 1]	;# selected? (""/S/N)
+    set expected [lindex ${do-what} 2]	;# expected to pass/fail (P/F)
+
+    if { [llength $args] >= 3 } {
+	switch -- [dg-process-target [lindex $args 2]] {
+	    "S" {
+		set selected "S"
+	    }
+	    "N" {
+		# Don't deselect a target if it's been explicitly selected,
+		# but indicate a specific target has been selected (so don't
+		# do this testcase if it's not appropriate for this target).
+		# The user really shouldn't have multiple lines of target
+		# selectors, but try to do the intuitive thing (multiple lines
+		# are OR'd together).
+		if { $selected != "S" } {
+		    set selected "N"
+		} else {
+		    set doaction [lindex ${do-what} 0]
+		}
+	    }
+	    "F" { set expected "F" }
+	    "P" {
+		# There's nothing to do for "P".  We don't want to clobber a
+		# previous xfail for this target.
+	    }
+	}
+    } else {
+	# Note: A previous occurrence of `dg-do' with target/xfail selectors
+	# is a user mistake.  We clobber previous values here.
+	set selected S
+	set expected P
+    }
+
+    switch -- [lindex $args 1] {
+	"preprocess" { }
+	"compile" { }
+	"assemble" { }
+	"link" { }
+	"run" { }
+	default {
+	    error "[lindex $args 0]: syntax error"
+	}
+    }
+    set do-what [list $doaction $selected $expected]
+}
+
+proc dg-error { args } {
+    upvar dg-messages messages
+
+    if { [llength $args] > 5 } {
+	error "[lindex $args 0]: too many arguments"
+    }
+
+    set xfail ""
+    if { [llength $args] >= 4 } {
+	switch -- [dg-process-target [lindex $args 3]] {
+	    "F" { set xfail "X" }
+	    "P" { set xfail "" }
+	    "N" {
+		# If we get "N", this error doesn't apply to us so ignore it.
+		return
+	    }
+	}
+    }
+
+    if { [llength $args] >= 5 } {
+	switch -- [lindex $args 4] {
+	    "." { set line [dg-format-linenum [lindex $args 0]] }
+	    "0" { set line "" }
+	    "default" { set line [dg-format-linenum [lindex $args 4]] }
+	}
+    } else {
+	set line [dg-format-linenum [lindex $args 0]]
+    }
+
+    lappend messages [list $line "${xfail}ERROR" [lindex $args 1] [lindex $args 2]]
+}
+
+proc dg-warning { args } {
+    upvar dg-messages messages
+
+    if { [llength $args] > 5 } {
+	error "[lindex $args 0]: too many arguments"
+    }
+
+    set xfail ""
+    if { [llength $args] >= 4 } {
+	switch -- [dg-process-target [lindex $args 3]] {
+	    "F" { set xfail "X" }
+	    "P" { set xfail "" }
+	    "N" {
+		# If we get "N", this warning doesn't apply to us so ignore it.
+		return
+	    }
+	}
+    }
+
+    if { [llength $args] >= 5 } {
+	switch -- [lindex $args 4] {
+	    "." { set line [dg-format-linenum [lindex $args 0]] }
+	    "0" { set line "" }
+	    "default" { set line [dg-format-linenum [lindex $args 4]] }
+	}
+    } else {
+	set line [dg-format-linenum [lindex $args 0]]
+    }
+
+    lappend messages [list $line "${xfail}WARNING" [lindex $args 1] [lindex $args 2]]
+}
+
+proc dg-bogus { args } {
+    upvar dg-messages messages
+
+    if { [llength $args] > 5 } {
+	error "[lindex $args 0]: too many arguments"
+    }
+
+    set xfail ""
+    if { [llength $args] >= 4 } {
+	switch -- [dg-process-target [lindex $args 3]] {
+	    "F" { set xfail "X" }
+	    "P" { set xfail "" }
+	    "N" {
+		# If we get "N", this message doesn't apply to us so ignore it.
+		return
+	    }
+	}
+    }
+
+    if { [llength $args] >= 5 } {
+	switch -- [lindex $args 4] {
+	    "." { set line [dg-format-linenum [lindex $args 0]] }
+	    "0" { set line "" }
+	    "default" { set line [dg-format-linenum [lindex $args 4]] }
+	}
+    } else {
+	set line [dg-format-linenum [lindex $args 0]]
+    }
+
+    lappend messages [list $line "${xfail}BOGUS" [lindex $args 1] [lindex $args 2]]
+}
+
+proc dg-build { args } {
+    upvar dg-messages messages
+
+    if { [llength $args] > 4 } {
+	error "[lindex $args 0]: too many arguments"
+    }
+
+    set xfail ""
+    if { [ llength $args] >= 4 } {
+	switch -- [dg-process-target [lindex $args 3]] {
+	    "F" { set xfail "X" }
+	    "P" { set xfail "" }
+	    "N" {
+		# If we get "N", this lossage doesn't apply to us so ignore it.
+		return
+	    }
+	}
+    }
+
+    lappend messages [list [lindex $args 0] "${xfail}BUILD" [lindex $args 1] [lindex $args 2]]
+}
+
+proc dg-excess-errors { args } {
+    upvar dg-excess-errors-flag excess-errors-flag
+
+    if { [llength $args] > 3 } {
+	error "[lindex $args 0]: too many arguments"
+    }
+
+    if { [llength $args] >= 3 } {
+	switch -- [dg-process-target [lindex $args 2]] {
+	    "F" { set excess-errors-flag 1 }
+	    "S" { set excess-errors-flag 1 }
+	}
+    } else {
+	set excess-errors-flag 1
+    }
+}
+
+# Indicate expected program output.
+#
+# We support multiple occurrences, but we do not implicitly insert newlines
+# between them.
+#
+# Note that target boards don't all support this kind of thing so it's a good
+# idea to specify the target all the time.  If one or more targets are
+# explicitly selected, the test won't be performed if we're not one of them
+# (as long as we were never mentioned).
+#
+# If you have target dependent output and want to set an xfail for one or more
+# of them, use { dg-output "" { xfail a-b-c ... } }.  The "" won't contribute
+# to the expected output.
+#
+proc dg-output { args } {
+    upvar dg-output-text output-text
+
+    if { [llength $args] > 3 } {
+	error "[lindex $args 0]: too many arguments"
+    }
+
+    # Allow target dependent output.
+
+    set expected [lindex ${output-text} 0]
+    if { [llength $args] >= 3 } {
+	switch -- [dg-process-target [lindex $args 2]] {
+	    "N" { return }
+	    "S" { }
+	    "F" { set expected "F" }
+	    # Don't override a previous xfail.
+	    "P" { }
+	}
+    }
+
+    if { [llength ${output-text}] == 1 } {
+	# First occurrence.
+	set output-text [list $expected [lindex $args 1]]
+    } else {
+	set output-text [list $expected "[lindex ${output-text} 1][lindex $args 1]"]
+    }
+}
+
+proc dg-final { args } {
+    upvar dg-final-code final-code
+
+    if { [llength $args] > 2 } {
+	error "[lindex $args 0]: too many arguments"
+    }
+
+    append final-code "[lindex $args 1]\n"
+}
+
+# Set up our environment
+#
+# There currently isn't much to do, but always calling it allows us to add
+# enhancements without having to update our callers.
+# It must be run before calling `dg-test'.
+#
+proc dg-init { } {
+}
+
+# dg-runtest -- simple main loop useful to most testsuites
+#
+# OPTIONS is a set of options to always pass.
+# DEFAULT_EXTRA_OPTIONS is a set of options to pass if the testcase
+# doesn't specify any (with dg-option).
+
+proc dg-runtest { testcases options default-extra-options } {
+    global runtests
+
+    foreach testcase $testcases {
+	# If we're only testing specific files and this isn't one of them, skip it.
+	if {![runtest_file_p $runtests $testcase]} {
+	    continue
+	}
+	verbose "Testing [file tail [file dirname $testcase]]/[file tail $testcase]"
+	dg-test $testcase $options ${default-extra-options}
+    }
+}
+
+# dg-trim-dirname -- rip DIR_NAME out of FILE_NAME
+#
+# Syntax: dg-trim-dirname dir_name file_name
+# We need to go through this contortion in order to properly support
+# directory-names which might have embedded regexp special characters.
+#
+proc dg-trim-dirname { dir_name file_name } {
+    set special_character "\[\?\+\-\.\(\)\$\|\]"
+    regsub -all -- $special_character $dir_name "\\\\&" dir_name
+    regsub "^$dir_name/?" $file_name "" file_name
+    return $file_name
+}
+
+# dg-test -- runs a new style DejaGnu test
+#
+# Syntax: dg-test [-keep-output] prog tool_flags default_extra_tool_flags
+#
+# PROG is the full path name of the file to pass to the tool (eg: compiler).
+# TOOL_FLAGS is a set of options to always pass.
+# DEFAULT_EXTRA_TOOL_FLAGS are additional options if the testcase has none.
+
+#proc dg-test { prog tool_flags default_extra_tool_flags } {
+proc dg-test { args } {
+    global dg-do-what-default dg-interpreter-batch-mode dg-linenum-format
+    global errorCode errorInfo
+    global tool
+    global srcdir
+    global host_triplet target_triplet
+
+    set keep 0
+    set i 0
+
+    if { [string index [lindex $args 0] 0] == "-" } {
+	for { set i 0 } { $i < [llength $args] } { incr i } {
+	    if { [lindex $args $i] == "--" } {
+		incr i
+		break
+	    } elseif { [lindex $args $i] == "-keep-output" } {
+		set keep 1
+	    } elseif { [string index [lindex $args $i] 0] == "-" } {
+		clone_output "ERROR: dg-test: illegal argument: [lindex $args $i]"
+		return
+	    } else {
+		break
+	    }
+	}
+    }
+
+    if { $i + 3 != [llength $args] } {
+	clone_output "ERROR: dg-test: missing arguments in call"
+	return
+    }
+    set prog [lindex $args $i]
+    set tool_flags [lindex $args [expr {$i + 1}]]
+    set default_extra_tool_flags [lindex $args [expr {$i + 2}]]
+
+    set text "\[- A-Za-z0-9\.\;\"\_\:\'\`\(\)\!\#\=\+\?\&\*]*"
+
+    set name [dg-trim-dirname $srcdir $prog]
+    # If we couldn't rip $srcdir out of `prog' then just do the best we can.
+    # The point is to reduce the unnecessary noise in the logs.  Don't strip
+    # out too much because different testcases with the same name can confuse
+    # `test-tool'.
+    if {[string match "/*" $name]} {
+	set name "[file tail [file dirname $prog]]/[file tail $prog]"
+    }
+
+    # We append the compilation flags, if any, to ensure that the test case
+    # names are unique.
+    if { "$tool_flags" != "" } {
+	set name "$name $tool_flags"
+    }
+
+    # Process any embedded dg options in the testcase.
+
+    # Use "" for the second element of dg-do-what so we can tell if it's been
+    # explicitly set to "S".
+    set dg-do-what [list ${dg-do-what-default} "" P]
+    set dg-excess-errors-flag 0
+    set dg-messages ""
+    set dg-extra-tool-flags $default_extra_tool_flags
+    set dg-final-code ""
+
+    # `dg-output-text' is a list of two elements: pass/fail and text.
+    # Leave second element off for now (indicates "don't perform test")
+    set dg-output-text "P"
+
+    # Define our own "special function" `unknown' so we catch spelling errors.
+    # But first rename the existing one so we can restore it afterwards.
+    if { [info procs dg-save-unknown] == [list] } {
+	rename unknown dg-save-unknown
+	proc unknown { args } {
+	    return -code error "unknown dg option: $args"
+	}
+    }
+
+    set tmp [dg-get-options $prog]
+    foreach op $tmp {
+	verbose "Processing option: $op" 3
+	set status [catch "$op" errmsg]
+	if { $status != 0 } {
+	    if { 0 && [info exists errorInfo] } {
+		# This also prints a backtrace which will just confuse
+		# testcase writers, so it's disabled.
+		perror "$name: $errorInfo\n"
+	    } else {
+		perror "$name: $errmsg for \"$op\"\n"
+	    }
+	    perror "$name: $errmsg for \"$op\"" 0
+	    return
+	}
+    }
+
+    # Restore normal error handling.
+    if { [info procs dg-save-unknown] != [list] } {
+	rename unknown ""
+	rename dg-save-unknown unknown
+    }
+
+    # If we're not supposed to try this test on this target, we're done.
+    if { [lindex ${dg-do-what} 1] == "N" } {
+	unsupported "$name"
+	verbose "$name not supported on this target, skipping it" 3
+	return
+    }
+
+    # Run the tool and analyze the results.
+    # The result of ${tool}-dg-test is in a bit of flux.
+    # Currently it is the name of the output file (or "" if none).
+    # If we need more than this it will grow into a list of things.
+    # No intention is made (at this point) to preserve upward compatibility
+    # (though at some point we'll have to).
+
+    set results [${tool}-dg-test $prog [lindex ${dg-do-what} 0] "$tool_flags ${dg-extra-tool-flags}"]
+
+    set comp_output [lindex $results 0]
+    set output_file [lindex $results 1]
+
+    foreach i ${dg-messages} {
+	verbose "Scanning for message: $i" 4
+
+	# Remove all error messages for the line [lindex $i 0]
+	# in the source file.  If we find any, success!
+	set line [lindex $i 0]
+	set pattern [lindex $i 2]
+	set comment [lindex $i 3]
+	if {[regsub -all "(^|\n)(\[^\n\]+$line\[^\n\]*($pattern)\[^\n\]*\n?)+" $comp_output "\n" comp_output]} {
+	    set comp_output [string trimleft $comp_output]
+	    set ok pass
+	    set uhoh fail
+	} else {
+	    set ok fail
+	    set uhoh pass
+	}
+
+	# $line will either be a formatted line number or a number all by
+	# itself.  Delete the formatting.
+	scan $line ${dg-linenum-format} line
+	switch -- [lindex $i 1] {
+	    "ERROR" {
+		$ok "$name $comment (test for errors, line $line)"
+	    }
+	    "XERROR" {
+		x$ok "$name $comment (test for errors, line $line)"
+	    }
+	    "WARNING" {
+		$ok "$name $comment (test for warnings, line $line)"
+	    }
+	    "XWARNING" {
+		x$ok "$name $comment (test for warnings, line $line)"
+	    }
+	    "BOGUS" {
+		$uhoh "$name $comment (test for bogus messages, line $line)"
+	    }
+	    "XBOGUS" {
+		x$uhoh "$name $comment (test for bogus messages, line $line)"
+	    }
+	    "BUILD" {
+		$uhoh "$name $comment (test for build failure, line $line)"
+	    }
+	    "XBUILD" {
+		x$uhoh "$name $comment (test for build failure, line $line)"
+	    }
+	    "EXEC" { }
+	    "XEXEC" { }
+	}
+    }
+
+    # Remove messages from the tool that we can ignore.
+    set comp_output [prune_warnings $comp_output]
+
+    if { [info procs ${tool}-dg-prune] != "" } {
+	set comp_output [${tool}-dg-prune $target_triplet $comp_output]
+	switch -glob -- $comp_output {
+	    "::untested::*" {
+		regsub "::untested::" $comp_output "" message
+		untested "$name: $message"
+		return
+	    }
+	    "::unresolved::*" {
+		regsub "::unresolved::" $comp_output "" message
+		unresolved "$name: $message"
+		return
+	    }
+	    "::unsupported::*" {
+		regsub "::unsupported::" $comp_output "" message
+		unsupported "$name: $message"
+		return
+	    }
+	}
+    }
+
+    # See if someone forgot to delete the extra lines.
+    regsub -all "\n+" $comp_output "\n" comp_output
+    regsub "^\n+" $comp_output "" comp_output
+
+    # Don't do this if we're testing an interpreter.
+    # FIXME: why?
+    if { ${dg-interpreter-batch-mode} == 0 } {
+	# Catch excess errors (new bugs or incomplete testcases).
+	if {${dg-excess-errors-flag}} {
+	    setup_xfail "*-*-*"
+	}
+	if {![string match "" $comp_output]} {
+	    fail "$name (test for excess errors)"
+	    send_log "Excess errors:\n$comp_output\n"
+	} else {
+	    pass "$name (test for excess errors)"
+	}
+    }
+
+    # Run the executable image if asked to do so.
+    # FIXME: This is the only place where we assume a standard meaning to
+    # the `keyword' argument of dg-do.  This could be cleaned up.
+    if { [lindex ${dg-do-what} 0] == "run" } {
+	if {![file exists $output_file]} {
+	    unresolved "$name compilation failed to produce executable"
+	} else {
+	    set status -1
+	    set result [${tool}_load $output_file]
+	    set status [lindex $result 0]
+	    set output [lindex $result 1]
+	    if { [lindex ${dg-do-what} 2] == "F" } {
+		setup_xfail "*-*-*"
+	    }
+	    if { "$status" == "pass" } {
+		pass "$name execution test"
+		verbose "Exec succeeded." 3
+		if { [llength ${dg-output-text}] > 1 } {
+		    if { [lindex ${dg-output-text} 0] == "F" } {
+			setup_xfail "*-*-*"
+		    }
+		    set texttmp [lindex ${dg-output-text} 1]
+		    if { ![regexp -- $texttmp ${output}] } {
+			fail "$name output pattern test"
+			send_log "Output was:\n${output}\nShould match:\n$texttmp\n"
+			verbose "Failed test for output pattern $texttmp" 3
+		    } else {
+			pass "$name output pattern test"
+			verbose "Passed test for output pattern $texttmp" 3
+		    }
+		    unset texttmp
+		}
+	    } elseif { "$status" == "fail" } {
+		# It would be nice to get some info out of errorCode.
+		if {[info exists errorCode]} {
+		    verbose "Exec failed, errorCode: $errorCode" 3
+		} else {
+		    verbose "Exec failed, errorCode not defined!" 3
+		}
+		fail "$name execution test"
+	    } else {
+		$status "$name execution test"
+	    }
+	}
+    }
+
+    # Are there any further tests to perform?
+    # Note that if the program has special run-time requirements, running
+    # of the program can be delayed until here.  Ditto for other situations.
+    # It would be a bit cumbersome though.
+
+    if {![string match ${dg-final-code} ""]} {
+	regsub -all "\\\\(\[{}\])" ${dg-final-code} "\\1" dg-final-code
+	# Note that the use of `args' here makes this a varargs proc.
+	proc dg-final-proc { args } ${dg-final-code}
+	verbose "Running dg-final tests." 3
+	verbose "dg-final-proc:\n[info body dg-final-proc]" 4
+	if {[catch "dg-final-proc $prog" errmsg]} {
+	    perror "$name: error executing dg-final: $errmsg" 0
+	}
+    }
+
+    # Do some final clean up.
+    # When testing an interpreter, we don't compile something and leave an
+    # output file.
+    if { ! ${keep} && ${dg-interpreter-batch-mode} == 0 } {
+	catch "file delete -force -- $output_file"
+    }
+}
+
+# Do any necessary cleanups.
+# This is called at the end to undo anything dg-init did (that needs undoing).
+#
+proc dg-finish { } {
+    # Reset this in case caller wonders whether s/he should.
+    global prms_id
+    set prms_id 0
+
+    # The framework doesn't like to see any error remnants, so remove them.
+    global errorInfo
+    if {[info exists errorInfo]} {
+	unset errorInfo
+    }
+
+    # If the tool has a "finish" routine, call it.
+    # There may be a bit of duplication (eg: resetting prms_id), leave it.
+    # Let's keep these procs robust.
+    global tool
+    if {![string match "" [info procs ${tool}_finish]]} {
+	${tool}_finish
+    }
+}

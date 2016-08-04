@@ -1,0 +1,176 @@
+# Copyright (C) 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2001
+# 2002, 2003, 2005, 2006, 2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+#
+# This file is part of DejaGnu.
+#
+# DejaGnu is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# DejaGnu is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with DejaGnu; if not, write to the Free Software Foundation,
+# Inc., 51 Franklin Street - Fifth Floor, Boston, MA 02110-1301, USA.
+
+# Connect to DEST using Kermit. Note that we're just using Kermit as a
+# simple serial or network connect program; we don't actually use Kermit
+# protocol to do downloads.
+#
+# Returns -1 if it failed, otherwise it returns the spawn_id.
+#
+proc kermit_open {dest args} {
+    global spawn_id
+    global board_info
+
+    if {[board_info $dest exists name]} {
+	set dest [board_info $dest name]
+    }
+    if {[board_info ${dest} exists serial]} {
+	set port [board_info ${dest} serial]
+	set device "-l [board_info ${dest} serial]"
+	if {[board_info ${dest} exists baud]} {
+	    append device " -b [board_info ${dest} baud]"
+	}
+    } else {
+	set port [board_info ${dest} netport]
+	set device "-j [board_info ${dest} netport]"
+    }
+
+    set tries 0
+    set result -1
+    verbose "kermit $device"
+    eval spawn kermit $device
+    if {$spawn_id < 0} {
+	perror "invalid spawn id from Kermit"
+	return -1
+    }
+
+    expect {
+	-re ".*ermit.*>.*$" {
+	    send "c\n"
+	    expect {
+		-re "Connecting to.*$port.*Type the escape character followed by C to.*options.*\[\r\n\]$" {
+		    verbose "Got prompt\n"
+		    set result 0
+		    incr tries
+		}
+		timeout {
+		    warning "Never got prompt from Kermit."
+		    set result -1
+		    incr tries
+		    if {$tries <= 2} {
+			exp_continue
+		    }
+		}
+	    }
+	}
+	-re "Connection Closed.*$" {
+	    perror "Never connected."
+	    set result -1
+	    incr tries
+	    if {$tries <= 2} {
+		exp_continue
+	    }
+	}
+	timeout			{
+	    warning "Timed out trying to connect."
+	    set result -1
+	    incr tries
+	    if {$tries <= 2} {
+		exp_continue
+	    }
+	}
+    }
+
+    if {$result < 0} {
+	perror "Couldn't connect after $tries tries."
+	if {[info exists board_info($dest,fileid)]} {
+	    unset board_info($dest,fileid)
+	}
+	return -1
+    } else {
+	verbose "Kermit connection established with spawn_id $spawn_id."
+	set board_info($dest,fileid) $spawn_id
+	kermit_command $dest "set file type binary" "set transfer display none"
+	if {[board_info $dest exists transmit_pause]} {
+	    kermit_command $dest "set transmit pause [board_info $dest transmit_pause]"
+	}
+	return $spawn_id
+    }
+}
+
+# Send a list of commands to the Kermit session connected to DEST.
+#
+proc kermit_command {dest args} {
+    if {[board_info $dest exists name]} {
+	set dest [board_info $dest name]
+    }
+    set shell_id [board_info $dest fileid]
+
+    # Sometimes we have to send multiple ^\c sequences. Don't know
+    # why.
+    set timeout 2
+    for {set i 1} {$i <= 5} {incr i} {
+	send -i $shell_id "c"
+	expect {
+	    -i $shell_id -re ".*Back at.*ermit.*>.*$" {set i 10}
+	    -i $shell_id timeout {
+		if {$i > 2} {
+		    warning "Unable to get prompt from kermit."
+		}
+	    }
+	}
+    }
+    foreach command $args {
+	set timeout 120
+	send -i $shell_id "${command}\r"
+	expect {
+	    -i $shell_id -re ".*ermit.*>.*$" { }
+	    -i $shell_id timeout {
+		perror "Response failed from Kermit."
+		return -1
+	    }
+	}
+    }
+    send -i $shell_id "c\r"
+    expect {
+	-i $shell_id -re ".*other options.\[\r\n\]+" { }
+	-i $shell_id timeout {
+	    perror "Unable to resume Kermit connection."
+	    return -1
+	}
+    }
+    return 0
+}
+
+# Send STRING to DEST.
+#
+proc kermit_send {dest string args} {
+    if {[board_info $dest exists transmit_pause]} {
+	set f [open "/tmp/fff" "w"]
+	puts -nonewline $f "$string"
+	close $f
+	set result [remote_transmit $dest /tmp/fff]
+	remote_file build delete "/tmp/fff"
+	return "$result"
+    } else {
+	return [standard_send $dest $string]
+    }
+}
+
+# Transmit FILE directly to DEST as raw data.
+# No translation is performed.
+#
+proc kermit_transmit {dest file args} {
+    if {[board_info $dest exists transmit_pause]} {
+	kermit_command $dest "transmit $file"
+	return ""
+    } else {
+	return [standard_transmit $dest $file]
+    }
+}

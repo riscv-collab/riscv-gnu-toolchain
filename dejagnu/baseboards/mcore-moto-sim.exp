@@ -1,0 +1,141 @@
+# Copyright (C) 1997, 1998, 1999, 2000, 2001, 2002, 2003, 2004,
+# 2005, 2006, 2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+#
+# This file is part of DejaGnu.
+#
+# DejaGnu is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# DejaGnu is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with DejaGnu; if not, write to the Free Software Foundation,
+# Inc., 51 Franklin Street - Fifth Floor, Boston, MA 02110-1301, USA.
+
+# This is a HACKED version of mcore-sim.exp that is intended to
+# support running tests on Motorola's proprietary MCore simulator.
+
+# It is quite likely that this file will need to be modified in
+# order for you to use Motorola's simulator.
+
+# This is a list of toolchains that are supported on this board.
+set_board_info target_install {mcore-elf, mcore-pe}
+
+# Do general config stuff but do not load anything.  "jim" was
+# chosen because it does not exist.
+load_generic_config "jim"
+
+process_multilib_options ""
+
+# We only support newlib on this target. We assume that all multilib
+# options have been specified before we get here.
+set_board_info compiler  "[find_gcc]"
+set_board_info cflags    "[libgloss_include_flags] [newlib_include_flags]"
+set_board_info ldflags   "[libgloss_link_flags] [newlib_link_flags]"
+
+# No linker script needed.
+set_board_info ldscript ""
+
+# The simulator doesn't return exit statuses and we need to indicate this;
+# the standard GCC wrapper will work with this target.
+set_board_info needs_status_wrapper  1
+
+# Doesn't pass arguments or signals, can't return results, and doesn't
+# do inferiorio.
+set_board_info noargs 1
+set_board_info gdb,nosignals 1
+set_board_info gdb,noresults 1
+set_board_info gdb,noinferiorio 1
+
+# Rather than include the normal simulator support files,
+# their functions are reproduced (and modified) here.
+# --------------------------------------------------------------
+proc sim_spawn { dest cmdline args } {
+
+    # Choose whoch simulator to run
+    ## XXX - fixme - this should be automatic based on the
+    ## multilib option.
+    ## XXX - fixme - this should not be hardcoded.
+    set sim "/home/nickc/bin/linux/sim-be"
+    #   set sim "/home/nickc/bin/linux/sim-le"
+
+    set simflags "-m abi"
+
+    # Create a script to run the program
+    set handle [open doit w]
+    puts $handle "load $cmdline"
+    puts $handle "reset"
+    puts $handle "g 28"
+    puts $handle "quit"
+    close $handle
+
+    return [eval remote_spawn host \{ $sim $simflags "-sdoit" \} $args]
+}
+
+proc sim_wait { dest timeout } {
+    return [remote_wait host $timeout]
+}
+
+proc sim_load { dest prog args } {
+
+    if {![file exists $prog]} then {
+	perror "sim.exp: $prog to be downloaded does not exist."
+	verbose -log "$prog to be downloaded does not exist." 3
+	return [list "untested" ""]
+    }
+
+    set sim_time_limit 240
+
+    set output ""
+
+    set res [remote_spawn target "${prog}"]
+
+    if { $res <= 0 } {
+	return [list "fail" "remote_spawn failed"]
+    }
+
+    set state [remote_wait target $sim_time_limit]
+    set status [lindex $state 0]
+    set output [lindex $state 1]
+    verbose "Output is $output"
+
+    set status2 [check_for_board_status output]
+    if { $status2 >= 0 } {
+	set status $status2
+    }
+
+    verbose "Return status was: $status" 2
+    if { $status == 0 } {
+	set result "pass"
+    } else {
+	set result "fail"
+    }
+    return [list $result $output]
+}
+
+set_board_info protocol  "sim"
+
+# By default, assume the simulator is slow.  This causes some tests
+# to either be simplified or skipped completely.
+set_board_info slow_simulator 1
+
+# -----------------------------------------------------------
+# find_sim -- find a usable simulator
+# This proc is local to this file and is used to locate a simulator to use.
+# First we see if SIM=foo was specified on the command line.
+# Otherwise we search the build tree, then $PATH.
+
+proc find_sim { target_alias sim_dir sim_name } {
+
+    ## XXX - fixme - this should not be hardcoded.
+    ## XXX - fixme - this should vary depending upon endianism selected.
+
+    return "/home/nickc/bin/linux/sim-be"
+}
+
+set_board_info is_simulator 1

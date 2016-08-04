@@ -1,0 +1,189 @@
+# Copyright (C) 2013 Free Software Foundation, Inc.
+#
+# This file is part of DejaGnu.
+#
+# DejaGnu is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# DejaGnu is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with DejaGnu; if not, write to the Free Software Foundation,
+# Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+
+#
+# Get serial number in case of multiple devices
+#
+proc adb_serial {} {
+    # If the user has ADB_SERIAL set, use that, otherwise default to the
+    # only device.
+    set serial "[getenv ADB_SERIAL]"
+    if { $serial == "" } {
+	set status [catch "exec adb devices |& wc -l" output]
+	if { $output > 3 } {
+	    perror "Set ADB_SERIAL in your environment to specify the correct target device!"
+	}
+	return ""
+    } else {
+	return "-s $serial"
+    }
+}
+
+#
+# Connect to hostname using adb
+#
+proc adb_open { hostname } {
+    global spawn_id
+
+    set tries 0
+    set result -1
+
+    if {[board_info ${hostname} exists shell_prompt]} {
+	set shell_prompt [board_info ${hostname} shell_prompt]
+    } else {
+	set shell_prompt "root@android:/ # "
+    }
+
+    if {[board_info $hostname exists fileid]} {
+	unset board_info($hostname,fileid)
+    }
+
+    set serial [adb_serial]
+    if { $serial != "" } {
+      spawn adb [adb_serial] shell
+    } else {
+      spawn adb shell
+    }
+    if { $spawn_id < 0 } {
+	perror "invalid spawn id from adb"
+	return -1
+    }
+
+    send "\r\n"
+    while { $tries <= 3 } {
+	expect {
+	    -re ".*$shell_prompt.*$" {
+		verbose "Got prompt\n"
+		set result 0
+		break
+	    }
+	    timeout {
+		warning "adb shell: timed out trying to connect."
+	    }
+	    eof {
+		perror "adb shell: got EOF while trying to connect."
+		break
+	    }
+	}
+	incr tries
+    }
+
+    if { $result < 0 } {
+	#	perror "adb shell: couldn't connect after $tries tries."
+	catch "close -i $spawn_id"
+	set spawn_id -1
+    } else {
+	set board_info($hostname,fileid) $spawn_id
+    }
+
+    return $spawn_id
+}
+
+#
+# Download $srcfile to $destfile on $desthost.
+#
+
+proc adb_download {desthost srcfile destfile} {
+    set serial [adb_serial]
+    verbose "Removing old executable: adb $serial shell rm $destfile" 3
+    set status [catch "exec adb $serial shell rm $destfile |& cat" output]
+    verbose "Downloading: adb $serial shell push $srcfile $destfile" 3
+    set status [catch "exec adb $serial push $srcfile $destfile |& cat" output]
+    if { $status == 0 } {
+	verbose "Copied $srcfile to $destfile" 2
+	return $destfile
+    } else {
+	verbose "Download to target failed, $output."
+	return ""
+    }
+}
+
+proc adb_file {dest op args} {
+    set file [lindex $args 0]
+    verbose "Executing command: $op $args" 2
+    switch -- $op {
+	exists {
+	    set status [catch "exec adb [adb_serial] shell ls |& cat" out]
+	}
+	delete {
+	    set status [catch "exec adb [adb_serial] shell rm $file |& cat" rmout]
+	}
+    }
+    return [eval remote_raw_file \"$dest\" \"$op\" $args]
+}
+
+proc adb_upload {desthost srcfile destfile} {
+    set status [catch "exec adb [adb_serial] pull $srcfile $destfile |& cat" output]
+    if { $status == 0 } {
+	verbose "Copied $srcfile to $destfile" 2
+	return $destfile
+    } else {
+	verbose "Upload from $desthost failed, $output."
+	return ""
+    }
+}
+
+#
+# Execute "$cmd $args[0]" on $boardname.
+#
+proc adb_exec { boardname cmd args } {
+    global remove_test
+
+    if { [llength $args] > 0 } {
+	set pargs [lindex $args 0]
+	if { [llength $args] > 1 } {
+	    set inp [lindex $args 1]
+	} else {
+	    set inp ""
+	}
+    } else {
+	set pargs ""
+	set inp ""
+    }
+
+    # If CMD sends any output to stderr, exec will think it failed.  More often
+    # than not that will be true, but it doesn't catch the case where there is
+    # no output but the exit code is non-zero.
+    if { $inp == "" } {
+	set inp "/dev/null"
+    }
+
+    verbose "Executing on $boardname:$cmd $pargs < $inp "
+
+    # Execute commands only from temporary folder, therefore do "cd" first
+    global android_tmp_dir
+    set status [catch "exec cat $inp | adb [adb_serial] shell cd $android_tmp_dir \&\& \( $cmd $pargs \) \\; echo XYZ\\\$\\\{\?\\\}ZYX |& cat" output]
+
+    # `status' doesn't mean much here other than adb worked ok.
+    # What we want is whether $cmd ran ok.
+    if { $status != 0 } {
+	regsub "XYZ(\[0-9\]*)ZYX\n?" $output "" output
+	return [list -1 "adb to $boardname failed for $cmd, $output"]
+    }
+
+    regexp "XYZ(\[0-9\]*)ZYX" $output junk status
+    verbose "adb_exec: status:$status text:$output" 4
+    if { $status == "" } {
+	return [list -1 "Couldn't parse adb output, $output."]
+    }
+    regsub "XYZ(\[0-9\]*)ZYX\n?" $output "" output
+    # Delete one trailing \n because that is what `exec' will do and we want
+    # to behave identical to it.
+    regsub "\n$" $output "" output
+    return [list [expr {$status != 0}] $output]
+}
