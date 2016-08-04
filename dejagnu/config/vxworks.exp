@@ -1,0 +1,508 @@
+# Copyright (C) 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2001
+# 2002, 2003, 2005, 2006, 2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+#
+# This file is part of DejaGnu.
+#
+# DejaGnu is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# DejaGnu is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with DejaGnu; if not, write to the Free Software Foundation,
+# Inc., 51 Franklin Street - Fifth Floor, Boston, MA 02110-1301, USA.
+
+# This file was originally written by Rob Savoye <rob@welcomehome.org>
+# and modified by Bob Manson <manson@cygnus.com>.
+
+#
+# Try to boot the machine into the requested OS.
+#
+proc ${board}_init { dest } {
+    # This is not the right way to determine the required OS...
+    global target_os
+    set shell_prompt [board_info $dest shell_prompt]
+    set do_reboot 0
+
+    set desired_kernel [board_info $dest "kernel,$target_os"]
+
+    if { $desired_kernel == "" } {
+	vxworks_final_init $dest
+	# Nothing to see here, nothing to do. Move along.
+	return
+    }
+
+    remote_raw_open $dest raw
+    remote_send $dest "\n"
+    remote_expect $dest 5 {
+	-re "$shell_prompt" {
+	    set do_reboot 1
+	}
+	-re "Press any key to stop auto-boot" {
+	    remote_send $dest "\n"
+	    exp_continue
+	}
+	-re "VxWorks Boot" {
+	    set boot_mon 0
+	    set boot_mon_prompt "VxWorks Boot"
+	}
+	-re "\[0-9\]\[\r\n\]+ *\[0-9\]\[\r\n\]" {
+	    remote_send $dest "\n"
+	    exp_continue
+	}
+	timeout {
+	    set do_reboot 1
+	}
+    }
+
+    if { $do_reboot } {
+	remote_close $dest
+	remote_reboot $dest
+	return
+    }
+    remote_binary $dest
+    remote_send $dest "\n\n"
+    remote_expect $dest 3 {
+	timeout {}
+	-re ".+" { exp_continue }
+    }
+    remote_send $dest "p\n"
+    remote_expect $dest 20 {
+	-re "file name\[ \t\]+: (\[^ \r\n\]+)\[ \r\n\]+" {
+	    set curr_file $expect_out(1,string)
+	    exp_continue
+	}
+	-re "$boot_mon_prompt" { }
+    }
+    if {![info exists curr_file]} {
+	remote_close $dest
+	remote_reboot $dest
+	return
+    }
+    if { $curr_file != $desired_kernel } {
+	verbose "$curr_file != '$desired_kernel'"
+	# Oh boy.
+	remote_send $dest "c\n"
+	remote_expect $dest 20 {
+	    -re "file name\[ \t\]+:.*$" {
+		remote_send $dest "$desired_kernel\n"
+		exp_continue
+	    }
+	    -re "\[a-z() \t\]+:.*$" {
+		remote_send $dest "\n"
+		exp_continue
+	    }
+	    -re "$boot_mon_prompt" {}
+	}
+    }
+    remote_send $dest "@\n"
+    remote_expect $dest 30 {
+	-re "(^|\[\r\n\])$shell_prompt" {}
+	-re ".+" {
+	    exp_continue
+	}
+    }
+    vxworks_final_init $dest
+    remote_close $dest
+}
+
+proc vxworks_final_init { dest } {
+    if {[board_info $dest exists preload_obj]} {
+	if { [target_compile [board_info $dest preload_obj] foo.out object [board_info $dest preload_obj_flags]] == "" } {
+	    vxworks_ld $dest foo.out
+	}
+	remote_file build delete foo.out
+    }
+}
+#
+# Execute the command PROGRAM on VxWorks.
+#
+
+proc vxworks_exec { dest program pargs inp outp } {
+    global decimal hex
+
+    set shell_id [vxworks_open $dest]
+    if { $shell_id < 0 } {
+	return [list -1 "open failure"]
+    }
+
+    if { $inp != "" } {
+	set inp [remote_download $dest $inp]
+	set suffix " < $inp"
+    } else {
+	set suffix ""
+    }
+
+    set shell_prompt [board_info $dest shell_prompt]
+    remote_send $dest "${program} ${pargs}$suffix\n"
+    # FIXME: The value 300 below should probably be a parameter passed in.
+    remote_expect $dest 300 {
+	-re "\\\[VxWorks Boot\\\]:" {
+	    remote_send $dest "@\n"
+	    sleep 20
+	    exp_continue
+	}
+	-re "(.*)value = (-*$decimal) = $hex\[^\r\n\]*\[\r\n\]+$shell_prompt" {
+	    set result [list $expect_out(2,string) $expect_out(1,string)]
+	}
+	-re "undefined symbol: .*$shell_prompt" {
+	    set result [list 1 "unknown command"]
+	}
+	-re "syntax error.*$shell_prompt" {
+	    set result [list -1 "syntax error in command"]
+	}
+	default {
+	    set result [list -1 "unable to execute command"]
+	}
+    }
+    if { $suffix != "" } {
+	remote_file $dest delete $inp
+    }
+    return $result
+}
+
+proc vxworks_download { dest localfile remotefile } {
+    if {[board_info $dest exists vxworks_homedir]} {
+	set rfile "[board_info $dest vxworks_homedir]/$remotefile"
+	remote_download build $localfile $rfile
+	return $rfile
+    }
+    return [remote_raw_download $dest $localfile $remotefile]
+}
+
+proc vxworks_file { dest op args } {
+    set file [lindex $args 0]
+    if {[board_info $dest exists vxworks_homedir]} {
+	set dir "[board_info $dest vxworks_homedir]"
+	switch -- $op {
+	    exists {
+		set file "${dir}/[file tail $file]"
+		return [file exists $file]
+	    }
+	    delete {
+		foreach x $args {
+		    set x "${dir}/[file tail $x]"
+		    if { [file exists $x] && [file isfile $x] } {
+			file delete -force -- $x
+		    }
+		}
+		return {}
+	    }
+	}
+    }
+    return [eval remote_raw_file \"$dest\" \"$op\" $args]
+}
+
+proc vxworks_send { dest string } {
+    # Convert LFs to CRs, 'cause that is what VxWorks wants to see.
+    regsub -all "\n" $string "\r" string
+    verbose "Sending '$string' to $dest" 2
+    return [remote_raw_send $dest "$string"]
+}
+
+proc vxworks_open { dest args } {
+    if {[board_info $dest exists fileid]} {
+	return [board_info $dest fileid]
+    }
+
+    set shell_prompt [board_info $dest shell_prompt]
+
+    set shell_id [remote_raw_open $dest]
+
+    if { $shell_id == "" || $shell_id < 0 } {
+	return -1
+    }
+
+    if {[board_info $dest exists logname]} {
+	set logname [board_info $dest logname]
+	if {[board_info $dest exists password]} {
+	    remote_send $dest "iam \"$logname\",\"[board_info $dest passwd]\"\r"
+	} else {
+	    remote_send $dest "iam \"$logname\"\r"
+	}
+
+	remote_expect $dest 30 {
+	    "iam*value = 0 = 0x0*$shell_prompt" {
+		verbose "Set default user." 2
+	    }
+	    timeout {
+		perror "Couldn't set default user."
+		return -1
+	    }
+	}
+    }
+
+    set dir ""
+    if {[board_info $dest exists ftp_directory]} {
+	set dir [board_info $dest ftp_directory]
+    }
+    if {[board_info $dest exists vxworks_homedir]} {
+	set dir [board_info $dest vxworks_homedir]
+    }
+    if { $dir != "" } {
+	set status [remote_exec $dest "cd" "\"$dir\""]
+	if {[lindex $status 0]} {
+	    perror "Error in cd to $dir--[lindex $status 1]"
+	    return 1
+	}
+    }
+    return $shell_id
+}
+#
+# Load a file into vxworks
+#
+# The result is:
+#  0 - success
+#  1 - failed (eg: link failed so testcase should fail)
+# -1 - unresolved (eg: timeout), may be fixed by rebooting
+#
+proc vxworks_ld { dest prog } {
+    global decimal hex
+    global board_info
+
+    if { $prog == "" } {
+	return 1
+    }
+
+    set shell_id [remote_open $dest]
+
+    if { $shell_id < 0 } {
+	return -1
+    }
+
+    set prog [remote_download $dest $prog]
+
+    set shell_prompt [board_info $dest shell_prompt]
+
+    # We always want to exit the program via the code at the end.
+    # If the load fails we want `expect_out' stored in the log and this
+    # saves duplicating that code.
+
+    for { set x 0 } { $x < 3 } { incr x } {
+	remote_send $dest "\n"
+	remote_expect $dest 30 {
+	    -re ".*$shell_prompt $" { set x 20 }
+	    -re "\\\[VxWorks Boot\\\]:" {
+		remote_send $dest "@\n"
+		sleep 20
+		exp_continue
+	    }
+	    timeout { return -1 }
+	}
+    }
+
+    set tries 0
+    set maxtries 3
+    set result -7	;# -7 is a local value meaning "not done"
+
+    while { $result == -7 && $tries < $maxtries } {
+	verbose "Loading $prog into vxworks."
+	remote_send $dest "ld < $prog\n"
+	incr tries
+	remote_expect $dest 300 {
+	    -re "USER.*command not understood" {
+		perror "Need to set the user and password."
+		set result 1
+	    }
+	    -re "Stale NFS file handle.*$shell_prompt $" {
+		# Need to retry.
+	    }
+	    -re "undefined symbol:.*$shell_prompt $" {
+		# This is an error in the testcase, don't call perror.
+		warning "Undefined symbol, $prog not loaded."
+		set result 1
+	    }
+	    -re "memPartAlloc: block too.*$shell_prompt $" {
+		perror "Not enough memory to load $prog."
+		set result -1
+	    }
+	    -re "can't open input.*$shell_prompt $" {
+		perror "Can't access $prog."
+		set result 1
+	    }
+	    -re "value = (-*${decimal}) = ${hex}.*$shell_prompt $" {
+		verbose "Loaded $prog into vxworks."
+		set board_info([board_info $dest name],vx_module) $expect_out(1,string)
+		set result 0
+	    }
+	    -re "(.*)$shell_prompt $" {
+		warning "Load failed: $expect_out(1,string)"
+	    }
+	    timeout {
+		warning "Timed out trying load $prog."
+		set result -1
+	    }
+	}
+    }
+
+    if { $result && [info exists expect_out(buffer)] } {
+	send_log "$expect_out(buffer)"
+    }
+
+    remote_file $dest delete $prog
+    return $result
+}
+
+#
+# Start a thread (process) executing
+#
+# The result is:
+#  0 - success
+#  1 - failed (eg: testcase aborted)
+# -1 - unresolved, may be fixed by rebooting
+#
+proc vxworks_run { dest function pargs inp outp } {
+    global hex decimal
+
+    set shell_prompt [board_info $dest shell_prompt]
+    set output ""
+
+    # There isn't a command to wait for a thread to finish, so we have to keep
+    # polling. Instead, we expect the status wrapper to return an exit
+    # status.
+
+    set status [remote_exec $dest "sp" "$function $pargs" $inp $outp]
+
+    set tid [lindex $status 0]
+
+    # Bad task id, reboot and try again.
+    if { $tid == -1 || $tid == 0 } {
+	return -1
+    }
+
+    set result 1
+    # FIXME: The value 300 below should be a parameter.
+    remote_expect $dest 300 {
+	-re "task ${hex} - aborted.*$shell_prompt $" {
+	    # FIXME: It's not clear we'll ever get here.
+	    verbose "$function aborted"
+	    set result 1
+	}
+	-re "\[\r\n\]syntax error\[\r\n\]" {
+	    verbose "weirdness after task started"
+	    set result -1
+	}
+	-re "(.*)\\*\\*\\* EXIT code ($decimal)\[\r\n\]" {
+	    set output "$expect_out(1,string)"
+	    set exit_code "$expect_out(2,string)"
+	    if { ($exit_code + 0) != 0 } {
+		set result 1
+	    } else {
+		set result 0
+	    }
+	}
+	-re "Operation Fault.*fault type:" {
+	    set result 1
+	}
+	-re "Bus Error" {
+	    # This is here to try to cope with apparently flaky h/w.
+	    # This is potentially an error in the testcase, but we don't
+	    # really know, do we?
+	    warning "Bus Error."
+	    set result 1
+	    set output "Bus Error"
+	    remote_reboot $dest
+	}
+	timeout {
+	    # Infinite loop? probably.
+	    remote_exec $dest "td" "$tid"
+	    set result 1
+	}
+    }
+
+    return [list $result $output]
+}
+
+#
+# Unload the last executable that we loaded, so we can free up its memory.
+#
+proc vxworks_unld { dest } {
+    global board_info
+
+    if {[board_info $dest exists vx_module]} {
+	# Vxworks5.0 does not have the unld command.
+	if { [board_info $dest os] != "vxworks5.0" } {
+	    remote_exec $dest "unld" "[board_info $dest vx_module]"
+	}
+	unset board_info([board_info $dest name],vx_module)
+    }
+}
+
+#
+# We loop around rebooting the box until either the load and run
+# "work" or we give up.
+#
+proc vxworks_load {dest prog args} {
+    set result ""
+    set output ""
+
+    if { [llength $args] > 0 } {
+	set pargs "[lindex $args 0]"
+    } else {
+	set pargs ""
+    }
+
+    if { [llength $args] > 1 } {
+	set inp "[lindex $args 1]"
+    } else {
+	set inp ""
+    }
+
+    if { [llength $args] > 2 } {
+	set outp "[lindex $args 2]"
+    } else {
+	set outp ""
+    }
+
+    for { set x 0 } { $x < 3 } { incr x } {
+	set status [vxworks_ld $dest $prog]
+	if { $status >= 0 } {
+	    if { $status > 0 } {
+		set result "fail"
+	    } else {
+		set out [vxworks_run $dest __wrap_main $pargs $inp $outp]
+		set status [lindex $out 0]
+		set output [lindex $out 1]
+		# Get rid of the carriage returns, because they confuse
+		# callers that try to parse the result.
+		regsub -all "\r" $output "" output
+		if { $status != 0 } {
+		    if { $status > 0 } {
+			set result "fail"
+		    }
+		} else {
+		    set result "pass"
+		}
+	    }
+	}
+	if { $result != "" } {
+	    vxworks_unld $dest
+	    return [list $result $output]
+	}
+	remote_reboot $dest
+    }
+    return [list "fail" ""]
+}
+
+set_board_info protocol "vxworks"
+# -lm under vxworks isn't needed.
+set_board_info mathlib ""
+set_board_info shell_prompt "->"
+set_board_info needs_status_wrapper 1
+# FTP doesn't work in passive mode to this board.
+set_board_info ftp_no_passive 1
+# Wait 15 seconds after powercycling.
+set_board_info reboot_delay 15
+
+# We don't have sys/unistd.h.
+set_board_info wrap_compile_flags "-DNO_UNISTD_H"
+
+set_board_info gdb_prompt "\[(\]vxgdb\[)\]"
+
+set_board_info is_vxworks 1
+set_board_info gdb,nosignals 1

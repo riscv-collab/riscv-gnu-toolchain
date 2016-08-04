@@ -1,0 +1,1421 @@
+# Copyright (C) 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2001
+# 2002, 2003, 2005, 2006, 2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+#
+# This file is part of DejaGnu.
+#
+# DejaGnu is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# DejaGnu is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with DejaGnu; if not, write to the Free Software Foundation,
+# Inc., 51 Franklin Street - Fifth Floor, Boston, MA 02110-1301, USA.
+
+# This file was written by Rob Savoye <rob@welcomehome.org>.
+
+# Load various protocol support modules.
+
+load_lib "telnet.exp"
+load_lib "rlogin.exp"
+load_lib "kermit.exp"
+load_lib "tip.exp"
+load_lib "rsh.exp"
+load_lib "ftp.exp"
+
+# Open a connection to a remote host or target. This requires the target_info
+# array be filled in with the proper info to work.
+#
+# type is either "build", "host", "target", or the name of a board loaded
+# into the board_info array. The default is target if no name is supplied.
+# It returns the spawn id of the process that is the connection.
+#
+proc remote_open { args } {
+    global reboot
+
+    if { [llength $args] == 0 } {
+	set type "target"
+    } else {
+	set type $args
+    }
+
+    # Shudder...
+    if { $reboot && $type == "target" } {
+	reboot_target
+    }
+
+    return [call_remote "" open $type]
+}
+
+proc remote_raw_open { args } {
+    return [eval call_remote raw open $args]
+}
+
+# Close a spawn ID, and wait for the process to die.  If PID is not
+# -1, then the process is killed if it doesn't exit gracefully.
+#
+proc close_wait_program { program_id pid {wres_varname ""} } {
+    if {$wres_varname != "" } {
+	upvar 1 $wres_varname wres
+    }
+
+    set exec_pid -1
+
+    if { $pid > 0 } {
+	# Tcl has no kill primitive, so we have to execute an external
+	# command in order to kill the process.
+	verbose "doing kill, pid is $pid"
+	# Prepend "-" to generate the "process group ID" needed by
+	# kill.
+	set pgid "-$pid"
+	# Send SIGINT to give the program a better chance to interrupt
+	# whatever it might be doing and react to stdin closing.
+	# eg, in case of GDB, this should get it back to the prompt.
+	exec sh -c "exec > /dev/null 2>&1 && (kill -2 $pgid || kill -2 $pid)"
+
+	# If the program doesn't exit gracefully when stdin closes,
+	# we'll need to kill it.  But only do this after 'wait'ing a
+	# bit, to avoid killing the wrong process in case of a
+	# PID-reuse race.  The extra sleep at the end is there to give
+	# time to kill $exec_pid without having _that_ be subject to a
+	# PID reuse race.
+	set secs 5
+	set sh_cmd "exec > /dev/null 2>&1"
+	append sh_cmd " && sleep $secs && (kill -15 $pgid || kill -15 $pid)"
+	append sh_cmd " && sleep $secs && (kill -9 $pgid || kill -9 $pid)"
+	append sh_cmd " && sleep $secs"
+	set exec_pid [exec sh -c "$sh_cmd" &]
+    }
+    verbose "pid is $pid"
+
+    # This closes the program's stdin.  This should cause well behaved
+    # interactive programs to exit.  This will hang if the kill
+    # doesn't work.  Nothin' to do, and it's not OK.
+    catch "close -i $program_id"
+
+    # Reap it.
+    set res [catch "wait -i $program_id" wres]
+    if {$exec_pid != -1} {
+	# We reaped the process, so cancel the pending force-kills, as
+	# otherwise if the PID is reused for some other unrelated
+	# process, we'd kill the wrong process.
+	exec sh -c "exec > /dev/null 2>&1 && kill -9 $exec_pid"
+    }
+
+    return $res
+}
+
+# Run the specified COMMANDLINE on the local machine, redirecting
+# input from file INP (if non-empty), redirecting output to file OUTP
+# (if non-empty), and waiting TIMEOUT seconds for the command to
+# complete before killing it. A list of two elements is returned: the
+# first member is the exit status of the command, the second is any
+# output produced from the command (if output is redirected, this may
+# or may not be empty). If output is redirected, both stdout and
+# stderr will appear in the specified file.
+#
+# Caveats: A pipeline is used if input or output is redirected. There
+# will be problems with killing the program if a pipeline is used. Either
+# the "tee" command or the "cat" command is used in the pipeline if input
+# or output is redirected. If the program needs to be killed, /bin/sh and
+# the kill command will be invoked.
+#
+proc local_exec { commandline inp outp timeout } {
+    # Tcl's exec is a pile of crap. It does two very inappropriate things.
+    # Firstly, it has no business returning an error if the program being
+    # executed happens to write to stderr. Secondly, it appends its own
+    # error messages to the output of the command if the process exits with
+    # non-zero status.
+    #
+    # So, ok, we do this funny stuff with using spawn sometimes and
+    # open others because of spawn's inability to invoke commands with
+    # redirected I/O. We also hope that nobody passes in a command that's
+    # a pipeline, because spawn can't handle it.
+    #
+    # We want to use spawn in most cases, because Tcl's pipe mechanism
+    # doesn't assign process groups correctly and we can't reliably kill
+    # programs that bear children. We can't use Tcl's exec because it has
+    # no way to timeout programs that hang.
+    #
+    # The expect command will close the connection when it sees
+    # EOF. Closing the connection may send SIGHUP to the child and
+    # cause it to exit before it can exit normally.  The child should
+    # ignore SIGHUP.
+    global errorInfo
+    if { "$inp" == "" && "$outp" == "" } {
+	set id -1
+	set result [catch "eval spawn -ignore SIGHUP \{${commandline}\}" pid]
+	if { $result == 0 } {
+	    set result2 0
+	} else {
+	    set pid 0
+	    set result2 5
+	}
+    } else {
+	# Use a command pipeline with open.
+	if { $inp != "" } {
+	    set inp "< $inp"
+	    set mode "r"
+	} else {
+	    set mode "w"
+	}
+
+	set use_tee 0
+	# We add |& cat so that Tcl exec doesn't freak out if the
+	# program writes to stderr.
+	if { $outp == "" } {
+	    set outp "|& cat"
+	} else {
+	    set outpf "$outp"
+	    set outp "> $outp"
+	    if { $inp != "" } {
+		set use_tee 1
+	    }
+	}
+	# Why do we use tee? Because open can't redirect both input and output.
+	if { $use_tee } {
+	    set result [catch {open "| ${commandline} $inp |& tee $outpf" RDONLY} id]
+	} else {
+	    set result [catch {open "| ${commandline} $inp $outp" $mode} id]
+	}
+
+	if { $result != 0 } {
+	    return [list -1 "open of $commandline $inp $outp failed: $errorInfo"]
+	}
+	set pid [pid $id]
+	set result [catch "spawn -ignore SIGHUP -leaveopen $id" result2]
+    }
+    # Prepend "-" to each pid, to generate the "process group IDs" needed by
+    # kill.
+    set pgid "-[join $pid { -}]"
+    verbose "pid is $pid $pgid"
+    if { $result != 0 || $result2 != 0 } {
+	# This shouldn't happen.
+	if {[info exists errorInfo]} {
+	    set foo $errorInfo
+	} else {
+	    set foo ""
+	}
+	verbose "spawn -open $id failed, $result $result2, $foo"
+	catch "close $id"
+	return [list -1 "spawn failed"]
+    }
+
+    set got_eof 0
+    set output ""
+
+    # Wait for either $timeout seconds to elapse, or for the program to
+    # exit.
+    expect {
+	-i $spawn_id -timeout $timeout -re ".+" {
+	    append output $expect_out(buffer)
+	    exp_continue -continue_timer
+	}
+	timeout {
+	    warning "program timed out"
+	}
+	eof {
+	    set got_eof 1
+	}
+    }
+
+    # If we didn't get EOF, we have to kill the poor defenseless program.
+    if { $got_eof } {
+	set pid -1
+    }
+    set r2 [close_wait_program $spawn_id $pid wres]
+    if { $id > 0 } {
+	set r2 [catch "close $id" res]
+    } else {
+	verbose "waitres is $wres" 2
+	if { $r2 == 0 } {
+	    set r2 [lindex $wres 3]
+	    if { [llength $wres] > 4 } {
+		if { [lindex $wres 4] == "CHILDKILLED" } {
+		    set r2 1
+		}
+	    }
+	    if { $r2 != 0 } {
+		set res "$wres"
+	    } else {
+		set res ""
+	    }
+	} else {
+	    set res "wait failed"
+	}
+    }
+    if { $r2 != 0 || $res != "" || ! $got_eof } {
+	verbose "close result is $res"
+	set status 1
+    } else {
+	set status 0
+    }
+    verbose "output is $output status $status"
+    if { $outp == "" || $outp == "|& cat" } {
+	return [list $status $output]
+    } else {
+	return [list $status ""]
+    }
+}
+
+#
+# Execute the supplied program on HOSTNAME. There are four optional arguments
+# the first is a set of arguments to pass to PROGRAM, the second is an
+# input file to feed to stdin of PROGRAM, the third is the name of an
+# output file where the output from PROGRAM should be written, and
+# the fourth is a timeout value (we give up after the specified # of seconds
+# has elapsed).
+#
+# A two-element list is returned. The first value is the exit status of the
+# program (-1 if the exec failed). The second is any output produced by
+# the program (which may or may not be empty if output from the program was
+# redirected).
+#
+proc remote_exec { hostname program args } {
+    if { [llength $args] > 0 } {
+	set pargs [lindex $args 0]
+    } else {
+	set pargs ""
+    }
+
+    if { [llength $args] > 1 } {
+	set inp "[lindex $args 1]"
+    } else {
+	set inp ""
+    }
+
+    if { [llength $args] > 2 } {
+	set outp "[lindex $args 2]"
+    } else {
+	set outp ""
+    }
+
+    # call_remote below gets its timeout from global variable, so set
+    # it here.
+    global timeout
+    set old_timeout $timeout
+    # 300 is probably a lame default.
+    if { [llength $args] > 3 } {
+	set timeout "[lindex $args 3]"
+    } else {
+	set timeout 300
+    }
+
+    verbose -log "Executing on $hostname: $program $pargs $inp $outp (timeout = $timeout)" 2
+
+    # Run it locally if appropriate.
+    if { ![is_remote $hostname] } {
+	set result [local_exec "$program $pargs" $inp $outp $timeout]
+    } else {
+        if { [board_info $hostname exists remotedir] } {
+            set remotedir [board_info $hostname remotedir]
+	    # This is a bit too clever. Join cd $remotedir and
+	    # $program on the command line with ';' and not '&&'. When
+	    # called, $program may be mkdir to initially create the
+	    # remote directory, in which case cd would fail.
+            set program "test -d $remotedir && cd $remotedir; $program"
+        }
+	set result [call_remote "" exec $hostname $program $pargs $inp $outp]
+    }
+
+    # Restore timeout.
+    set timeout $old_timeout
+    return $result
+}
+
+proc standard_exec { hostname args } {
+    return [eval rsh_exec \"$hostname\" $args]
+}
+
+# Close the remote connection.
+#	arg - This is the name of the machine whose connection we're closing,
+#	      or target, host or build.
+#
+proc remote_close { host } {
+    while { 1 } {
+	set result [call_remote "" close "$host"]
+	if { [remote_pop_conn $host] != "pass" } {
+	    break
+	}
+    }
+    return $result
+}
+
+proc remote_raw_close { host } {
+    return [call_remote raw close "$host"]
+}
+
+proc standard_close { host } {
+    global board_info
+
+    if {[board_info ${host} exists fileid]} {
+	set shell_id [board_info ${host} fileid]
+	set pid -1
+
+	verbose "Closing the remote shell $shell_id" 2
+	if {[board_info ${host} exists fileid_origid]} {
+	    set oid [board_info ${host} fileid_origid]
+	    set pid [pid $oid]
+	    unset board_info(${host},fileid_origid)
+	} else {
+	    set result [catch "exp_pid -i $shell_id" pid]
+	    if { $result != 0 || $pid <= 0 } {
+		set result [catch "pid $shell_id" pid]
+		if { $result != 0 } {
+		    set pid -1
+		}
+	    }
+	}
+
+	close_wait_program $shell_id $pid
+
+	if {[info exists oid]} {
+	    catch "close $oid"
+	}
+
+	unset board_info(${host},fileid)
+	verbose "Shell closed."
+    }
+    return 0
+}
+
+# Set the connection into "binary" mode, a.k.a. no processing of input
+# characters.
+#
+proc remote_binary { host } {
+    return [call_remote "" binary "$host"]
+}
+
+proc remote_raw_binary { host } {
+    return [call_remote raw binary "$host"]
+}
+
+
+# Return value of this function depends on actual implementation of reboot that
+# will be used, in practice it is expected that remote_reboot returns 1 on
+# success and 0 on failure.
+#
+proc remote_reboot { host } {
+    clone_output "\nRebooting ${host}\n"
+    # FIXME: don't close the host connection, or all the remote
+    # procedures will fail.
+    # remote_close $host
+    set status [call_remote "" reboot "$host"]
+    if {[board_info $host exists name]} {
+	set host [board_info $host name]
+    }
+    if { [info procs ${host}_init] != "" } {
+	${host}_init $host
+    }
+    return $status
+}
+
+# It looks like that this proc is never called, instead ${board}_reboot defined
+# in base-config.exp will be used because it has higher priority and
+# base-config.exp is always imported by runtest.
+#
+proc standard_reboot { host } {
+    return 1
+}
+#
+# Download file FILE to DEST. If the optional DESTFILE is specified,
+# that file will be used on the destination board. It returns either
+# "" (indicating that the download failed), or the name of the file on
+# the destination machine.
+#
+
+proc remote_download { dest file args } {
+    if { [llength $args] > 0 } {
+	set destfile [lindex $args 0]
+    } else {
+	set destfile [file tail $file]
+    }
+
+    if { ![is_remote $dest] } {
+	if { $destfile == "" || $destfile == $file } {
+	    return $file
+	} else {
+	    set result [catch "exec cp -p $file $destfile" output]
+	    if {[regexp "same file|are identical" $output]} {
+		set result 0
+		set output ""
+	    } else {
+		# try to make sure we can read it
+		# and write it (in case we copy onto it again)
+		catch {exec chmod u+rw $destfile}
+	    }
+	    if { $result != 0 || $output != "" } {
+		perror "remote_download to $dest of $file to $destfile: $output"
+		return ""
+	    } else {
+		return $destfile
+	    }
+	}
+    }
+    if { [board_info $dest exists remotedir] } {
+        set remotedir [board_info $dest remotedir]
+        set status [remote_exec $dest mkdir "-p $remotedir"]
+        if { [lindex $status 0] != 0 } {
+            perror "Couldn't create remote directory $remotedir on $dest"
+	    return ""
+        }
+        set destfile "$remotedir/$destfile"
+    }
+
+    return [call_remote "" download $dest $file $destfile]
+}
+
+# The default download procedure. Uses rcp to download to $dest.
+#
+proc standard_download {dest file destfile} {
+    set orig_destfile $destfile
+
+    if {[board_info $dest exists nfsdir]} {
+	set destdir [board_info $dest nfsdir]
+	if {[board_info $dest exists nfsroot_server]} {
+	    set dest [board_info $dest nfsroot_server]
+	} else {
+	    set dest ""
+	}
+	set destfile "$destdir/$destfile"
+    }
+
+    if { "$dest" != "" } {
+	set result [rsh_download $dest $file $destfile]
+	if { $result == $destfile } {
+	    return $orig_destfile
+	} else {
+	    return $result
+	}
+    }
+
+    set result [catch "exec cp -p $file $destfile" output]
+    if {[regexp "same file|are identical" $output]} {
+	set result 0
+	set output ""
+    } else {
+	# try to make sure we can read it
+	# and write it (in case we copy onto it again)
+	catch {exec chmod u+rw $destfile}
+    }
+    if { $result != 0 || $output != "" } {
+	perror "remote_download to $dest of $file to $destfile: $output"
+	return ""
+    } else {
+	return $orig_destfile
+    }
+}
+
+proc remote_upload {dest srcfile args} {
+    if { [llength $args] > 0 } {
+	set destfile [lindex $args 0]
+    } else {
+	set destfile [file tail $srcfile]
+    }
+
+    if { ![is_remote $dest] } {
+	if { $destfile == "" || $srcfile == $destfile } {
+	    return $srcfile
+	}
+	set result [catch "exec cp -p $srcfile $destfile" output]
+	return $destfile
+    }
+
+    return [call_remote "" upload $dest $srcfile $destfile]
+}
+
+proc standard_upload { dest srcfile destfile } {
+    set orig_srcfile $srcfile
+
+    if {[board_info $dest exists nfsdir]} {
+	set destdir [board_info $dest nfsdir]
+	if {[board_info $dest exists nfsroot_server]} {
+	    set dest [board_info $dest nfsroot_server]
+	} else {
+	    set dest ""
+	}
+	set srcfile "$destdir/$srcfile"
+    }
+
+    if { "$dest" != "" } {
+	return [rsh_upload $dest $srcfile $destfile]
+    }
+
+    set result [catch "exec cp -p $srcfile $destfile" output]
+    if {[regexp "same file|are identical" $output]} {
+	set result 0
+	set output ""
+    } else {
+	# try to make sure we can read it
+	# and write it (in case we copy onto it again)
+	catch {exec chmod u+rw $destfile}
+    }
+    if { $result != 0 || $output != "" } {
+	perror "remote_upload to $dest of $srcfile to $destfile: $output"
+	return ""
+    } else {
+	return $destfile
+    }
+}
+
+# A standard procedure to call the appropriate function. It first looks
+# for a board-specific version, then a version specific to the protocol,
+# and then finally it will call standard_$proc.
+#
+proc call_remote { type proc dest args } {
+    if {[board_info $dest exists name]} {
+	set dest [board_info $dest name]
+    }
+
+    if { $proc == "reboot" } {
+	regsub {/.*} "$dest" "" dest
+	verbose "Changed dest to $dest"
+    }
+
+    if { $dest != "host" && $dest != "build" && $dest != "target" } {
+	if { ![board_info $dest exists name] } {
+	    global board
+
+	    if {[info exists board]} {
+		error "board exists"
+	    }
+	    load_board_description $dest
+	    if { $proc == "reboot" } {
+		regsub {/.*} "$dest" "" dest
+		verbose "Changed dest to $dest"
+	    }
+	}
+    }
+
+    set high_prot ""
+    if { $type != "raw" } {
+	if {[board_info $dest exists protocol]} {
+	    set high_prot "${dest} [board_info $dest protocol]"
+	} else {
+	    set high_prot "${dest} [board_info $dest generic_name]"
+	}
+    }
+
+    verbose "call_remote $type $proc $dest $args " 3
+    # Close has to be handled specially.
+    if { $proc == "close" || $proc == "open" } {
+	foreach try "$high_prot [board_info $dest connect] telnet standard" {
+	    if { $try != "" } {
+		if { [info procs "${try}_${proc}"] != "" } {
+		    verbose "call_remote calling ${try}_${proc}" 3
+		    set result [eval ${try}_${proc} \"$dest\" $args]
+		    break
+		}
+	    }
+	}
+	set ft "[board_info $dest file_transfer]"
+	if { [info procs "${ft}_${proc}"] != "" } {
+	    verbose "calling ${ft}_${proc} $dest $args" 3
+	    set result2 [eval ${ft}_${proc} \"$dest\" $args]
+	}
+	if {![info exists result]} {
+	    if {[info exists result2]} {
+		set result $result2
+	    } else {
+		set result ""
+	    }
+	}
+	return $result
+    }
+    foreach try "${high_prot} [board_info $dest file_transfer] [board_info $dest connect] telnet standard" {
+	verbose "looking for ${try}_${proc}" 4
+	if { $try != "" } {
+	    if { [info procs "${try}_${proc}"] != "" } {
+		verbose "call_remote calling ${try}_${proc}" 3
+		return [eval ${try}_${proc} \"$dest\" $args]
+	    }
+	}
+    }
+    if { $proc == "close" } {
+	return ""
+    }
+    error "No procedure for '$proc' in call_remote"
+}
+
+# Send FILE through the existing session established to DEST.
+#
+proc remote_transmit { dest file } {
+    return [call_remote "" transmit "$dest" "$file"]
+}
+
+proc remote_raw_transmit { dest file } {
+    return [call_remote raw transmit "$dest" "$file"]
+}
+
+# The default transmit procedure if no other exists. This feeds the
+# supplied file directly into the connection.
+#
+proc standard_transmit {dest file} {
+    if {[board_info ${dest} exists name]} {
+	set dest [board_info ${dest} name]
+    }
+    if {[board_info ${dest} exists baud]} {
+	set baud [board_info ${dest} baud]
+    } else {
+	set baud 9600
+    }
+    set shell_id [board_info ${dest} fileid]
+
+    set lines 0
+    set chars 0
+    set fd [open $file r]
+    while { [gets $fd cur_line] >= 0 } {
+	set errmess ""
+	catch "send -i $shell_id \"$cur_line\r\"" errmess
+	if {[string match "write\(spawn_id=\[0-9\]+\):" $errmess]} {
+	    perror "sent \"$cur_line\" got expect error \"$errmess\""
+	    catch "close $fd"
+	    return -1
+	}
+	set chars [expr {$chars + ([string length $cur_line] * 10)}]
+	if { $chars > $baud } {
+	    sleep 1
+	    set chars 0
+	}
+	verbose "." 3
+	verbose "Sent $cur_line" 4
+	incr lines
+    }
+    verbose "$lines lines transmitted" 2
+    close $fd
+    return 0
+}
+
+proc remote_send { dest string } {
+    return [call_remote "" send "$dest" "$string"]
+}
+
+proc remote_raw_send { dest string } {
+    return [call_remote raw send "$dest" "$string"]
+}
+
+proc standard_send { dest string } {
+    if {![board_info $dest exists fileid]} {
+	perror "no fileid for $dest"
+	return "no fileid for $dest"
+    } else {
+	set shell_id [board_info $dest fileid]
+	verbose "shell_id in standard_send is $shell_id" 3
+	verbose "send -i [board_info $dest fileid] -- $string" 3
+	if {[catch "send -i [board_info $dest fileid] -- \$string" errorInfo]} {
+	    return "$errorInfo"
+	} else {
+	    return ""
+	}
+    }
+}
+
+proc file_on_host { op file args } {
+    return [eval remote_file host \"$op\" \"$file\" $args]
+}
+
+proc file_on_build { op file args } {
+    return [eval remote_file build \"$op\" \"$file\" $args]
+}
+
+proc remote_file { dest args } {
+    return [eval call_remote \"\" file \"$dest\" $args]
+}
+
+proc remote_raw_file { dest args } {
+    return [eval call_remote raw file \"$dest\" $args]
+}
+
+# Perform the specified file op on a remote Unix board.
+#
+proc standard_file { dest op args } {
+    set file [lindex $args 0]
+    verbose "dest in proc standard_file is $dest" 3
+    if { ![is_remote $dest] } {
+	switch -- $op {
+	    cmp {
+		set otherfile [lindex $args 1]
+		if { [file exists $file] && [file exists $otherfile]
+		     && [file size $file] == [file size $otherfile] } {
+		    set r [remote_exec build cmp "$file $otherfile"]
+		    if { [lindex $r 0] == 0 } {
+			return 0
+		    }
+		}
+		return 1
+	    }
+	    tail {
+		return [file tail $file]
+	    }
+	    dirname {
+		if { [file pathtype $file] == "relative" } {
+		    set file [remote_file $dest absolute $file]
+		}
+		set result [file dirname $file]
+		if { $result == "" } {
+		    return "/"
+		}
+		return $result
+	    }
+	    join {
+		return [file join [lindex $args 0] [lindex $args 1]]
+	    }
+	    absolute {
+		return [unix_clean_filename $dest $file]
+	    }
+	    exists {
+		return [file exists $file]
+	    }
+	    delete {
+		foreach x $args {
+		    if { [file exists $x] && [file isfile $x] } {
+			file delete -force -- $x
+		    }
+		}
+		return {}
+	    }
+	}
+    } else {
+	switch -- $op {
+	    exists {
+		set status [remote_exec $dest "test -f $file"]
+		return [expr {[lindex $status 0] == 0}]
+	    }
+	    delete {
+		set file ""
+		# Allow multiple files to be deleted at once.
+		foreach x $args {
+		    append file " $x"
+		}
+		verbose "remote_file deleting $file"
+		set status [remote_exec $dest "rm -f $file"]
+		return [lindex $status 0]
+	    }
+	}
+    }
+}
+
+# Return an absolute version of the filename in $file, with . and ..
+# removed.
+#
+proc unix_clean_filename { dest file } {
+    if { [file pathtype $file] == "relative" } {
+	set file [remote_file $dest join [pwd] $file]
+    }
+    set result ""
+    foreach x [split $file "/"] {
+	if { $x == "." || $x == "" } {
+	    continue
+	}
+	if { $x == ".." } {
+	    set rlen [expr {[llength $result] - 2}]
+	    if { $rlen >= 0 } {
+		set result [lrange $result 0 $rlen]
+	    } else {
+		set result ""
+	    }
+	    continue
+	}
+	lappend result $x
+    }
+    return "/[join $result /]"
+}
+
+#
+# Start COMMANDLINE running on DEST. By default it is not possible to
+# redirect I/O. If the optional keyword "readonly" is specified, input
+# to the command may be redirected. If the optional keyword
+# "writeonly" is specified, output from the command may be redirected.
+#
+# If the command is successfully started, a positive "spawn id" is returned.
+# If the spawn fails, a negative value will be returned.
+#
+# Once the command is spawned, you can interact with it via the remote_expect
+# and remote_wait functions.
+#
+proc remote_spawn { dest commandline args } {
+    global board_info
+
+    if {![is_remote $dest]} {
+	if {[info exists board_info($dest,fileid)]} {
+	    unset board_info($dest,fileid)
+	}
+	verbose "remote_spawn is local" 3
+	if {[board_info $dest exists name]} {
+	    set dest [board_info $dest name]
+	}
+
+	verbose "spawning command $commandline"
+
+	if { [llength $args] > 0 } {
+	    if { [lindex $args 0] == "readonly" } {
+		set result [catch { open "| ${commandline} |& cat" "r" } id]
+		if { $result != 0 } {
+		    return -1
+		}
+	    } else {
+		set result [catch {open "| ${commandline}" "w"} id]
+		if { $result != 0 } {
+		    return -1
+		}
+	    }
+	    set result [catch "spawn -leaveopen $id" result2]
+	    if { $result == 0 && $result2 == 0} {
+		verbose "setting board_info($dest,fileid) to $spawn_id" 3
+		set board_info($dest,fileid) $spawn_id
+		set board_info($dest,fileid_origid) $id
+		return $spawn_id
+	    } else {
+		# This shouldn't happen.
+		global errorInfo
+		if {[info exists errorInfo]} {
+		    set foo $errorInfo
+		} else {
+		    set foo ""
+		}
+		verbose "spawn -open $id failed, $result $result2, $foo"
+		catch "close $id"
+		return -1
+	    }
+	} else {
+	    set result [catch "spawn $commandline" pid]
+	    if { $result == 0 } {
+		verbose "setting board_info($dest,fileid) to $spawn_id" 3
+		set board_info($dest,fileid) $spawn_id
+		return $spawn_id
+	    } else {
+		verbose -log "spawn of $commandline failed"
+		return -1
+	    }
+	}
+    }
+
+    # Seems to me there should be a cleaner way to do this.
+    if { "$args" == "" } {
+	return [call_remote "" spawn "$dest" "$commandline"]
+    } else {
+	return [call_remote "" spawn "$dest" "$commandline" $args]
+    }
+}
+
+proc remote_raw_spawn { dest commandline } {
+    return [call_remote raw spawn "$dest" "$commandline"]
+}
+
+# The default spawn procedure. Uses rsh to connect to $dest.
+#
+proc standard_spawn { dest commandline } {
+    global board_info
+
+    if {![board_info $dest exists rsh_prog]} {
+	if { [which remsh] != 0 } {
+	    set RSH remsh
+	} else {
+	    set RSH rsh
+	}
+    } else {
+	set RSH [board_info $dest rsh_prog]
+    }
+
+    if {[board_info $dest exists hostname]} {
+	set remote [board_info $dest hostname]
+    } else {
+	set remote $dest
+    }
+
+    if {![board_info $dest exists username]} {
+	spawn $RSH $remote $commandline
+    } else {
+	spawn $RSH -l [board_info $dest username] $remote $commandline
+    }
+
+    set board_info($dest,fileid) $spawn_id
+    return $spawn_id
+}
+
+# Run PROG on DEST, with optional arguments, input and output files.
+# It returns a list of two items. The first is ether "pass" if the
+# program loaded, ran and exited with a zero exit status, or "fail"
+# otherwise.  The second argument is any output produced by the
+# program while it was running.
+#
+proc remote_load { dest prog args } {
+    global tool
+
+    set dname [board_info $dest name]
+    set cache "[getenv REMOTELOAD_CACHE]/$tool/$dname/[file tail $prog]"
+    set empty [is_remote $dest]
+    if { [board_info $dest exists is_simulator] || [getenv REMOTELOAD_CACHE] == "" } {
+	set empty 0
+    } else {
+	for { set x 0 } {$x < [llength $args] } {incr x} {
+	    if { [lindex $args $x] != "" } {
+		set empty 0
+		break
+	    }
+	}
+    }
+    if {$empty} {
+	global sum_program
+
+	if {[info exists sum_program]} {
+	    if {![target_info exists objcopy]} {
+		set_currtarget_info objcopy [find_binutils_prog objcopy]
+	    }
+	    if {[is_remote host]} {
+		set dprog [remote_download host $prog "a.out"]
+	    } else {
+		set dprog $prog
+	    }
+	    set status [remote_exec host "[target_info objcopy]" "-O srec $dprog ${dprog}.sum"]
+	    if {[is_remote host]} {
+		remote_file upload ${dprog}.sum ${prog}.sum
+	    }
+	    if { [lindex $status 0] == 0 } {
+		set sumout [remote_exec build "$sum_program" "${prog}.sum"]
+		set sum [lindex $sumout 1]
+		regsub "\[\r\n \t\]+$" "$sum" "" sum
+	    } else {
+		set sumout [remote_exec build "$sum_program" "${prog}"]
+		set sum [lindex $sumout 1]
+		regsub "\[\r\n \t\]+$" "$sum" "" sum
+	    }
+	    remote_file build delete ${prog}.sum
+	}
+	if {[file exists $cache]} {
+	    set same 0
+	    if {[info exists sum_program]} {
+		set id [open $cache "r"]
+		set oldsum [read $id]
+		close $id
+		if { $oldsum == $sum } {
+		    set same 1
+		}
+	    } else {
+		if { [remote_file build cmp $prog $cache] == 0 } {
+		    set same 1
+		}
+	    }
+	    if { $same } {
+		set fd [open "${cache}.res" "r"]
+		gets $fd l1
+		set result [list $l1 [read $fd]]
+		close $fd
+	    }
+	}
+    }
+    if {![info exists result]} {
+	set result [eval call_remote \"\" load \"$dname\" \"$prog\" $args]
+	# Not quite happy about the "pass" condition, but it makes sense if
+	# you think about it for a while-- *why* did the test not pass?
+	if { $empty && [lindex $result 0] == "pass" } {
+	    if { [getenv LOAD_REMOTECACHE] != "" } {
+		set dir "[getenv REMOTELOAD_CACHE]/$tool/$dname"
+		if {![file exists $dir]} {
+		    file mkdir $dir
+		}
+		if {[file exists $dir]} {
+		    if {[info exists sum_program]} {
+			set id [open $cache "w"]
+			puts -nonewline $id "$sum"
+			close $id
+		    } else {
+			remote_exec build cp "$prog $cache"
+		    }
+		    set id [open "${cache}.res" "w"]
+		    puts $id [lindex $result 0]
+		    puts -nonewline $id [lindex $result 1]
+		    close $id
+		}
+	    }
+	}
+    }
+    return $result
+}
+
+proc remote_raw_load { dest prog args } {
+    return [eval call_remote raw load \"$dest\" \"$prog\" $args ]
+}
+
+# The default load procedure if no other exists for $dest. It uses
+# remote_download and remote_exec to load and execute the program.
+#
+proc standard_load { dest prog args } {
+    global board_info
+
+    if { [llength $args] > 0 } {
+	set pargs [lindex $args 0]
+    } else {
+	set pargs ""
+    }
+
+    if { [llength $args] > 1 } {
+	set inp "[lindex $args 1]"
+    } else {
+	set inp ""
+    }
+
+    if {![file exists $prog]} then {
+	# We call both here because this should never happen.
+	perror "$prog does not exist in standard_load."
+	verbose -log "$prog does not exist." 3
+	return "untested"
+    }
+
+    if {[is_remote $dest]} {
+        if {![board_info $dest exists remotedir]} {
+            set board_info($dest,remotedir) "/tmp/runtest.[pid]"
+        }
+	set remotefile [file tail $prog]
+	set remotefile [remote_download $dest $prog $remotefile]
+	if { $remotefile == "" } {
+	    verbose -log "Download of $prog to [board_info $dest name] failed." 3
+	    return "unresolved"
+	}
+	if {[board_info $dest exists remote_link]} {
+	    if {[[board_info $dest remote_link] $remotefile]} {
+		verbose -log "Couldn't do remote link"
+		remote_file target delete $remotefile
+		return "unresolved"
+	    }
+	}
+	set status [remote_exec $dest $remotefile $pargs $inp]
+	remote_file $dest delete $remotefile
+    } else {
+	set status [remote_exec $dest $prog $pargs $inp]
+    }
+    if { [lindex $status 0] < 0 } {
+	verbose -log "Couldn't execute $prog, [lindex $status 1]" 3
+	return "unresolved"
+    }
+    set output [lindex $status 1]
+    set status [lindex $status 0]
+
+    verbose -log "Executed $prog, status $status" 2
+    if {![string match "" $output]} {
+	verbose -log -- "$output" 2
+    }
+    if { $status == 0 } {
+	return [list "pass" $output]
+    } else {
+	return [list "fail" $output]
+    }
+}
+
+# Loads PROG into DEST.
+#
+proc remote_ld { dest prog } {
+    return [eval call_remote \"\" ld \"$dest\" \"$prog\"]
+}
+
+proc remote_raw_ld { dest prog } {
+    return [eval call_remote raw ld \"$dest\" \"$prog\"]
+}
+
+# Wait up to TIMEOUT seconds for the last spawned command on DEST to
+# complete. A list of two values is returned; the first is the exit
+# status (-1 if the program timed out), and the second is any output
+# produced by the command.
+#
+proc remote_wait { dest timeout } {
+    return [eval call_remote \"\" wait \"$dest\" $timeout]
+}
+
+proc remote_raw_wait { dest timeout } {
+    return [eval call_remote raw wait \"$dest\" $timeout]
+}
+
+# The standard wait procedure, used for commands spawned on the local
+# machine.
+#
+proc standard_wait { dest timeout } {
+    set output ""
+    set status -1
+
+    if {[info exists exp_close_result]} {
+	unset exp_close_result
+    }
+    remote_expect $dest $timeout {
+	-re ".+" {
+	    append output $expect_out(buffer)
+	    exp_continue -continue_timer
+	}
+	timeout {
+	    warning "program timed out."
+	}
+	eof {
+	    # There may be trailing characters in the buffer.
+	    # Append them, too.
+	    append output $expect_out(buffer)
+	    if {[board_info $dest exists fileid_origid]} {
+		global board_info
+
+		set id [board_info $dest fileid]
+		set oid [board_info $dest fileid_origid]
+		verbose "$id $oid"
+		unset board_info($dest,fileid)
+		unset board_info($dest,fileid_origid)
+		catch "close -i $id"
+		# I don't believe this. You HAVE to do a wait, even tho
+		# it won't work! stupid ()*$%*)(% expect...
+		catch "wait -i $id"
+		set r2 [catch "close $oid" res]
+		if { $r2 != 0 } {
+		    verbose "close result is $res"
+		    set status 1
+		} else {
+		    set status 0
+		}
+	    } else {
+		set s [wait -i [board_info $dest fileid]]
+		if { [lindex $s 0] != 0 && [lindex $s 2] == 0 } {
+		    set status [lindex $s 3]
+		    if { [llength $s] > 4 } {
+			if { [lindex $s 4] == "CHILDKILLED" } {
+			    set status 1
+			}
+		    }
+		}
+	    }
+	}
+    }
+
+    remote_close $dest
+    return [list $status $output]
+}
+
+# This checks the value contained in the variable named "variable" in
+# the calling procedure for output from the status wrapper and returns
+# a non-negative value if it exists; otherwise, it returns -1. The
+# output from the wrapper is removed from the variable.
+#
+proc check_for_board_status  { variable } {
+    upvar $variable output
+
+    # If all programs of this board have a wrapper that always outputs a
+    # status message, then the absence of it means that the program
+    # crashed, regardless of status found elsewhere (e.g. simulator exit
+    # code).
+    if { [target_info needs_status_wrapper] != "" } then {
+	set nomatch_return 2
+    } else {
+	set nomatch_return -1
+    }
+
+    if {[regexp "(^|\[\r\n\])\\*\\*\\* EXIT code" $output]} {
+	regsub "^.*\\*\\*\\* EXIT code " $output "" result
+	regsub "\[\r\n\].*$" $result "" result
+	regsub -all "(^|\[\r\n\]|\r\n)\\*\\*\\* EXIT code \[^\r\n\]*(\[\r\n\]\[\r\n\]?|$)" $output "" output
+	regsub "^\[^0-9\]*" $result "" result
+	regsub "\[^0-9\]*$" $result "" result
+	verbose "got board status $result" 3
+	verbose "output is $output" 3
+	if { $result == "" } {
+	    return $nomatch_return
+	} else {
+	    return [expr {$result}]
+	}
+    } else {
+	return $nomatch_return
+    }
+}
+
+# remote_expect works basically the same as standard expect, but it
+# also takes care of getting the file descriptor from the specified
+# host and also calling the timeout/eof/default section if there is an
+# error on the expect call.
+#
+proc remote_expect { board timeout args } {
+    global errorInfo errorCode
+    global remote_suppress_flag
+
+    set spawn_id [board_info $board fileid]
+
+    if { [llength $args] == 1 } {
+	set args "[lindex $args 0]"
+    }
+
+    set res {}
+    set got_re 0
+    set need_append 1
+
+    set orig "$args"
+
+    set error_sect ""
+    set save_next 0
+
+    if { $spawn_id == "" } {
+	# This should be an invalid spawn id.
+	set spawn_id 1000
+    }
+
+    for { set i 0 } { $i < [llength $args] } { incr i }  {
+	if { $need_append } {
+	    append res "\n-i $spawn_id "
+	    set need_append 0
+	}
+
+	set x "[lrange $args $i $i]"
+	regsub "^\n*\[ 	\]*" "$x" "" x
+
+	if { $x == "-i" || $x == "-timeout" || $x == "-ex" } {
+	    append res "$x "
+	    set next [expr {$i + 1}]
+	    append res "[lrange $args $next $next]"
+	    incr i
+	    continue
+	}
+	if { $x == "-n" || $x == "-notransfer" || $x == "-nocase" || $x == "-indices" } {
+	    append res "${x} "
+	    continue
+	}
+	if { $x == "-re" } {
+	    append res "${x} "
+	    set next [expr {$i + 1}]
+	    set y [lrange $args $next $next]
+	    append res "${y} "
+	    set got_re 1
+	    incr i
+	    continue
+	}
+	if { $got_re } {
+	    set need_append 0
+	    append res "$x "
+	    set got_re 0
+	    if { $save_next } {
+		set save_next 0
+		set error_sect [lindex $args $i]
+	    }
+	} else {
+	    if { ${x} == "eof" } {
+		set save_next 1
+	    } elseif { ${x} == "default" || ${x} == "timeout" } {
+		if { $error_sect == "" } {
+		    set save_next 1
+		}
+	    }
+	    append res "${x} "
+	    set got_re 1
+	}
+    }
+
+    if {[info exists remote_suppress_flag]} {
+	if { $remote_suppress_flag } {
+	    set code 1
+	}
+    }
+    if {![info exists code]} {
+	set res "\n-timeout $timeout $res"
+	set body "expect \{\n-i $spawn_id -timeout $timeout $orig\}"
+	set code [catch {uplevel $body} string]
+    }
+
+    if {$code == 1} {
+	if {[info exists string]} {
+	    perror "$errorInfo $errorCode $string"
+	}
+
+	if { $error_sect != "" } {
+	    set code [catch {uplevel $error_sect} string]
+	} else {
+	    warning "remote_expect statement without a default case"
+	    return
+	}
+    }
+
+    if {$code == 1} {
+	return -code error -errorinfo $errorInfo -errorcode $errorCode $string
+    } else {
+	return -code $code $string
+    }
+}
+
+# Push the current connection to HOST onto a stack.
+#
+proc remote_push_conn { host } {
+    global board_info
+
+    set name [board_info $host name]
+
+    if { $name == "" } {
+	return "fail"
+    }
+
+    if {![board_info $host exists fileid]} {
+	return "fail"
+    }
+
+    set fileid [board_info $host fileid]
+    set conninfo [board_info $host conninfo]
+    if {![info exists board_info($name,fileid_stack)]} {
+	set board_info($name,fileid_stack) {}
+    }
+    set board_info($name,fileid_stack) [list $fileid $conninfo $board_info($name,fileid_stack)]
+    unset board_info($name,fileid)
+    if {[info exists board_info($name,conninfo)]} {
+	unset board_info($name,conninfo)
+    }
+    return "pass"
+}
+
+# Pop a previously-pushed connection from a stack. You should have closed the
+# current connection before doing this.
+#
+proc remote_pop_conn { host } {
+    global board_info
+
+    set name [board_info $host name]
+
+    if { $name == "" } {
+	return "fail"
+    }
+    if {![info exists board_info($name,fileid_stack)]} {
+	return "fail"
+    }
+    set stack $board_info($name,fileid_stack)
+    if { [llength $stack] < 3 } {
+	return "fail"
+    }
+    set board_info($name,fileid) [lindex $stack 0]
+    set board_info($name,conninfo) [lindex $stack 1]
+    set board_info($name,fileid_stack) [lindex $stack 2]
+    return "pass"
+}
+
+# Swap the current connection with the topmost one on the stack.
+#
+proc remote_swap_conn { host } {
+    global board_info
+    set name [board_info $host name]
+
+    if {![info exists board_info($name,fileid)]} {
+	return "fail"
+    }
+
+    set fileid $board_info($name,fileid)
+    if {[info exists board_info($name,conninfo)]} {
+	set conninfo $board_info($name,conninfo)
+    } else {
+	set conninfo {}
+    }
+    if { [remote_pop_conn $host] != "pass" } {
+	set board_info($name,fileid) $fileid
+	set board_info($name,conninfo) $conninfo
+	return "fail"
+    }
+    set newfileid $board_info($name,fileid)
+    set newconninfo $board_info($name,conninfo)
+    set board_info($name,fileid) $fileid
+    set board_info($name,conninfo) $conninfo
+    remote_push_conn $host
+    set board_info($name,fileid) $newfileid
+    set board_info($name,conninfo) $newconninfo
+    return "pass"
+}
+
+set sum_program "testcsum"

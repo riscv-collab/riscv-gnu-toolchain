@@ -1,0 +1,147 @@
+# Copyright (C) 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2001
+# 2002, 2003, 2005, 2006, 2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+#
+# This file is part of DejaGnu.
+#
+# DejaGnu is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# DejaGnu is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with DejaGnu; if not, write to the Free Software Foundation,
+# Inc., 51 Franklin Street - Fifth Floor, Boston, MA 02110-1301, USA.
+
+#
+# sim_load -- load the program and execute it
+#
+# See default.exp for explanation of arguments and results.
+#
+
+proc sim_spawn { dest cmdline args } {
+    if {![board_info $dest exists sim]} {
+	perror "no simulator defined for [board_info $dest name]"
+	exit 1
+    } else {
+	set sim [board_info $dest sim]
+    }
+
+    if {[board_info $dest exists sim,options]} {
+	set simflags [board_info $dest sim,options]
+    } else {
+        set simflags ""
+    }
+
+    if {![is_remote host]} {
+	if { [which $sim] == 0 } {
+	    verbose -log "Simulator $sim missing." 3
+	    return -1
+	}
+    }
+
+    if {[is_remote host]} {
+	# download the program to remote.
+	# we're assuming the program is the first word in the command.
+	# FIXME: "prog < infile" won't work until we download infile.
+	set prog [lindex $cmdline 0]
+	set prog [remote_download host $prog a.out]
+	set cmdline [lreplace $cmdline 0 0 $prog]
+    }
+
+    return [eval remote_spawn host \{ $sim $simflags $cmdline \} $args]
+}
+
+proc sim_wait { dest timeout } {
+    return [remote_wait host $timeout]
+}
+
+proc sim_load { dest prog args } {
+    set inpfile ""
+    if { [llength $args] > 1 } {
+	if { [lindex $args 1] != "" } {
+	    set inpfile "[lindex $args 1]"
+	}
+    }
+
+    if {![file exists $prog]} then {
+	perror "sim.exp: $prog to be downloaded does not exist."
+	verbose -log "$prog to be downloaded does not exist." 3
+	return [list "untested" ""]
+    }
+
+    if {[board_info $dest exists sim_time_limit]} {
+	set sim_time_limit [board_info $dest sim_time_limit]
+    } else {
+	set sim_time_limit 240
+    }
+
+    set output ""
+
+    if { [board_info target sim,protocol] == "sid" } {
+	set cmd "-e \"set cpu-loader file [list $prog]\""
+    } elseif { [board_info target sim,protocol] == "rawsid" } {
+	set cmd "--load=$prog"
+    } else {
+	set cmd $prog
+    }
+
+    # Run the program with a limited amount of real time. While
+    # this isn't as nice as limiting the amount of CPU time, it
+    # will have to do.
+    if { $inpfile != "" } {
+	set res [remote_spawn target "${cmd} < $inpfile" "readonly"]
+    } else {
+	set res [remote_spawn target "${cmd}"]
+    }
+
+    if { $res <= 0 } {
+	return [list "fail" "remote_spawn failed"]
+    }
+
+    set state [remote_wait target $sim_time_limit]
+    set status [lindex $state 0]
+    set output [lindex $state 1]
+    verbose "Output is $output"
+
+    set status2 [check_for_board_status output]
+    if { $status2 >= 0 } {
+	set status $status2
+    }
+
+    verbose "Return status was: $status" 2
+    if { $status == 0 } {
+	set result "pass"
+    } else {
+	set result "fail"
+    }
+    return [list $result $output]
+}
+
+proc sim_download { dest file args } {
+    return [remote_download host $file $args]
+}
+
+proc sim_upload { dest srcfile args } {
+    return [remote_upload host $srcfile $args]
+}
+
+proc sim_exec { dest srcfile args } {
+    perror "Remote execution for simulators not implemented."
+    verbose -log "Remote execution for simulators not implemented."
+    return -1
+}
+
+proc sim_file { board args } {
+    return [eval [list remote_file host] $args]
+}
+
+set_board_info protocol  "sim"
+
+# By default, assume the simulator is slow.  This causes some tests
+# to either be simplified or skipped completely.
+set_board_info slow_simulator 1

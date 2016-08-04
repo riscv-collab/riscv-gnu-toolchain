@@ -1,0 +1,828 @@
+# Copyright (C) 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2001
+# 2002, 2003, 2005, 2006, 2007, 2008, 2009, 2010, 2011 Free Software Foundation, Inc.
+#
+# This file is part of DejaGnu.
+#
+# DejaGnu is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# DejaGnu is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with DejaGnu; if not, write to the Free Software Foundation,
+# Inc., 51 Franklin Street - Fifth Floor, Boston, MA 02110-1301, USA.
+
+# This file was written by Rob Savoye <rob@welcomehome.org> and
+# extensively modified by Bob Manson <manson@cygnus.com>.
+
+# A hairy pattern to recognize text.
+set text "\[- A-Za-z0-9\.\;\"\_\:\'\`\(\)\!\#\=\+\?\&\*]"
+
+# This is a collection of support procs for the target data
+# structures. We use a named array, since Tcl has no real data
+# structures. Here's the special index words for the array:
+#       Required fields are:
+#	    name    - the name of the target. (mostly for error messages) This
+#		      should also be the string used for this target's array.
+#                     It should also be the same as the linker script so we
+#		      can find them dynamically.
+#       Optional fields are:
+#	    ldflags - the flags required to produce a fully linked executable.
+#	    config  - the target canonical for this target. This is a regexp
+#		      as passed to istarget or isnative.
+#	    cflags  - the flags required to produce an object file from a
+#		      source file.
+#	    connect - the connectmode for this target. This is for both IP and
+#		      serial connections.
+#	    hostname  - the hostname of the target. This is for TCP/IP based
+#		      connections, and is also used for versions of tip that
+#		      use /etc/remote.
+#	    serial  - the serial port. This is typically /dev/tty? or com?:.
+#	    baud    - the baud rate for a serial port connection.
+#	    netport - the IP port.
+#	    x10     - parameters for the x10 controller (used to reboot)
+#	    fileid  - the fileid or spawn id of of the connection.
+#	    prompt  - a regexp for matching the prompt.
+#	    ioport  - the port for I/O on dual port systems.
+#
+# there are three main arrays, indexed in with "target", "build", and "host".
+# all other targets are indexed with a name usually based on the linker script
+# like "idp", or "ex93x.ld".
+#
+
+# Set the target connection.
+#
+proc push_target { name } {
+    global target_abbrev
+
+    pop_config  target
+    push_config target $name
+}
+
+# Set the host connection.
+#
+proc push_host { name } {
+    pop_config host
+    push_config host $name
+}
+
+# Set the build connection.
+#
+proc push_build { name } {
+    pop_config build
+    push_config build $name
+}
+
+# Set the config for the current host or target connection.
+#
+proc push_config { type name } {
+    global target_info
+
+    verbose "pushing config for $type, name is $name"
+    if {[info exists target_info($type,name)]} {
+	if { $target_info($type,name) == $name } {
+	    error "pushing config for $type, '$name' twice"
+	}
+    }
+    set target_info($type,name) $name
+}
+
+# Set the current connection for target or host.
+#
+proc pop_config { type  } {
+    global target_info
+
+    if {[info exists target_info(${type},name)]} {
+	unset target_info(${type},name)
+    }
+}
+
+# Unset the target connection.
+#
+proc pop_target { } {
+    pop_config target
+}
+
+# Unset the host connection.
+#
+proc pop_host { } {
+    pop_config host
+}
+
+# Remove extraneous warnings from TEXT.
+#
+# An example is:
+# ld.so: warning: /usr/lib/libc.so.1.8.1 has older revision than expected 9
+#
+proc prune_warnings { text } {
+    global host_triplet
+
+    # remove the \r part of "\r\n" so we don't break all the patterns
+    # we want to match.
+    regsub -all -- "\r" $text "" text
+
+    # This is from sun4's.  Do it for all machines for now.
+    # The "\\1" is to try to preserve a "\n" but only if necessary.
+    if {[ishost "sparc-*-sunos*"]} {
+	regsub -all "(^|\n)(ld.so: warning:\[^\n\]*\n?)+" $text "\\1" text
+    }
+
+    # See Brendan for the raison d'etre of this one.
+    # http://en.wikipedia.org/wiki/Brendan_Kehoe
+    if {[ishost "alpha*-*-*"]} {
+	regsub -all "(^|\n)(/usr/(ucb|bin)/ld.*without exceptions was\[^\n\]+\n?)" $text "\\1" text
+    }
+    if {[ishost "hppa*-*-hpux*"]} {
+       # Ignore the compiler's warnings about PA incompatibility.
+       regsub -all "(^|\n)\[^\n\]*PA 2.0 object file \[^\n\]* was detected. The linked output may not run on a PA 1.x system." $text "" text
+
+       regsub -all "(^|\n)\[^\n\]*PA 2.0 object file \[^\n\]* was detected. The linked output may not run on a PA 1.x system." $text "" text
+
+       # And the linker's +vcompatwarnings verbage.
+       regsub -all "(^|\n)\[^\n\]*Linker features were used that may not be supported\[^\n\]*.\[^\n\]*." $text "" text
+
+       # Ignore these warnings, which the HP aCC compiler seems to
+       # generate on HP-UX 10.30 and 11.0.  (Something is probably
+       # wrong with some system headers, but still...)
+       #
+       # This particular warning always is given with a line of warning
+       # text, followed by a source line, followed by a line with "^^^"
+       # underlining an offending symbol name.  Here we slurp up the
+       # warning text and the next two lines, assuming that they are
+       # the source line and underline chars.
+       #
+       regsub -all "Warning .*The linkage directive is ignored for an object or function declared static..\[^\n\]*.\[^\n\]*." $text "" text
+
+       # Ignore these warnings, which I often see from the ANSI C
+       # compiler installed on HP-UX 11.0 machines.  (Something is
+       # probably wrong with an installation, or perhaps NLS isn't
+       # quite healthy yet on 11.0.  In either case, it's easier to
+       # "fix" this nit here, than it is to track down & fix the
+       # root cause.)
+       #
+       # This particular warning always is given with a line of warning
+       # text, followed by line that says "Using internal messages".
+       #
+       regsub -all "Warning: Unable to open pxdb message catalog.*" $text "" text
+       regsub -all ".* Using internal messages.*" $text "" text
+
+       # Another form of the "unable to find message catalog" warning.
+       #
+       regsub -all "cpp: warning .*Possibly incorrect message catalog." $text "" text
+
+       # Another odd warning on 11.0.
+       #
+       regsub -all "aCC .assigner.: Warning .*Could not find library for -l.*" $text "" text
+
+       # Oh heck, just keep adding 'em here...
+       #
+       regsub -all "aCC .assigner.: Warning .*Could not satisfy instantiation request for \[^\n\]* contained in\[^\n\]*\n\t/lib/pa20_64/lib\[a-zA-Z0-9\]*.sl" $text "" text
+
+      # Remove the lines that are output by the HP F77 compiler to
+      # indicate the functions that are being compiled.
+      upvar compiler_type compiler_type
+      if { [info exists compiler_type] && $compiler_type == "f77" } {
+	  regsub -all "\[ \ta-zA-Z_0-9\./\]*:\[\r\n\]+" $text "" text
+      }
+
+      # Ignore the warnings about unknown options
+      regsub -all ".*warning \[0-9\]+: Unknown option.*ignored.*" $text "" text
+
+      }
+
+    # Ignore these.
+    regsub -all "(^|\n)\[^\n\]*linker input file unused since linking not done" $text "" text
+    regsub -all "(^|\n)\[^\n\]*file path prefix \[^\n\]* never used" $text "" text
+
+    # This is from sun4's.  Do it for all machines for now.
+    # The "\\1" is to try to preserve a "\n" but only if necessary.
+    regsub -all "(^|\n)(ld.so: warning:\[^\n\]*\n?)+" $text "\\1" text
+
+    # This happens when compiling on Alpha OSF/1 with cc -g -O.
+    regsub -all "(^|\n)(\n*uopt: Warning: file not optimized; use -g3 if both optimization and debug wanted\n?)+" $text "\\1" text
+
+    # This happens when compiling on Alpha OSF using gas.
+    regsub -all "(^|\n)(/usr/.*/ld:\nWarning: Linking some objects which contain exception information sections\n\tand some which do not. This may cause fatal runtime exception handling\n\tproblems\[^\n\]*\n?)+" $text "\\1" text
+
+    # This happens on SunOS with cc -g -O.
+    regsub -all "(^|\n)(cc: Warning: -O conflicts with -g. -O turned off.\n?)+" $text "\\1" text
+
+    # This happens when assembling code with the native HP assembler
+    regsub -all "(^|\n)(as:\[^\n\]*err#13.\n  .warning.\[^\n\]*\n?)+" $text "\\1" text
+
+    # When using the HP assembler, -g isn't supported.
+    regsub -all "(^|\n)(cc1: warning: -g is only supported when using GAS on this processor\[^\n\]*\ncc1: warning:\[^\n\]*\n?)+" $text "\\1" text
+    regsub -all "(^|\n)(cc1plus: warning: -g is only supported when using GAS on this processor\[^\n\]*\ncc1plus: warning:\[^\n\]*\n?)+" $text "\\1" text
+
+    # This happens when testing across NFS.
+    regsub -all "(^|\n)((NFS|nfs) server \[^\n\]* not responding\[^\n\]*\n?)+" $text "\\1" text
+    regsub -all "(^|\n)((NFS|nfs) server \[^\n\]* (ok|is alive again)\[^\n\]*\n?)+" $text "\\1" text
+
+    # This happens when testing across NFS on osf4.
+    regsub -all "(^|\n)(NFS3 server \[^\n\]* not responding still trying\[^\n\]*\n?)+" $text "\\1" text
+    regsub -all "(^|\n)(NFS3 server \[^\n\]* ok\[^\n\]*\n?)+" $text "\\1" text
+
+    # When using the IRIX 6 o32 assembler, -g isn't supported
+    regsub -all "(^|\n)(cc1: warning: `-g' not supported by this configuration of GCC\[^\n\]*\n?)+" $text "\\1" text
+    regsub -all "(^|\n)(cc1plus: warning: `-g' not supported by this configuration of GCC\[^\n\]*\n?)+" $text "\\1" text
+
+    regsub -all "(^|\n)(cc1: warning: -mabi=32 does not support -g\[^\n\]*\n?)+" $text "\\1" text
+    regsub -all "(^|\n)(cc1plus: warning: -mabi=32 does not support -g\[^\n\]*\n?)+" $text "\\1" text
+
+    # This happens with the o32 assembler on IRIX 6.
+    regsub -all "(^|\n)(as: Warning: -O3 is not supported for assembly compiles for ucode compilers; changing to -O2.\n?)+" $text "\\1" text
+
+    # This happens when using g++ on a DWARF system.
+    regsub -all "(^|\n)(cc1plus: warning: -g option not supported for C\\+\\+ on systems using the DWARF debugging format\n?)+" $text "\\1" text
+
+    # This is from sun4's.  Do it for all machines for now.
+    # The "\\1" is to try to preserve a "\n" but only if necessary.
+    regsub -all "(^|\n)(ld.so: warning:\[^\n\]*\n?)+" $text "\\1" text
+
+    # See Brendan for the raison d'etre of this one.
+    # http://en.wikipedia.org/wiki/Brendan_Kehoe
+    if {[string match "alpha*-*-*" $host_triplet]} {
+	regsub -all "(^|\n)(/usr/(ucb|bin)/ld.*without exceptions was\[^\n\]+\n?)" $text "\\1" text
+    }
+
+    # Don't pay attention to the AIX4 linker warnings.
+    regsub -all "(^|\n)(ld:.*WARNING: Duplicate.*ld:.*Use the -bload\[^\n\]*\n?)" $text "\\1" text
+
+    # Or the IRIX 6 ones.
+    regsub -all "(^|\n)(ld(|32|64): WARNING \[^\n\]*\n?)+" $text "\\1" text
+    regsub -all "(^|\n)(ld(|32|64): Giving up.*Use -wall\[^\n\]*\n?)+" $text "\\1" text
+
+    # Or the NetBSD ones.
+     regsub -all "(^|\n)(\[^\n\]*: In function\[^\n\]*\n\[^\n\]\[^\n\]*warning: this program uses \[^\n\]*)" $text "\\1" text
+     regsub -all "(^|\n)(\[^\n\]*: In function\[^\n\]*\n\[^\n\]\[^\n\]*warning: reference to compatibility \[^\n\]*)" $text "\\1" text
+     regsub -all "(^|\n)(\[^\n\]*:\[0-9\]+: warning: \[^\n\]* possibly used unsafely, use \[^\n\]*\n?)" $text "\\1" text
+    regsub -all "(^|\n)(\[^\n\]*: warning: reference to compatibility glob\[^\n\]*\n?)" $text "\\1" text
+
+    # Or the OpenBSD ones.
+    regsub -all "(^|\n)(\[^\n\]*: In function\[^\n\]*\n\[^\n\]\[^\n\]*warning: \[^\n\]* is (often|almost always) misused, please use \[^\n\]*\n?)" $text "\\1" text
+    regsub -all "(^|\n)(\[^\n\]*: warning: \[^\n\]* is (often|almost always) misused, please use \[^\n\]*\n?)" $text "\\1" text
+
+    # GNU ld warns about functions marked as dangerous in GNU libc.
+    regsub -all "(^|\n)\[^\n\]*: In function\[^\n\]*\n\[^\n\]\[^\n\]*is dangerous\[^\n\]*" $text "" text
+     regsub -all "(^|\n)\[^\n\]*: In function\[^\n\]*\n\[^\n\]\[^\n\]*the use of \[^\n\]* is dangerous, better use \[^\n\]*" $text "" text
+    regsub -all "(^|\n)\[^\n\]*is dangerous\[^\n\]*" $text "" text
+
+     # Libgloss libnosys defines functions that warn when linked in
+    regsub -all "(^|\n)\[^\n\]*: In function\[^\n\]*\n\[^\n\]\[^\n\]*is not implemented and will always fail\[^\n\]*" $text "" text
+    regsub -all "(^|\n)\[^\n\]*is not implemented and will always fail\[^\n\]*" $text "" text
+
+    # libstdc++-v3 tests can emit cpplib warnings due to duplicate -isystem / -I flags
+    regsub -all "(^|\n)\[^\n\]*: warning: changing search order for system directory\[^\n\]*" $text "" text
+    regsub -all "(^|\n)\[^\n\]*: warning:   as it has already been specified\[^\n\]*" $text "" text
+
+    # Cygwin cc1 warns about -fpic and -fPIC
+    regsub -all "(^|\n)\[^\n\]*: warning: -f(pic|PIC) ignored for target \[^\n\]*" $text "" text
+
+    # Ignore linker warning when searching 64bit libraries in /lib.
+    regsub -all "(^|\n)\[^\n\]*: skipping incompatible \[^\n\]* when searching for \[^\n\]*" $text "" text
+
+    # It might be tempting to get carried away and delete blank lines, etc.
+    # Just delete *exactly* what we're ask to, and that's it.
+    return $text
+}
+
+# Invoke the compiler. This gets interesting cause the compiler may
+# not be on the same machine we're running DejaGnu on.
+#
+proc target_compile {source destfile type options} {
+    set target [target_info name]
+    if { [info procs ${target}_compile] != "" } {
+	return [${target}_compile $source $destfile $type $options]
+    } else {
+	return [default_target_compile $source $destfile $type $options]
+    }
+}
+
+proc default_target_compile {source destfile type options} {
+    global target_triplet
+    global tool_root_dir
+    global CFLAGS_FOR_TARGET
+    global LDFLAGS_FOR_TARGET
+    global compiler_flags
+
+    if { $destfile == "" && $type != "preprocess" && $type != "none" } {
+	error "Must supply an output filename for the compile to default_target_compile"
+    }
+
+    set add_flags ""
+    set libs ""
+    set compiler_type "c"
+    set compiler ""
+    set ldflags ""
+    set dest [target_info name]
+
+    if {[info exists CFLAGS_FOR_TARGET]} {
+	append add_flags " $CFLAGS_FOR_TARGET"
+    }
+
+    if {[info exists LDFLAGS_FOR_TARGET]} {
+	append ldflags " $LDFLAGS_FOR_TARGET"
+    }
+
+    if {[info exists target_info(host,name)]} {
+	set host [host_info name]
+    } else {
+	set host "unix"
+    }
+
+    foreach i $options {
+
+	if { $i == "ada" } {
+	    set compiler_type "ada"
+	    if {[board_info $dest exists adaflags]} {
+		append add_flags " [target_info adaflags]"
+	    }
+	    if {[board_info $dest exists gnatmake]} {
+		set compiler [target_info gnatmake]
+	    } else {
+		set compiler [find_gnatmake]
+	    }
+	}
+
+	if { $i == "c++" } {
+	    set compiler_type "c++"
+	    if {[board_info $dest exists cxxflags]} {
+		append add_flags " [target_info cxxflags]"
+	    }
+	    append add_flags " [g++_include_flags]"
+	    if {[board_info $dest exists c++compiler]} {
+		set compiler [target_info c++compiler]
+	    } else {
+		set compiler [find_g++]
+	    }
+	}
+
+	if { $i == "d" } {
+	    set compiler_type "d"
+	    if {[board_info $dest exists dflags]} {
+		append add_flags " [target_info dflags]"
+	    }
+	    if {[board_info $dest exists dcompiler]} {
+		set compiler [target_info dcompiler]
+	    } else {
+		set compiler [find_gdc]
+	    }
+	}
+
+	if { $i == "f77" } {
+	    set compiler_type "f77"
+	    if {[board_info $dest exists f77flags]} {
+		append add_flags " [target_info f77flags]"
+	    }
+	    if {[board_info $dest exists f77compiler]} {
+		set compiler [target_info f77compiler]
+	    } else {
+		set compiler [find_g77]
+	    }
+	}
+
+	if { $i == "f90" } {
+	    set compiler_type "f90"
+	    if {[board_info $dest exists f90flags]} {
+		append add_flags " [target_info f90flags]"
+	    }
+	    if {[board_info $dest exists f90compiler]} {
+		set compiler [target_info f90compiler]
+	    } else {
+		set compiler [find_gfortran]
+	    }
+	}
+
+	if {[regexp "^dest=" $i]} {
+	    regsub "^dest=" $i "" tmp
+	    if {[board_info $tmp exists name]} {
+		set dest [board_info $tmp name]
+	    } else {
+		set dest $tmp
+	    }
+	}
+	if {[regexp "^compiler=" $i]} {
+	    regsub "^compiler=" $i "" tmp
+	    set compiler $tmp
+	}
+	if {[regexp "^additional_flags=" $i]} {
+	    regsub "^additional_flags=" $i "" tmp
+	    append add_flags " $tmp"
+	}
+	if {[regexp "^ldflags=" $i]} {
+	    regsub "^ldflags=" $i "" tmp
+	    append ldflags " $tmp"
+	}
+	if {[regexp "^libs=" $i]} {
+	    regsub "^libs=" $i "" tmp
+	    append libs " $tmp"
+	}
+	if {[regexp "^incdir=" $i]} {
+	    regsub "^incdir=" $i "-I" tmp
+	    append add_flags " $tmp"
+	}
+	if {[regexp "^libdir=" $i]} {
+	    regsub "^libdir=" $i "-L" tmp
+	    append add_flags " $tmp"
+	}
+	if {[regexp "^ldscript=" $i]} {
+	    regsub "^ldscript=" $i "" ldscript
+	}
+	if {[regexp "^redirect=" $i]} {
+	    regsub "^redirect=" $i "" redirect
+	}
+	if {[regexp "^optimize=" $i]} {
+	    regsub "^optimize=" $i "" optimize
+	}
+	if {[regexp "^timeout=" $i]} {
+	    regsub "^timeout=" $i "" timeout
+	}
+    }
+
+    if {[board_info $host exists cflags_for_target]} {
+	append add_flags " [board_info $host cflags_for_target]"
+    }
+
+    global CC_FOR_TARGET
+    global CXX_FOR_TARGET
+    global D_FOR_TARGET
+    global F77_FOR_TARGET
+    global F90_FOR_TARGET
+    global GNATMAKE_FOR_TARGET
+
+    if {[info exists GNATMAKE_FOR_TARGET]} {
+	if { $compiler_type == "ada" } {
+	    set compiler $GNATMAKE_FOR_TARGET
+	}
+    }
+
+    if {[info exists CC_FOR_TARGET]} {
+	if { $compiler == "" } {
+	    set compiler $CC_FOR_TARGET
+	}
+    }
+
+    if {[info exists CXX_FOR_TARGET]} {
+	if { $compiler_type == "c++" } {
+	    set compiler $CXX_FOR_TARGET
+	}
+    }
+
+    if {[info exists D_FOR_TARGET]} {
+	if { $compiler_type == "d" } {
+	    set compiler $D_FOR_TARGET
+	}
+    }
+
+    if {[info exists F77_FOR_TARGET]} {
+	if { $compiler_type == "f77" } {
+	    set compiler $F77_FOR_TARGET
+	}
+    }
+
+    if {[info exists F90_FOR_TARGET]} {
+	if { $compiler_type == "f90" } {
+	    set compiler $F90_FOR_TARGET
+	}
+    }
+
+    if { $compiler == "" } {
+	set compiler [board_info $dest compiler]
+	if { $compiler == "" } {
+	    return "default_target_compile: No compiler to compile with"
+	}
+    }
+
+    if {![is_remote host]} {
+	if { [which $compiler] == 0 } {
+	    return "default_target_compile: Can't find $compiler."
+	}
+    }
+
+    if {$type == "object"} {
+	append add_flags " -c"
+    }
+
+    if { $type == "preprocess" } {
+	append add_flags " -E"
+    }
+
+    if { $type == "assembly" } {
+	append add_flags " -S"
+    }
+
+    if {[board_info $dest exists cflags]} {
+	append add_flags " [board_info $dest cflags]"
+    }
+
+    if { $type == "executable" } {
+	if {[board_info $dest exists ldflags]} {
+	    append add_flags " [board_info $dest ldflags]"
+	}
+	if { $compiler_type == "c++" } {
+	    append add_flags " [g++_link_flags]"
+	}
+	if {[isnative]} {
+	    # This is a lose.
+	    catch "glob -nocomplain $tool_root_dir/libstdc++/libstdc++.so* $tool_root_dir/libstdc++/libstdc++.sl" tmp
+	    if { ${tmp} != "" } {
+		if {[regexp ".*solaris2.*" $target_triplet]} {
+		    # Solaris 2
+		    append add_flags " -R$tool_root_dir/libstdc++"
+		} elseif {[regexp ".*(osf|irix5|linux).*" $target_triplet]} {
+		    # OSF/1 or IRIX 5
+		    append add_flags " -Wl,-rpath,$tool_root_dir/libstdc++"
+		} elseif {[regexp ".*hppa.*" $target_triplet]} {
+		    # HP-UX
+		    append add_flags " -Wl,-a,shared_archive"
+		}
+	    }
+	}
+    }
+
+    if {![info exists ldscript]} {
+	set ldscript [board_info $dest ldscript]
+    }
+
+    foreach i $options {
+	if { $i == "debug" } {
+	    if {[board_info $dest exists debug_flags]} {
+		append add_flags " [board_info $dest debug_flags]"
+	    } else {
+		append add_flags " -g"
+	    }
+	}
+    }
+
+    if {[info exists optimize]} {
+	append add_flags " $optimize"
+    }
+
+    if { $type == "executable" } {
+	append add_flags " $ldflags"
+	foreach x $libs {
+	    if {[file exists $x]} {
+		append source " $x"
+	    } else {
+		append add_flags " $x"
+	    }
+	}
+
+	if {[board_info $dest exists libs]} {
+	    append add_flags " [board_info $dest libs]"
+	}
+
+	# This probably isn't such a good idea, but it avoids nasty
+	# hackiness in the testsuites.
+	# The math library must be linked in before the C library.  The C
+	# library is linked in by the linker script, so this must be before
+	# the linker script.
+	if {[board_info $dest exists mathlib]} {
+	    append add_flags " [board_info $dest mathlib]"
+	} else {
+	    append add_flags " -lm"
+	}
+
+	# This must be added here.
+	append add_flags " $ldscript"
+
+	if {[board_info $dest exists remote_link]} {
+	    # Relink option.
+	    append add_flags " -Wl,-r"
+	}
+	if {[board_info $dest exists output_format]} {
+	    append add_flags " -Wl,-oformat,[board_info $dest output_format]"
+	}
+    }
+
+    if {[board_info $dest exists multilib_flags]} {
+	set add_flags "[board_info $dest multilib_flags] $add_flags"
+    }
+
+    verbose "doing compile"
+
+    set sources ""
+    if {[is_remote host]} {
+	foreach x $source {
+	    set file [remote_download host $x]
+	    if { $file == "" } {
+		warning "Unable to download $x to host."
+		return "Unable to download $x to host."
+	    } else {
+		append sources " $file"
+	    }
+	}
+    } else {
+	set sources $source
+    }
+
+    if {[is_remote host]} {
+	append add_flags " -o a.out"
+	remote_file host delete a.out
+    } else {
+	if { $destfile != "" } {
+	    append add_flags " -o $destfile"
+	}
+    }
+
+    # This is obscure: we put SOURCES at the end when building an
+    # object, because otherwise, in some situations, libtool will
+    # become confused about the name of the actual source file.
+    if {$type == "object"} {
+	set opts "$add_flags $sources"
+    } else {
+	set opts "$sources $add_flags"
+    }
+
+    if {[is_remote host]} {
+	if {[host_info exists use_at]} {
+	    set fid [open "atfile" "w"]
+	    puts $fid "$opts"
+	    close $fid
+	    set opts "@[remote_download host atfile]"
+	    remote_file build delete atfile
+	}
+    }
+
+    verbose "Invoking the compiler as $compiler $opts" 2
+
+    if {[info exists redirect]} {
+	verbose "Redirecting output to $redirect" 2
+	set status [remote_exec host "$compiler $opts" "" "" $redirect]
+    } else {
+	if {[info exists timeout]} {
+	    verbose "Setting timeout to $timeout" 2
+	    set status [remote_exec host "$compiler $opts" "" "" "" $timeout]
+	} else {
+	    set status [remote_exec host "$compiler $opts"]
+	}
+    }
+
+    set compiler_flags $opts
+    if {[is_remote host]} {
+	remote_upload host a.out $destfile
+	remote_file host delete a.out
+    }
+    set comp_output [prune_warnings [lindex $status 1]]
+    regsub "^\[\r\n\]+" $comp_output "" comp_output
+    if { [lindex $status 0] != 0 } {
+	verbose -log "compiler exited with status [lindex $status 0]"
+    }
+    if { [lindex $status 1] != "" } {
+	verbose "output is:\n[lindex $status 1]" 2
+    }
+    if { [lindex $status 0] != 0 && "${comp_output}" == "" } {
+	set comp_output "exit status is [lindex $status 0]"
+    }
+    return ${comp_output}
+}
+
+proc reboot_target { } {
+    set result [remote_reboot target]
+    puts "REBOOT_TARGET: \"$result\""
+    return ${result}
+}
+
+# Invoke this if you really want as to be called directly, rather than
+# calling the compiler. FLAGS are any additional flags to pass to the
+# assembler.
+#
+proc target_assemble { source destfile flags } {
+    return [default_target_assemble $source $destfile $flags]
+}
+
+proc default_target_assemble { source destfile flags } {
+    global AS_FOR_TARGET
+    global ASFLAGS_FOR_TARGET
+
+    if {[info exists AS_FOR_TARGET]} {
+	set AS "$AS_FOR_TARGET"
+    } else {
+	if {![board_info target exists assembler]} {
+	    set AS [find_gas]
+	} else {
+	    set AS [board_info target assembler]
+	}
+    }
+
+    if {[info exists ASFLAGS_FOR_TARGET]} {
+	append flags " $ASFLAGS_FOR_TARGET"
+    }
+
+    if {[is_remote host]} {
+	set source [remote_download host $source]
+	set dest "a.out"
+    } else {
+	set dest $destfile
+    }
+    set status [remote_exec host "$AS $source $flags -o $dest"]
+    if {[is_remote host]} {
+	remote_upload host $dest $destfile
+    }
+
+    set comp_output [prune_warnings [lindex $status 1]]
+    if { [lindex $status 0] != 0 } {
+	verbose -log "assembler exited with status [lindex $status 0]"
+    }
+    if { [lindex $status 1] != "" } {
+	verbose "assembler output is:\n[lindex $status 1]" 2
+    }
+    return ${comp_output}
+}
+
+# Invoke this if you really want ld to be called directly, rather than
+# calling the compiler. FLAGS are any additional flags to pass to the
+# linker.
+#
+proc target_link { objects destfile flags } {
+    return [default_link target "$objects" "$destfile" $flags]
+}
+
+proc default_link { board objects destfile flags } {
+    global LD_FOR_TARGET
+    global LDFLAGS_FOR_TARGET
+
+    # return -L's in ldflags
+    proc only--Ls { ldflags } {
+	set result ""
+	set ldflags [split $ldflags]
+	set len [llength $ldflags]
+	for { set i 0 } { $i < $len } { incr i } {
+	    # Note: We ignore the situation where a -L is actually the
+	    # argument to an option.
+	    set arg [lindex $ldflags $i]
+	    regsub "^-Wl," $arg "" arg
+	    if {[regexp "^-L" $arg]} {
+		# Is the directory in the next arg, or part of this one?
+		if { "$arg" == "-L" } {
+		    if { $i + 1 < $len } {
+			append result " -L [lindex $ldflags $i+1]"
+			incr i
+		    }
+		} else {
+		    append result " $arg"
+		}
+	    }
+	}
+	return $result
+    }
+
+    if {[info exists LD_FOR_TARGET]} {
+	set LD "$LD_FOR_TARGET"
+    } else {
+	if {![board_info target exists linker]} {
+	    set LD [find_ld]
+	} else {
+	    set LD [board_info target linker]
+	}
+    }
+
+    if {[info exists LDFLAGS_FOR_TARGET]} {
+	append flags " $LDFLAGS_FOR_TARGET"
+    }
+
+    # `ldflags' consists of arguments to gcc (that are then
+    # passed to ld), not arguments to ld directly.
+    # We need the -L's.
+    if {[board_info $board exists ldflags]} {
+	set ldflags [board_info $board ldflags]
+	set ldflags [only--Ls $ldflags]
+	append flags " $ldflags"
+    }
+
+    if {[board_info $board exists ldscript]} {
+	# strip leading -Wl, if present
+	set ldscript [board_info $board ldscript]
+	regsub "^-Wl," $ldscript "" ldscript
+	append flags " $ldscript"
+    }
+
+    if {[is_remote host]} {
+	set nobjects ""
+	foreach x $objects {
+	    set nobjects "$nobjects [remote_download host $x]"
+	}
+	set objects "$nobjects"
+	set dest "a.out"
+    } else {
+	set dest $destfile
+    }
+    set status [remote_exec host "$LD $objects $flags -o $dest"]
+    if {[is_remote host]} {
+	remote_upload host $dest $destfile
+    }
+
+    set comp_output [prune_warnings [lindex $status 1]]
+    if { [lindex $status 0] != 0 } {
+	verbose -log "linker exited with status [lindex $status 0]"
+    }
+    if { [lindex $status 1] != "" } {
+	verbose "linker output is:\n[lindex $status 1]" 2
+    }
+    return ${comp_output}
+}

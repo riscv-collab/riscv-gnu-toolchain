@@ -1,0 +1,1030 @@
+# Copyright (C) 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000,
+# 2001 2002, 2003, 2005, 2006, 2007, 2008, 2009, 2010, 2012, 2016 Free
+# Software Foundation, Inc.
+#
+# This file is part of DejaGnu.
+#
+# DejaGnu is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# DejaGnu is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with DejaGnu; if not, write to the Free Software Foundation,
+# Inc., 51 Franklin Street - Fifth Floor, Boston, MA 02110-1301, USA.
+
+# This file was written by Rob Savoye <rob@welcomehome.org>.
+
+# These variables are local to this file.
+# This or more warnings and a test fails.
+set warning_threshold 3
+# This or more errors and a test fails.
+set perror_threshold 1
+
+proc mail_file { file to subject } {
+    if {[file readable $file]} {
+	catch "exec mail -s \"$subject\" $to < $file"
+    }
+}
+
+# Insert DTD for xml format checking.
+#
+proc insertdtd { } {
+    xml_output "<!DOCTYPE testsuite \[
+<!-- testsuite.dtd -->
+<!ELEMENT testsuite (test | summary)+>
+<!ELEMENT test (input, output, result, name, prms_id )>
+  <!ELEMENT input              (#PCDATA)>
+  <!ELEMENT output             (#PCDATA)>
+  <!ELEMENT result             (#PCDATA)>
+  <!ELEMENT name               (#PCDATA)>
+  <!ELEMENT prms_id            (#PCDATA)>
+  <!ELEMENT summary 	(result, description, total)>
+  <!ELEMENT description        (#PCDATA)>
+  <!ELEMENT total              (#PCDATA)>
+\]>"
+}
+
+# Open the output logs.
+#
+proc open_logs { } {
+    global outdir
+    global tool
+    global sum_file
+    global xml_file
+    global xml_file_name
+    global xml
+
+    if { ${tool} ==  "" } {
+	set tool testrun
+    }
+    catch "file delete -force -- $outdir/$tool.sum"
+    set sum_file [open [file join $outdir $tool.sum] w]
+    if { $xml } {
+	catch "file delete -force -- $outdir/$tool.xml"
+	if { ![string compare $xml_file_name ""] } {
+	    set xml_file_name $tool.xml
+	}
+	set xml_file [open [file join $outdir $xml_file_name] w]
+	xml_output "<?xml version=\"1.0\"?>"
+	insertdtd
+	xml_output "<testsuite>"
+    }
+    catch "file delete -force -- $outdir/$tool.log"
+    log_file -a "$outdir/$tool.log"
+    verbose "Opening log files in $outdir"
+    if { ${tool} ==  "testrun" } {
+	set tool ""
+    }
+    fconfigure $sum_file -buffering line
+}
+
+# Close the output logs.
+#
+proc close_logs { } {
+    global sum_file
+    global xml
+    global xml_file
+
+    if { $xml } {
+	xml_output "</testsuite>"
+	catch "close $xml_file"
+    }
+
+    catch "close $sum_file"
+}
+
+# Check build host triplet for PATTERN.
+# With no arguments it returns the triplet string.
+#
+proc isbuild { pattern } {
+    global build_triplet
+    global host_triplet
+
+    if {![info exists build_triplet]} {
+	set build_triplet ${host_triplet}
+    }
+    if {[string match "" $pattern]} {
+	return $build_triplet
+    }
+    verbose "Checking pattern \"$pattern\" with $build_triplet" 2
+
+    if {[string match "$pattern" $build_triplet]} {
+	return 1
+    } else {
+	return 0
+    }
+}
+
+# Is $board remote? Return a non-zero value if so.
+#
+proc is_remote { board } {
+    global host_board
+    global target_list
+
+    verbose "calling is_remote $board" 3
+    # Remove any target variant specifications from the name.
+    set board [lindex [split $board "/"] 0]
+
+    # Map the host or build back into their short form.
+    if { [board_info build name] == $board } {
+	set board "build"
+    } elseif { [board_info host name] == $board } {
+	set board "host"
+    }
+
+    # We're on the "build". The check for the empty string is just for
+    # paranoia's sake--we shouldn't ever get one. "unix" is a magic
+    # string that should really go away someday.
+    if { $board == "build" || $board == "unix" || $board == "" } {
+	verbose "board is $board, not remote" 3
+	return 0
+    }
+
+    if { $board == "host" } {
+	if { [info exists host_board] && $host_board != "" } {
+	    verbose "board is $board, is remote" 3
+	    return 1
+	} else {
+	    verbose "board is $board, host is local" 3
+	    return 0
+	}
+    }
+
+    if { $board == "target" } {
+	global current_target_name
+
+	if {[info exists current_target_name]} {
+	    # This shouldn't happen, but we'll be paranoid anyway.
+	    if { $current_target_name != "target" } {
+		return [is_remote $current_target_name]
+	    }
+	}
+	return 0
+    }
+    if {[board_info $board exists isremote]} {
+	verbose "board is $board, isremote is [board_info $board isremote]" 3
+	return [board_info $board isremote]
+    }
+    return 1
+}
+
+# If this is a Canadian (3 way) cross. This means the tools are
+# being built with a cross compiler for another host.
+#
+proc is3way {} {
+    global host_triplet
+    global build_triplet
+
+    if {![info exists build_triplet]} {
+	set build_triplet ${host_triplet}
+    }
+    verbose "Checking $host_triplet against $build_triplet" 2
+    if { "$build_triplet" == "$host_triplet" } {
+	return 0
+    }
+    return 1
+}
+
+# Check host triplet for PATTERN.
+# With no arguments it returns the triplet string.
+#
+proc ishost { pattern } {
+    global host_triplet
+
+    if {[string match "" $pattern]} {
+	return $host_triplet
+    }
+    verbose "Checking pattern \"$pattern\" with $host_triplet" 2
+
+    if {[string match "$pattern" $host_triplet]} {
+	return 1
+    } else {
+	return 0
+    }
+}
+
+# Check target triplet for pattern.
+#
+# With no arguments it returns the triplet string.
+# Returns 1 if the target looked for, or 0 if not.
+#
+proc istarget { args } {
+    global target_triplet
+
+    # if no arg, return the config string
+    if {[string match "" $args]} {
+	if {[info exists target_triplet]} {
+	    return $target_triplet
+	} else {
+	    perror "No target configuration names found."
+	}
+    }
+
+    set triplet [lindex $args 0]
+
+    # now check against the cannonical name
+    if {[info exists target_triplet]} {
+	verbose "Checking \"$triplet\" against \"$target_triplet\"" 2
+	if {[string match $triplet $target_triplet]} {
+	    return 1
+	}
+    }
+
+    # nope, no match
+    return 0
+}
+
+# Check to see if we're running the tests in a native environment
+# Returns 1 if running native, 0 if on a target.
+#
+proc isnative { } {
+    global target_triplet
+    global build_triplet
+
+    if {[string match $build_triplet $target_triplet]} {
+	return 1
+    }
+    return 0
+}
+
+# unknown -- called by expect if a proc is called that doesn't exist
+#
+# Rename unknown to tcl_unknown so that we can wrap tcl_unknown.
+# This allows Tcl package autoloading to work in the modern age.
+
+rename ::unknown ::tcl_unknown
+proc unknown args {
+    if {[catch {uplevel 1 ::tcl_unknown $args} msg]} {
+	global errorCode
+	global errorInfo
+	global exit_status
+
+	clone_output "ERROR: (DejaGnu) proc \"$args\" does not exist."
+	if {[info exists errorCode]} {
+	    send_error "The error code is $errorCode\n"
+	}
+	if {[info exists errorInfo]} {
+	    send_error "The info on the error is:\n$errorInfo\n"
+	}
+	set exit_status 2
+	log_and_exit
+    }
+}
+
+# Print output to stdout (or stderr) and to log file
+#
+# If the --all flag (-a) option was used then all messages go the the screen.
+# Without this, all messages that start with a keyword are written only to the
+# detail log file.  All messages that go to the screen will also appear in the
+# detail log.  This should only be used by the framework itself using pass,
+# fail, xpass, xfail, kpass, kfail, warning, perror, note, untested, unresolved,
+# or unsupported procedures.
+#
+proc clone_output { message } {
+    global sum_file
+    global all_flag
+
+    if { $sum_file != "" } {
+	puts $sum_file "$message"
+    }
+
+    regsub "^\[ \t\]*(\[^ \t\]+).*$" "$message" "\\1" firstword
+    switch -glob -- "$firstword" {
+	"PASS:" -
+	"XFAIL:" -
+	"KFAIL:" -
+	"UNRESOLVED:" -
+	"UNSUPPORTED:" -
+	"UNTESTED:" {
+	    if {$all_flag} {
+		send_user -- "$message\n"
+		return "$message"
+	    } else {
+		send_log -- "$message\n"
+	    }
+	}
+	{"ERROR:" "WARNING:" "NOTE:"} {
+	    send_error -- "$message\n"
+	    return "$message"
+	}
+	default {
+	    send_user -- "$message\n"
+	    return "$message"
+	}
+    }
+}
+
+# Reset a few counters.
+#
+proc reset_vars {} {
+    global test_names test_counts
+    global warncnt errcnt
+
+    # other miscellaneous variables
+    global prms_id
+    global bug_id
+
+    # reset them all
+    set prms_id	0
+    set bug_id	0
+    set warncnt 0
+    set errcnt  0
+    foreach x $test_names {
+	set test_counts($x,count) 0
+    }
+
+    # Variables local to this file.
+    global warning_threshold perror_threshold
+    set warning_threshold 3
+    set perror_threshold 1
+}
+
+proc log_and_exit {} {
+    global exit_status
+    global tool mail_logs outdir mailing_list
+
+    log_summary total
+    # extract version number
+    if {[info procs ${tool}_version] != ""} {
+	if {[catch "${tool}_version" output]} {
+	    warning "${tool}_version failed:\n$output"
+	}
+    }
+    close_logs
+    verbose -log "runtest completed at [timestamp -format %c]"
+    if {$mail_logs} {
+	if { ${tool} ==  "" } {
+	    set tool testrun
+	}
+	mail_file $outdir/$tool.sum $mailing_list "Dejagnu Summary Log"
+    }
+    remote_close host
+    remote_close target
+    exit $exit_status
+}
+
+proc xml_output { message } {
+    global xml_file
+    if { $xml_file != "" } {
+	puts $xml_file "$message"
+    }
+}
+
+# Print summary of all pass/fail counts.
+#
+proc log_summary { args } {
+    global tool
+    global sum_file
+    global xml_file
+    global xml
+    global exit_status
+    global mail_logs
+    global outdir
+    global mailing_list
+    global current_target_name
+    global test_counts
+    global testcnt
+
+    if { [llength $args] == 0 } {
+	set which "count"
+    } else {
+	set which [lindex $args 0]
+    }
+
+    if { [llength $args] == 0 } {
+	clone_output "\n\t\t=== $tool Summary for $current_target_name ===\n"
+    } else {
+	clone_output "\n\t\t=== $tool Summary ===\n"
+    }
+
+    # If the tool set `testcnt', it wants us to do a sanity check on the
+    # total count, so compare the reported number of testcases with the
+    # expected number.  Maintaining an accurate count in `testcnt' isn't easy
+    # so it's not clear how often this will be used.
+    if {[info exists testcnt]} {
+	if { $testcnt > 0 } {
+	    set totlcnt 0
+	    # total all the testcases reported
+	    foreach x { FAIL PASS XFAIL KFAIL XPASS KPASS UNTESTED UNRESOLVED UNSUPPORTED } {
+		incr totlcnt test_counts($x,$which)
+	    }
+	    set testcnt test_counts(total,$which)
+
+	    if { $testcnt>$totlcnt || $testcnt<$totlcnt } {
+		if { $testcnt > $totlcnt } {
+		    set mismatch "unreported  [expr {$testcnt - $totlcnt}]"
+		}
+		if { $testcnt < $totlcnt } {
+		    set mismatch "misreported [expr {$totlcnt - $testcnt}]"
+		}
+	    } else {
+		verbose "# of testcases run         $testcnt"
+	    }
+
+	    if {[info exists mismatch]} {
+		clone_output "### ERROR: totals do not equal number of testcases run"
+		clone_output "### ERROR: # of testcases expected    $testcnt"
+		clone_output "### ERROR: # of testcases reported    $totlcnt"
+		clone_output "### ERROR: # of testcases $mismatch\n"
+	    }
+	}
+    }
+    foreach x { PASS FAIL XPASS XFAIL KPASS KFAIL UNRESOLVED UNTESTED UNSUPPORTED } {
+	set val $test_counts($x,$which)
+	if { $val > 0 } {
+	    set mess "# of $test_counts($x,name)"
+	    if { $xml } {
+		xml_output "  <summary>"
+		xml_output "    <result>$x</result>"
+		xml_output "    <description>$mess</description>"
+		xml_output "    <total>$val</total>"
+		xml_output "  </summary>"
+	    }
+	    if { [string length $mess] < 24 } {
+		append mess "\t"
+	    }
+	    clone_output "$mess\t$val"
+	}
+    }
+}
+
+# Setup a flag to control whether a failure is expected or not
+#
+# Multiple target triplet patterns can be specified for targets
+# for which the test fails.  A bug report ID can be specified,
+# which is a string without '-'.
+#
+proc setup_xfail { args } {
+    global xfail_flag
+    global xfail_prms
+
+    set xfail_prms 0
+    set argc [ llength $args ]
+    for { set i 0 } { $i < $argc } { incr i } {
+	set sub_arg [ lindex $args $i ]
+	# is a prms number. we assume this is a string with no '-' characters
+	if {[regexp "^\[^\-\]+$" $sub_arg]} {
+	    set xfail_prms $sub_arg
+	    continue
+	}
+	if {[istarget $sub_arg]} {
+	    set xfail_flag 1
+	    continue
+	}
+    }
+}
+
+# Setup a flag to control whether it is a known failure.
+#
+# A bug report ID _MUST_ be specified, and is the first argument.
+# It still must be a string without '-' so we can be sure someone
+# did not just forget it and we end-up using a target triple as
+# bug id.
+#
+# Multiple target triplet patterns can be specified for targets
+# for which the test is known to fail.
+#
+proc setup_kfail { args } {
+    global kfail_flag
+    global kfail_prms
+
+    set kfail_prms 0
+    set argc [ llength $args ]
+    for { set i 0 } { $i < $argc } { incr i } {
+	set sub_arg [ lindex $args $i ]
+	# is a prms number. we assume this is a string with no '-' characters
+	if {[regexp "^\[^\-\]+$" $sub_arg]} {
+	    set kfail_prms $sub_arg
+	    continue
+	}
+	if {[istarget $sub_arg]} {
+	    set kfail_flag 1
+	    continue
+	}
+    }
+
+    if {$kfail_prms == 0} {
+	perror "Attempt to set a kfail without specifying bug tracking id"
+    }
+}
+
+# Check to see if a conditional xfail is triggered.
+#	message {targets} {include} {exclude}
+#
+proc check_conditional_xfail { args } {
+    global compiler_flags
+
+    set all_args [lindex $args 0]
+
+    set message [lindex $all_args 0]
+
+    set target_list [lindex $all_args 1]
+    verbose "Limited to targets: $target_list" 3
+
+    # get the list of flags to look for
+    set includes [lindex $all_args 2]
+    verbose "Will search for options $includes" 3
+
+    # get the list of flags to exclude
+    if { [llength $all_args] > 3 } {
+	set excludes [lindex $all_args 3]
+	verbose "Will exclude for options $excludes" 3
+    } else {
+	set excludes ""
+    }
+
+    # loop through all the targets, checking the options for each one
+    verbose "Compiler flags are: $compiler_flags" 2
+
+    set incl_hit 0
+    set excl_hit 0
+    foreach targ $target_list {
+	if {[istarget $targ]} {
+	    # look through the compiler options for flags we want to see
+	    # this is really messy cause each set of options to look for
+	    # may also be a list. We also want to find each element of the
+	    # list, regardless of order to make sure they're found.
+	    # So we look for lists in side of lists, and make sure all
+	    # the elements match before we decide this is legit.
+	    # Se we 'incl_hit' to 1 before the loop so that if the 'includes'
+	    # list is empty, this test will report a hit.  (This can be
+	    # useful if a target will always fail unless certain flags,
+	    # specified in the 'excludes' list, are used.)
+	    set incl_hit 1
+	    for { set i 0 } { $i < [llength $includes] } { incr i } {
+		set incl_hit 0
+		set opt [lindex $includes $i]
+		verbose "Looking for $opt to include in the compiler flags" 2
+		foreach j "$opt" {
+		    if {[string match "* $j *" $compiler_flags]} {
+			verbose "Found $j to include in the compiler flags" 2
+			incr incl_hit
+		    }
+		}
+		# if the number of hits we get is the same as the number of
+		# specified options, then we got a match
+		if {$incl_hit == [llength $opt]} {
+		    break
+		} else {
+		    set incl_hit 0
+		}
+	    }
+	    # look through the compiler options for flags we don't
+	    # want to see
+	    for { set i 0 } { $i < [llength $excludes] } { incr i } {
+		set excl_hit 0
+		set opt [lindex $excludes $i]
+		verbose "Looking for $opt to exclude in the compiler flags" 2
+		foreach j "$opt" {
+		    if {[string match "* $j *" $compiler_flags]} {
+			verbose "Found $j to exclude in the compiler flags" 2
+			incr excl_hit
+		    }
+		}
+		# if the number of hits we get is the same as the number of
+		# specified options, then we got a match
+		if {$excl_hit == [llength $opt]} {
+		    break
+		} else {
+		    set excl_hit 0
+		}
+	    }
+
+	    # if we got a match for what to include, but didn't find any reasons
+	    # to exclude this, then we got a match! So return one to turn this into
+	    # an expected failure.
+	    if {$incl_hit && ! $excl_hit } {
+		verbose "This is a conditional match" 2
+		return 1
+	    } else {
+		verbose "This is not a conditional match" 2
+		return 0
+	    }
+	}
+    }
+    return 0
+}
+
+# Clear the xfail flag for a particular target.
+#
+proc clear_xfail { args } {
+    global xfail_flag
+    global xfail_prms
+
+    set argc [ llength $args ]
+    for { set i 0 } { $i < $argc } { incr i } {
+	set sub_arg [ lindex $args $i ]
+	switch -glob -- $sub_arg {
+	    "*-*-*" {			# is a configuration triplet
+		if {[istarget $sub_arg]} {
+		    set xfail_flag 0
+		    set xfail_prms 0
+		}
+		continue
+	    }
+	}
+    }
+}
+
+# Clear the kfail flag for a particular target.
+#
+proc clear_kfail { args } {
+    global kfail_flag
+    global kfail_prms
+
+    set argc [ llength $args ]
+    for { set i 0 } { $i < $argc } { incr i } {
+	set sub_arg [ lindex $args $i ]
+	switch -glob -- $sub_arg {
+	    "*-*-*" {			# is a configuration triplet
+		if {[istarget $sub_arg]} {
+		    set kfail_flag 0
+		    set kfail_prms 0
+		}
+		continue
+	    }
+	}
+    }
+}
+
+# Record that a test has passed or failed (perhaps unexpectedly).
+# This is an internal procedure, only used in this file.
+#
+proc record_test { type message args } {
+    global exit_status
+    global xml
+    global prms_id bug_id
+    global xfail_flag xfail_prms
+    global kfail_flag kfail_prms
+    global errcnt warncnt
+    global warning_threshold perror_threshold
+    global pf_prefix
+
+    if { [llength $args] > 0 } {
+	set count [lindex $args 0]
+    } else {
+	set count 1
+    }
+    if {[info exists pf_prefix]} {
+	set message [concat $pf_prefix " " $message]
+    }
+
+    # If we have too many warnings or errors,
+    # the output of the test can't be considered correct.
+    if { $warning_threshold > 0 && $warncnt >= $warning_threshold
+	 || $perror_threshold > 0 && $errcnt >= $perror_threshold } {
+        verbose "Error/Warning threshold exceeded: \
+                 $errcnt $warncnt (max. $perror_threshold $warning_threshold)"
+        set type UNRESOLVED
+    }
+
+    incr_count $type
+
+    if { $xml } {
+	global errorInfo
+	set error ""
+	if {[info exists errorInfo]} {
+	    set error $errorInfo
+	}
+	global expect_out
+	set rio { "" "" }
+	if { [catch { set rio [split $expect_out(buffer) "\n"] } result]} {
+	    #do nothing - leave as { "" "" }
+	}
+
+	set output ""
+	set output "expect_out(buffer)"
+	xml_output "  <test>"
+	xml_output "    <input>[string trimright [lindex $rio 0]]</input>"
+	xml_output "    <output>[string trimright [lindex $rio 1]]</output>"
+	xml_output "    <result>$type</result>"
+	xml_output "    <name>$message</name>"
+	xml_output "    <prms_id>$prms_id</prms_id>"
+	xml_output "  </test>"
+    }
+
+    switch -- $type {
+	PASS {
+	    if {$prms_id} {
+		set message [concat $message "\t(PRMS $prms_id)"]
+	    }
+	}
+	FAIL {
+	    set exit_status 1
+	    if {$prms_id} {
+		set message [concat $message "\t(PRMS $prms_id)"]
+	    }
+	}
+	XPASS {
+	    set exit_status 1
+	    if { $xfail_prms != 0 } {
+		set message [concat $message "\t(PRMS $xfail_prms)"]
+	    }
+	}
+	XFAIL {
+	    if { $xfail_prms != 0 } {
+		set message [concat $message "\t(PRMS $xfail_prms)"]
+	    }
+	}
+	KPASS {
+	    set exit_status 1
+	    if { $kfail_prms != 0 } {
+		set message [concat $message "\t(PRMS $kfail_prms)"]
+	    }
+	}
+	KFAIL {
+	    if { $kfail_prms != 0 } {
+		set message [concat $message "\t(PRMS: $kfail_prms)"]
+	    }
+	}
+	UNTESTED {
+	    # The only reason we look at the xfail/kfail stuff is to pick up
+	    # `xfail_prms'.
+	    if { $kfail_flag && $kfail_prms != 0 } {
+		set message [concat $message "\t(PRMS $kfail_prms)"]
+	    } elseif { $xfail_flag && $xfail_prms != 0 } {
+		set message [concat $message "\t(PRMS $xfail_prms)"]
+	    } elseif { $prms_id } {
+		set message [concat $message "\t(PRMS $prms_id)"]
+	    }
+	}
+	UNRESOLVED {
+	    set exit_status 1
+	    # The only reason we look at the xfail/kfail stuff is to pick up
+	    # `xfail_prms'.
+	    if { $kfail_flag && $kfail_prms != 0 } {
+		set message [concat $message "\t(PRMS $kfail_prms)"]
+	    } elseif { $xfail_flag && $xfail_prms != 0 } {
+		set message [concat $message "\t(PRMS $xfail_prms)"]
+	    } elseif { $prms_id } {
+		set message [concat $message "\t(PRMS $prms_id)"]
+	    }
+	}
+	UNSUPPORTED {
+	    # The only reason we look at the xfail/kfail stuff is to pick up
+	    # `xfail_prms'.
+	    if { $kfail_flag && $kfail_prms != 0 } {
+		set message [concat $message "\t(PRMS $kfail_prms)"]
+	    } elseif { $xfail_flag && $xfail_prms != 0 } {
+		set message [concat $message "\t(PRMS $xfail_prms)"]
+	    } elseif { $prms_id } {
+		set message [concat $message "\t(PRMS $prms_id)"]
+	    }
+	}
+	default {
+	    perror "record_test called with bad type `$type'"
+	    set errcnt 0
+	    return
+	}
+    }
+
+    if { $bug_id } {
+	set message [concat $message "\t(BUG $bug_id)"]
+    }
+
+    global multipass_name
+    if { $multipass_name != "" } {
+	set message [format "$type: %s: $message" "$multipass_name"]
+    } else {
+	set message "$type: $message"
+    }
+    clone_output "$message"
+
+    # If a command name exists in the $local_record_procs associative
+    # array for this type of result, then invoke it.
+
+    set lowcase_type [string tolower $type]
+    global local_record_procs
+    if {[info exists local_record_procs($lowcase_type)]} {
+	$local_record_procs($lowcase_type) "$message"
+    }
+
+    # Reset these so they're ready for the next test case.  We don't reset
+    # prms_id or bug_id here.  There may be multiple tests for them.  Instead
+    # they are reset in the main loop after each test.  It is also the
+    # testsuite driver's responsibility to reset them after each testcase.
+    set warncnt 0
+    set errcnt 0
+    set xfail_flag 0
+    set kfail_flag 0
+    set xfail_prms 0
+    set kfail_prms 0
+}
+
+# Record that a test has passed.
+#
+proc pass { message } {
+    global xfail_flag kfail_flag compiler_conditional_xfail_data
+
+    # if we have a conditional xfail setup, then see if our compiler flags match
+    if {[ info exists compiler_conditional_xfail_data ]} {
+	if {[check_conditional_xfail $compiler_conditional_xfail_data]} {
+	    set xfail_flag 1
+	}
+	unset compiler_conditional_xfail_data
+    }
+
+    if { $kfail_flag } {
+	record_test KPASS $message
+    } elseif { $xfail_flag } {
+	record_test XPASS $message
+    } else {
+	record_test PASS $message
+    }
+}
+
+# Record that a test has failed.
+#
+proc fail { message } {
+    global xfail_flag kfail_flag compiler_conditional_xfail_data
+
+    # if we have a conditional xfail setup, then see if our compiler flags match
+    if {[ info exists compiler_conditional_xfail_data ]} {
+	if {[check_conditional_xfail $compiler_conditional_xfail_data]} {
+	    set xfail_flag 1
+	}
+	unset compiler_conditional_xfail_data
+    }
+
+    if { $kfail_flag } {
+	record_test KFAIL $message
+    } elseif { $xfail_flag } {
+	record_test XFAIL $message
+    } else {
+	record_test FAIL $message
+    }
+}
+
+# Record that a test that was expected to fail has passed unexpectedly.
+#
+proc xpass { message } {
+    record_test XPASS $message
+}
+
+# Record that a test that was expected to fail did indeed fail.
+#
+proc xfail { message } {
+    record_test XFAIL $message
+}
+
+# Record that a test for a known bug has passed unexpectedly.
+#
+proc kpass { bugid message } {
+    global kfail_flag kfail_prms
+    set kfail_flag 1
+    set kfail_prms $bugid
+    record_test KPASS $message
+}
+
+# Record that a test has failed due to a known bug.
+#
+proc kfail { bugid message } {
+    global kfail_flag kfail_prms
+    set kfail_flag 1
+    set kfail_prms $bugid
+    record_test KFAIL $message
+}
+
+# Set warning threshold.
+#
+proc set_warning_threshold { threshold } {
+    global warning_threshold
+    set warning_threshold $threshold
+}
+
+# Get warning threshold.
+#
+proc get_warning_threshold { } {
+    global warning_threshold
+    return $warning_threshold
+}
+
+# Prints warning messages.
+# These are warnings from the framework, not from the tools being
+# tested.  It takes a string, and an optional number and returns
+# nothing.
+#
+proc warning { args } {
+    global warncnt
+
+    if { [llength $args] > 1 } {
+	set warncnt [lindex $args 1]
+    } else {
+	incr warncnt
+    }
+    set message [lindex $args 0]
+
+    clone_output "WARNING: $message"
+
+    global errorInfo
+    if {[info exists errorInfo]} {
+	unset errorInfo
+    }
+}
+
+# Prints error messages.
+# These are errors from the framework, not from the tools being
+# tested.  It takes a string, and an optional number and returns
+# nothing.
+#
+proc perror { args } {
+    global errcnt
+
+    if { [llength $args] > 1 } {
+	set errcnt [lindex $args 1]
+    } else {
+	incr errcnt
+    }
+    set message [lindex $args 0]
+
+    clone_output "ERROR: $message"
+
+    global errorInfo
+    if {[info exists errorInfo]} {
+	unset errorInfo
+    }
+}
+
+# Prints informational messages.
+#
+# These are messages from the framework, not from the tools being
+# tested.  This means that it is currently illegal to call this proc
+# outside of dejagnu proper.
+#
+proc note { message } {
+    clone_output "NOTE: $message"
+}
+
+# untested -- mark the test case as untested.
+#
+proc untested { message } {
+    record_test UNTESTED $message
+}
+
+# Mark the test case as unresolved.
+#
+proc unresolved { message } {
+    record_test UNRESOLVED $message
+}
+
+# Mark the test case as unsupported.
+# Usually this is used for a test that is missing OS support.
+#
+proc unsupported { message } {
+    record_test UNSUPPORTED $message
+}
+
+# Set up the values in the test_counts array (name and initial
+# totals).
+#
+proc init_testcounts { } {
+    global test_counts test_names
+    set test_counts(TOTAL,name) "testcases run"
+    set test_counts(PASS,name) "expected passes"
+    set test_counts(FAIL,name) "unexpected failures"
+    set test_counts(XFAIL,name) "expected failures"
+    set test_counts(XPASS,name) "unexpected successes"
+    set test_counts(KFAIL,name) "known failures"
+    set test_counts(KPASS,name) "unknown successes"
+    set test_counts(WARNING,name) "warnings"
+    set test_counts(ERROR,name) "errors"
+    set test_counts(UNSUPPORTED,name) "unsupported tests"
+    set test_counts(UNRESOLVED,name) "unresolved testcases"
+    set test_counts(UNTESTED,name) "untested testcases"
+    set j ""
+
+    foreach i [lsort [array names test_counts]] {
+	regsub ",.*$" "$i" "" i
+	if { $i == $j } {
+	    continue
+	}
+	set test_counts($i,total) 0
+	lappend test_names $i
+	set j $i
+    }
+}
+
+# Increment NAME in the test_counts array; the amount to increment can
+# be is optional (defaults to 1).
+#
+proc incr_count { name args } {
+    global test_counts
+
+    if { [llength $args] == 0 } {
+	set count 1
+    } else {
+	set count [lindex $args 0]
+    }
+    if {[info exists test_counts($name,count)]} {
+	incr test_counts($name,count) $count
+	incr test_counts($name,total) $count
+    } else {
+	perror "$name doesn't exist in incr_count"
+    }
+}

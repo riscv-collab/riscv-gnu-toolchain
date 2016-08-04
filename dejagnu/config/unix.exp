@@ -1,0 +1,149 @@
+# Copyright (C) 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2001
+# 2002, 2003, 2005, 2006, 2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+#
+# This file is part of DejaGnu.
+#
+# DejaGnu is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# DejaGnu is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with DejaGnu; if not, write to the Free Software Foundation,
+# Inc., 51 Franklin Street - Fifth Floor, Boston, MA 02110-1301, USA.
+
+# This file was written by Rob Savoye <rob@welcomehome.org>.
+
+if {![info exists board]} {
+    error "must set $board before loading unix.exp"
+}
+
+# For rcp_download, rsh_exec.
+load_lib remote.exp
+
+#
+# unix_load -- load the program and execute it
+#
+# See default.exp for explanation of arguments and results.
+#
+
+
+proc unix_load { dest prog args } {
+    global ld_library_path
+    global test_timeout
+    set output ""
+    set orig_ld_library_path ""
+
+    if {![info exists test_timeout]} {
+	set test_timeout 300
+    }
+
+    if { [llength $args] > 0 } {
+	set parg [lindex $args 0]
+    } else {
+	set parg ""
+    }
+
+    if { [llength $args] > 1 } {
+	set inp [lindex $args 1]
+    } else {
+	set inp ""
+    }
+
+    if {![file exists $prog]} then {
+	# We call both here because this should never happen.
+	perror "$prog does not exist in unix_load."
+	verbose -log "$prog does not exist." 3
+	return "untested"
+    }
+    verbose "loading to $dest" 2
+    if {![is_remote $dest]} {
+	if { "$inp" != "" } {
+	    set command "$prog $parg < $inp"
+	} else {
+	    set command "$prog $parg"
+	}
+
+        if {![info exists ld_library_path]} {
+	    set ld_library_path ""
+        }
+
+	set orig_ld_library_path "[getenv LD_LIBRARY_PATH]"
+	setenv LD_LIBRARY_PATH "$ld_library_path:$orig_ld_library_path"
+	setenv SHLIB_PATH "$ld_library_path:$orig_ld_library_path"
+	verbose -log "Setting LD_LIBRARY_PATH to $ld_library_path:$orig_ld_library_path" 2
+	verbose -log "Execution timeout is: $test_timeout" 2
+
+	set id [remote_spawn $dest "$command" "readonly"]
+	if { $id < 0 } {
+	    set output "remote_spawn failed"
+	    set status -1
+	} else {
+	    set status [remote_wait $dest $test_timeout]
+	    set output [lindex $status 1]
+	    set status [lindex $status 0]
+	}
+	# Unset them so we don't potentially get hosed when we try to run a
+	# non-testcase executable. (Setting LD_LIBRARY_PATH is the wrong
+	# fix in the first place; this just tries to minimize the resulting
+	# crap.)
+	if {[info exists ld_library_path]} {
+	    setenv LD_LIBRARY_PATH $orig_ld_library_path
+	    setenv SHLIB_PATH $orig_ld_library_path
+	}
+    } else {
+	set remotefile [file tail $prog]
+	set remotefile [remote_download $dest $prog $remotefile]
+	if { $remotefile == "" } {
+	    verbose -log "Download of $prog to [board_info $dest name] failed." 3
+	    return [list "unresolved" ""]
+	}
+	if {[board_info $dest exists remote_link]} {
+	    if {[[board_info $dest remote_link] $remotefile]} {
+		verbose -log "Couldn't do remote link"
+		remote_exec $dest "\\rm -f $remotefile"
+		return [list "unresolved" ""]
+	    }
+
+	    verbose "$prog linked ok" 3
+	} else {
+	    # rcp's to lynx seem not to get marked executable
+	    set status [remote_exec $dest "chmod +x $remotefile"]
+	    if { [lindex $status 0] != 0 } {
+		remote_file $dest delete ${remotefile}.o $remotefile
+		verbose -log "chmod +x of $prog on $dest failed." 3
+		return [list "unresolved" ""]
+	    }
+	}
+	set status [remote_exec $dest "$remotefile" $parg $inp]
+	remote_file $dest delete $remotefile.o $remotefile
+	if { [lindex $status 0] < 0 } {
+	    verbose -log "Couldn't execute $prog, [lindex $status 1]" 3
+	    return [list "unresolved" ""]
+	}
+	set output [lindex $status 1]
+	set status [lindex $status 0]
+    }
+
+    setenv LD_LIBRARY_PATH $orig_ld_library_path
+    setenv SHLIB_PATH $orig_ld_library_path
+
+    verbose "Executed $prog, status $status" 2
+    if {![string match "" $output]} {
+	verbose -- "$output" 2
+    }
+    if { $status == 0 } {
+	set result "pass"
+    } else {
+	set result "fail"
+    }
+    return [list $result $output]
+}
+
+set_board_info remotedir "/tmp/runtest.[pid]"
+set_board_info protocol  "unix"

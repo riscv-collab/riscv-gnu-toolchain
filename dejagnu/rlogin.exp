@@ -1,0 +1,170 @@
+# Copyright (C) 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2001
+# 2002, 2003, 2005, 2006, 2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+#
+# This file is part of DejaGnu.
+#
+# DejaGnu is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# DejaGnu is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with DejaGnu; if not, write to the Free Software Foundation,
+# Inc., 51 Franklin Street - Fifth Floor, Boston, MA 02110-1301, USA.
+
+# Connect to ARG using rlogin. This is for systems using rlogin to
+# braindead targets. It returns either the spawn_id or a -1.
+#
+proc rlogin_open { arg } {
+    global board_info
+
+    set tries 0
+    set result -1
+
+    if {[board_info $arg exists fileid]} {
+	return [board_info $arg fileid]
+    }
+
+    # get the hostname and port number from the config array
+    if {[board_info $arg exists netport]} {
+	set hostname [lindex [split [board_info $arg netport] ":"] 0]
+    } else {
+	set hostname $arg
+    }
+
+    if {![board_info $arg exists shell_prompt]} {
+	# if no prompt, then set it to something generic
+	set shell_prompt ".*> "
+    } else {
+	set shell_prompt [board_info $arg shell_prompt]
+    }
+
+    if {[board_info $arg exists fileid]} {
+	unset board_info($arg,fileid)
+    }
+    # get the right version of rlogin
+    if {![board_info $arg exists rlogin_prog]} {
+	set RLOGIN rlogin
+    } else {
+	set RLOGIN [board_info $arg rlogin_prog]
+    }
+
+    # start connection and store the spawn_id
+    verbose "Opening a $RLOGIN connection to $hostname" 2
+    spawn $RLOGIN $hostname
+    if { $spawn_id < 0 } {
+	perror "invalid spawn id from rlogin"
+	return -1
+    }
+    set board_info($arg,fileid) $spawn_id
+
+    # Try to connect to the target. We give up after 3 attempts.
+    while { $tries <= 3 } {
+	expect {
+	    -re ".*$shell_prompt.*$" {
+		verbose "Got prompt\n"
+		set result 0
+		break
+	    }
+	    -re "TERM = .*\\)\[ ]*$" {
+		send "dumb\r\n"
+		expect {
+		    "Terminal type is*$" {
+			verbose "rlogin: set the terminal to dumb" 2
+		    }
+		    default {
+			warning "rlogin: couldn't set terminmal type"
+		    }
+		}
+		set result 10
+		break
+	    }
+	    "unknown host" {
+		perror "rlogin: unknown host"
+		break
+	    }
+	    "has logged on from" {
+		exp_continue
+	    }
+	    "Terminal type is" {
+		verbose "rlogin: connected, got terminal prompt" 2
+		set result 0
+		break
+	    }
+	    -re "Maximum number of users already logged in.*$" {
+		warning "rlogin: maximum number of users already logged in"
+	    }
+	    -re "Sorry, shell is locked.*Connection closed.*$" {
+		warning "rlogin: lready connected."
+	    }
+	    -re "Sorry, this system is engaged.*Connection closed.*$" {
+		warning "rlogin: system engaged."
+	    }
+	    timeout	{
+		warning "rlogin: timed out trying to connect."
+	    }
+	    eof {
+		perror "rlogin: got EOF while trying to connect."
+		break
+	    }
+	}
+	incr tries
+    }
+
+    # see if we maxed out on errors
+    if { $result < 0 } {
+	catch "close -i $spawn_id"
+	catch "wait -i $spawn_id"
+	set spawn_id -1
+    } else {
+	verbose "rlogin: connected to $hostname" 2
+    }
+
+    return $spawn_id
+}
+
+# Start CMDLINE running on DEST. Return the shell_id associated with
+# the command.
+#
+proc rlogin_spawn { dest cmdline } {
+    if {![board_info $dest exists shell_prompt]} {
+	set shell_prompt "(^|\[\r\n\])\[^\r\n\]*>"
+    } else {
+	set shell_prompt [board_info $dest shell_prompt]
+    }
+    set prefix ""
+    set ok 0
+    for { set i 0 } {$i <= 2 && ! $ok} { incr i } {
+	set shell_id [remote_open $dest]
+	if { $shell_id != "" && $shell_id > 0 } {
+	    remote_send $dest "echo k\r"
+	    remote_expect $dest 20 {
+		-re "\\(gdb\\)" {
+		    set shell_prompt "\\(gdb\\)"
+		    # gdb uses 'shell command'.
+		    set prefix "shell "
+		    set ok 1
+		}
+		-re ".*$shell_prompt" {
+		    set ok 1
+		}
+		default { }
+	    }
+	}
+	if { ! $ok } {
+	    remote_close $dest
+	    remote_reboot $dest
+	}
+    }
+    if { ! $ok } {
+	return "unable to start command"
+    } else {
+	remote_send $dest "${prefix}${cmdline}\n"
+	return [board_info $dest fileid]
+    }
+}

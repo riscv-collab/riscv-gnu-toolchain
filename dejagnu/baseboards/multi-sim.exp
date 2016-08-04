@@ -1,0 +1,157 @@
+# Copyright (C) 2013 Free Software Foundation, Inc.
+#
+# This file is part of DejaGnu.
+#
+# DejaGnu is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# DejaGnu is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with DejaGnu; if not, write to the Free Software Foundation,
+# Inc., 51 Franklin Street - Fifth Floor, Boston, MA 02110-1301, USA.
+
+# Contributed by Steve Ellcey <sellcey@mips.com>.
+
+# With the generic-sim.exp baseboard I would test GCC with something
+# like:
+#   export DEJAGNU_SIM_LINK_FLAGS="-Wl,--dynamic-linker=/local/home/sellcey/nightly/install-mips-mti-linux-gnu/sysroot-mips-mti-linux-gnu/usr/lib/ld-2.17.90.so -Wl,-rpath=/local/home/sellcey/nightly/install-mips-mti-linux-gnu/sysroot-mips-mti-linux-gnu/usr/lib:/local/home/sellcey/nightly/install-mips-mti-linux-gnu/mips-mti-linux-gnu/lib"
+#   make check RUNTESTFLAGS="--target_board=generic-sim"
+#
+# With multi-sim.exp I can skip the export and just do:
+#   make check RUNTESTFLAGS="--target_board=multi-sim"
+#
+# And I can also do this now:
+#   make check RUNTESTFLAGS="--target_board=multi-sim\{-EB,-EL\}\{-mhard-float,-msoft-float\}"
+
+# Use env to check env. variables and modify the simulator.
+global env
+global SIM
+
+# Load the generic configuration for this board. This will define a basic
+# set of routines needed by the tool to communicate with the board.
+load_generic_config "sim"
+
+# basic-sim.exp is a basic description for the standard Cygnus simulator.
+load_base_board_description "basic-sim"
+
+proc get_library_dirlist { args } {
+    global board
+    set compiler "[board_info $board compiler]"
+    set mflags "[board_info $board multilib_flags]"
+    set result [remote_exec host "$compiler $mflags --print-search-dirs"]
+    set regresult [regexp {(libraries: =)(\S*)} $result dummy1 dummy2 libdirlist]
+    if {$regresult == 0} {
+	perror "Could not find compilers library search path."
+    }
+    return [split $libdirlist :]
+}
+
+proc dynamic_linker_flag { args } {
+    global board
+    set compiler "[board_info $board compiler]"
+    set mflags "[board_info $board multilib_flags]"
+    foreach i [get_library_dirlist] {
+	set dynlinker [glob -nocomplain -directory $i ld-*.so]
+	if { $dynlinker != "" } break
+    }
+    verbose "dynamic_linker_flag: -Wl,--dynamic-linker=$dynlinker"
+    return "-Wl,--dynamic-linker=$dynlinker"
+}
+
+proc rpath_flags { args } {
+    global board
+    set compiler "[board_info $board compiler]"
+    set mflags "[board_info $board multilib_flags] [libgloss_include_flags] [newlib_include_flags] [libgloss_link_flags] [libgloss_link_flags]"
+    set rpathflags ""
+    set gccpath [get_multilibs]
+    foreach i {libgcc_s.so  libstdc++.so libgfortran.so libatomic.so libgomp.so} {
+	set result [remote_exec host "$compiler $mflags --print-file-name=$i"]
+	set output [lindex $result 1]
+	set rpathdir [file dirname $output]
+	# If testing an installed compiler, --print-file-name  will find the
+	# libraries, if testing a built but not installed compiler it will not
+	# find libraries like libstdc++.so or libgfortran.so so we add the
+	# extra hack/search so it can work.
+	if {[string match "." $rpathdir]} {
+	    if {[string match $i "libstdc++.so"]} {
+		if {[file exists "$gccpath/libstdc++-v3/src/.libs/libstdc++.so"]} {
+		    set rpathflags "$rpathflags -Wl,-rpath=$gccpath/libstdc++-v3/src/.libs"
+		}
+	    }
+	    if {[string match $i "libgfortran.so"]} {
+		if {[file exists "$gccpath/libgfortran/.libs/libgfortran.so"]} {
+		    set rpathflags "$rpathflags -Wl,-rpath=$gccpath/libgfortran/.libs"
+		}
+	    }
+	    if {[string match $i "libatomic.so"]} {
+		if {[file exists "$gccpath/libatomic/.libs/libatomic.so"]} {
+		    set rpathflags "$rpathflags -Wl,-rpath=$gccpath/libatomic/.libs"
+		}
+	    }
+	    if {[string match $i "libgomp.so"]} {
+		if {[file exists "$gccpath/libgomp/.libs/libgomp.so"]} {
+		    set rpathflags "$rpathflags -Wl,-rpath=$gccpath/libgomp/.libs"
+		}
+	    }
+	} else {
+	    set rpathflags "$rpathflags -Wl,-rpath=$rpathdir"
+	}
+    }
+    foreach i [get_library_dirlist] {
+	set rpathflags "$rpathflags -Wl,-rpath=$i"
+    }
+    verbose "rpath_flags: $rpathflags"
+    return $rpathflags
+}
+
+# The TCL SIM variable takes precedence over the DEJAGNU_SIM env. variable
+if {[info exists env(DEJAGNU_SIM)] && ![info exists SIM]} {
+    set SIM $env(DEJAGNU_SIM)
+}
+
+# This tells it which directory to look in for the simulator.
+setup_sim sim
+
+# No multilib flags are set by default.
+if {[info exists env(DEJAGNU_SIM_MULTILIB_OPTIONS)]} {
+    process_multilib_options "$env(DEJAGNU_SIM_MULTILIB_OPTIONS)"
+} else {
+    process_multilib_options ""
+}
+
+# The compiler used to build for this board. This has *nothing* to do
+# with what compiler is tested if we're testing gcc.
+if {[info exists env(DEJAGNU_SIM_GCC)]} {
+    set_board_info compiler "$env(DEJAGNU_SIM_GCC)"
+} else {
+    set_board_info compiler "[find_gcc]"
+}
+
+if {[info exists env(DEJAGNU_SIM_INCLUDE_FLAGS)]} {
+    set_board_info cflags "[libgloss_include_flags] [newlib_include_flags] $env(DEJAGNU_SIM_INCLUDE_FLAGS)"
+} else {
+    set_board_info cflags "[libgloss_include_flags] [newlib_include_flags]"
+}
+if {[info exists env(DEJAGNU_SIM_LINK_FLAGS)]} {
+    set_board_info ldflags "[libgloss_link_flags] [newlib_link_flags] [dynamic_linker_flag] [rpath_flags] $env(DEJAGNU_SIM_LINK_FLAGS)"
+} else {
+    set_board_info ldflags "[libgloss_link_flags] [newlib_link_flags] [dynamic_linker_flag] [rpath_flags]"
+}
+if {[info exists env(DEJAGNU_SIM_LDSCRIPT)]} {
+    set_board_info ldscript "$env(DEJAGNU_SIM_LDSCRIPT)"
+}
+if {[info exists env(DEJAGNU_SIM_OPTIONS)]} {
+    set_board_info sim,options "$env(DEJAGNU_SIM_OPTIONS)"
+}
+
+if {[info exists env(DEJAGNU_SIM_BOARD_INFO)]} {
+    foreach e $env(DEJAGNU_SIM_BOARD_INFO) {
+	set_board_info [lindex $e 0] [lindex $e 1]
+    }
+}

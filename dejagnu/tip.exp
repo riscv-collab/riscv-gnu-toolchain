@@ -1,0 +1,182 @@
+# Copyright (C) 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2001
+# 2002, 2003, 2005, 2006, 2007, 2008, 2009, 2010 Free Software Foundation, Inc.
+#
+# This file is part of DejaGnu.
+#
+# DejaGnu is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# DejaGnu is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with DejaGnu; if not, write to the Free Software Foundation,
+# Inc., 51 Franklin Street - Fifth Floor, Boston, MA 02110-1301, USA.
+
+# Connect to HOSTNAME using tip(1).  Sets the board's fileid field
+# with the spawn_id on success and returns the spawn id, otherwise
+# returns -1.
+#
+proc tip_open { hostname } {
+    global verbose
+    global spawn_id
+
+    set tries 0
+    set result -1
+
+    if {[board_info $hostname exists name]} {
+	set hostname [board_info ${hostname} name]
+    }
+    set port [board_info ${hostname} tipname]
+    if {[board_info ${hostname} exists shell_prompt]} {
+	set shell_prompt [board_info ${hostname} shell_prompt]
+    } else {
+	# Pick something reasonably generic.
+	set shell_prompt ".*> "
+    }
+
+    if {[board_info ${hostname} exists fileid]} {
+	unset board_info(${hostname},fileid)
+    }
+    spawn tip -v $port
+    if { $spawn_id < 0 } {
+	perror "invalid spawn id from tip"
+	return -1
+    }
+    expect {
+	-re ".*connected.*$" {
+	    send "\r\n"
+	    expect {
+		-re ".*$shell_prompt.*$" {
+		    verbose "Got prompt\n"
+		    set result 0
+		    incr tries
+		}
+		timeout {
+		    warning "Never got prompt."
+		    set result -1
+		    incr tries
+		    if $tries<=2 {
+			exp_continue
+		    }
+		}
+	    }
+	}
+	-re "all ports busy.*$" {
+	    set result -1
+	    perror "All ports busy."
+	    incr tries
+	    if { $tries <= 2 } {
+		exp_continue
+	    }
+	}
+	-re "Connection Closed.*$" {
+	    perror "Never connected."
+	    set result -1
+	    incr tries
+	    if { $tries <= 2 } {
+		exp_continue
+	    }
+	}
+	-re ".*: Permission denied.*link down.*$" {
+	    perror "Link down."
+	    set result -1
+	    incr tries
+	}
+	timeout	{
+	    perror "Timed out trying to connect."
+	    set result -1
+	    incr tries
+	    if { $tries <= 2 } {
+		exp_continue
+	    }
+	}
+	eof {
+	    perror "Got unexpected EOF from tip."
+	    set result -1
+	    incr tries
+	}
+    }
+
+    send "\n~s"
+    expect {
+	"~\[set\]*" {
+	    verbose "Setting verbose mode" 1
+	    send "verbose\n\n\n"
+	}
+    }
+
+    if { $result < 0 } {
+	perror "Couldn't connect after $tries tries."
+	return -1
+    } else {
+	set board_info($hostname,fileid) $spawn_id
+	return $spawn_id
+    }
+}
+
+# Download FILE to DEST using the ~put command in tip(1).
+# Returns -1 if an error occurred, otherwise returns 0.
+#
+proc tip_download { dest file args } {
+    global verbose
+    global decimal
+    global expect_out
+
+    if {[board_info $dest exists shell_prompt]} {
+	set shell_prompt [board_info $dest shell_prompt]
+    } else {
+	set shell_prompt ".*>"
+    }
+
+    set result ""
+    if {![board_info $dest exists fileid]} {
+	perror "tip_download: no connection to $dest."
+	return $result
+    }
+    set shell_id [board_info $dest fileid]
+
+    if {![file exists $file]} {
+	perror "$file doesn't exist."
+	return $result
+    }
+
+    send -i $shell_id "\n~p"
+    expect {
+	-i $shell_id "~\[put\]*" {
+	    verbose "Downloading $file, please wait" 1
+	    send -i $shell_id "$file\n"
+	    set timeout 50
+	    expect {
+		-i $shell_id -re ".*$file.*$" {
+		    exp_continue
+		}
+		-i $shell_id -re ".*lines transferred in.*minute.*seconds.*$shell_prompt.*$" {
+		    verbose "Download $file successfully" 1
+		    set result $file
+		}
+		-i $shell_id -re ".*Invalid command.*$shell_prompt$" {
+		    warning "Got an invalid command to the remote shell."
+		}
+		-i $shell_id -re ".*$decimal\r" {
+		    if {[info exists expect_out(buffer)]} {
+			verbose "$expect_out(buffer)"
+			exp_continue
+		    }
+		}
+		-i $shell_id timeout {
+		    perror "Timed out trying to download."
+		}
+	    }
+	}
+	timeout {
+	    perror "Timed out waiting for response to put command."
+	}
+    }
+    set timeout 10
+    return $result
+}

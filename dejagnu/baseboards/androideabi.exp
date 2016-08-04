@@ -1,0 +1,112 @@
+# Copyright (C) 2013 Free Software Foundation, Inc.
+#
+# This file is part of DejaGnu.
+#
+# DejaGnu is free software; you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# DejaGnu is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with DejaGnu; if not, write to the Free Software Foundation,
+# Inc., 51 Franklin Street - Fifth Floor, Boston, MA 02110-1301, USA.
+
+process_multilib_options ""
+
+load_generic_config "adb"
+
+# We need this for find_gcc and *_include_flags/*_link_flags.
+load_base_board_description "adb"
+
+set_board_info compiler  "[find_gcc]"
+
+# We may need -mandroid.
+set_board_info cflags  "-mandroid"
+set_board_info ldflags  "-mandroid"
+
+#
+# load PROG to DEST and run it with ARGS using adb
+#
+proc adb_load { dest prog args } {
+    # Default directory uses tmpfs, so it is the best place to run
+    # tests to avoid excessive wear of flash.
+    global android_tmp_dir
+    if { $android_tmp_dir != "" } {
+	verbose -log "android temporary directory is set to $android_tmp_dir" 3
+    } else {
+	set android_tmp_dir "/mnt/sdcard/.android_secure"
+	verbose -log "android temporary directory will be used by default $android_tmp_dir" 3
+    }
+
+    if { [llength $args] > 0 } {
+	set pargs [lindex $args 0]
+    } else {
+	set pargs ""
+    }
+
+    if { [llength $args] > 1 } {
+	set inp "[lindex $args 1]"
+    } else {
+	set inp ""
+    }
+
+    if {![file exists $prog]} then {
+	# We call both here because this should never happen.
+	perror "$prog does not exist in standard_load."
+	verbose -log "$prog does not exist." 3
+	return "untested"
+    }
+
+    if {[is_remote $dest]} {
+	set localfile "./[file tail $prog].[pid]"
+	set remotefile "$android_tmp_dir/[file tail $prog].[pid]"
+	set remotefile [remote_download $dest $prog $remotefile]
+	if { $remotefile == "" } {
+	    verbose -log "Download of $prog to [board_info $dest name] failed." 3
+	    return "unresolved"
+	}
+	set retval [remote_exec $dest "test -x $remotefile"]
+	if { $retval != "0 {}" } {
+	    # Android doesn't support symbolic input for chmod, therefore set executable permission by number
+	    set retval [remote_exec $dest "chmod 755 $remotefile"]
+	    if { $retval != "0 {}" } {
+		verbose -log "Setting executable permissions of $prog on [board_info $dest name] failed." 3
+		return "unresolved"
+	    }
+	}
+	if {[board_info $dest exists remote_link]} {
+	    if {[[board_info $dest remote_link] $remotefile]} {
+		verbose -log "Couldn't do remote link"
+		# Can't use remote_file delete since /system/bin/rm does not
+		# support -f on Android.
+		remote_exec $dest rm $remotefile
+		return "unresolved"
+	    }
+	}
+	set status [remote_exec $dest $localfile $pargs $inp]
+	remote_exec $dest rm $remotefile
+    } else {
+	set status [remote_exec $dest $prog $pargs $inp]
+    }
+    if { [lindex $status 0] < 0 } {
+	verbose -log "Couldn't execute $prog, [lindex $status 1]" 3
+	return "unresolved"
+    }
+    set output [lindex $status 1]
+    set status [lindex $status 0]
+
+    verbose -log "Executed $prog, status $status" 2
+    if {![string match "" $output]} {
+	verbose -log -- "$output" 2
+    }
+    if { $status == 0 } {
+	return [list "pass" $output]
+    } else {
+	return [list "fail" $output]
+    }
+}
