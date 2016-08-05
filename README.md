@@ -79,3 +79,12 @@ rather than the usual prefix (riscv32-... or riscv64-...).
 
 There are a number of additional options that may be passed to
 configure.  See './configure --help' for more details.
+
+### Test Suite
+
+The DejaGnu test suite has been ported to RISC-V.  This currently only runs in
+the GDB simulator, which doesn't support floating-point or Linux/glibc.  To
+test GCC, run the following commands:
+
+  ./configure --prefix=$RISCV --disable-float --disable-linux
+  make check-gcc-newlib
