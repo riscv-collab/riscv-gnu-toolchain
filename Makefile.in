@@ -2,8 +2,7 @@ srcdir := @abs_top_srcdir@
 builddir := @abs_top_builddir@
 INSTALL_DIR := @prefix@
 
-PACKAGES := newlib
-newlib_version := 2.2.0
+PACKAGES :=
 
 DISTDIR ?= /var/cache/distfiles
 GNU_MIRROR := http://mirrors.kernel.org/gnu
@@ -46,7 +45,7 @@ ASFLAGS_FOR_TARGET := $(ASFLAGS_FOR_TARGET_EXTRA) $(FLOAT_ASFLAGS)
 
 all: @default_target@
 
-newlib: stamps/build-gcc-newlib
+newlib: stamps/build-gcc-newlib-stage2
 
 ifneq ($(findstring --disable-multilib,$(MULTILIB_FLAGS)),)
 linux: stamps/build-gcc-linux-stage2
@@ -237,23 +236,29 @@ stamps/build-binutils-newlib: $(srcdir)/riscv-binutils-gdb
 	$(MAKE) -C $(notdir $@) install
 	mkdir -p $(dir $@) && touch $@
 
-src/newlib-gcc: $(srcdir)/riscv-gcc src/newlib
-	rm -rf $@ $@.tmp
-	cp -a $< $@.tmp
-	cp -a src/newlib/newlib $@.tmp
-	cp -a src/newlib/libgloss $@.tmp
-	$(srcdir)/scripts/cp_s $(srcdir)/newlib $@.tmp
-	mv $@.tmp $@
-
-stamps/build-gcc-newlib: src/newlib-gcc stamps/build-binutils-newlib
+stamps/build-newlib: $(srcdir)/riscv-newlib stamps/build-gcc-newlib-stage1
+	echo $(PATH)
 	rm -rf $@ $(notdir $@)
 	mkdir $(notdir $@)
-	cd $(notdir $@) && $(CURDIR)/$</configure \
+	cd $(notdir $@) && $</configure \
+		--target=riscv$(XLEN)-unknown-elf \
+		--prefix=$(INSTALL_DIR) \
+		--enable-newlib-io-c99-formats \
+		--enable-newlib-io-long-long
+	$(MAKE) -C $(notdir $@)
+	$(MAKE) -C $(notdir $@) install
+	mkdir -p $(dir $@) && touch $@
+
+
+stamps/build-gcc-newlib-stage1: $(srcdir)/riscv-gcc stamps/build-binutils-newlib
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	cd $(notdir $@) && $</configure \
 		--target=riscv$(XLEN)-unknown-elf \
 		--prefix=$(INSTALL_DIR) \
 		--disable-shared \
 		--disable-threads \
-		--enable-tls \
+		--disable-tls \
 		--enable-languages=c,c++ \
 		--with-newlib \
 		--disable-libmudflap \
@@ -264,15 +269,39 @@ stamps/build-gcc-newlib: src/newlib-gcc stamps/build-binutils-newlib
 		$(GCC_FLOAT_FLAGS) \
 		$(MULTILIB_FLAGS) \
 		$(WITH_ARCH)
-	$(MAKE) -C $(notdir $@) inhibit-libc=true
+	$(MAKE) -C $(notdir $@) all-gcc
+	$(MAKE) -C $(notdir $@) install-gcc
+	mkdir -p $(dir $@) && touch $@
+
+stamps/build-gcc-newlib-stage2: $(srcdir)/riscv-gcc stamps/build-binutils-newlib stamps/build-newlib
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	cd $(notdir $@) && $</configure \
+		--target=riscv$(XLEN)-unknown-elf \
+		--prefix=$(INSTALL_DIR) \
+		--with-headers=$(INSTALL_DIR)/include \
+		--disable-shared \
+		--disable-threads \
+		--disable-tls \
+		--enable-languages=c,c++ \
+		--with-newlib \
+		--disable-libmudflap \
+		--disable-libssp \
+		--disable-libquadmath \
+		--disable-libgomp \
+		--disable-nls \
+		$(GCC_FLOAT_FLAGS) \
+		$(MULTILIB_FLAGS) \
+		$(WITH_ARCH)
+	$(MAKE) -C $(notdir $@)
 	$(MAKE) -C $(notdir $@) install
 	mkdir -p $(dir $@) && touch $@
 
 .PHONY: check-gcc-newlib
-check-gcc-newlib: stamps/build-gcc-newlib
+check-gcc-newlib: stamps/build-gcc-newlib-stage2
 	export PATH=$(INSTALL_DIR)/bin:$(PATH) && \
 	export DEJAGNULIBS=$(srcdir)/riscv-dejagnu && \
-	cd build-gcc-newlib && \
+	cd build-gcc-newlib-stage2 && \
 	$(MAKE) check-gcc "RUNTESTFLAGS=--target_board=riscv-sim"
 
 clean:
