@@ -82,9 +82,16 @@ configure.  See './configure --help' for more details.
 
 ### Test Suite
 
-The DejaGnu test suite has been ported to RISC-V.  This currently only runs in
-the GDB simulator, which doesn't support floating-point or Linux/glibc.  To
-test GCC, run the following commands:
+The DejaGnu test suite has been ported to RISC-V.  This can run with GDB
+simulator for elf toolchain or Qemu for linux toolchain, and GDB simulator
+doesn't support floating-point.
+To test GCC, run the following commands:
 
   ./configure --prefix=$RISCV --disable-float --disable-linux
+  make newlib
   make check-gcc-newlib
+
+  ./configure --prefix=$RISCV
+  make linux
+  # Need qemu-riscv32 or qemu-riscv64 in your `PATH`.
+  make check-gcc-linux
