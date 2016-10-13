@@ -87,11 +87,11 @@ simulator for elf toolchain or Qemu for linux toolchain, and GDB simulator
 doesn't support floating-point.
 To test GCC, run the following commands:
 
-  ./configure --prefix=$RISCV --disable-float --disable-linux
-  make newlib
-  make check-gcc-newlib
+    ./configure --prefix=$RISCV --disable-float --disable-linux
+    make newlib
+    make check-gcc-newlib
 
-  ./configure --prefix=$RISCV
-  make linux
-  # Need qemu-riscv32 or qemu-riscv64 in your `PATH`.
-  make check-gcc-linux
+    ./configure --prefix=$RISCV
+    make linux
+    # Need qemu-riscv32 or qemu-riscv64 in your `PATH`.
+    make check-gcc-linux
