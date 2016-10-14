@@ -1,6 +1,6 @@
 #include <ieeefp.h>
 
-#ifdef __riscv_hard_float
+#ifdef __riscv_flen
 static void fssr(int value)
 {
   asm volatile ("fssr %0" :: "r"(value));
@@ -21,7 +21,7 @@ fp_except fpgetmask(void)
 
 fp_rnd fpgetround(void)
 {
-#ifdef __riscv_hard_float
+#ifdef __riscv_flen
   int rm = frsr() >> 5;
   return rm == 0 ? FP_RN : rm == 1 ? FP_RZ : rm == 2 ? FP_RM : FP_RP;
 #else
@@ -31,7 +31,7 @@ fp_rnd fpgetround(void)
 
 fp_except fpgetsticky(void)
 {
-#ifdef __riscv_hard_float
+#ifdef __riscv_flen
   return frsr() & 0x1f;
 #else
   return 0;
@@ -45,7 +45,7 @@ fp_except fpsetmask(fp_except mask)
 
 fp_rnd fpsetround(fp_rnd rnd_dir)
 {
-#ifdef __riscv_hard_float
+#ifdef __riscv_flen
   int fsr = frsr();
   int rm = fsr >> 5;
   int new_rm = rnd_dir == FP_RN ? 0 : rnd_dir == FP_RZ ? 1 : rnd_dir == FP_RM ? 2 : 3;
@@ -58,7 +58,7 @@ fp_rnd fpsetround(fp_rnd rnd_dir)
 
 fp_except fpsetsticky(fp_except sticky)
 {
-#ifdef __riscv_hard_float
+#ifdef __riscv_flen
   int fsr = frsr();
   fssr(sticky & 0x1f | fsr & ~0x1f);
   return fsr & 0x1f;

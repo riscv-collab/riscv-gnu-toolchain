@@ -105,14 +105,9 @@ AS_IF([test "x$enable_atomic" != xno],
 	[AC_SUBST(atomic_cflags,-mno-atomic)])
 
 AS_IF([test "x$enable_float" != xno],
-	    [AC_SUBST(float_cflags,-mhard-float)dnl
-AC_SUBST(float_asflags,-mhard-float)dnl
-AC_SUBST(binutils_float_flags,--disable-soft-float)dnl
-AC_SUBST(gcc_float_flags,"--disable-soft-float --with-float=hard")dnl
-AC_SUBST(glibc_float_flags,)],
-	    [AC_SUBST(float_cflags,-msoft-float)dnl
-AC_SUBST(float_asflags,-msoft-float)dnl
-AC_SUBST(binutils_float_flags,--enable-soft-float)dnl
+	    [AC_SUBST(binutils_float_flags,--disable-soft-float)dnl
+AC_SUBST(gcc_float_flags,"--disable-soft-float")],
+	    [AC_SUBST(binutils_float_flags,--enable-soft-float)dnl
 AC_SUBST(gcc_float_flags,"--enable-soft-float --with-float=soft")dnl
 AC_SUBST(glibc_float_flags,--without-fp)])
 
