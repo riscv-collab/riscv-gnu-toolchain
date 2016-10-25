@@ -36,6 +36,7 @@ size_t strlen(const char* str)
   if (c0 == 0)            return ret + 4 - sl;
   if (c1 == 0)            return ret + 5 - sl;
   if (c2 == 0)            return ret + 6 - sl;
-                          return ret + 7 - sl;
+
+  return ret + 7 - sl;
 #endif /* not PREFER_SIZE_OVER_SPEED */
 }
