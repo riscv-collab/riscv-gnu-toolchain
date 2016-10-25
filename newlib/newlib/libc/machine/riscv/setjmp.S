@@ -8,14 +8,14 @@
 # define SZREG 4
 #endif
 
-#ifdef __riscv_flen
+#ifndef __riscv_float_abi_soft
 /* For ABI uniformity, reserve 8 bytes for floats, even if double-precision
    floating-point is not supported in hardware.  */
 # define SZFREG 8
-# if __riscv_flen == 32
+# ifdef __riscv_float_abi_single
 #  define FREG_L flw
 #  define FREG_S fsw
-# elif __riscv_flen == 64
+# elif defined(__riscv_float_abi_double)
 #  define FREG_L fld
 #  define FREG_S fsd
 # else
@@ -41,7 +41,7 @@ setjmp:
 	REG_S s11,12*SZREG(a0)
 	REG_S sp, 13*SZREG(a0)
 
-#ifdef __riscv_flen
+#ifndef __riscv_float_abi_soft
 	FREG_S fs0, 14*SZREG+ 0*SZFREG(a0)
 	FREG_S fs1, 14*SZREG+ 1*SZFREG(a0)
 	FREG_S fs2, 14*SZREG+ 2*SZFREG(a0)
@@ -77,7 +77,7 @@ longjmp:
 	REG_L s11,12*SZREG(a0)
 	REG_L sp, 13*SZREG(a0)
 
-#ifdef __riscv_flen
+#ifndef __riscv_float_abi_soft
 	FREG_L fs0, 14*SZREG+ 0*SZFREG(a0)
 	FREG_L fs1, 14*SZREG+ 1*SZFREG(a0)
 	FREG_L fs2, 14*SZREG+ 2*SZFREG(a0)
