@@ -122,6 +122,16 @@ AS_IF([test "x$enable_multilib" != xno],
         [AC_SUBST(multilib_flags,)],
 	[AC_SUBST(multilib_flags,--disable-multilib)])
 
+AC_ARG_ENABLE(gcc-checking,
+        [AS_HELP_STRING([--enable-gcc-checking],
+		[Enable gcc internal checking, it will make gcc very slow, only enable it when developing gcc @<:@--disable-gcc-checking@:>@])],
+        [],
+        [enable_gcc_checking=yes]
+        )
+AS_IF([test "x$enable_gcc_checking" != xno],
+	[AC_SUBST(gcc_checking, --enable-checking=yes)],
+	[AC_SUBST(gcc_checking, --enable-checking=release)])
+
 AC_CONFIG_FILES([Makefile])
 AC_CONFIG_FILES([scripts/wrapper/awk/awk], [chmod +x scripts/wrapper/awk])
 AC_CONFIG_FILES([scripts/wrapper/sed/sed], [chmod +x scripts/wrapper/sed])
