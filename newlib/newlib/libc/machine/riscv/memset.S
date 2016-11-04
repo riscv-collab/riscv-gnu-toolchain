@@ -1,7 +1,3 @@
-# memset, optimized for RISC-V
-# Andrew Waterman
-# 2012/10/15
-
 .text
 .global memset
 memset:

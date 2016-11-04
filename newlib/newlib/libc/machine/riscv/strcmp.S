@@ -1,5 +1,3 @@
-# Artisanally coded in California by A. Shell Waterman
-
 #include <sys/asm.h>
 
 #if BYTE_ORDER != LITTLE_ENDIAN
