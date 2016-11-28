@@ -9,18 +9,12 @@ _start:
 1:auipc gp, %pcrel_hi(_gp)
   addi  gp, gp, %pcrel_lo(1b)
 
-# clear the bss segment
-  la      t0, _fbss
-  la      t1, _end
-1:
-#ifdef __riscv64
-  sd      zero,0(t0)
-  addi    t0, t0, 8
-#else
-  sw      zero,0(t0)
-  addi    t0, t0, 4
-#endif
-  bltu    t0, t1, 1b
+  # Clear the bss segment
+  la      a0, _edata
+  la      a2, _end
+  sub     a2, a2, a0
+  li      a1, 0
+  call    memset
 
   la      a0, __libc_fini_array   # Register global termination functions
   call    atexit                  #  to be called upon exit
