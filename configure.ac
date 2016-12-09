@@ -119,8 +119,12 @@ AC_ARG_ENABLE(multilib,
 	)
 
 AS_IF([test "x$enable_multilib" != xno],
-        [AC_SUBST(multilib_flags,)],
+        [AC_SUBST(multilib_flags,--enable-multilib)],
 	[AC_SUBST(multilib_flags,--disable-multilib)])
+
+AS_IF([test "x$enable_multilib" != xno],
+        [AC_SUBST(multilib_names,"rv32ima-ilp32 rv32imafd-ilp32 rv32imafd-ilp32d rv64ima-lp64 rv64imafd-lp64 rv64imafd-lp64d")],
+	[AC_SUBST(multilib_names,"-")])
 
 AC_ARG_ENABLE(gcc-checking,
         [AS_HELP_STRING([--enable-gcc-checking],
