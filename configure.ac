@@ -50,13 +50,6 @@ AS_IF([test "x$enable_linux" != xno],
 	[AC_SUBST(default_target, linux)],
 	[AC_SUBST(default_target, newlib)])
 
-AC_ARG_WITH(xlen,
-	[AS_HELP_STRING([--with-xlen=XLEN],
-		[Set XLEN, the X-register bit width (default is 64)])],
-	AC_SUBST(XLEN, $withval),
-	AC_SUBST(XLEN, 64)
-	)
-
 AC_ARG_ENABLE(atomic,
 	[AS_HELP_STRING([--disable-atomic],
 		[disable use of atomic memory instructions in glibc @<:@--enable-atomic@:>@])],
@@ -64,52 +57,19 @@ AC_ARG_ENABLE(atomic,
 	[enable_atomic=yes]
 	)
 
-AC_ARG_ENABLE(float,
-	[AS_HELP_STRING([--disable-float],
-		[use software floating point in glibc @<:@--enable-float@:>@])],
-	[],
-	[enable_float=yes]
-	)
-
-AC_DEFUN([MATCH_PATTERN], [echo "$1" | $GREP -qE "$2"])
-
-AC_DEFUN([GENERATE_EXTENSION],
-	[AS_IF([MATCH_PATTERN([$1], [^RV(32|64).*$2])],
-		[$3=yes],
-		[$3=no])]
-	)
-
-AC_DEFUN([PARSE_EXTENSIONS],
-	[GENERATE_EXTENSION([$1], A, enable_atomic)
-	 GENERATE_EXTENSION([$1], F, enable_float)]
-	)
-
-AC_DEFUN([PARSE_BASE_ARCH],
-	[AS_IF([MATCH_PATTERN([$1], [^RV32])],
-		AC_SUBST(XLEN, 32))
-	 AS_IF([MATCH_PATTERN([$1], [^RV64])],
-		AC_SUBST(XLEN, 64))]
-	)
-
 AC_ARG_WITH(arch,
-	[AS_HELP_STRING([--with-arch=RV64IMAFD],
-		[Sets the base RISC-V ISA, defaults to RV64IMAFD])],
-	[PARSE_BASE_ARCH([$withval])
-	 PARSE_EXTENSIONS([$withval])
-	 AC_SUBST(WITH_ARCH, --with-arch=$withval)],
-	[]
+	[AS_HELP_STRING([--with-arch=rv64g],
+		[Sets the base RISC-V ISA, defaults to rv64g])],
+	AC_SUBST(WITH_ARCH, --with-arch=$withval),
+	AC_SUBST(WITH_ARCH, --with-arch=rv64g)
 	)
 
-AS_IF([test "x$enable_atomic" != xno],
-        [],
-	[AC_SUBST(atomic_cflags,-mno-atomic)])
-
-AS_IF([test "x$enable_float" != xno],
-	    [AC_SUBST(binutils_float_flags,--disable-soft-float)dnl
-AC_SUBST(gcc_float_flags,"--disable-soft-float")],
-	    [AC_SUBST(binutils_float_flags,--enable-soft-float)dnl
-AC_SUBST(gcc_float_flags,"--enable-soft-float --with-float=soft")dnl
-AC_SUBST(glibc_float_flags,--without-fp)])
+AC_ARG_WITH(abi,
+	[AS_HELP_STRING([--with-abi=lp64d],
+		[Sets the base RISC-V ABI, defaults to lp64d])],
+	AC_SUBST(WITH_ABI, --with-abi=$withval),
+	AC_SUBST(WITH_ABI, --with-abi=lp64d)
+	)
 
 AC_ARG_ENABLE(multilib,
 	[AS_HELP_STRING([--enable-multilib],
@@ -123,8 +83,8 @@ AS_IF([test "x$enable_multilib" != xno],
 	[AC_SUBST(multilib_flags,--disable-multilib)])
 
 AS_IF([test "x$enable_multilib" != xno],
-        [AC_SUBST(multilib_names,"rv32ima-ilp32 rv32imafd-ilp32 rv32imafd-ilp32d rv64ima-lp64 rv64imafd-lp64 rv64imafd-lp64d")],
-	[AC_SUBST(multilib_names,"-")])
+        [AC_SUBST(multilib_names,"rv32ima-ilp32 rv32imafd-ilp32d rv64ima-lp64 rv64imafd-lp64d")],
+	[])
 
 AC_ARG_ENABLE(gcc-checking,
         [AS_HELP_STRING([--enable-gcc-checking],
