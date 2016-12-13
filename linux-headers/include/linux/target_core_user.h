@@ -41,10 +41,7 @@
 
 #define TCMU_MAILBOX_VERSION 2
 #define ALIGN_SIZE 64 /* Should be enough for most CPUs */
-
-/* See https://gcc.gnu.org/onlinedocs/cpp/Stringification.html */
-#define xstr(s) str(s)
-#define str(s) #s
+#define TCMU_MAILBOX_FLAG_CAP_OOOC (1 << 0) /* Out-of-order completions */
 
 struct tcmu_mailbox {
 	__u16 version;

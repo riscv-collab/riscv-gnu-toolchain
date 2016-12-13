@@ -27,7 +27,7 @@
 #ifndef _I915_DRM_H_
 #define _I915_DRM_H_
 
-#include <drm/drm.h>
+#include "drm.h"
 
 /* Please note that modifications to all structs defined here are
  * subject to backwards-compatibility constraints.
@@ -171,8 +171,12 @@ typedef struct _drm_i915_sarea {
 #define I915_BOX_TEXTURE_LOAD  0x8
 #define I915_BOX_LOST_CONTEXT  0x10
 
-/* I915 specific ioctls
- * The device specific ioctl range is 0x40 to 0x79.
+/*
+ * i915 specific ioctls.
+ *
+ * The device specific ioctl range is [DRM_COMMAND_BASE, DRM_COMMAND_END) ie
+ * [0x40, 0xa0) (a0 is excluded). The numbers below are defined as offset
+ * against DRM_COMMAND_BASE and should be between [0x0, 0x60).
  */
 #define DRM_I915_INIT		0x00
 #define DRM_I915_FLUSH		0x01
@@ -350,9 +354,16 @@ typedef struct drm_i915_irq_wait {
 #define I915_PARAM_REVISION              32
 #define I915_PARAM_SUBSLICE_TOTAL	 33
 #define I915_PARAM_EU_TOTAL		 34
+#define I915_PARAM_HAS_GPU_RESET	 35
+#define I915_PARAM_HAS_RESOURCE_STREAMER 36
+#define I915_PARAM_HAS_EXEC_SOFTPIN	 37
 
 typedef struct drm_i915_getparam {
-	int param;
+	__s32 param;
+	/*
+	 * WARNING: Using pointers instead of fixed-size u64 means we need to write
+	 * compat32 code. Don't repeat this mistake.
+	 */
 	int *value;
 } drm_i915_getparam_t;
 
@@ -672,15 +683,21 @@ struct drm_i915_gem_exec_object2 {
 	__u64 alignment;
 
 	/**
-	 * Returned value of the updated offset of the object, for future
-	 * presumed_offset writes.
+	 * When the EXEC_OBJECT_PINNED flag is specified this is populated by
+	 * the user with the GTT offset at which this object will be pinned.
+	 * When the I915_EXEC_NO_RELOC flag is specified this must contain the
+	 * presumed_offset of the object.
+	 * During execbuffer2 the kernel populates it with the value of the
+	 * current GTT offset of the object, for future presumed_offset writes.
 	 */
 	__u64 offset;
 
 #define EXEC_OBJECT_NEEDS_FENCE (1<<0)
 #define EXEC_OBJECT_NEEDS_GTT	(1<<1)
 #define EXEC_OBJECT_WRITE	(1<<2)
-#define __EXEC_OBJECT_UNKNOWN_FLAGS -(EXEC_OBJECT_WRITE<<1)
+#define EXEC_OBJECT_SUPPORTS_48B_ADDRESS (1<<3)
+#define EXEC_OBJECT_PINNED	(1<<4)
+#define __EXEC_OBJECT_UNKNOWN_FLAGS -(EXEC_OBJECT_PINNED<<1)
 	__u64 flags;
 
 	__u64 rsvd1;
@@ -755,12 +772,19 @@ struct drm_i915_gem_execbuffer2 {
 #define I915_EXEC_HANDLE_LUT		(1<<12)
 
 /** Used for switching BSD rings on the platforms with two BSD rings */
-#define I915_EXEC_BSD_MASK		(3<<13)
-#define I915_EXEC_BSD_DEFAULT		(0<<13) /* default ping-pong mode */
-#define I915_EXEC_BSD_RING1		(1<<13)
-#define I915_EXEC_BSD_RING2		(2<<13)
+#define I915_EXEC_BSD_SHIFT	 (13)
+#define I915_EXEC_BSD_MASK	 (3 << I915_EXEC_BSD_SHIFT)
+/* default ping-pong mode */
+#define I915_EXEC_BSD_DEFAULT	 (0 << I915_EXEC_BSD_SHIFT)
+#define I915_EXEC_BSD_RING1	 (1 << I915_EXEC_BSD_SHIFT)
+#define I915_EXEC_BSD_RING2	 (2 << I915_EXEC_BSD_SHIFT)
 
-#define __I915_EXEC_UNKNOWN_FLAGS -(1<<15)
+/** Tell the kernel that the batchbuffer is processed by
+ *  the resource streamer.
+ */
+#define I915_EXEC_RESOURCE_STREAMER     (1<<15)
+
+#define __I915_EXEC_UNKNOWN_FLAGS -(I915_EXEC_RESOURCE_STREAMER<<1)
 
 #define I915_EXEC_CONTEXT_ID_MASK	(0xffffffff)
 #define i915_execbuffer2_set_context_id(eb2, context) \
@@ -790,10 +814,35 @@ struct drm_i915_gem_busy {
 	/** Handle of the buffer to check for busy */
 	__u32 handle;
 
-	/** Return busy status (1 if busy, 0 if idle).
-	 * The high word is used to indicate on which rings the object
-	 * currently resides:
-	 *  16:31 - busy (r or r/w) rings (16 render, 17 bsd, 18 blt, etc)
+	/** Return busy status
+	 *
+	 * A return of 0 implies that the object is idle (after
+	 * having flushed any pending activity), and a non-zero return that
+	 * the object is still in-flight on the GPU. (The GPU has not yet
+	 * signaled completion for all pending requests that reference the
+	 * object.)
+	 *
+	 * The returned dword is split into two fields to indicate both
+	 * the engines on which the object is being read, and the
+	 * engine on which it is currently being written (if any).
+	 *
+	 * The low word (bits 0:15) indicate if the object is being written
+	 * to by any engine (there can only be one, as the GEM implicit
+	 * synchronisation rules force writes to be serialised). Only the
+	 * engine for the last write is reported.
+	 *
+	 * The high word (bits 16:31) are a bitmask of which engines are
+	 * currently reading from the object. Multiple engines may be
+	 * reading from the object simultaneously.
+	 *
+	 * The value of each engine is the same as specified in the
+	 * EXECBUFFER2 ioctl, i.e. I915_EXEC_RENDER, I915_EXEC_BSD etc.
+	 * Note I915_EXEC_DEFAULT is a symbolic value and is mapped to
+	 * the I915_EXEC_RENDER engine for execution, and so it is never
+	 * reported as active itself. Some hardware may have parallel
+	 * execution engines, e.g. multiple media engines, which are
+	 * mapped to the same identifier in the EXECBUFFER2 ioctl and
+	 * so are not separately reported for busyness.
 	 */
 	__u32 busy;
 };
@@ -996,6 +1045,7 @@ struct drm_intel_overlay_put_image {
 /* flags */
 #define I915_OVERLAY_UPDATE_ATTRS	(1<<0)
 #define I915_OVERLAY_UPDATE_GAMMA	(1<<1)
+#define I915_OVERLAY_DISABLE_DEST_COLORKEY	(1<<2)
 struct drm_intel_overlay_attrs {
 	__u32 flags;
 	__u32 color_key;
@@ -1062,6 +1112,12 @@ struct drm_i915_gem_context_destroy {
 };
 
 struct drm_i915_reg_read {
+	/*
+	 * Register offset.
+	 * For 64bit wide registers where the upper 32bits don't immediately
+	 * follow the lower 32bits, the offset of the lower 32bits must
+	 * be specified
+	 */
 	__u64 offset;
 	__u64 val; /* Return value */
 };
@@ -1108,7 +1164,9 @@ struct drm_i915_gem_context_param {
 	__u32 ctx_id;
 	__u32 size;
 	__u64 param;
-#define I915_CONTEXT_PARAM_BAN_PERIOD 0x1
+#define I915_CONTEXT_PARAM_BAN_PERIOD	0x1
+#define I915_CONTEXT_PARAM_NO_ZEROMAP	0x2
+#define I915_CONTEXT_PARAM_GTT_SIZE	0x3
 	__u64 value;
 };
 

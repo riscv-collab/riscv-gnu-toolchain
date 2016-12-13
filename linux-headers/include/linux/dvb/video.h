@@ -25,7 +25,6 @@
 #define _DVBVIDEO_H_
 
 #include <linux/types.h>
-#include <stdint.h>
 #include <time.h>
 
 typedef enum {
