@@ -176,7 +176,7 @@
 
 #define PORT_S3C6400	84
 
-/* NWPSERIAL */
+/* NWPSERIAL, now removed */
 #define PORT_NWPSERIAL	85
 
 /* MAX3100 */
@@ -257,5 +257,11 @@
 
 /* Cris v10 / v32 SoC */
 #define PORT_CRIS	112
+
+/* STM32 USART */
+#define PORT_STM32	113
+
+/* MVEBU UART */
+#define PORT_MVEBU	114
 
 #endif /* LINUX_SERIAL_CORE_H */

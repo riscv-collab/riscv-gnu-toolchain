@@ -153,6 +153,8 @@ enum ovs_packet_cmd {
  * flow key against the kernel's.
  * @OVS_PACKET_ATTR_ACTIONS: Contains actions for the packet.  Used
  * for %OVS_PACKET_CMD_EXECUTE.  It has nested %OVS_ACTION_ATTR_* attributes.
+ * Also used in upcall when %OVS_ACTION_ATTR_USERSPACE has optional
+ * %OVS_USERSPACE_ATTR_ACTIONS attribute.
  * @OVS_PACKET_ATTR_USERDATA: Present for an %OVS_PACKET_CMD_ACTION
  * notification if the %OVS_ACTION_ATTR_USERSPACE action specified an
  * %OVS_USERSPACE_ATTR_USERDATA attribute, with the same length and content
@@ -162,6 +164,9 @@ enum ovs_packet_cmd {
  * %OVS_USERSPACE_ATTR_EGRESS_TUN_PORT attribute, which is sent only if the
  * output port is actually a tunnel port. Contains the output tunnel key
  * extracted from the packet as nested %OVS_TUNNEL_KEY_ATTR_* attributes.
+ * @OVS_PACKET_ATTR_MRU: Present for an %OVS_PACKET_CMD_ACTION and
+ * %OVS_PACKET_ATTR_USERSPACE action specify the Maximum received fragment
+ * size.
  *
  * These attributes follow the &struct ovs_header within the Generic Netlink
  * payload for %OVS_PACKET_* commands.
@@ -178,6 +183,7 @@ enum ovs_packet_attr {
 	OVS_PACKET_ATTR_UNUSED2,
 	OVS_PACKET_ATTR_PROBE,      /* Packet operation is a feature probe,
 				       error logging should be suppressed. */
+	OVS_PACKET_ATTR_MRU,	    /* Maximum received IP fragment size. */
 	__OVS_PACKET_ATTR_MAX
 };
 
@@ -317,6 +323,10 @@ enum ovs_key_attr {
 	OVS_KEY_ATTR_MPLS,      /* array of struct ovs_key_mpls.
 				 * The implementation may restrict
 				 * the accepted length of the array. */
+	OVS_KEY_ATTR_CT_STATE,	/* u32 bitmask of OVS_CS_F_* */
+	OVS_KEY_ATTR_CT_ZONE,	/* u16 connection tracking zone. */
+	OVS_KEY_ATTR_CT_MARK,	/* u32 connection tracking mark */
+	OVS_KEY_ATTR_CT_LABELS,	/* 16-octet connection tracking label */
 
 	__OVS_KEY_ATTR_MAX
 };
@@ -336,6 +346,8 @@ enum ovs_tunnel_key_attr {
 	OVS_TUNNEL_KEY_ATTR_TP_SRC,		/* be16 src Transport Port. */
 	OVS_TUNNEL_KEY_ATTR_TP_DST,		/* be16 dst Transport Port. */
 	OVS_TUNNEL_KEY_ATTR_VXLAN_OPTS,		/* Nested OVS_VXLAN_EXT_* */
+	OVS_TUNNEL_KEY_ATTR_IPV6_SRC,		/* struct in6_addr src IPv6 address. */
+	OVS_TUNNEL_KEY_ATTR_IPV6_DST,		/* struct in6_addr dst IPv6 address. */
 	__OVS_TUNNEL_KEY_ATTR_MAX
 };
 
@@ -425,6 +437,28 @@ struct ovs_key_nd {
 	__u8	nd_sll[ETH_ALEN];
 	__u8	nd_tll[ETH_ALEN];
 };
+
+#define OVS_CT_LABELS_LEN	16
+struct ovs_key_ct_labels {
+	__u8	ct_labels[OVS_CT_LABELS_LEN];
+};
+
+/* OVS_KEY_ATTR_CT_STATE flags */
+#define OVS_CS_F_NEW               0x01 /* Beginning of a new connection. */
+#define OVS_CS_F_ESTABLISHED       0x02 /* Part of an existing connection. */
+#define OVS_CS_F_RELATED           0x04 /* Related to an established
+					 * connection. */
+#define OVS_CS_F_REPLY_DIR         0x08 /* Flow is in the reply direction. */
+#define OVS_CS_F_INVALID           0x10 /* Could not track connection. */
+#define OVS_CS_F_TRACKED           0x20 /* Conntrack has occurred. */
+#define OVS_CS_F_SRC_NAT           0x40 /* Packet's source address/port was
+					 * mangled by NAT.
+					 */
+#define OVS_CS_F_DST_NAT           0x80 /* Packet's destination address/port
+					 * was mangled by NAT.
+					 */
+
+#define OVS_CS_F_NAT_MASK (OVS_CS_F_SRC_NAT | OVS_CS_F_DST_NAT)
 
 /**
  * enum ovs_flow_attr - attributes for %OVS_FLOW_* commands.
@@ -525,6 +559,7 @@ enum ovs_sample_attr {
  * copied to the %OVS_PACKET_CMD_ACTION message as %OVS_PACKET_ATTR_USERDATA.
  * @OVS_USERSPACE_ATTR_EGRESS_TUN_PORT: If present, u32 output port to get
  * tunnel info.
+ * @OVS_USERSPACE_ATTR_ACTIONS: If present, send actions with upcall.
  */
 enum ovs_userspace_attr {
 	OVS_USERSPACE_ATTR_UNSPEC,
@@ -532,6 +567,7 @@ enum ovs_userspace_attr {
 	OVS_USERSPACE_ATTR_USERDATA,  /* Optional user-specified cookie. */
 	OVS_USERSPACE_ATTR_EGRESS_TUN_PORT,  /* Optional, u32 output port
 					      * to get tunnel info. */
+	OVS_USERSPACE_ATTR_ACTIONS,   /* Optional flag to get actions. */
 	__OVS_USERSPACE_ATTR_MAX
 };
 
@@ -588,6 +624,75 @@ struct ovs_action_hash {
 };
 
 /**
+ * enum ovs_ct_attr - Attributes for %OVS_ACTION_ATTR_CT action.
+ * @OVS_CT_ATTR_COMMIT: If present, commits the connection to the conntrack
+ * table. This allows future packets for the same connection to be identified
+ * as 'established' or 'related'. The flow key for the current packet will
+ * retain the pre-commit connection state.
+ * @OVS_CT_ATTR_ZONE: u16 connection tracking zone.
+ * @OVS_CT_ATTR_MARK: u32 value followed by u32 mask. For each bit set in the
+ * mask, the corresponding bit in the value is copied to the connection
+ * tracking mark field in the connection.
+ * @OVS_CT_ATTR_LABELS: %OVS_CT_LABELS_LEN value followed by %OVS_CT_LABELS_LEN
+ * mask. For each bit set in the mask, the corresponding bit in the value is
+ * copied to the connection tracking label field in the connection.
+ * @OVS_CT_ATTR_HELPER: variable length string defining conntrack ALG.
+ * @OVS_CT_ATTR_NAT: Nested OVS_NAT_ATTR_* for performing L3 network address
+ * translation (NAT) on the packet.
+ */
+enum ovs_ct_attr {
+	OVS_CT_ATTR_UNSPEC,
+	OVS_CT_ATTR_COMMIT,     /* No argument, commits connection. */
+	OVS_CT_ATTR_ZONE,       /* u16 zone id. */
+	OVS_CT_ATTR_MARK,       /* mark to associate with this connection. */
+	OVS_CT_ATTR_LABELS,     /* labels to associate with this connection. */
+	OVS_CT_ATTR_HELPER,     /* netlink helper to assist detection of
+				   related connections. */
+	OVS_CT_ATTR_NAT,        /* Nested OVS_NAT_ATTR_* */
+	__OVS_CT_ATTR_MAX
+};
+
+#define OVS_CT_ATTR_MAX (__OVS_CT_ATTR_MAX - 1)
+
+/**
+ * enum ovs_nat_attr - Attributes for %OVS_CT_ATTR_NAT.
+ *
+ * @OVS_NAT_ATTR_SRC: Flag for Source NAT (mangle source address/port).
+ * @OVS_NAT_ATTR_DST: Flag for Destination NAT (mangle destination
+ * address/port).  Only one of (@OVS_NAT_ATTR_SRC, @OVS_NAT_ATTR_DST) may be
+ * specified.  Effective only for packets for ct_state NEW connections.
+ * Packets of committed connections are mangled by the NAT action according to
+ * the committed NAT type regardless of the flags specified.  As a corollary, a
+ * NAT action without a NAT type flag will only mangle packets of committed
+ * connections.  The following NAT attributes only apply for NEW
+ * (non-committed) connections, and they may be included only when the CT
+ * action has the @OVS_CT_ATTR_COMMIT flag and either @OVS_NAT_ATTR_SRC or
+ * @OVS_NAT_ATTR_DST is also included.
+ * @OVS_NAT_ATTR_IP_MIN: struct in_addr or struct in6_addr
+ * @OVS_NAT_ATTR_IP_MAX: struct in_addr or struct in6_addr
+ * @OVS_NAT_ATTR_PROTO_MIN: u16 L4 protocol specific lower boundary (port)
+ * @OVS_NAT_ATTR_PROTO_MAX: u16 L4 protocol specific upper boundary (port)
+ * @OVS_NAT_ATTR_PERSISTENT: Flag for persistent IP mapping across reboots
+ * @OVS_NAT_ATTR_PROTO_HASH: Flag for pseudo random L4 port mapping (MD5)
+ * @OVS_NAT_ATTR_PROTO_RANDOM: Flag for fully randomized L4 port mapping
+ */
+enum ovs_nat_attr {
+	OVS_NAT_ATTR_UNSPEC,
+	OVS_NAT_ATTR_SRC,
+	OVS_NAT_ATTR_DST,
+	OVS_NAT_ATTR_IP_MIN,
+	OVS_NAT_ATTR_IP_MAX,
+	OVS_NAT_ATTR_PROTO_MIN,
+	OVS_NAT_ATTR_PROTO_MAX,
+	OVS_NAT_ATTR_PERSISTENT,
+	OVS_NAT_ATTR_PROTO_HASH,
+	OVS_NAT_ATTR_PROTO_RANDOM,
+	__OVS_NAT_ATTR_MAX,
+};
+
+#define OVS_NAT_ATTR_MAX (__OVS_NAT_ATTR_MAX - 1)
+
+/**
  * enum ovs_action_attr - Action types.
  *
  * @OVS_ACTION_ATTR_OUTPUT: Output packet to port.
@@ -616,6 +721,8 @@ struct ovs_action_hash {
  * indicate the new packet contents. This could potentially still be
  * %ETH_P_MPLS if the resulting MPLS label stack is not empty.  If there
  * is no MPLS label stack, as determined by ethertype, no action is taken.
+ * @OVS_ACTION_ATTR_CT: Track the connection. Populate the conntrack-related
+ * entries in the flow key.
  *
  * Only a single header can be set with a single %OVS_ACTION_ATTR_SET.  Not all
  * fields within a header are modifiable, e.g. the IPv4 protocol and fragment
@@ -641,6 +748,7 @@ enum ovs_action_attr {
 				       * data immediately followed by a mask.
 				       * The data must be zero for the unmasked
 				       * bits. */
+	OVS_ACTION_ATTR_CT,           /* Nested OVS_CT_ATTR_* . */
 
 	__OVS_ACTION_ATTR_MAX,	      /* Nothing past this will be accepted
 				       * from userspace. */

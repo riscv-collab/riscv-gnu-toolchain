@@ -51,11 +51,52 @@
 /* We have included glibc headers... */
 #if defined(__GLIBC__)
 
+/* Coordinate with glibc net/if.h header. */
+#if defined(_NET_IF_H)
+
+/* GLIBC headers included first so don't define anything
+ * that would already be defined. */
+
+#define __UAPI_DEF_IF_IFCONF 0
+#define __UAPI_DEF_IF_IFMAP 0
+#define __UAPI_DEF_IF_IFNAMSIZ 0
+#define __UAPI_DEF_IF_IFREQ 0
+/* Everything up to IFF_DYNAMIC, matches net/if.h until glibc 2.23 */
+#define __UAPI_DEF_IF_NET_DEVICE_FLAGS 0
+/* For the future if glibc adds IFF_LOWER_UP, IFF_DORMANT and IFF_ECHO */
+#ifndef __UAPI_DEF_IF_NET_DEVICE_FLAGS_LOWER_UP_DORMANT_ECHO
+#define __UAPI_DEF_IF_NET_DEVICE_FLAGS_LOWER_UP_DORMANT_ECHO 1
+#endif /* __UAPI_DEF_IF_NET_DEVICE_FLAGS_LOWER_UP_DORMANT_ECHO */
+
+#else /* _NET_IF_H */
+
+/* Linux headers included first, and we must define everything
+ * we need. The expectation is that glibc will check the
+ * __UAPI_DEF_* defines and adjust appropriately. */
+
+#define __UAPI_DEF_IF_IFCONF 1
+#define __UAPI_DEF_IF_IFMAP 1
+#define __UAPI_DEF_IF_IFNAMSIZ 1
+#define __UAPI_DEF_IF_IFREQ 1
+/* Everything up to IFF_DYNAMIC, matches net/if.h until glibc 2.23 */
+#define __UAPI_DEF_IF_NET_DEVICE_FLAGS 1
+/* For the future if glibc adds IFF_LOWER_UP, IFF_DORMANT and IFF_ECHO */
+#define __UAPI_DEF_IF_NET_DEVICE_FLAGS_LOWER_UP_DORMANT_ECHO 1
+
+#endif /* _NET_IF_H */
+
 /* Coordinate with glibc netinet/in.h header. */
 #if defined(_NETINET_IN_H)
 
 /* GLIBC headers included first so don't define anything
  * that would already be defined. */
+#define __UAPI_DEF_IN_ADDR		0
+#define __UAPI_DEF_IN_IPPROTO		0
+#define __UAPI_DEF_IN_PKTINFO		0
+#define __UAPI_DEF_IP_MREQ		0
+#define __UAPI_DEF_SOCKADDR_IN		0
+#define __UAPI_DEF_IN_CLASS		0
+
 #define __UAPI_DEF_IN6_ADDR		0
 /* The exception is the in6_addr macros which must be defined
  * if the glibc code didn't define them. This guard matches
@@ -78,6 +119,13 @@
 /* Linux headers included first, and we must define everything
  * we need. The expectation is that glibc will check the
  * __UAPI_DEF_* defines and adjust appropriately. */
+#define __UAPI_DEF_IN_ADDR		1
+#define __UAPI_DEF_IN_IPPROTO		1
+#define __UAPI_DEF_IN_PKTINFO		1
+#define __UAPI_DEF_IP_MREQ		1
+#define __UAPI_DEF_SOCKADDR_IN		1
+#define __UAPI_DEF_IN_CLASS		1
+
 #define __UAPI_DEF_IN6_ADDR		1
 /* We unconditionally define the in6_addr macros and glibc must
  * coordinate. */
@@ -102,6 +150,24 @@
  * or we are being included in the kernel, then define everything
  * that we need. */
 #else /* !defined(__GLIBC__) */
+
+/* Definitions for if.h */
+#define __UAPI_DEF_IF_IFCONF 1
+#define __UAPI_DEF_IF_IFMAP 1
+#define __UAPI_DEF_IF_IFNAMSIZ 1
+#define __UAPI_DEF_IF_IFREQ 1
+/* Everything up to IFF_DYNAMIC, matches net/if.h until glibc 2.23 */
+#define __UAPI_DEF_IF_NET_DEVICE_FLAGS 1
+/* For the future if glibc adds IFF_LOWER_UP, IFF_DORMANT and IFF_ECHO */
+#define __UAPI_DEF_IF_NET_DEVICE_FLAGS_LOWER_UP_DORMANT_ECHO 1
+
+/* Definitions for in.h */
+#define __UAPI_DEF_IN_ADDR		1
+#define __UAPI_DEF_IN_IPPROTO		1
+#define __UAPI_DEF_IN_PKTINFO		1
+#define __UAPI_DEF_IP_MREQ		1
+#define __UAPI_DEF_SOCKADDR_IN		1
+#define __UAPI_DEF_IN_CLASS		1
 
 /* Definitions for in6.h */
 #define __UAPI_DEF_IN6_ADDR		1
