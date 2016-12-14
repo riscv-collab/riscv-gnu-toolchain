@@ -72,13 +72,14 @@ AC_ARG_WITH(abi,
 	)
 
 AS_IF([test "x$with_abi" == xdefault],
-	[AS_CASE([$with_arch],
-		[*rv64g | *rv64*d*], [with_abi=lp64d],
-		[*rv64*f*], [with_abi=lp64f],
-		[*rv64*], [with_abi=lp64],
-		[*rv32g | *rv32*d*], [with_abi=ilp32d],
-		[*rv32*f*], [with_abi=ilp32f],
-		[*rv32*], [with_abi=ilp32],
+	[AS_CASE(["x$with_arch"],
+		[x], [with_abi=lp64d],
+		[x*rv64g | x*rv64*d*], [with_abi=lp64d],
+		[x*rv64*f*], [with_abi=lp64],
+		[x*rv64*], [with_abi=lp64],
+		[x*rv32g | x*rv32*d*], [with_abi=ilp32d],
+		[x*rv32*f*], [with_abi=ilp32],
+		[x*rv32*], [with_abi=ilp32],
 		[AC_MSG_ERROR([Unknown arch])]
 	)])
 
