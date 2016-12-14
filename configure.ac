@@ -67,9 +67,22 @@ AC_ARG_WITH(arch,
 AC_ARG_WITH(abi,
 	[AS_HELP_STRING([--with-abi=lp64d],
 		[Sets the base RISC-V ABI, defaults to lp64d])],
-	AC_SUBST(WITH_ABI, --with-abi=$withval),
-	AC_SUBST(WITH_ABI, --with-abi=lp64d)
+	[],
+	[with_abi=default]
 	)
+
+AS_IF([test "x$with_abi" == xdefault],
+	[AS_CASE([$with_arch],
+		[*rv64g | *rv64*d*], [with_abi=lp64d],
+		[*rv64*f*], [with_abi=lp64f],
+		[*rv64*], [with_abi=lp64],
+		[*rv32g | *rv32*d*], [with_abi=ilp32d],
+		[*rv32*f*], [with_abi=ilp32f],
+		[*rv32*], [with_abi=ilp32],
+		[AC_MSG_ERROR([Unknown arch])]
+	)])
+
+AC_SUBST(WITH_ABI, --with-abi=$with_abi)
 
 AC_ARG_ENABLE(multilib,
 	[AS_HELP_STRING([--enable-multilib],
