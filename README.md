@@ -64,6 +64,19 @@ run the following command:
     ./configure --prefix=/opt/riscv
     make linux
 
+The build defaults to targetting RV64G (64-bit), even on a 32-bit build
+environment.  To build the 32-bit RV32G toolchain, use:
+
+    ./configure --prefix=/opt/riscv --with-arch=rv32g --with-abi=ilp32d
+    make linux
+
+Supported architectures are rv32i or rv64i plus standard extensions (a)tomics,
+(m)ultiplication and division, (f)loat, (d)ouble, or (g)eneral for MAFD.
+
+Supported ABIs are ilp32 (32-bit soft-float), ilp32d (32-bit hard-float),
+ilp32f (32-bit with single-precision in registers and double in memory, niche
+use only), lp64 lp64f lp64d (same but with 64-bit long and pointers).
+
 ### Installation (Linux multilib)
 
 To build the Linux cross-compiler with support for both 32-bit and
