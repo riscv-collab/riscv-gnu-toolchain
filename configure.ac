@@ -60,8 +60,8 @@ AC_ARG_ENABLE(atomic,
 AC_ARG_WITH(arch,
 	[AS_HELP_STRING([--with-arch=rv64g],
 		[Sets the base RISC-V ISA, defaults to rv64g])],
-	AC_SUBST(WITH_ARCH, --with-arch=$withval),
-	AC_SUBST(WITH_ARCH, --with-arch=rv64g)
+	[],
+	[with_arch=rv64g]
 	)
 
 AC_ARG_WITH(abi,
@@ -82,6 +82,7 @@ AS_IF([test "x$with_abi" == xdefault],
 		[AC_MSG_ERROR([Unknown arch])]
 	)])
 
+AC_SUBST(WITH_ARCH, --with-arch=$with_arch)
 AC_SUBST(WITH_ABI, --with-abi=$with_abi)
 
 AC_ARG_ENABLE(multilib,
