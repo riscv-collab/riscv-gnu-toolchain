@@ -41,7 +41,7 @@ ifneq ($(XLEN),32)
 endif
 
 ifeq ($(MULTILIB_NAMES),)
-	MULTILIB_NAMES := $(subst --with-arch=,,$(WITH_ARCH))-$(subst --with-abi=,,$(WITH_ABI))
+	MULTILIB_NAMES := $(XLEN)
 endif
 
 CFLAGS_FOR_TARGET := $(CFLAGS_FOR_TARGET_EXTRA)
@@ -101,36 +101,36 @@ stamps/build-glibc-linux-headers: $(srcdir)/riscv-glibc stamps/build-gcc-linux-s
 	cd $(notdir $@) && CC="$(GLIBC_CC_FOR_TARGET)" $</configure \
 		--host=riscv$(XLEN)-unknown-linux-gnu \
 		--prefix=$(SYSROOT)/usr \
-		libc_cv_forced_unwind=yes \
-		libc_cv_c_cleanup=yes \
 		--enable-shared \
-		--enable-__thread \
+		--with-headers=$(srcdir)/linux-headers/include \
 		--disable-multilib \
-		--enable-kernel=2.6.32
+		--enable-kernel=3.0.0
 	$(MAKE) -C $(notdir $@) install-headers
 	mkdir -p $(dir $@) && touch $@
 
 stamps/build-glibc-linux-%: $(srcdir)/riscv-glibc stamps/build-gcc-linux-stage1
+	$(eval $@_ARCH := $(word 4,$(subst -, ,$@)))
+	$(eval $@_ABI := $(word 5,$(subst -, ,$@)))
+	$(eval $@_LIBDIRSUFFIX := $(if $($@_ABI),$(shell echo $($@_ARCH) | sed 's/.*rv\([0-9]*\).*/\1/')/$($@_ABI),))
+	$(eval $@_XLEN := $(if $($@_ABI),$(shell echo $($@_ARCH) | sed 's/.*rv\([0-9]*\).*/\1/'),$(XLEN)))
+	$(eval $@_CFLAGS := $(if $($@_ABI),-march=$($@_ARCH) -mabi=$($@_ABI),))
+	$(eval $@_LIBDIROPTS := $(if $@_LIBDIRSUFFIX,--libdir=/usr/lib$($@_LIBDIRSUFFIX) libc_cv_slibdir=/lib$($@_LIBDIRSUFFIX) libc_cv_rtlddir=/lib,))
 	rm -rf $@ $(notdir $@)
 	mkdir $(notdir $@)
 	cd $(notdir $@) && \
-		CC="$(GLIBC_CC_FOR_TARGET) -march=$(word 4,$(subst -, ,$@)) -mabi=$(word 5,$(subst -, ,$@))" \
-		CFLAGS="$(CFLAGS_FOR_TARGET) -g -O2 -march=$(word 4,$(subst -, ,$@)) -mabi=$(word 5,$(subst -, ,$@))" \
-		ASFLAGS="$(ASFLAGS_FOR_TARGET) -march=$(word 4,$(subst -, ,$@)) -mabi=$(word 5,$(subst -, ,$@))" \
+		CC="$(GLIBC_CC_FOR_TARGET) $($@_CFLAGS)" \
+		CFLAGS="$(CFLAGS_FOR_TARGET) -g -O2 $($@_CFLAGS)" \
+		ASFLAGS="$(ASFLAGS_FOR_TARGET) $($@_CFLAGS)" \
 		$</configure \
-		--host=riscv$(XLEN)-unknown-linux-gnu \
+		--host=riscv$($@_XLEN)-unknown-linux-gnu \
 		--prefix=/usr \
-		libc_cv_forced_unwind=yes \
-		libc_cv_c_cleanup=yes \
 		--disable-werror \
 		--enable-shared \
-		--enable-__thread \
+		--with-headers=$(srcdir)/linux-headers/include \
 		$(MULTILIB_FLAGS) \
-		--enable-kernel=2.6.32 \
+		--enable-kernel=3.0.0 \
 		$(GLIBC_TARGET_FLAGS) \
-		$(if $(filter %d,$@),,--without-fp) \
-		--libdir=/usr/lib$(shell echo $(word 4,$(subst -, ,$@)) | sed 's/.*rv\([0-9]*\).*/\1/')/$(word 5,$(subst -, ,$@)) \
-		libc_cv_slibdir=/lib$(shell echo $(word 4,$(subst -, ,$@)) | sed 's/.*rv\([0-9]*\).*/\1/')/$(word 5,$(subst -, ,$@))
+		$($@_LIBDIROPTS)
 	$(MAKE) -C $(notdir $@)
 	+flock $(SYSROOT)/.lock $(MAKE) -C $(notdir $@) install install_root=$(SYSROOT)
 	mkdir -p $(dir $@) && touch $@
@@ -208,9 +208,8 @@ src/newlib-gcc: $(srcdir)/riscv-gcc
 	rm -rf $@ $@.tmp
 	mkdir -p $(dir $@)
 	cp -a $< $@.tmp
-	cp -a $(srcdir)/riscv-newlib/newlib $@.tmp
-	cp -a $(srcdir)/riscv-newlib/libgloss $@.tmp
-	$(srcdir)/scripts/cp_s $(srcdir)/riscv-newlib $@.tmp
+	cp -a $(srcdir)/riscv-newlib/. $@.tmp
+	cp -a $</include/. $@.tmp/include
 	mv $@.tmp $@
 
 stamps/build-gcc-newlib: src/newlib-gcc stamps/build-binutils-newlib
@@ -219,6 +218,7 @@ stamps/build-gcc-newlib: src/newlib-gcc stamps/build-binutils-newlib
 	cd $(notdir $@) && $(CURDIR)/$</configure \
 		--target=riscv$(XLEN)-unknown-elf \
 		--prefix=$(INSTALL_DIR) \
+		--without-headers \
 		--disable-shared \
 		--disable-threads \
 		--enable-languages=c,c++ \
