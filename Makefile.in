@@ -1,0 +1,263 @@
+srcdir := @abs_top_srcdir@
+builddir := @abs_top_builddir@
+INSTALL_DIR := @prefix@
+
+PACKAGES :=
+
+DISTDIR ?= /var/cache/distfiles
+GNU_MIRROR := http://mirrors.kernel.org/gnu
+gcc_url := $(GNU_MIRROR)/gcc/gcc-$(gcc_version)/gcc-$(gcc_version).tar.gz
+glibc_url := $(GNU_MIRROR)/glibc/glibc-$(glibc_version).tar.gz
+newlib_url := ftp://sourceware.org/pub/newlib/newlib-$(newlib_version).tar.gz
+
+WITH_ARCH ?= @WITH_ARCH@
+WITH_ABI ?= @WITH_ABI@
+SYSROOT := $(INSTALL_DIR)/sysroot
+
+SHELL := /bin/sh
+AWK := @GAWK@
+SED := @GSED@
+PATH := $(INSTALL_DIR)/bin:$(PATH)
+
+# Check to see if we need wrapper scripts for awk/sed (which point to
+# gawk/gsed on platforms where these aren't the default), otherwise
+# don't override these as the wrappers don't always work.
+ifneq (@GSED@,/bin/sed)
+	PATH := $(base_dir)/sed:$(PATH)
+endif
+ifneq (@GAWK@,/usr/bin/gawk)
+	PATH := $(base_dir)/awk:$(PATH)
+endif
+
+export PATH AWK SED
+
+MULTILIB_FLAGS := @multilib_flags@
+MULTILIB_NAMES := @multilib_names@
+GCC_CHECKING_FLAGS := @gcc_checking@
+
+XLEN := $(shell echo $(WITH_ARCH) | tr A-Z a-z | sed 's/.*rv\([0-9]*\).*/\1/')
+ifneq ($(XLEN),32)
+	XLEN := 64
+endif
+
+ifeq ($(MULTILIB_NAMES),)
+	MULTILIB_NAMES := $(subst --with-arch=,,$(WITH_ARCH))-$(subst --with-abi=,,$(WITH_ABI))
+endif
+
+CFLAGS_FOR_TARGET := $(CFLAGS_FOR_TARGET_EXTRA)
+ASFLAGS_FOR_TARGET := $(ASFLAGS_FOR_TARGET_EXTRA)
+GLIBC_TARGET_FLAGS := $(GLIBC_TARGET_FLAGS_EXTRA)
+GLIBC_CC_FOR_TARGET ?= riscv$(XLEN)-unknown-linux-gnu-gcc
+GLIBC_CXX_FOR_TARGET ?= riscv$(XLEN)-unknown-linux-gnu-g++
+
+all: @default_target@
+newlib: stamps/build-gcc-newlib
+linux: stamps/build-gcc-linux-stage2
+
+$(addprefix src/original-,$(PACKAGES)):
+	mkdir -p src
+	rm -rf $@ $(subst original-,,$@)-*
+	cd src && (cat $(DISTDIR)/$(subst src/original-,,$@)-$($(subst src/original-,,$@)_version).tar.gz || @FETCHER@ $($(subst src/original-,,$@)_url)) | tar zxf -
+	mv $(subst original-,,$@)-$($(subst src/original-,,$@)_version) $@
+
+$(addprefix src/,$(PACKAGES)): src/%: src/original-%
+	rm -rf $@ $@.tmp
+	cp -a $< $@.tmp
+	$(srcdir)/scripts/cp_s $(srcdir)/$(notdir $@) $@.tmp
+	cd $@.tmp && patch -p1 < $(srcdir)/patches/$(notdir $@)
+	if test -f $@.tmp/contrib/download_prerequisites && test "@NEED_GCC_EXTERNAL_LIBRARIES@" == "true"; then cd $@.tmp && ./contrib/download_prerequisites; fi
+	mv $@.tmp $@
+
+.PHONY: patches $(addprefix $(srcdir)/patches/,$(PACKAGES))
+$(addprefix $(srcdir)/patches/,$(PACKAGES)): $(srcdir)/patches/%: src/%
+	-cd src/$(notdir $@) && rm `cd $(srcdir)/$(notdir $@) && find . -type f`
+	-cd src && diff --exclude=manual --exclude=autom4te.cache -rupN original-$(notdir $@) $(notdir $@) | filterdiff --remove-timestamps > $@
+	$(srcdir)/scripts/cp_s $(srcdir)/$(notdir $@) $<
+
+patches: $(addprefix $(srcdir)/patches/,$(PACKAGES))
+
+stamps/build-binutils-linux: $(srcdir)/riscv-binutils-gdb
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	cd $(notdir $@) && $</configure \
+		--target=riscv$(XLEN)-unknown-linux-gnu \
+		--prefix=$(INSTALL_DIR) \
+		--with-sysroot=$(SYSROOT) \
+		$(MULTILIB_FLAGS) \
+		--disable-werror \
+		--disable-nls
+	$(MAKE) -C $(notdir $@)
+	$(MAKE) -C $(notdir $@) install
+	mkdir -p $(dir $@) && touch $@
+
+stamps/build-linux-headers:
+	mkdir -p $(SYSROOT)/usr/
+	cp -a $(srcdir)/linux-headers/include $(SYSROOT)/usr/
+	mkdir -p $(dir $@) && touch $@
+
+stamps/build-glibc-linux-headers: $(srcdir)/riscv-glibc stamps/build-gcc-linux-stage1
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	cd $(notdir $@) && CC="$(GLIBC_CC_FOR_TARGET)" $</configure \
+		--host=riscv$(XLEN)-unknown-linux-gnu \
+		--prefix=$(SYSROOT)/usr \
+		libc_cv_forced_unwind=yes \
+		libc_cv_c_cleanup=yes \
+		--enable-shared \
+		--enable-__thread \
+		--disable-multilib \
+		--enable-kernel=2.6.32
+	$(MAKE) -C $(notdir $@) install-headers
+	mkdir -p $(dir $@) && touch $@
+
+stamps/build-glibc-linux-%: $(srcdir)/riscv-glibc stamps/build-gcc-linux-stage1
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	cd $(notdir $@) && \
+		CC="$(GLIBC_CC_FOR_TARGET) -march=$(word 4,$(subst -, ,$@)) -mabi=$(word 5,$(subst -, ,$@))" \
+		CFLAGS="$(CFLAGS_FOR_TARGET) -g -O2 -march=$(word 4,$(subst -, ,$@)) -mabi=$(word 5,$(subst -, ,$@))" \
+		ASFLAGS="$(ASFLAGS_FOR_TARGET) -march=$(word 4,$(subst -, ,$@)) -mabi=$(word 5,$(subst -, ,$@))" \
+		$</configure \
+		--host=riscv$(XLEN)-unknown-linux-gnu \
+		--prefix=/usr \
+		libc_cv_forced_unwind=yes \
+		libc_cv_c_cleanup=yes \
+		--disable-werror \
+		--enable-shared \
+		--enable-__thread \
+		$(MULTILIB_FLAGS) \
+		--enable-kernel=2.6.32 \
+		$(GLIBC_TARGET_FLAGS) \
+		$(if $(filter %d,$@),,--without-fp) \
+		--libdir=/usr/lib$(shell echo $(word 4,$(subst -, ,$@)) | sed 's/.*rv\([0-9]*\).*/\1/')/$(word 5,$(subst -, ,$@)) \
+		libc_cv_slibdir=/lib$(shell echo $(word 4,$(subst -, ,$@)) | sed 's/.*rv\([0-9]*\).*/\1/')/$(word 5,$(subst -, ,$@))
+	$(MAKE) -C $(notdir $@)
+	+flock $(SYSROOT)/.lock $(MAKE) -C $(notdir $@) install install_root=$(SYSROOT)
+	mkdir -p $(dir $@) && touch $@
+
+stamps/build-gcc-linux-stage1: $(srcdir)/riscv-gcc stamps/build-binutils-linux \
+                               stamps/build-linux-headers
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	cd $(notdir $@) && $</configure \
+		--target=riscv$(XLEN)-unknown-linux-gnu \
+		--prefix=$(INSTALL_DIR) \
+		--with-sysroot=$(SYSROOT) \
+		--with-newlib \
+		--without-headers \
+		--disable-shared \
+		--disable-threads \
+		--with-system-zlib \
+		--enable-tls \
+		--enable-languages=c \
+		--disable-libatomic \
+		--disable-libmudflap \
+		--disable-libssp \
+		--disable-libquadmath \
+		--disable-libgomp \
+		--disable-nls \
+		--disable-bootstrap \
+		$(GCC_CHECKING_FLAGS) \
+		$(MULTILIB_FLAGS) \
+		$(WITH_ABI) \
+		$(WITH_ARCH)
+	$(MAKE) -C $(notdir $@) inhibit-libc=true all-gcc
+	$(MAKE) -C $(notdir $@) inhibit-libc=true install-gcc
+	$(MAKE) -C $(notdir $@) inhibit-libc=true all-target-libgcc
+	$(MAKE) -C $(notdir $@) inhibit-libc=true install-target-libgcc
+	mkdir -p $(dir $@) && touch $@
+
+stamps/build-gcc-linux-stage2: $(srcdir)/riscv-gcc $(addprefix stamps/build-glibc-linux-,$(MULTILIB_NAMES)) \
+                               stamps/build-glibc-linux-headers
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	cd $(notdir $@) && $</configure \
+		--target=riscv$(XLEN)-unknown-linux-gnu \
+		--prefix=$(INSTALL_DIR) \
+		--with-sysroot=$(SYSROOT) \
+		--with-system-zlib \
+		--enable-shared \
+		--enable-tls \
+		--enable-languages=c,c++,fortran \
+		--disable-libmudflap \
+		--disable-libssp \
+		--disable-libquadmath \
+		--disable-nls \
+		--disable-bootstrap \
+		$(GCC_CHECKING_FLAGS) \
+		$(MULTILIB_FLAGS) \
+		$(WITH_ABI) \
+		$(WITH_ARCH)
+	$(MAKE) -C $(notdir $@)
+	$(MAKE) -C $(notdir $@) install
+	cp -a $(INSTALL_DIR)/riscv$(XLEN)-unknown-linux-gnu/lib* $(SYSROOT)
+	mkdir -p $(dir $@) && touch $@
+
+stamps/build-binutils-newlib: $(srcdir)/riscv-binutils-gdb
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	cd $(notdir $@) && $</configure \
+		--target=riscv$(XLEN)-unknown-elf \
+		--prefix=$(INSTALL_DIR) \
+		--disable-tls \
+		--disable-werror
+	$(MAKE) -C $(notdir $@)
+	$(MAKE) -C $(notdir $@) install
+	mkdir -p $(dir $@) && touch $@
+
+src/newlib-gcc: $(srcdir)/riscv-gcc
+	rm -rf $@ $@.tmp
+	mkdir -p $(dir $@)
+	cp -a $< $@.tmp
+	cp -a $(srcdir)/riscv-newlib/newlib $@.tmp
+	cp -a $(srcdir)/riscv-newlib/libgloss $@.tmp
+	$(srcdir)/scripts/cp_s $(srcdir)/riscv-newlib $@.tmp
+	mv $@.tmp $@
+
+stamps/build-gcc-newlib: src/newlib-gcc stamps/build-binutils-newlib
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	cd $(notdir $@) && $(CURDIR)/$</configure \
+		--target=riscv$(XLEN)-unknown-elf \
+		--prefix=$(INSTALL_DIR) \
+		--disable-shared \
+		--disable-threads \
+		--disable-tls \
+		--enable-languages=c,c++ \
+		--with-system-zlib \
+		--with-newlib \
+		--disable-libmudflap \
+		--disable-libssp \
+		--disable-libquadmath \
+		--disable-libgomp \
+		--disable-nls \
+		$(GCC_CHECKING_FLAGS) \
+		$(MULTILIB_FLAGS) \
+		$(WITH_ABI) \
+		$(WITH_ARCH)
+	$(MAKE) -C $(notdir $@) inhibit-libc=true
+	$(MAKE) -C $(notdir $@) install
+	mkdir -p $(dir $@) && touch $@
+
+.PHONY: check-gcc-newlib
+check-gcc-newlib: stamps/build-gcc-newlib
+	export PATH=$(INSTALL_DIR)/bin:$(PATH) && \
+	export DEJAGNULIBS=$(srcdir)/riscv-dejagnu && \
+	cd build-gcc-newlib && \
+	$(MAKE) check-gcc "RUNTESTFLAGS=--target_board=riscv-sim"
+
+check-gcc-linux: stamps/build-gcc-linux-stage2
+	export PATH=$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH) && \
+	export DEJAGNULIBS=$(srcdir)/riscv-dejagnu && \
+	export RISC_V_SYSROOT=$(SYSROOT) && \
+	cd build-gcc-linux-stage2 && \
+	$(MAKE) check-gcc "RUNTESTFLAGS=--target_board=riscv-sim"
+
+clean:
+	rm -rf build-* $(addprefix src/,$(PACKAGES)) stamps
+
+distclean: clean
+	rm -rf src
+
+# All of the packages install themselves, so our install target does nothing.
+install:
