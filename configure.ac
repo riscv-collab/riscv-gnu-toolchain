@@ -1,5 +1,10 @@
 AC_INIT(riscv-toolchain, 1.0)
 
+AS_IF([test x"$CC" != x],
+      [AC_MSG_ERROR([CC is set, which will cause the host tools to build riscv-glibc])])
+AS_IF([test x"$CXX" != x],
+      [AC_MSG_ERROR([CXX is set, which will cause the host tools to build riscv-glibc])])
+
 AC_PROG_CC
 AC_PROG_FGREP
 AC_PROG_GREP
