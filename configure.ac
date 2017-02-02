@@ -58,10 +58,10 @@ AC_ARG_ENABLE(atomic,
 	)
 
 AC_ARG_WITH(arch,
-	[AS_HELP_STRING([--with-arch=rv64g],
-		[Sets the base RISC-V ISA, defaults to rv64g])],
+	[AS_HELP_STRING([--with-arch=rv64imafdc],
+		[Sets the base RISC-V ISA, defaults to rv64imafdc])],
 	[],
-	[with_arch=rv64g]
+	[with_arch=rv64imafdc]
 	)
 
 AC_ARG_WITH(abi,
@@ -73,10 +73,10 @@ AC_ARG_WITH(abi,
 
 AS_IF([test "x$with_abi" == xdefault],
 	[AS_CASE([$with_arch],
-		[*rv64g | *rv64*d*], [with_abi=lp64d],
+		[*rv64g* | *rv64*d*], [with_abi=lp64d],
 		[*rv64*f*], [with_abi=lp64f],
 		[*rv64*], [with_abi=lp64],
-		[*rv32g | *rv32*d*], [with_abi=ilp32d],
+		[*rv32g* | *rv32*d*], [with_abi=ilp32d],
 		[*rv32*f*], [with_abi=ilp32f],
 		[*rv32*], [with_abi=ilp32],
 		[AC_MSG_ERROR([Unknown arch])]
@@ -97,7 +97,7 @@ AS_IF([test "x$enable_multilib" != xno],
 	[AC_SUBST(multilib_flags,--disable-multilib)])
 
 AS_IF([test "x$enable_multilib" != xno],
-        [AC_SUBST(multilib_names,"rv32ima-ilp32 rv32imafd-ilp32d rv64ima-lp64 rv64imafd-lp64d")],
+        [AC_SUBST(multilib_names,"rv32imac-ilp32 rv32imafdc-ilp32d rv64imac-lp64 rv64imafdc-lp64d")],
 	[])
 
 AC_ARG_ENABLE(gcc-checking,
