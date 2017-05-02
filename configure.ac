@@ -110,6 +110,16 @@ AS_IF([test "x$enable_gcc_checking" != xno],
 	[AC_SUBST(gcc_checking, --enable-checking=yes)],
 	[AC_SUBST(gcc_checking, --enable-checking=release)])
 
+AC_ARG_WITH(cmodel,
+	[AS_HELP_STRING([--with-cmodel],
+		[Select the code model to use when building libc and libgcc @<:@--with-cmodel=medlow@:>@])],
+	[],
+	[enable_gcc_checking=yes]
+	)
+AS_IF([test "x$with_cmodel" != x],
+	[AC_SUBST(cmodel, -mcmodel=$with_cmodel)],
+	[AC_SUBST(cmodel, -mcmodel=medlow)])
+
 AC_CONFIG_FILES([Makefile])
 AC_CONFIG_FILES([scripts/wrapper/awk/awk], [chmod +x scripts/wrapper/awk])
 AC_CONFIG_FILES([scripts/wrapper/sed/sed], [chmod +x scripts/wrapper/sed])
