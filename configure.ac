@@ -124,4 +124,15 @@ AC_CONFIG_FILES([Makefile])
 AC_CONFIG_FILES([scripts/wrapper/awk/awk], [chmod +x scripts/wrapper/awk])
 AC_CONFIG_FILES([scripts/wrapper/sed/sed], [chmod +x scripts/wrapper/sed])
 
+AC_ARG_WITH(host,
+	[AS_HELP_STRING([--with-host=x86_64-w64-mingw32],
+			[Sets the host for the tools, you probably want nothing])],
+	[],
+	[with_host=default]
+	)
+
+AS_IF([test "x$with_host" != xdefault],
+	[AC_SUBST(configure_host,--host=$with_host)],
+	[AC_SUBST(configure_host,"")])
+
 AC_OUTPUT
