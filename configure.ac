@@ -146,4 +146,15 @@ AS_IF([test "x$with_system_zlib" != xno],
 	[AC_SUBST(with_system_zlib,--with-system-zlib)],
 	[AC_SUBST(with_system_zlib,--without-system-zlib)])
 
+AC_ARG_WITH(guile,
+	[AC_HELP_STRING([--with-guile],
+			[Set which guile to use, if any])],
+	[],
+	[with_guile=default]
+	)
+
+AS_IF([test "x$with_guile" != xdefault],
+	[AC_SUBST(with_guile,--with-guile=$with_guile)],
+	[AC_SUBST(with_guile,"")])
+
 AC_OUTPUT
