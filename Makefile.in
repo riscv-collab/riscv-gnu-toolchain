@@ -40,10 +40,6 @@ ifneq ($(XLEN),32)
 	XLEN := 64
 endif
 
-ifeq ($(MULTILIB_NAMES),)
-	MULTILIB_NAMES := $(XLEN)
-endif
-
 make_tuple = riscv$(1)-unknown-$(2)
 LINUX_TUPLE  ?= $(call make_tuple,$(XLEN),linux-gnu)
 NEWLIB_TUPLE ?= $(call make_tuple,$(XLEN),elf)
@@ -55,12 +51,31 @@ GLIBC_CC_FOR_TARGET ?= $(LINUX_TUPLE)-gcc
 GLIBC_CXX_FOR_TARGET ?= $(LINUX_TUPLE)-g++
 NEWLIB_CC_FOR_TARGET ?= $(NEWLIB_TUPLE)-gcc
 NEWLIB_CXX_FOR_TARGET ?= $(NEWLIB_TUPLE)-g++
+GCC_TARGET_BOARDS ?= $(shell echo "$(MULTILIB_NAMES)" | sed 's@\([a-z0-9]*\)-\([a-z0-9]*\)@riscv-sim/-march=\1/-mabi=\2@g')
 
 CONFIGURE_HOST   = @configure_host@
 
 all: @default_target@
 newlib: stamps/build-gcc-newlib-stage2
 linux: stamps/build-gcc-linux-stage2
+
+.PHONY: build-binutils build-gcc1 build-libc build-gcc2 build-qemu
+build-binutils: stamps/build-binutils-@default_target@
+build-gcc%: stamps/build-gcc-@default_target@-stage%
+ifeq (@default_target@,linux)
+build-libc: $(patsubst %,stamps/build-glibc-linux-%,$(MULTLIB_NAMES))
+else
+build-libc: build-newlib
+endif
+build-qemu: stamps/build-qemu
+
+.PHONY: check check-gcc
+check: check-gcc
+check-gcc: stamps/check-gcc-@default_target@
+
+.PHONY: report report-gcc
+report: report-gcc
+report-gcc: report-gcc-@default_target@
 
 $(addprefix src/original-,$(PACKAGES)):
 	mkdir -p src
@@ -119,8 +134,13 @@ stamps/build-glibc-linux-headers: $(srcdir)/riscv-glibc stamps/build-gcc-linux-s
 	mkdir -p $(dir $@) && touch $@
 
 stamps/build-glibc-linux-%: $(srcdir)/riscv-glibc stamps/build-gcc-linux-stage1
+ifeq ($(MULTILIB_FLAGS),--enable-multilib)
 	$(eval $@_ARCH := $(word 4,$(subst -, ,$@)))
 	$(eval $@_ABI := $(word 5,$(subst -, ,$@)))
+else
+	$(eval $@_ARCH := )
+	$(eval $@_ABI := )
+endif
 	$(eval $@_LIBDIRSUFFIX := $(if $($@_ABI),$(shell echo $($@_ARCH) | sed 's/.*rv\([0-9]*\).*/\1/')/$($@_ABI),))
 	$(eval $@_XLEN := $(if $($@_ABI),$(shell echo $($@_ARCH) | sed 's/.*rv\([0-9]*\).*/\1/'),$(XLEN)))
 	$(eval $@_CFLAGS := $(if $($@_ABI),-march=$($@_ARCH) -mabi=$($@_ABI),))
@@ -290,20 +310,42 @@ stamps/build-gcc-newlib-stage2: $(srcdir)/riscv-gcc stamps/build-newlib
 	$(MAKE) -C $(notdir $@) install
 	mkdir -p $(dir $@) && touch $@
 
-.PHONY: check-gcc-newlib
-check-gcc-newlib: stamps/build-gcc-newlib-stage2
+stamps/build-qemu: $(srcdir)/riscv-qemu
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	cd $(notdir $@) && $</configure \
+		--prefix=$(INSTALL_DIR) \
+		--target-list=riscv64-linux-user,riscv32-linux-user
+	$(MAKE) -C $(notdir $@)
+	$(MAKE) -C $(notdir $@) install
+	date > $@
+
+stamps/check-gcc-newlib: stamps/build-gcc-newlib-stage2 stamps/build-qemu
 	export PATH=$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH) && \
 	export DEJAGNULIBS=$(srcdir)/riscv-dejagnu && \
 	export RISC_V_SYSROOT=$(SYSROOT) && \
 	cd build-gcc-newlib-stage2 && \
-	$(MAKE) check-gcc "RUNTESTFLAGS=--target_board=riscv-sim"
+	$(MAKE) check-gcc "RUNTESTFLAGS=--target_board='$(GCC_TARGET_BOARDS)'"
+	date > $@
 
-check-gcc-linux: stamps/build-gcc-linux-stage2
+stamps/check-gcc-linux: stamps/build-gcc-linux-stage2 stamps/build-qemu
 	export PATH=$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH) && \
 	export DEJAGNULIBS=$(srcdir)/riscv-dejagnu && \
 	export RISC_V_SYSROOT=$(SYSROOT) && \
 	cd build-gcc-linux-stage2 && \
-	$(MAKE) check-gcc "RUNTESTFLAGS=--target_board=riscv-sim"
+	$(MAKE) check-gcc "RUNTESTFLAGS=--target_board='$(GCC_TARGET_BOARDS)'"
+	date > $@
+
+.PHONY: report-gcc-newlib
+
+report-gcc-newlib: stamps/check-gcc-newlib
+	test -f $(patsubst %,$(srcdir)/test/gcc-newlib/%.log,$(MULTILIB_NAMES)) || exit 1
+	if find build-gcc-newlib-stage2/gcc/testsuite/ -iname '*.sum' | xargs grep ^FAIL | sort | grep -F -v $(patsubst %,--file=$(srcdir)/test/gcc-newlib/%.log,$(MULTILIB_NAMES)); then false; else true; fi
+
+.PHONY: report-gcc-linux
+report-gcc-linux: stamps/check-gcc-linux
+	test -f $(patsubst %,$(srcdir)/test/gcc-linux/%.log,$(MULTILIB_NAMES)) || exit 1
+	if find build-gcc-linux-stage2/gcc/testsuite/ -iname '*.sum' | xargs grep ^FAIL | sort | grep -F -v $(patsubst %,--file=$(srcdir)/test/gcc-linux/%.log,$(MULTILIB_NAMES)); then false; else true; fi
 
 clean:
 	rm -rf build-* $(addprefix src/,$(PACKAGES)) stamps
