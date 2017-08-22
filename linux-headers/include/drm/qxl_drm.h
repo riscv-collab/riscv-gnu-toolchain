@@ -26,6 +26,10 @@
 
 #include "drm.h"
 
+#if defined(__cplusplus)
+extern "C" {
+#endif
+
 /* Please note that modifications to all structs defined here are
  * subject to backwards-compatibility constraints.
  *
@@ -76,19 +80,18 @@ struct drm_qxl_reloc {
 };
 
 struct drm_qxl_command {
-	__u64	 command; /* void* */
-	__u64	 relocs; /* struct drm_qxl_reloc* */
+	__u64		command; /* void* */
+	__u64		relocs; /* struct drm_qxl_reloc* */
 	__u32		type;
 	__u32		command_size;
 	__u32		relocs_num;
 	__u32                pad;
 };
 
-/* XXX: call it drm_qxl_commands? */
 struct drm_qxl_execbuffer {
 	__u32		flags;		/* for future use */
 	__u32		commands_num;
-	__u64	 commands;	/* struct drm_qxl_command* */
+	__u64		commands;	/* struct drm_qxl_command* */
 };
 
 struct drm_qxl_update_area {
@@ -147,5 +150,9 @@ struct drm_qxl_alloc_surf {
 #define DRM_IOCTL_QXL_ALLOC_SURF \
 	DRM_IOWR(DRM_COMMAND_BASE + DRM_QXL_ALLOC_SURF,\
 		struct drm_qxl_alloc_surf)
+
+#if defined(__cplusplus)
+}
+#endif
 
 #endif

@@ -26,6 +26,10 @@
 
 #include "drm.h"
 
+#if defined(__cplusplus)
+extern "C" {
+#endif
+
 #define DRM_VC4_SUBMIT_CL                         0x00
 #define DRM_VC4_WAIT_SEQNO                        0x01
 #define DRM_VC4_WAIT_BO                           0x02
@@ -33,6 +37,10 @@
 #define DRM_VC4_MMAP_BO                           0x04
 #define DRM_VC4_CREATE_SHADER_BO                  0x05
 #define DRM_VC4_GET_HANG_STATE                    0x06
+#define DRM_VC4_GET_PARAM                         0x07
+#define DRM_VC4_SET_TILING                        0x08
+#define DRM_VC4_GET_TILING                        0x09
+#define DRM_VC4_LABEL_BO                          0x0a
 
 #define DRM_IOCTL_VC4_SUBMIT_CL           DRM_IOWR(DRM_COMMAND_BASE + DRM_VC4_SUBMIT_CL, struct drm_vc4_submit_cl)
 #define DRM_IOCTL_VC4_WAIT_SEQNO          DRM_IOWR(DRM_COMMAND_BASE + DRM_VC4_WAIT_SEQNO, struct drm_vc4_wait_seqno)
@@ -41,6 +49,10 @@
 #define DRM_IOCTL_VC4_MMAP_BO             DRM_IOWR(DRM_COMMAND_BASE + DRM_VC4_MMAP_BO, struct drm_vc4_mmap_bo)
 #define DRM_IOCTL_VC4_CREATE_SHADER_BO    DRM_IOWR(DRM_COMMAND_BASE + DRM_VC4_CREATE_SHADER_BO, struct drm_vc4_create_shader_bo)
 #define DRM_IOCTL_VC4_GET_HANG_STATE      DRM_IOWR(DRM_COMMAND_BASE + DRM_VC4_GET_HANG_STATE, struct drm_vc4_get_hang_state)
+#define DRM_IOCTL_VC4_GET_PARAM           DRM_IOWR(DRM_COMMAND_BASE + DRM_VC4_GET_PARAM, struct drm_vc4_get_param)
+#define DRM_IOCTL_VC4_SET_TILING          DRM_IOWR(DRM_COMMAND_BASE + DRM_VC4_SET_TILING, struct drm_vc4_set_tiling)
+#define DRM_IOCTL_VC4_GET_TILING          DRM_IOWR(DRM_COMMAND_BASE + DRM_VC4_GET_TILING, struct drm_vc4_get_tiling)
+#define DRM_IOCTL_VC4_LABEL_BO            DRM_IOWR(DRM_COMMAND_BASE + DRM_VC4_LABEL_BO, struct drm_vc4_label_bo)
 
 struct drm_vc4_submit_rcl_surface {
 	__u32 hindex; /* Handle index, or ~0 if not present. */
@@ -275,5 +287,43 @@ struct drm_vc4_get_hang_state {
 	/* Pad that we may save more registers into in the future. */
 	__u32 pad[16];
 };
+
+#define DRM_VC4_PARAM_V3D_IDENT0		0
+#define DRM_VC4_PARAM_V3D_IDENT1		1
+#define DRM_VC4_PARAM_V3D_IDENT2		2
+#define DRM_VC4_PARAM_SUPPORTS_BRANCHES		3
+#define DRM_VC4_PARAM_SUPPORTS_ETC1		4
+#define DRM_VC4_PARAM_SUPPORTS_THREADED_FS	5
+
+struct drm_vc4_get_param {
+	__u32 param;
+	__u32 pad;
+	__u64 value;
+};
+
+struct drm_vc4_get_tiling {
+	__u32 handle;
+	__u32 flags;
+	__u64 modifier;
+};
+
+struct drm_vc4_set_tiling {
+	__u32 handle;
+	__u32 flags;
+	__u64 modifier;
+};
+
+/**
+ * struct drm_vc4_label_bo - Attach a name to a BO for debug purposes.
+ */
+struct drm_vc4_label_bo {
+	__u32 handle;
+	__u32 len;
+	__u64 name;
+};
+
+#if defined(__cplusplus)
+}
+#endif
 
 #endif /* _VC4_DRM_H_ */

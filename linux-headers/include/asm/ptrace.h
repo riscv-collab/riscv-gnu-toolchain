@@ -1,3 +1,16 @@
+/*
+ * Copyright (C) 2012 Regents of the University of California
+ *
+ *   This program is free software; you can redistribute it and/or
+ *   modify it under the terms of the GNU General Public License
+ *   as published by the Free Software Foundation, version 2.
+ *
+ *   This program is distributed in the hope that it will be useful,
+ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *   GNU General Public License for more details.
+ */
+
 #ifndef _ASM_RISCV_PTRACE_H
 #define _ASM_RISCV_PTRACE_H
 
@@ -5,7 +18,8 @@
 
 #include <linux/types.h>
 
-/* User-mode register state for core dumps, ptrace, sigcontext
+/*
+ * User-mode register state for core dumps, ptrace, sigcontext
  *
  * This decouples struct pt_regs from the userspace ABI.
  * struct user_regs_struct must form a prefix of struct pt_regs.
@@ -45,9 +59,30 @@ struct user_regs_struct {
 	unsigned long t6;
 };
 
-struct user_fpregs_struct {
+struct __riscv_f_ext_state {
+	__u32 f[32];
+	__u32 fcsr;
+};
+
+struct __riscv_d_ext_state {
 	__u64 f[32];
 	__u32 fcsr;
+};
+
+struct __riscv_q_ext_state {
+	__u64 f[64] __attribute__((aligned(16)));
+	__u32 fcsr;
+	/*
+	 * Reserved for expansion of sigcontext structure.  Currently zeroed
+	 * upon signal, and must be zero upon sigreturn.
+	 */
+	__u32 reserved[3];
+};
+
+union __riscv_fp_state {
+	struct __riscv_f_ext_state f;
+	struct __riscv_d_ext_state d;
+	struct __riscv_q_ext_state q;
 };
 
 #endif /* __ASSEMBLY__ */
