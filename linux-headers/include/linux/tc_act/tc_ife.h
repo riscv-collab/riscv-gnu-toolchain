@@ -3,6 +3,7 @@
 
 #include <linux/types.h>
 #include <linux/pkt_cls.h>
+#include <linux/ife.h>
 
 #define TCA_ACT_IFE 25
 /* Flag bits for now just encoding/decoding; mutually exclusive */
@@ -23,16 +24,9 @@ enum {
 	TCA_IFE_SMAC,
 	TCA_IFE_TYPE,
 	TCA_IFE_METALST,
+	TCA_IFE_PAD,
 	__TCA_IFE_MAX
 };
 #define TCA_IFE_MAX (__TCA_IFE_MAX - 1)
-
-#define IFE_META_SKBMARK 1
-#define IFE_META_HASHID 2
-#define	IFE_META_PRIO 3
-#define	IFE_META_QMAP 4
-/*Can be overridden at runtime by module option*/
-#define	__IFE_META_MAX 5
-#define IFE_META_MAX (__IFE_META_MAX - 1)
 
 #endif

@@ -174,6 +174,8 @@ enum perf_branch_sample_type_shift {
 	PERF_SAMPLE_BRANCH_NO_FLAGS_SHIFT	= 14, /* no flags */
 	PERF_SAMPLE_BRANCH_NO_CYCLES_SHIFT	= 15, /* no cycles */
 
+	PERF_SAMPLE_BRANCH_TYPE_SAVE_SHIFT	= 16, /* save branch type */
+
 	PERF_SAMPLE_BRANCH_MAX_SHIFT		/* non-ABI */
 };
 
@@ -198,7 +200,28 @@ enum perf_branch_sample_type {
 	PERF_SAMPLE_BRANCH_NO_FLAGS	= 1U << PERF_SAMPLE_BRANCH_NO_FLAGS_SHIFT,
 	PERF_SAMPLE_BRANCH_NO_CYCLES	= 1U << PERF_SAMPLE_BRANCH_NO_CYCLES_SHIFT,
 
+	PERF_SAMPLE_BRANCH_TYPE_SAVE	=
+		1U << PERF_SAMPLE_BRANCH_TYPE_SAVE_SHIFT,
+
 	PERF_SAMPLE_BRANCH_MAX		= 1U << PERF_SAMPLE_BRANCH_MAX_SHIFT,
+};
+
+/*
+ * Common flow change classification
+ */
+enum {
+	PERF_BR_UNKNOWN		= 0,	/* unknown */
+	PERF_BR_COND		= 1,	/* conditional */
+	PERF_BR_UNCOND		= 2,	/* unconditional  */
+	PERF_BR_IND		= 3,	/* indirect */
+	PERF_BR_CALL		= 4,	/* function call */
+	PERF_BR_IND_CALL	= 5,	/* indirect function call */
+	PERF_BR_RET		= 6,	/* function return */
+	PERF_BR_SYSCALL		= 7,	/* syscall */
+	PERF_BR_SYSRET		= 8,	/* syscall return */
+	PERF_BR_COND_CALL	= 9,	/* conditional function call */
+	PERF_BR_COND_RET	= 10,	/* conditional function return */
+	PERF_BR_MAX,
 };
 
 #define PERF_SAMPLE_BRANCH_PLM_ALL \
@@ -276,6 +299,9 @@ enum perf_event_read_format {
 
 /*
  * Hardware event_id to monitor via a performance monitoring event:
+ *
+ * @sample_max_stack: Max number of frame pointers in a callchain,
+ *		      should be < /proc/sys/kernel/perf_event_max_stack
  */
 struct perf_event_attr {
 
@@ -340,7 +366,9 @@ struct perf_event_attr {
 				comm_exec      :  1, /* flag comm events that are due to an exec */
 				use_clockid    :  1, /* use @clockid for time fields */
 				context_switch :  1, /* context switch data */
-				__reserved_1   : 37;
+				write_backward :  1, /* Write ring buffer from end to beginning */
+				namespaces     :  1, /* include namespaces data */
+				__reserved_1   : 35;
 
 	union {
 		__u32		wakeup_events;	  /* wakeup every n events */
@@ -384,7 +412,8 @@ struct perf_event_attr {
 	 * Wakeup watermark for AUX area
 	 */
 	__u32	aux_watermark;
-	__u32	__reserved_2;	/* align to __u64 */
+	__u16	sample_max_stack;
+	__u16	__reserved_2;	/* align to __u64 */
 };
 
 #define perf_flags(attr)	(*(&(attr)->read_format + 1))
@@ -401,6 +430,7 @@ struct perf_event_attr {
 #define PERF_EVENT_IOC_SET_FILTER	_IOW('$', 6, char *)
 #define PERF_EVENT_IOC_ID		_IOR('$', 7, __u64 *)
 #define PERF_EVENT_IOC_SET_BPF		_IOW('$', 8, __u32)
+#define PERF_EVENT_IOC_PAUSE_OUTPUT	_IOW('$', 9, __u32)
 
 enum perf_event_ioc_flags {
 	PERF_IOC_FLAG_GROUP		= 1U << 0,
@@ -602,6 +632,23 @@ struct perf_event_header {
 	__u32	type;
 	__u16	misc;
 	__u16	size;
+};
+
+struct perf_ns_link_info {
+	__u64	dev;
+	__u64	ino;
+};
+
+enum {
+	NET_NS_INDEX		= 0,
+	UTS_NS_INDEX		= 1,
+	IPC_NS_INDEX		= 2,
+	PID_NS_INDEX		= 3,
+	USER_NS_INDEX		= 4,
+	MNT_NS_INDEX		= 5,
+	CGROUP_NS_INDEX		= 6,
+
+	NR_NAMESPACES,		/* number of available namespaces */
 };
 
 enum perf_event_type {
@@ -856,10 +903,23 @@ enum perf_event_type {
 	 */
 	PERF_RECORD_SWITCH_CPU_WIDE		= 15,
 
+	/*
+	 * struct {
+	 *	struct perf_event_header	header;
+	 *	u32				pid;
+	 *	u32				tid;
+	 *	u64				nr_namespaces;
+	 *	{ u64				dev, inode; } [nr_namespaces];
+	 *	struct sample_id		sample_id;
+	 * };
+	 */
+	PERF_RECORD_NAMESPACES			= 16,
+
 	PERF_RECORD_MAX,			/* non-ABI */
 };
 
 #define PERF_MAX_STACK_DEPTH		127
+#define PERF_MAX_CONTEXTS_PER_STACK	  8
 
 enum perf_callchain_context {
 	PERF_CONTEXT_HV			= (__u64)-32,
@@ -878,12 +938,14 @@ enum perf_callchain_context {
  */
 #define PERF_AUX_FLAG_TRUNCATED		0x01	/* record was truncated to fit */
 #define PERF_AUX_FLAG_OVERWRITE		0x02	/* snapshot from overwrite mode */
+#define PERF_AUX_FLAG_PARTIAL		0x04	/* record contains gaps */
 
 #define PERF_FLAG_FD_NO_GROUP		(1UL << 0)
 #define PERF_FLAG_FD_OUTPUT		(1UL << 1)
 #define PERF_FLAG_PID_CGROUP		(1UL << 2) /* pid=cgroup id, per-cpu mode only */
 #define PERF_FLAG_FD_CLOEXEC		(1UL << 3) /* O_CLOEXEC */
 
+#if defined(__LITTLE_ENDIAN_BITFIELD)
 union perf_mem_data_src {
 	__u64 val;
 	struct {
@@ -895,6 +957,21 @@ union perf_mem_data_src {
 			mem_rsvd:31;
 	};
 };
+#elif defined(__BIG_ENDIAN_BITFIELD)
+union perf_mem_data_src {
+	__u64 val;
+	struct {
+		__u64	mem_rsvd:31,
+			mem_dtlb:7,	/* tlb access */
+			mem_lock:2,	/* lock instr */
+			mem_snoop:5,	/* snoop mode */
+			mem_lvl:14,	/* memory hierarchy level */
+			mem_op:5;	/* type of opcode */
+	};
+};
+#else
+#error "Unknown endianness"
+#endif
 
 /* type of opcode (load/store/prefetch,code) */
 #define PERF_MEM_OP_NA		0x01 /* not available */
@@ -961,6 +1038,7 @@ union perf_mem_data_src {
  *     in_tx: running in a hardware transaction
  *     abort: aborting a hardware transaction
  *    cycles: cycles from last branch (or 0 if not supported)
+ *      type: branch type
  */
 struct perf_branch_entry {
 	__u64	from;
@@ -970,7 +1048,8 @@ struct perf_branch_entry {
 		in_tx:1,    /* in transaction */
 		abort:1,    /* transaction abort */
 		cycles:16,  /* cycle count to last branch */
-		reserved:44;
+		type:4,     /* branch type */
+		reserved:40;
 };
 
 #endif /* _LINUX_PERF_EVENT_H */

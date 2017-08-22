@@ -57,6 +57,7 @@
 #define _LINUX__HFI1_USER_H
 
 #include <linux/types.h>
+#include <rdma/rdma_user_ioctl.h>
 
 /*
  * This version number is given to the driver by the user code during
@@ -66,7 +67,7 @@
  * The major version changes when data structures change in an incompatible
  * way. The driver must be the same for initialization to succeed.
  */
-#define HFI1_USER_SWMAJOR 5
+#define HFI1_USER_SWMAJOR 6
 
 /*
  * Minor version differences are always compatible
@@ -75,7 +76,12 @@
  * may not be implemented; the user code must deal with this if it
  * cares, or it must abort after initialization reports the difference.
  */
-#define HFI1_USER_SWMINOR 0
+#define HFI1_USER_SWMINOR 3
+
+/*
+ * We will encode the major/minor inside a single 32bit version number.
+ */
+#define HFI1_SWMAJOR_SHIFT 16
 
 /*
  * Set of HW and driver capability/feature bits.
@@ -106,42 +112,6 @@
 #define HFI1_RCVHDR_ENTSIZE_2    (1UL << 0)
 #define HFI1_RCVHDR_ENTSIZE_16   (1UL << 1)
 #define HFI1_RCVDHR_ENTSIZE_32   (1UL << 2)
-
-/*
- * If the unit is specified via open, HFI choice is fixed.  If port is
- * specified, it's also fixed.  Otherwise we try to spread contexts
- * across ports and HFIs, using different algorithms.  WITHIN is
- * the old default, prior to this mechanism.
- */
-#define HFI1_ALG_ACROSS 0 /* round robin contexts across HFIs, then
-			  * ports; this is the default */
-#define HFI1_ALG_WITHIN 1 /* use all contexts on an HFI (round robin
-			  * active ports within), then next HFI */
-#define HFI1_ALG_COUNT  2 /* number of algorithm choices */
-
-
-/* User commands. */
-#define HFI1_CMD_ASSIGN_CTXT     1	/* allocate HFI and context */
-#define HFI1_CMD_CTXT_INFO       2	/* find out what resources we got */
-#define HFI1_CMD_USER_INFO       3	/* set up userspace */
-#define HFI1_CMD_TID_UPDATE      4	/* update expected TID entries */
-#define HFI1_CMD_TID_FREE        5	/* free expected TID entries */
-#define HFI1_CMD_CREDIT_UPD      6	/* force an update of PIO credit */
-#define HFI1_CMD_SDMA_STATUS_UPD 7      /* force update of SDMA status ring */
-
-#define HFI1_CMD_RECV_CTRL       8	/* control receipt of packets */
-#define HFI1_CMD_POLL_TYPE       9	/* set the kind of polling we want */
-#define HFI1_CMD_ACK_EVENT       10	/* ack & clear user status bits */
-#define HFI1_CMD_SET_PKEY        11     /* set context's pkey */
-#define HFI1_CMD_CTXT_RESET      12     /* reset context's HW send context */
-#define HFI1_CMD_TID_INVAL_READ  13     /* read TID cache invalidations */
-/* separate EPROM commands from normal PSM commands */
-#define HFI1_CMD_EP_INFO         64      /* read EPROM device ID */
-#define HFI1_CMD_EP_ERASE_CHIP   65      /* erase whole EPROM */
-/* range 66-74 no longer used */
-#define HFI1_CMD_EP_ERASE_RANGE  75      /* erase EPROM range */
-#define HFI1_CMD_EP_READ_RANGE   76      /* read EPROM range */
-#define HFI1_CMD_EP_WRITE_RANGE  77      /* write EPROM range */
 
 #define _HFI1_EVENT_FROZEN_BIT         0
 #define _HFI1_EVENT_LINKDOWN_BIT       1
@@ -187,68 +157,6 @@
 #define HFI1_POLL_TYPE_ANYRCV     0x0
 #define HFI1_POLL_TYPE_URGENT     0x1
 
-/*
- * This structure is passed to the driver to tell it where
- * user code buffers are, sizes, etc.   The offsets and sizes of the
- * fields must remain unchanged, for binary compatibility.  It can
- * be extended, if userversion is changed so user code can tell, if needed
- */
-struct hfi1_user_info {
-	/*
-	 * version of user software, to detect compatibility issues.
-	 * Should be set to HFI1_USER_SWVERSION.
-	 */
-	__u32 userversion;
-	__u16 pad;
-	/* HFI selection algorithm, if unit has not selected */
-	__u16 hfi1_alg;
-	/*
-	 * If two or more processes wish to share a context, each process
-	 * must set the subcontext_cnt and subcontext_id to the same
-	 * values.  The only restriction on the subcontext_id is that
-	 * it be unique for a given node.
-	 */
-	__u16 subctxt_cnt;
-	__u16 subctxt_id;
-	/* 128bit UUID passed in by PSM. */
-	__u8 uuid[16];
-};
-
-struct hfi1_ctxt_info {
-	__u64 runtime_flags;    /* chip/drv runtime flags (HFI1_CAP_*) */
-	__u32 rcvegr_size;      /* size of each eager buffer */
-	__u16 num_active;       /* number of active units */
-	__u16 unit;             /* unit (chip) assigned to caller */
-	__u16 ctxt;             /* ctxt on unit assigned to caller */
-	__u16 subctxt;          /* subctxt on unit assigned to caller */
-	__u16 rcvtids;          /* number of Rcv TIDs for this context */
-	__u16 credits;          /* number of PIO credits for this context */
-	__u16 numa_node;        /* NUMA node of the assigned device */
-	__u16 rec_cpu;          /* cpu # for affinity (0xffff if none) */
-	__u16 send_ctxt;        /* send context in use by this user context */
-	__u16 egrtids;          /* number of RcvArray entries for Eager Rcvs */
-	__u16 rcvhdrq_cnt;      /* number of RcvHdrQ entries */
-	__u16 rcvhdrq_entsize;  /* size (in bytes) for each RcvHdrQ entry */
-	__u16 sdma_ring_size;   /* number of entries in SDMA request ring */
-};
-
-struct hfi1_tid_info {
-	/* virtual address of first page in transfer */
-	__u64 vaddr;
-	/* pointer to tid array. this array is big enough */
-	__u64 tidlist;
-	/* number of tids programmed by this request */
-	__u32 tidcnt;
-	/* length of transfer buffer programmed by this request */
-	__u32 length;
-};
-
-struct hfi1_cmd {
-	__u32 type;        /* command type */
-	__u32 len;         /* length of struct pointed to by add */
-	__u64 addr;        /* pointer to user structure */
-};
-
 enum hfi1_sdma_comp_state {
 	FREE = 0,
 	QUEUED,
@@ -271,71 +179,6 @@ struct hfi1_status {
 	__u64 dev;      /* device/hw status bits */
 	__u64 port;     /* port state and status bits */
 	char freezemsg[0];
-};
-
-/*
- * This structure is returned by the driver immediately after
- * open to get implementation-specific info, and info specific to this
- * instance.
- *
- * This struct must have explicit pad fields where type sizes
- * may result in different alignments between 32 and 64 bit
- * programs, since the 64 bit * bit kernel requires the user code
- * to have matching offsets
- */
-struct hfi1_base_info {
-	/* version of hardware, for feature checking. */
-	__u32 hw_version;
-	/* version of software, for feature checking. */
-	__u32 sw_version;
-	/* Job key */
-	__u16 jkey;
-	__u16 padding1;
-	/*
-	 * The special QP (queue pair) value that identifies PSM
-	 * protocol packet from standard IB packets.
-	 */
-	__u32 bthqp;
-	/* PIO credit return address, */
-	__u64 sc_credits_addr;
-	/*
-	 * Base address of write-only pio buffers for this process.
-	 * Each buffer has sendpio_credits*64 bytes.
-	 */
-	__u64 pio_bufbase_sop;
-	/*
-	 * Base address of write-only pio buffers for this process.
-	 * Each buffer has sendpio_credits*64 bytes.
-	 */
-	__u64 pio_bufbase;
-	/* address where receive buffer queue is mapped into */
-	__u64 rcvhdr_bufbase;
-	/* base address of Eager receive buffers. */
-	__u64 rcvegr_bufbase;
-	/* base address of SDMA completion ring */
-	__u64 sdma_comp_bufbase;
-	/*
-	 * User register base for init code, not to be used directly by
-	 * protocol or applications.  Always maps real chip register space.
-	 * the register addresses are:
-	 * ur_rcvhdrhead, ur_rcvhdrtail, ur_rcvegrhead, ur_rcvegrtail,
-	 * ur_rcvtidflow
-	 */
-	__u64 user_regbase;
-	/* notification events */
-	__u64 events_bufbase;
-	/* status page */
-	__u64 status_bufbase;
-	/* rcvhdrtail update */
-	__u64 rcvhdrtail_base;
-	/*
-	 * shared memory pages for subctxts if ctxt is shared; these cover
-	 * all the processes in the group sharing a single context.
-	 * all have enough space for the num_subcontexts value on this job.
-	 */
-	__u64 subctxt_uregbase;
-	__u64 subctxt_rcvegrbuf;
-	__u64 subctxt_rcvhdrbuf;
 };
 
 enum sdma_req_opcode {

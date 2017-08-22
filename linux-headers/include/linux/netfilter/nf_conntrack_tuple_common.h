@@ -3,6 +3,7 @@
 
 #include <linux/types.h>
 #include <linux/netfilter.h>
+#include <linux/netfilter/nf_conntrack_common.h> /* IP_CT_IS_REPLY */
 
 enum ip_conntrack_dir {
 	IP_CT_DIR_ORIGINAL,
