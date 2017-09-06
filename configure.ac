@@ -157,4 +157,15 @@ AS_IF([test "x$with_guile" != xdefault],
 	[AC_SUBST(with_guile,--with-guile=$with_guile)],
 	[AC_SUBST(with_guile,"")])
 
+AC_ARG_ENABLE(gdb,
+	[AS_HELP_STRING([--disable-gdb],
+		[Don't build GDB, as it's not upstream])],
+	[],
+	[enable_gdb=yes]
+	)
+
+AS_IF([test "x$enable_gdb" != xno],
+	[AC_SUBST(enable_gdb, --enable-gdb)],
+	[AC_SUBST(enable_gdb, --disable-gdb)])
+
 AC_OUTPUT
