@@ -50,6 +50,17 @@ AS_IF([test "x$enable_linux" != xno],
 	[AC_SUBST(default_target, linux)],
 	[AC_SUBST(default_target, newlib)])
 
+AC_ARG_ENABLE(libnosys,
+	[AS_HELP_STRING([--enable-libnosys],
+		[build a toolchain without system call support])],
+	[],
+	[enable_libnosys=no]
+	)
+
+AS_IF([test "x$enable_libnosys" != xno],
+	[AC_SUBST(newlib_system, none)],
+	[AC_SUBST(newlib_system, elf)])
+
 AC_ARG_ENABLE(atomic,
 	[AS_HELP_STRING([--disable-atomic],
 		[disable use of atomic memory instructions in glibc @<:@--enable-atomic@:>@])],
