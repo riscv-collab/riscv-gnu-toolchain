@@ -391,7 +391,7 @@ extern clock_t	clock();
 	*** You must define HZ!!! ***
 #endif /* HZ */
 #ifndef PASS2
-struct tms      time_info;
+extern struct tms      time_info;
 #endif
 /*extern  int     times ();*/
                 /* see library function "times" */

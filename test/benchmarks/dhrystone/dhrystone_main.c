@@ -7,6 +7,8 @@
 // This is the classic Dhrystone synthetic integer benchmark.
 //
 
+struct tms      time_info;
+
 #define read_csr(reg) ({ unsigned long __tmp; \
   asm volatile ("csrr %0, " #reg : "=r"(__tmp)); \
   __tmp; })
