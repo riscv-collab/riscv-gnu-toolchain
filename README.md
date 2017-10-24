@@ -104,9 +104,9 @@ To test GCC, run the following commands:
 
     ./configure --prefix=$RISCV --disable-linux --with-arch=rv64ima # or --with-arch=rv32ima
     make newlib
-    make check-gcc-newlib
+    make report-newlib
 
     ./configure --prefix=$RISCV
     make linux
     # Need qemu-riscv32 or qemu-riscv64 in your `PATH`.
-    make check-gcc-linux
+    make report-linux
