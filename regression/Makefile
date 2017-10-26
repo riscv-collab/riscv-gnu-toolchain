@@ -1,23 +1,37 @@
 .SECONDARY:
+report:
 
 # The list of target tuples that we want to test.
-.PHONY: report
-report: report-newlib-rv32i-ilp32-medlow
-report: report-newlib-rv32im-ilp32-medlow
-report: report-newlib-rv32iac-ilp32-medlow
-report: report-newlib-rv32imac-ilp32-medlow
-report: report-newlib-rv32imafc-ilp32f-medlow
-report: report-newlib-rv64imac-lp64-medlow
-report: report-newlib-rv64imafdc-lp64d-medlow
-report: report-linux-rv32imac-ilp32-medlow
-report: report-linux-rv32imafdc-ilp32-medlow
-report: report-linux-rv32imafdc-ilp32d-medlow
-report: report-linux-rv64imac-lp64-medlow
-report: report-linux-rv64imafdc-lp64-medlow
-report: report-linux-rv64imafdc-lp64d-medlow
+TARGETS  =
+TARGETS += newlib-rv32i-ilp32-medlow
+TARGETS += newlib-rv32im-ilp32-medlow
+TARGETS += newlib-rv32iac-ilp32-medlow
+TARGETS += newlib-rv32imac-ilp32-medlow
+TARGETS += newlib-rv32imafc-ilp32f-medlow
+TARGETS += newlib-rv64imac-lp64-medlow
+TARGETS += newlib-rv64imafdc-lp64d-medlow
+TARGETS += linux-rv32imac-ilp32-medlow
+TARGETS += linux-rv32imafdc-ilp32-medlow
+TARGETS += linux-rv32imafdc-ilp32d-medlow
+TARGETS += linux-rv64imac-lp64-medlow
+TARGETS += linux-rv64imafdc-lp64-medlow
+TARGETS += linux-rv64imafdc-lp64d-medlow
 
 # This is the link between the report targets and the actual testsuite
-# build/test runs.
+# build/test runs.  It's setup with a level of indirection here to make sure
+# that when running "make report" we run all the test suites before running any
+# of the reports.  Since the various check targets are never supposed to fail,
+# this lets me ensure that re-running "make report" is always fast.
+.PHONY: check
+check: $(addprefix stamps/check-,$(TARGETS))
+
+.PHONY: check-%
+check-%: stamps/check-%
+
+.PHONY: report
+report: check
+	$(MAKE) $(addprefix report-,$(TARGETS))
+
 .PHONY: report-%
 report-%: stamps/check-%
 	$(eval $@_BUILDDIR := build/$(patsubst report-%,%,$(notdir $@)))
