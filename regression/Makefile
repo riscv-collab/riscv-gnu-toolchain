@@ -16,6 +16,19 @@ TARGETS += linux-rv32imafdc-ilp32d-medlow
 TARGETS += linux-rv64imac-lp64-medlow
 TARGETS += linux-rv64imafdc-lp64-medlow
 TARGETS += linux-rv64imafdc-lp64d-medlow
+TARGETS += newlib-rv32i-ilp32-medany
+TARGETS += newlib-rv32im-ilp32-medany
+TARGETS += newlib-rv32iac-ilp32-medany
+TARGETS += newlib-rv32imac-ilp32-medany
+TARGETS += newlib-rv32imafc-ilp32f-medany
+TARGETS += newlib-rv64imac-lp64-medany
+TARGETS += newlib-rv64imafdc-lp64d-medany
+TARGETS += linux-rv32imac-ilp32-medany
+TARGETS += linux-rv32imafdc-ilp32-medany
+TARGETS += linux-rv32imafdc-ilp32d-medany
+TARGETS += linux-rv64imac-lp64-medany
+TARGETS += linux-rv64imafdc-lp64-medany
+TARGETS += linux-rv64imafdc-lp64d-medany
 
 # This is the link between the report targets and the actual testsuite
 # build/test runs.  It's setup with a level of indirection here to make sure
