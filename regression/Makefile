@@ -75,7 +75,7 @@ stamps/build-%: stamps/configure-%
 	$(eval $@_PREFIX := install/$(patsubst build-%,%,$(notdir $@)))
 	$(MAKE) -C $($@_BUILDDIR)
 	mkdir -p $(dir $@)
-	echo 'export $$PATH="$(abspath $($@_PREFIX)):$$PATH"' > $($@_PREFIX)/enter.bash
+	echo 'export PATH="$(abspath $($@_PREFIX))/bin:$$PATH"' > $($@_PREFIX)/enter.bash
 	date > $@
 
 stamps/check-%: stamps/build-%
