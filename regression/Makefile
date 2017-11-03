@@ -35,6 +35,9 @@ TARGETS += linux-rv64imafdc-lp64d-medany
 # that when running "make report" we run all the test suites before running any
 # of the reports.  Since the various check targets are never supposed to fail,
 # this lets me ensure that re-running "make report" is always fast.
+.PHONY: build
+build: $(addprefix stamps/build-,$(TARGETS))
+
 .PHONY: check
 check: $(addprefix stamps/check-,$(TARGETS))
 
