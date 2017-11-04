@@ -44,6 +44,9 @@ check: $(addprefix stamps/check-,$(TARGETS))
 .PHONY: check-%
 check-%: stamps/check-%
 
+.PHONY: build-%
+build-%: stamps/build-%
+
 .PHONY: report
 report: check
 	$(MAKE) $(addprefix report-,$(TARGETS))
