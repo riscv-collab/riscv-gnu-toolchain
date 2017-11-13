@@ -54,6 +54,7 @@ GLIBC_TARGET_BOARDS ?= $(shell echo "$(GLIBC_MULTILIB_NAMES)" | sed 's!\([a-z0-9
 NEWLIB_CC_FOR_TARGET ?= $(NEWLIB_TUPLE)-gcc
 NEWLIB_CXX_FOR_TARGET ?= $(NEWLIB_TUPLE)-g++
 NEWLIB_TARGET_BOARDS ?= $(shell echo "$(NEWLIB_MULTILIB_NAMES)" | sed 's!\([a-z0-9]*\)-\([a-z0-9]*\)!riscv-sim/-march=\1/-mabi=\2/@cmodel@!g')
+NEWLIB_NANO_TARGET_BOARDS ?= $(shell echo "$(NEWLIB_MULTILIB_NAMES)" | sed 's!\([a-z0-9]*\)-\([a-z0-9]*\)!riscv-sim-nano/-march=\1/-mabi=\2/@cmodel@!g')
 
 CONFIGURE_HOST   = @configure_host@
 
@@ -68,7 +69,8 @@ build-gcc%: stamps/build-gcc-@default_target@-stage%
 ifeq (@default_target@,linux)
 build-libc: $(patsubst %,stamps/build-glibc-linux-%,$(MULTLIB_NAMES))
 else
-build-libc: build-newlib
+build-libc: stamps/build-newlib stamps/build-newlib-nano \
+	stamps/merge-newlib-nano
 endif
 build-qemu: stamps/build-qemu
 
@@ -79,28 +81,31 @@ check: check-@default_target@
 .PHONY: check-linux check-newlib
 check-linux: $(patsubst %,check-%-linux,$(REGRESSION_TEST_LIST))
 check-newlib: $(patsubst %,check-%-newlib,$(REGRESSION_TEST_LIST))
-.PHONY: check-gcc check-gcc-linux check-gcc-newlib
+check-newlib-nano: $(patsubst %,check-%-newlib-nano,$(REGRESSION_TEST_LIST))
+.PHONY: check-gcc check-gcc-linux check-gcc-newlib check-gcc-newlib-nano
 check-gcc: check-gcc-@default_target@
 check-gcc-linux: stamps/check-gcc-linux
 check-gcc-newlib: stamps/check-gcc-newlib
+check-gcc-newlib-nano: stamps/check-gcc-newlib-nano
 .PHONY: check-dhrystone check-dhrystone-linux check-dhrystone-newlib
 check-dhrystone: check-dhrystone-@default_target@
-check-dhrystone-linux: stamps/check-dhrystone-linux
-check-dhrystone-newlib: stamps/check-dhrystone-newlib
 .PHONY: check-binutils check-binutils-linux check-binutils-newlib
 check-binutils: check-binutils-@default_target@
 check-binutils-linux: stamps/check-binutils-linux
 check-binutils-newlib: stamps/check-binutils-newlib
+check-binutils-newlib-nano: stamps/check-binutils-newlib-nano
 .PHONY: check-gdb check-gdb-linux check-gdb-newlib
 check-gdb: check-gdb-@default_target@
 check-gdb-linux: stamps/check-gdb-linux
 check-gdb-newlib: stamps/check-gdb-newlib
+check-gdb-newlib-nano: stamps/check-gdb-newlib-nano
 
 .PHONY: report
 report: report-@default_target@
-.PHONY: report-linux report-newlib
+.PHONY: report-linux report-newlib report-newlib-nano
 report-linux: $(patsubst %,report-%-linux,$(REGRESSION_TEST_LIST))
 report-newlib: $(patsubst %,report-%-newlib,$(REGRESSION_TEST_LIST))
+report-newlib-nano: $(patsubst %,report-%-newlib-nano,$(REGRESSION_TEST_LIST))
 .PHONY: report-gcc
 report-gcc: report-gcc-@default_target@
 .PHONY: report-dhrystone
@@ -333,6 +338,7 @@ stamps/build-gcc-newlib-stage1: $(srcdir)/riscv-gcc stamps/build-binutils-newlib
 		--enable-languages=c,c++ \
 		@with_system_zlib@ \
 		--with-newlib \
+		--with-sysroot=$(INSTALL_DIR)/$(NEWLIB_TUPLE) \
 		--disable-libmudflap \
 		--disable-libssp \
 		--disable-libquadmath \
@@ -362,7 +368,51 @@ stamps/build-newlib: $(srcdir)/riscv-newlib stamps/build-gcc-newlib-stage1
 	$(MAKE) -C $(notdir $@) install
 	mkdir -p $(dir $@) && touch $@
 
-stamps/build-gcc-newlib-stage2: $(srcdir)/riscv-gcc stamps/build-newlib
+stamps/build-newlib-nano: $(srcdir)/riscv-newlib stamps/build-gcc-newlib-stage1
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	cd $(notdir $@) && $</configure \
+		--target=$(NEWLIB_TUPLE) \
+		$(CONFIGURE_HOST) \
+		--prefix=$(builddir)/install-newlib-nano \
+		--enable-newlib-reent-small \
+		--disable-newlib-fvwrite-in-streamio \
+		--disable-newlib-fseek-optimization \
+		--disable-newlib-wide-orient \
+		--enable-newlib-nano-malloc \
+		--disable-newlib-unbuf-stream-opt \
+		--enable-lite-exit \
+		--enable-newlib-global-atexit \
+		--enable-newlib-nano-formatted-io \
+		--disable-newlib-supplied-syscalls \
+		--disable-nls \
+		--enable-newlib-register-fini \
+		CFLAGS_FOR_TARGET="-Os -ffunction-sections -fdata-sections $(CFLAGS_FOR_TARGET)"
+	$(MAKE) -C $(notdir $@)
+	$(MAKE) -C $(notdir $@) install
+	mkdir -p $(dir $@) && touch $@
+
+stamps/merge-newlib-nano: stamps/build-newlib-nano stamps/build-newlib
+# Copy nano library files into newlib install dir.
+	set -e; \
+        for ml in `$(INSTALL_DIR)/bin/$(NEWLIB_TUPLE)-gcc --print-multi-lib`; \
+	do \
+	    mld=`echo $${ml} | sed -e 's/;.*$$//'`; \
+	    cp $(builddir)/install-newlib-nano/$(NEWLIB_TUPLE)/lib/$${mld}/libc.a \
+		$(INSTALL_DIR)/$(NEWLIB_TUPLE)/lib/$${mld}/libc_nano.a; \
+	    cp $(builddir)/install-newlib-nano/$(NEWLIB_TUPLE)/lib/$${mld}/libg.a \
+		$(INSTALL_DIR)/$(NEWLIB_TUPLE)/lib/$${mld}/libg_nano.a; \
+	    cp $(builddir)/install-newlib-nano/$(NEWLIB_TUPLE)/lib/$${mld}/libgloss.a\
+		$(INSTALL_DIR)/$(NEWLIB_TUPLE)/lib/$${mld}/libgloss_nano.a; \
+	done
+# Copy nano header files into newlib install dir.
+	mkdir -p $(INSTALL_DIR)/$(NEWLIB_TUPLE)/include/newlib-nano; \
+	cp $(builddir)/install-newlib-nano/$(NEWLIB_TUPLE)/include/newlib.h \
+		$(INSTALL_DIR)/$(NEWLIB_TUPLE)/include/newlib-nano/newlib.h; \
+	mkdir -p $(dir $@) && touch $@
+
+stamps/build-gcc-newlib-stage2: $(srcdir)/riscv-gcc stamps/build-newlib \
+		stamps/merge-newlib-nano
 	rm -rf $@ $(notdir $@)
 	mkdir $(notdir $@)
 	cd $(notdir $@) && $</configure \
@@ -375,7 +425,8 @@ stamps/build-gcc-newlib-stage2: $(srcdir)/riscv-gcc stamps/build-newlib
 		@with_system_zlib@ \
 		--enable-tls \
 		--with-newlib \
-		--with-headers=$(INSTALL_DIR)/$(NEWLIB_TUPLE)/include \
+		--with-sysroot=$(INSTALL_DIR)/$(NEWLIB_TUPLE) \
+		--with-native-system-header-dir=/include \
 		--disable-libmudflap \
 		--disable-libssp \
 		--disable-libquadmath \
@@ -409,21 +460,28 @@ stamps/build-dejagnu: $(srcdir)/riscv-dejagnu
 	cd $(notdir $@) && $</configure \
 		--prefix=$(INSTALL_DIR)
 	$(MAKE) -C $(notdir $@)
+	$(MAKE) -C $(notdir $@) install
 	mkdir -p $(dir $@)
 	date > $@
 
 stamps/check-gcc-newlib: stamps/build-gcc-newlib-stage2 stamps/build-qemu stamps/build-dejagnu
-	PATH="$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH)" DEJAGNULIBS="$(srcdir)/riscv-dejagnu" RISC_V_SYSROOT="$(SYSROOT)" $(MAKE) -C build-gcc-newlib-stage2 check-gcc "RUNTESTFLAGS=--target_board='$(NEWLIB_TARGET_BOARDS)'"
+	PATH="$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH)" RISC_V_SYSROOT="$(SYSROOT)" $(MAKE) -C build-gcc-newlib-stage2 check-gcc "RUNTESTFLAGS=--target_board='$(NEWLIB_TARGET_BOARDS)'"
+	mkdir -p $(dir $@)
+	date > $@
+
+stamps/check-gcc-newlib-nano: stamps/build-gcc-newlib-stage2 stamps/build-qemu stamps/build-dejagnu
+	PATH="$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH)" RISC_V_SYSROOT="$(SYSROOT)" $(MAKE) -C build-gcc-newlib-stage2 check-gcc "RUNTESTFLAGS=--target_board='$(NEWLIB_NANO_TARGET_BOARDS)'"
 	mkdir -p $(dir $@)
 	date > $@
 
 stamps/check-gcc-linux: stamps/build-gcc-linux-stage2 stamps/build-qemu stamps/build-dejagnu
-	PATH="$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH)" DEJAGNULIBS="$(srcdir)/riscv-dejagnu" RISC_V_SYSROOT="$(SYSROOT)" $(MAKE) -C build-gcc-linux-stage2 check-gcc "RUNTESTFLAGS=--target_board='$(GLIBC_TARGET_BOARDS)'"
+	PATH="$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH)" RISC_V_SYSROOT="$(SYSROOT)" $(MAKE) -C build-gcc-linux-stage2 check-gcc "RUNTESTFLAGS=--target_board='$(GLIBC_TARGET_BOARDS)'"
 	mkdir -p $(dir $@)
 	date > $@
 
-.PHONY: check-dhrystone-newlib
+.PHONY: check-dhrystone-newlib check-dhrystone-newlib-nano
 check-dhrystone-newlib: $(patsubst %,stamps/check-dhrystone-newlib-%,$(NEWLIB_MULTILIB_NAMES))
+check-dhrystone-newlib-nano: $(patsubst %,stamps/check-dhrystone-newlib-nano-%,$(NEWLIB_MULTILIB_NAMES))
 
 stamps/check-dhrystone-newlib-%: \
 		stamps/build-gcc-newlib-stage2 \
@@ -432,7 +490,16 @@ stamps/check-dhrystone-newlib-%: \
 	$(eval $@_ARCH := $(word 4,$(subst -, ,$@)))
 	$(eval $@_ABI := $(word 5,$(subst -, ,$@)))
 	$(eval $@_XLEN := $(patsubst rv32%,32,$(patsubst rv64%,64,$($@_ARCH))))
-	PATH="$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH)" DEJAGNULIBS="$(srcdir)/riscv-dejagnu" RISC_V_SYSROOT="$(SYSROOT)" $(srcdir)/test/benchmarks/dhrystone/check -march=$($@_ARCH) -mabi=$($@_ABI) -cc=riscv$(XLEN)-unknown-elf-gcc -objdump=riscv$(XLEN)-unknown-elf-objdump -sim=riscv$($@_XLEN)-unknown-elf-run -out=$@ $(filter %.c,$^) || true
+	PATH="$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH)" RISC_V_SYSROOT="$(SYSROOT)" $(srcdir)/test/benchmarks/dhrystone/check -march=$($@_ARCH) -mabi=$($@_ABI) -cc=riscv$(XLEN)-unknown-elf-gcc -objdump=riscv$(XLEN)-unknown-elf-objdump -sim=riscv$($@_XLEN)-unknown-elf-run -out=$@ $(filter %.c,$^) || true
+
+stamps/check-dhrystone-newlib-nano-%: \
+		stamps/build-gcc-newlib-stage2 \
+		stamps/build-qemu \
+		$(wildcard $(srcdir)/test/benchmarks/dhrystone/*)
+	$(eval $@_ARCH := $(word 5,$(subst -, ,$@)))
+	$(eval $@_ABI := $(word 6,$(subst -, ,$@)))
+	$(eval $@_XLEN := $(patsubst rv32%,32,$(patsubst rv64%,64,$($@_ARCH))))
+	PATH="$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH)" RISC_V_SYSROOT="$(SYSROOT)" $(srcdir)/test/benchmarks/dhrystone/check -march=$($@_ARCH) -mabi=$($@_ABI) -specs=nano.specs -cc=riscv$(XLEN)-unknown-elf-gcc -objdump=riscv$(XLEN)-unknown-elf-objdump -sim=riscv$($@_XLEN)-unknown-elf-run -out=$@ $(filter %.c,$^) || true
 
 .PHONY: check-dhrystone-linux
 check-dhrystone-linux: $(patsubst %,stamps/check-dhrystone-linux-%,$(GLIBC_MULTILIB_NAMES))
@@ -444,44 +511,63 @@ stamps/check-dhrystone-linux-%: \
 	$(eval $@_ARCH := $(word 4,$(subst -, ,$@)))
 	$(eval $@_ABI := $(word 5,$(subst -, ,$@)))
 	$(eval $@_XLEN := $(patsubst rv32%,32,$(patsubst rv64%,64,$($@_ARCH))))
-	PATH="$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH)" DEJAGNULIBS="$(srcdir)/riscv-dejagnu" RISC_V_SYSROOT="$(SYSROOT)" $(srcdir)/test/benchmarks/dhrystone/check -march=$($@_ARCH) -mabi=$($@_ABI) -cc=riscv$(XLEN)-unknown-elf-gcc -objdump=riscv$(XLEN)-unknown-elf-objdump -sim=riscv$($@_XLEN)-unknown-elf-run -out=$@ $(filter %.c,$^) || true
+	PATH="$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH)" RISC_V_SYSROOT="$(SYSROOT)" $(srcdir)/test/benchmarks/dhrystone/check -march=$($@_ARCH) -mabi=$($@_ABI) -cc=riscv$(XLEN)-unknown-elf-gcc -objdump=riscv$(XLEN)-unknown-elf-objdump -sim=riscv$($@_XLEN)-unknown-elf-run -out=$@ $(filter %.c,$^) || true
 
 stamps/check-binutils-newlib: stamps/build-gcc-newlib-stage2 stamps/build-qemu
-	PATH="$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH)" DEJAGNULIBS="$(srcdir)/riscv-dejagnu" RISC_V_SYSROOT="$(SYSROOT)" $(MAKE) -C build-binutils-newlib check-{binutils,gas,ld} -k "RUNTESTFLAGS=--target_board='$(NEWLIB_TARGET_BOARDS)'" || true
+	PATH="$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH)" RISC_V_SYSROOT="$(SYSROOT)" $(MAKE) -C build-binutils-newlib check-{binutils,gas,ld} -k "RUNTESTFLAGS=--target_board='$(NEWLIB_TARGET_BOARDS)'" || true
+	date > $@
+
+stamps/check-binutils-newlib-nano: stamps/build-gcc-newlib-stage2 stamps/build-qemu
+	PATH="$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH)" RISC_V_SYSROOT="$(SYSROOT)" $(MAKE) -C build-binutils-newlib check-{binutils,gas,ld} -k "RUNTESTFLAGS=--target_board='$(NEWLIB_NANO_TARGET_BOARDS)'" || true
 	date > $@
 
 stamps/check-binutils-linux: stamps/build-gcc-linux-stage2 stamps/build-qemu
-	PATH="$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH)" DEJAGNULIBS="$(srcdir)/riscv-dejagnu" RISC_V_SYSROOT="$(SYSROOT)" $(MAKE) -C build-binutils-linux check-{binutils,gas,ld} -k "RUNTESTFLAGS=--target_board='$(GLIBC_TARGET_BOARDS)'" || true
+	PATH="$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH)" RISC_V_SYSROOT="$(SYSROOT)" $(MAKE) -C build-binutils-linux check-{binutils,gas,ld} -k "RUNTESTFLAGS=--target_board='$(GLIBC_TARGET_BOARDS)'" || true
 	date > $@
 
 stamps/check-gdb-newlib: stamps/build-gcc-newlib-stage2 stamps/build-qemu
-	PATH="$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH)" DEJAGNULIBS="$(srcdir)/riscv-dejagnu" RISC_V_SYSROOT="$(SYSROOT)" $(MAKE) -C build-binutils-newlib check-gdb -k "RUNTESTFLAGS=--target_board='$(NEWLIB_TARGET_BOARDS)'" || true
+	PATH="$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH)" RISC_V_SYSROOT="$(SYSROOT)" $(MAKE) -C build-binutils-newlib check-gdb -k "RUNTESTFLAGS=--target_board='$(NEWLIB_TARGET_BOARDS)'" || true
+	date > $@
+
+stamps/check-gdb-newlib-nano: stamps/build-gcc-newlib-stage2 stamps/build-qemu
+	PATH="$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH)" RISC_V_SYSROOT="$(SYSROOT)" $(MAKE) -C build-binutils-newlib check-gdb -k "RUNTESTFLAGS=--target_board='$(NEWLIB_NANO_TARGET_BOARDS)'" || true
 	date > $@
 
 stamps/check-gdb-linux: stamps/build-gcc-linux-stage2 stamps/build-qemu
-	PATH="$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH)" DEJAGNULIBS="$(srcdir)/riscv-dejagnu" RISC_V_SYSROOT="$(SYSROOT)" $(MAKE) -C build-binutils-linux check-gdb -k "RUNTESTFLAGS=--target_board='$(GLIBC_TARGET_BOARDS)'" || true
+	PATH="$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH)" RISC_V_SYSROOT="$(SYSROOT)" $(MAKE) -C build-binutils-linux check-gdb -k "RUNTESTFLAGS=--target_board='$(GLIBC_TARGET_BOARDS)'" || true
 	date > $@
 
-.PHONY: report-gcc-newlib
+.PHONY: report-gcc-newlib report-gcc-newlib-nano
 report-gcc-newlib: stamps/check-gcc-newlib
 	stat $(patsubst %,$(srcdir)/test/gcc-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)) || exit 1
 	if find build-gcc-newlib-stage2/gcc/testsuite/ -iname '*.sum' | xargs grep ^FAIL | sort | grep -F -v $(patsubst %,--file=$(srcdir)/test/gcc-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)); then false; else true; fi
+
+report-gcc-newlib-nano: stamps/check-gcc-newlib-nano
+	stat $(patsubst %,$(srcdir)/test/gcc-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)) || exit 1
+	if find build-gcc-newlib-stage2/gcc/testsuite/ -iname '*.sum' | xargs grep ^FAIL | sort | grep -F -v $(patsubst %,--file=$(srcdir)/test/gcc-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)); then false; else true; fi
+
 
 .PHONY: report-gcc-linux
 report-gcc-linux: stamps/check-gcc-linux
 	stat $(patsubst %,$(srcdir)/test/gcc-linux/%.log,$(GLIBC_MULTILIB_NAMES)) || exit 1
 	if find build-gcc-linux-stage2/gcc/testsuite/ -iname '*.sum' | xargs grep ^FAIL | sort | grep -F -v $(patsubst %,--file=$(srcdir)/test/gcc-linux/%.log,$(GLIBC_MULTILIB_NAMES)); then false; else true; fi
 
-.PHONY: report-dhrystone-newlib
+.PHONY: report-dhrystone-newlib report-dhrystone-newlib-nano
 report-dhrystone-newlib: $(patsubst %,stamps/check-dhrystone-newlib-%,$(NEWLIB_MULTILIB_NAMES))
+	if cat $^ | grep -v '^PASS'; then false; else true; fi
+report-dhrystone-newlib-nano: $(patsubst %,stamps/check-dhrystone-newlib-nano-%,$(NEWLIB_MULTILIB_NAMES))
 	if cat $^ | grep -v '^PASS'; then false; else true; fi
 
 .PHONY: report-dhrystone-linux
 report-dhrystone-linux: $(patsubst %,stamps/check-dhrystone-linux-%,$(GLIBC_MULTILIB_NAMES))
 	if cat $^ | grep -v '^PASS'; then false; else true; fi
 
-.PHONY: report-binutils-newlib
+.PHONY: report-binutils-newlib report-binutils-newlib-nano
 report-binutils-newlib: stamps/check-binutils-newlib
+	stat $(patsubst %,$(srcdir)/test/binutils-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)) || exit 1
+	if find build-binutils-newlib -iname '*.sum' | xargs grep ^FAIL | sort | grep -F -v $(patsubst %,--file=$(srcdir)/test/binutils-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)); then false; else true; fi
+
+report-binutils-newlib-nano: stamps/check-binutils-newlib-nano
 	stat $(patsubst %,$(srcdir)/test/binutils-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)) || exit 1
 	if find build-binutils-newlib -iname '*.sum' | xargs grep ^FAIL | sort | grep -F -v $(patsubst %,--file=$(srcdir)/test/binutils-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)); then false; else true; fi
 
@@ -493,8 +579,12 @@ report-binutils-linux: stamps/check-binutils-linux
 clean:
 	rm -rf build-* $(addprefix src/,$(PACKAGES)) stamps
 
-.PHONY: report-gdb-newlib
+.PHONY: report-gdb-newlib report-gdb-newlib-nano
 report-gdb-newlib: stamps/check-gdb-newlib
+	stat $(patsubst %,$(srcdir)/test/gdb-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)) || exit 1
+	if find build-binutils-newlib -iname '*.sum' | xargs grep ^FAIL | sort | grep -F -v $(patsubst %,--file=$(srcdir)/test/gdb-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)); then false; else true; fi
+
+report-gdb-newlib-nano: stamps/check-gdb-newlib-nano
 	stat $(patsubst %,$(srcdir)/test/gdb-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)) || exit 1
 	if find build-binutils-newlib -iname '*.sum' | xargs grep ^FAIL | sort | grep -F -v $(patsubst %,--file=$(srcdir)/test/gdb-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)); then false; else true; fi
 
@@ -508,3 +598,7 @@ distclean: clean
 
 # All of the packages install themselves, so our install target does nothing.
 install:
+
+# Rebuilding Makefile.
+Makefile: $(srcdir)/Makefile.in config.status
+	CONFIG_FILES=$@ CONFIG_HEADERS= $(SHELL) ./config.status
