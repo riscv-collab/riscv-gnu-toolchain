@@ -55,7 +55,7 @@ run the following command:
     ./configure --prefix=/opt/riscv
     make
 
-You should now be able to use riscv-gcc and its cousins.
+You should now be able to use riscv64-unknown-elf-gcc and its cousins.
 
 ### Installation (Linux)
 
@@ -87,8 +87,8 @@ To build the Linux cross-compiler with support for both 32-bit and
     ./configure --prefix=/opt/riscv --enable-multilib
     make linux
 
-The multilib compiler will have the prefix riscv-unknown-linux-gnu-,
-rather than the usual prefix (riscv32-... or riscv64-...).
+The multilib compiler will have the prefix riscv64-unknown-linux-gnu-,
+but will be able to target both 32-bit and 64-bit systems.
 
 ### Advanced Options
 
@@ -108,5 +108,4 @@ To test GCC, run the following commands:
 
     ./configure --prefix=$RISCV
     make linux
-    # Need qemu-riscv32 or qemu-riscv64 in your `PATH`.
     make report-linux
