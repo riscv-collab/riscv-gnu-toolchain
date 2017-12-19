@@ -31,6 +31,8 @@ endif
 
 export PATH AWK SED
 
+.SECONDARY:
+
 MULTILIB_FLAGS := @multilib_flags@
 NEWLIB_MULTILIB_NAMES := @newlib_multilib_names@
 GLIBC_MULTILIB_NAMES := @glibc_multilib_names@
@@ -99,6 +101,9 @@ check-gdb: check-gdb-@default_target@
 check-gdb-linux: stamps/check-gdb-linux
 check-gdb-newlib: stamps/check-gdb-newlib
 check-gdb-newlib-nano: stamps/check-gdb-newlib-nano
+.PHONY: check-glibc check-glibc-linux
+check-glibc: check-glibc-@default_target@
+check-glibc-linux: stamps/check-glibc-linux
 
 .PHONY: report
 report: report-@default_target@
@@ -159,20 +164,30 @@ stamps/build-linux-headers:
 	cp -a $(srcdir)/linux-headers/include $(SYSROOT)/usr/
 	mkdir -p $(dir $@) && touch $@
 
-stamps/build-glibc-linux-headers: $(srcdir)/riscv-glibc stamps/build-gcc-linux-stage1
+stamps/build-glibc-linux-headers: $(srcdir)/riscv-glibc stamps/build-gcc-linux-stage1 stamps/build-linux-headers
 	rm -rf $@ $(notdir $@)
 	mkdir $(notdir $@)
 	cd $(notdir $@) && CC="$(GLIBC_CC_FOR_TARGET)" $</configure \
 		--host=$(LINUX_TUPLE) \
 		--prefix=$(SYSROOT)/usr \
 		--enable-shared \
-		--with-headers=$(srcdir)/linux-headers/include \
+		--with-headers=$(SYSROOT)/usr/include \
 		--disable-multilib \
 		--enable-kernel=3.0.0
 	$(MAKE) -C $(notdir $@) install-headers
 	mkdir -p $(dir $@) && touch $@
 
-stamps/build-glibc-linux-%: $(srcdir)/riscv-glibc stamps/build-gcc-linux-stage1
+stamps/build-glibc-locales: $(srcdir)/riscv-glibc
+	rm -rf $(notdir $@)
+	mkdir $(notdir $@)
+	cd $(notdir $@) && \
+		$</configure \
+		--prefix=/usr
+	$(MAKE) -C $(notdir $@)
+	+flock $(SYSROOT)/.lock $(MAKE) -C $(notdir $@) localedata/install-locales install_root=$(SYSROOT)
+	touch $@
+
+stamps/build-glibc-linux-%: $(srcdir)/riscv-glibc stamps/build-gcc-linux-stage1 stamps/build-linux-headers
 ifeq ($(MULTILIB_FLAGS),--enable-multilib)
 	$(eval $@_ARCH := $(word 4,$(subst -, ,$@)))
 	$(eval $@_ABI := $(word 5,$(subst -, ,$@)))
@@ -188,14 +203,16 @@ endif
 	mkdir $(notdir $@)
 	cd $(notdir $@) && \
 		CC="$(GLIBC_CC_FOR_TARGET) $($@_CFLAGS)" \
+		CXX="$(GLIBC_CXX_FOR_TARGET) $($@_CFLAGS)" \
 		CFLAGS="$(CFLAGS_FOR_TARGET) -g -O2 $($@_CFLAGS)" \
+		CXXFLAGS="$(CFLAGS_FOR_TARGET) -g -O2 $($@_CFLAGS)" \
 		ASFLAGS="$(ASFLAGS_FOR_TARGET) $($@_CFLAGS)" \
 		$</configure \
 		--host=$(call make_tuple,$($@_XLEN),linux-gnu) \
 		--prefix=/usr \
 		--disable-werror \
 		--enable-shared \
-		--with-headers=$(srcdir)/linux-headers/include \
+		--with-headers=$(SYSROOT)/usr/include \
 		$(MULTILIB_FLAGS) \
 		--enable-kernel=3.0.0 \
 		$(GLIBC_TARGET_FLAGS) \
@@ -535,6 +552,18 @@ stamps/check-gdb-newlib-nano: stamps/build-gcc-newlib-stage2 stamps/build-qemu
 
 stamps/check-gdb-linux: stamps/build-gcc-linux-stage2 stamps/build-qemu
 	PATH="$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH)" RISC_V_SYSROOT="$(SYSROOT)" $(MAKE) -C build-binutils-linux check-gdb -k "RUNTESTFLAGS=--target_board='$(GLIBC_TARGET_BOARDS)'" || true
+	date > $@
+
+stamps/check-glibc-linux: $(patsubst %,stamps/check-glibc-linux-%,$(GLIBC_MULTILIB_NAMES))
+
+stamps/check-glibc-linux-%: stamps/build-glibc-linux-%-stage2 stamps/build-gcc-linux-stage2 stamps/build-qemu stamps/build-glibc-locales
+	$(eval $@_ARCH := $(word 4,$(subst -, ,$@)))
+	$(eval $@_ABI := $(word 5,$(subst -, ,$@)))
+	$(eval $@_LIBDIRSUFFIX := $(if $($@_ABI),$(shell echo $($@_ARCH) | sed 's/.*rv\([0-9]*\).*/\1/')/$($@_ABI),))
+	$(eval $@_XLEN := $(if $($@_ABI),$(shell echo $($@_ARCH) | sed 's/.*rv\([0-9]*\).*/\1/'),$(XLEN)))
+	$(eval $@_CFLAGS := $(if $($@_ABI),-march=$($@_ARCH) -mabi=$($@_ABI),))
+	$(eval $@_LIBDIROPTS := $(if $@_LIBDIRSUFFIX,--libdir=/usr/lib$($@_LIBDIRSUFFIX) libc_cv_slibdir=/lib$($@_LIBDIRSUFFIX) libc_cv_rtlddir=/lib,))
+	PATH="$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH)" RISC_V_SYSROOT="$(SYSROOT)" $(MAKE) -C $(notdir $<) test-wrapper="$(abspath $(srcdir)/scripts/wrapper/qemu/riscv$($@_XLEN)-unknown-linux-gnu-run)" check
 	date > $@
 
 .PHONY: report-gcc-newlib report-gcc-newlib-nano

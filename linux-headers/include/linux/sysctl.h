@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 /*
  * sysctl.h: General linux system control interface
  *
@@ -25,8 +26,6 @@
 #include <linux/kernel.h>
 #include <linux/types.h>
 
-
-#include <stddef.h>		/* For size_t. */
 
 #define CTL_MAXNAME 10		/* how many path components do we allow in a
 				   call to sysctl?   In other words, what is

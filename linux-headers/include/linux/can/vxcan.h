@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 #ifndef _CAN_VXCAN_H
 #define _CAN_VXCAN_H
 

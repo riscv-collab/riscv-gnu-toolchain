@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: ((GPL-2.0 WITH Linux-syscall-note) OR BSD-2-Clause) */
 /*
  * Copyright (c) 2007 Cisco Systems, Inc. All rights reserved.
  * Copyright (c) 2007, 2008 Mellanox Technologies. All rights reserved.
@@ -98,8 +99,7 @@ struct mlx4_ib_create_srq_resp {
 struct mlx4_ib_create_qp_rss {
 	__u64   rx_hash_fields_mask;
 	__u8    rx_hash_function;
-	__u8    rx_key_len;
-	__u8    reserved[6];
+	__u8    reserved[7];
 	__u8    rx_hash_key[40];
 	__u32   comp_mask;
 	__u32   reserved1;
@@ -111,8 +111,8 @@ struct mlx4_ib_create_qp {
 	__u8	log_sq_bb_count;
 	__u8	log_sq_stride;
 	__u8	sq_no_prefetch;
-	__u32	inl_recv_sz;
 	__u8	reserved;
+	__u32	inl_recv_sz;
 };
 
 struct mlx4_ib_create_wq {
@@ -121,7 +121,6 @@ struct mlx4_ib_create_wq {
 	__u8	log_range_size;
 	__u8	reserved[3];
 	__u32   comp_mask;
-	__u32   reserved1;
 };
 
 struct mlx4_ib_modify_wq {
