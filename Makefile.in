@@ -57,8 +57,10 @@ NEWLIB_TUPLE ?= $(call make_tuple,$(XLEN),elf)
 CFLAGS_FOR_TARGET := $(CFLAGS_FOR_TARGET_EXTRA) @cmodel@
 ASFLAGS_FOR_TARGET := $(ASFLAGS_FOR_TARGET_EXTRA) @cmodel@
 # --with-expat is required to enable XML support used by OpenOCD.
-BINUTILS_GDB_TARGET_FLAGS := --with-expat=yes $(BINUTILS_GDB_TARGET_FLAGS_EXTRA)
-BINUTILS_GDB_NATIVE_FLAGS := $(BINUTILS_GDB_NATIVE_FLAGS_EXTRA)
+BINUTILS_TARGET_FLAGS := --with-expat=yes $(BINUTILS_TARGET_FLAGS_EXTRA)
+BINUTILS_NATIVE_FLAGS := $(BINUTILS_NATIVE_FLAGS_EXTRA)
+GDB_TARGET_FLAGS := --with-expat=yes $(GDB_TARGET_FLAGS_EXTRA)
+GDB_NATIVE_FLAGS := $(GDB_NATIVE_FLAGS_EXTRA)
 GLIBC_TARGET_FLAGS := $(GLIBC_TARGET_FLAGS_EXTRA)
 GLIBC_CC_FOR_TARGET ?= $(LINUX_TUPLE)-gcc
 GLIBC_CXX_FOR_TARGET ?= $(LINUX_TUPLE)-g++
@@ -73,10 +75,15 @@ CONFIGURE_HOST   = @configure_host@
 all: @default_target@
 newlib: stamps/build-gcc-newlib-stage2
 linux: stamps/build-gcc-linux-stage2
+ifeq (@enable_gdb@,--enable-gdb)
+newlib: stamps/build-gdb-newlib
+linux: stamps/build-gdb-linux
+endif
 linux-native: stamps/build-gcc-linux-native
 
-.PHONY: build-binutils build-gcc1 build-libc build-gcc2 build-qemu
+.PHONY: build-binutils build-gdb build-gcc1 build-libc build-gcc2 build-qemu
 build-binutils: stamps/build-binutils-@default_target@
+build-gdb: stamps/build-gdb-@default_target@
 build-gcc%: stamps/build-gcc-@default_target@-stage%
 ifeq (@default_target@,linux)
 build-libc: $(patsubst %,stamps/build-glibc-linux-%,$(MULTLIB_NAMES))
@@ -149,7 +156,7 @@ $(addprefix $(srcdir)/patches/,$(PACKAGES)): $(srcdir)/patches/%: src/%
 
 patches: $(addprefix $(srcdir)/patches/,$(PACKAGES))
 
-stamps/build-binutils-linux: $(srcdir)/riscv-binutils-gdb
+stamps/build-binutils-linux: $(srcdir)/riscv-binutils
 	rm -rf $@ $(notdir $@)
 	mkdir $(notdir $@)
 # CC_FOR_TARGET is required for the ld testsuite.
@@ -162,8 +169,35 @@ stamps/build-binutils-linux: $(srcdir)/riscv-binutils-gdb
 		@with_guile@ \
 		--disable-werror \
 		--disable-nls \
-		$(BINUTILS_GDB_TARGET_FLAGS) \
-		@enable_gdb@
+		$(BINUTILS_TARGET_FLAGS) \
+		--disable-gdb \
+		--disable-sim \
+		--disable-libdecnumber \
+		--disable-libreadline
+	$(MAKE) -C $(notdir $@)
+	$(MAKE) -C $(notdir $@) install
+	mkdir -p $(dir $@) && touch $@
+
+stamps/build-gdb-linux: $(srcdir)/riscv-gdb
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+# CC_FOR_TARGET is required for the ld testsuite.
+	cd $(notdir $@) && CC_FOR_TARGET=$(GLIBC_CC_FOR_TARGET) $</configure \
+		--target=$(LINUX_TUPLE) \
+		$(CONFIGURE_HOST) \
+		--prefix=$(INSTALL_DIR) \
+		--with-sysroot=$(SYSROOT) \
+		$(MULTILIB_FLAGS) \
+		@with_guile@ \
+		--disable-werror \
+		--disable-nls \
+		$(GDB_TARGET_FLAGS) \
+		--enable-gdb \
+		--disable-gas \
+		--disable-binutils \
+		--disable-ld \
+		--disable-gold \
+		--disable-gprof
 	$(MAKE) -C $(notdir $@)
 	$(MAKE) -C $(notdir $@) install
 	mkdir -p $(dir $@) && touch $@
@@ -282,7 +316,7 @@ stamps/build-gcc-linux-stage2: $(srcdir)/riscv-gcc $(addprefix stamps/build-glib
 	cp -a $(INSTALL_DIR)/$(LINUX_TUPLE)/lib* $(SYSROOT)
 	mkdir -p $(dir $@) && touch $@
 
-stamps/build-binutils-linux-native: $(srcdir)/riscv-binutils-gdb stamps/build-gcc-linux-stage2
+stamps/build-binutils-linux-native: $(srcdir)/riscv-binutils stamps/build-gcc-linux-stage2
 	rm -rf $@ $(notdir $@)
 	mkdir $(notdir $@)
 	cd $(notdir $@) && $</configure \
@@ -294,8 +328,11 @@ stamps/build-binutils-linux-native: $(srcdir)/riscv-binutils-gdb stamps/build-gc
 		@with_guile@ \
 		--disable-werror \
 		--disable-nls \
-		$(BINUTILS_GDB_NATIVE_FLAGS) \
-		@enable_gdb@
+		$(BINUTILS_NATIVE_FLAGS) \
+		--disable-gdb \
+		--disable-sim \
+		--disable-libdecnumber \
+		--disable-libreadline
 	$(MAKE) -C $(notdir $@)
 	$(MAKE) -C $(notdir $@) install
 	mkdir -p $(dir $@) && touch $@
@@ -328,7 +365,7 @@ stamps/build-gcc-linux-native: $(srcdir)/riscv-gcc stamps/build-gcc-linux-stage2
 	cp -a $(INSTALL_DIR)/$(LINUX_TUPLE)/lib* $(SYSROOT)
 	mkdir -p $(dir $@) && touch $@
 
-stamps/build-binutils-newlib: $(srcdir)/riscv-binutils-gdb
+stamps/build-binutils-newlib: $(srcdir)/riscv-binutils
 	rm -rf $@ $(notdir $@)
 	mkdir $(notdir $@)
 # CC_FOR_TARGET is required for the ld testsuite.
@@ -338,8 +375,32 @@ stamps/build-binutils-newlib: $(srcdir)/riscv-binutils-gdb
 		--prefix=$(INSTALL_DIR) \
 		@with_guile@ \
 		--disable-werror \
-		$(BINUTILS_GDB_TARGET_FLAGS) \
-		@enable_gdb@
+		$(BINUTILS_TARGET_FLAGS) \
+		--disable-gdb \
+		--disable-sim \
+		--disable-libdecnumber \
+		--disable-libreadline
+	$(MAKE) -C $(notdir $@)
+	$(MAKE) -C $(notdir $@) install
+	mkdir -p $(dir $@) && touch $@
+
+stamps/build-gdb-newlib: $(srcdir)/riscv-gdb
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+# CC_FOR_TARGET is required for the ld testsuite.
+	cd $(notdir $@) && CC_FOR_TARGET=$(NEWLIB_CC_FOR_TARGET) $</configure \
+		--target=$(NEWLIB_TUPLE) \
+		$(CONFIGURE_HOST) \
+		--prefix=$(INSTALL_DIR) \
+		@with_guile@ \
+		--disable-werror \
+		$(GDB_TARGET_FLAGS) \
+		--enable-gdb \
+		--disable-gas \
+		--disable-binutils \
+		--disable-ld \
+		--disable-gold \
+		--disable-gprof
 	$(MAKE) -C $(notdir $@)
 	$(MAKE) -C $(notdir $@) install
 	mkdir -p $(dir $@) && touch $@
@@ -547,16 +608,16 @@ stamps/check-binutils-linux: stamps/build-gcc-linux-stage2 stamps/build-qemu
 	PATH="$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH)" RISC_V_SYSROOT="$(SYSROOT)" $(MAKE) -C build-binutils-linux check-{binutils,gas,ld} -k "RUNTESTFLAGS=--target_board='$(GLIBC_TARGET_BOARDS)'" || true
 	date > $@
 
-stamps/check-gdb-newlib: stamps/build-gcc-newlib-stage2 stamps/build-qemu
-	PATH="$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH)" RISC_V_SYSROOT="$(SYSROOT)" $(MAKE) -C build-binutils-newlib check-gdb -k "RUNTESTFLAGS=--target_board='$(NEWLIB_TARGET_BOARDS)'" || true
+stamps/check-gdb-newlib: stamps/build-gcc-newlib-stage2 stamps/build-gdb-newlib stamps/build-qemu
+	PATH="$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH)" RISC_V_SYSROOT="$(SYSROOT)" $(MAKE) -C build-gdb-newlib check-gdb -k "RUNTESTFLAGS=--target_board='$(NEWLIB_TARGET_BOARDS)'" || true
 	date > $@
 
-stamps/check-gdb-newlib-nano: stamps/build-gcc-newlib-stage2 stamps/build-qemu
-	PATH="$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH)" RISC_V_SYSROOT="$(SYSROOT)" $(MAKE) -C build-binutils-newlib check-gdb -k "RUNTESTFLAGS=--target_board='$(NEWLIB_NANO_TARGET_BOARDS)'" || true
+stamps/check-gdb-newlib-nano: stamps/build-gcc-newlib-stage2 stamps/build-gdb-newlib stamps/build-qemu
+	PATH="$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH)" RISC_V_SYSROOT="$(SYSROOT)" $(MAKE) -C build-gdb-newlib check-gdb -k "RUNTESTFLAGS=--target_board='$(NEWLIB_NANO_TARGET_BOARDS)'" || true
 	date > $@
 
-stamps/check-gdb-linux: stamps/build-gcc-linux-stage2 stamps/build-qemu
-	PATH="$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH)" RISC_V_SYSROOT="$(SYSROOT)" $(MAKE) -C build-binutils-linux check-gdb -k "RUNTESTFLAGS=--target_board='$(GLIBC_TARGET_BOARDS)'" || true
+stamps/check-gdb-linux: stamps/build-gcc-linux-stage2 stamps/build-gdb-linux stamps/build-qemu
+	PATH="$(srcdir)/scripts/wrapper/qemu:$(INSTALL_DIR)/bin:$(PATH)" RISC_V_SYSROOT="$(SYSROOT)" $(MAKE) -C build-gdb-linux check-gdb -k "RUNTESTFLAGS=--target_board='$(GLIBC_TARGET_BOARDS)'" || true
 	date > $@
 
 .PHONY: report-gcc-newlib report-gcc-newlib-nano
@@ -606,16 +667,16 @@ clean:
 .PHONY: report-gdb-newlib report-gdb-newlib-nano
 report-gdb-newlib: stamps/check-gdb-newlib
 	stat $(patsubst %,$(srcdir)/test/gdb-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)) || exit 1
-	if find build-binutils-newlib -iname '*.sum' | xargs grep ^FAIL | sort | grep -F -v $(patsubst %,--file=$(srcdir)/test/gdb-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)); then false; else true; fi
+	if find build-gdb-newlib -iname '*.sum' | xargs grep ^FAIL | sort | grep -F -v $(patsubst %,--file=$(srcdir)/test/gdb-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)); then false; else true; fi
 
 report-gdb-newlib-nano: stamps/check-gdb-newlib-nano
 	stat $(patsubst %,$(srcdir)/test/gdb-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)) || exit 1
-	if find build-binutils-newlib -iname '*.sum' | xargs grep ^FAIL | sort | grep -F -v $(patsubst %,--file=$(srcdir)/test/gdb-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)); then false; else true; fi
+	if find build-gdb-newlib -iname '*.sum' | xargs grep ^FAIL | sort | grep -F -v $(patsubst %,--file=$(srcdir)/test/gdb-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)); then false; else true; fi
 
 .PHONY: report-gdb-linux
 report-gdb-linux: stamps/check-gdb-linux
 	stat $(patsubst %,$(srcdir)/test/gdb-linux/%.log,$(GLIBC_MULTILIB_NAMES)) || exit 1
-	if find build-binutils-linux -iname '*.sum' | xargs grep ^FAIL | sort | grep -F -v $(patsubst %,--file=$(srcdir)/test/gdb-linux/%.log,$(GLIBC_MULTILIB_NAMES)); then false; else true; fi
+	if find build-gdb-linux -iname '*.sum' | xargs grep ^FAIL | sort | grep -F -v $(patsubst %,--file=$(srcdir)/test/gdb-linux/%.log,$(GLIBC_MULTILIB_NAMES)); then false; else true; fi
 
 distclean: clean
 	rm -rf src
