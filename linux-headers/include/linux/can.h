@@ -95,11 +95,17 @@ typedef __u32 can_err_mask_t;
  * @can_dlc: frame payload length in byte (0 .. 8) aka data length code
  *           N.B. the DLC field from ISO 11898-1 Chapter 8.4.2.3 has a 1:1
  *           mapping of the 'data length code' to the real payload length
+ * @__pad:   padding
+ * @__res0:  reserved / padding
+ * @__res1:  reserved / padding
  * @data:    CAN frame payload (up to 8 byte)
  */
 struct can_frame {
 	canid_t can_id;  /* 32 bit CAN_ID + EFF/RTR/ERR flags */
 	__u8    can_dlc; /* frame payload length in byte (0 .. CAN_MAX_DLEN) */
+	__u8    __pad;   /* padding */
+	__u8    __res0;  /* reserved / padding */
+	__u8    __res1;  /* reserved / padding */
 	__u8    data[CAN_MAX_DLEN] __attribute__((aligned(8)));
 };
 
@@ -190,5 +196,6 @@ struct can_filter {
 };
 
 #define CAN_INV_FILTER 0x20000000U /* to be set in can_filter.can_id */
+#define CAN_RAW_FILTER_MAX 512 /* maximum number of can_filter set via setsockopt() */
 
 #endif /* !_UAPI_CAN_H */

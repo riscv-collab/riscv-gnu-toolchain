@@ -33,7 +33,7 @@ AS_IF([test x"$need_gcc_external_libraries" != xno],
 AC_PATH_PROG([CURL], [curl], [no])
 AC_PATH_PROG([WGET], [wget], [no])
 AC_PATH_PROG([FTP], [ftp], [no])
-AS_IF([test x"$CURL" != xno], [FETCHER="$CURL -L -o - --ftp-pasv"],
+AS_IF([test x"$CURL" != xno], [FETCHER="$CURL -L -o - --ftp-pasv --retry 10"],
 	[test x"$WGET" != xno], [FETCHER="$WGET -O -"],
 	[test x"$FTP" != xno], [FETCHER="$FTP -o - -p"],
 	[AC_MSG_ERROR([no file transfer utility found])])
@@ -50,13 +50,6 @@ AS_IF([test "x$enable_linux" != xno],
 	[AC_SUBST(default_target, linux)],
 	[AC_SUBST(default_target, newlib)])
 
-AC_ARG_WITH(xlen,
-	[AS_HELP_STRING([--with-xlen=XLEN],
-		[Set XLEN, the X-register bit width (default is 64)])],
-	AC_SUBST(XLEN, $withval),
-	AC_SUBST(XLEN, 64)
-	)
-
 AC_ARG_ENABLE(atomic,
 	[AS_HELP_STRING([--disable-atomic],
 		[disable use of atomic memory instructions in glibc @<:@--enable-atomic@:>@])],
@@ -64,57 +57,33 @@ AC_ARG_ENABLE(atomic,
 	[enable_atomic=yes]
 	)
 
-AC_ARG_ENABLE(float,
-	[AS_HELP_STRING([--disable-float],
-		[use software floating point in glibc @<:@--enable-float@:>@])],
-	[],
-	[enable_float=yes]
-	)
-
-AC_DEFUN([MATCH_PATTERN], [echo "$1" | $GREP -qE "$2"])
-
-AC_DEFUN([GENERATE_EXTENSION],
-	[AS_IF([MATCH_PATTERN([$1], [^RV(32|64).*$2])],
-		[$3=yes],
-		[$3=no])]
-	)
-
-AC_DEFUN([PARSE_EXTENSIONS],
-	[GENERATE_EXTENSION([$1], A, enable_atomic)
-	 GENERATE_EXTENSION([$1], F, enable_float)]
-	)
-
-AC_DEFUN([PARSE_BASE_ARCH],
-	[AS_IF([MATCH_PATTERN([$1], [^RV32])],
-		AC_SUBST(XLEN, 32))
-	 AS_IF([MATCH_PATTERN([$1], [^RV64])],
-		AC_SUBST(XLEN, 64))]
-	)
-
 AC_ARG_WITH(arch,
-	[AS_HELP_STRING([--with-arch=RV64IMAFD],
-		[Sets the base RISC-V ISA, defaults to RV64IMAFD])],
-	[PARSE_BASE_ARCH([$withval])
-	 PARSE_EXTENSIONS([$withval])
-	 AC_SUBST(WITH_ARCH, --with-arch=$withval)],
-	[]
+	[AS_HELP_STRING([--with-arch=rv64imafdc],
+		[Sets the base RISC-V ISA, defaults to rv64imafdc])],
+	[],
+	[with_arch=rv64imafdc]
 	)
 
-AS_IF([test "x$enable_atomic" != xno],
-        [],
-	[AC_SUBST(atomic_cflags,-mno-atomic)])
+AC_ARG_WITH(abi,
+	[AS_HELP_STRING([--with-abi=lp64d],
+		[Sets the base RISC-V ABI, defaults to lp64d])],
+	[],
+	[with_abi=default]
+	)
 
-AS_IF([test "x$enable_float" != xno],
-	    [AC_SUBST(float_cflags,-mhard-float)dnl
-AC_SUBST(float_asflags,-mhard-float)dnl
-AC_SUBST(binutils_float_flags,--disable-soft-float)dnl
-AC_SUBST(gcc_float_flags,"--disable-soft-float --with-float=hard")dnl
-AC_SUBST(glibc_float_flags,)],
-	    [AC_SUBST(float_cflags,-msoft-float)dnl
-AC_SUBST(float_asflags,-msoft-float)dnl
-AC_SUBST(binutils_float_flags,--enable-soft-float)dnl
-AC_SUBST(gcc_float_flags,"--enable-soft-float --with-float=soft")dnl
-AC_SUBST(glibc_float_flags,--without-fp)])
+AS_IF([test "x$with_abi" == xdefault],
+	[AS_CASE([$with_arch],
+		[*rv64g* | *rv64*d*], [with_abi=lp64d],
+		[*rv64*f*], [with_abi=lp64f],
+		[*rv64*], [with_abi=lp64],
+		[*rv32g* | *rv32*d*], [with_abi=ilp32d],
+		[*rv32*f*], [with_abi=ilp32f],
+		[*rv32*], [with_abi=ilp32],
+		[AC_MSG_ERROR([Unknown arch])]
+	)])
+
+AC_SUBST(WITH_ARCH, --with-arch=$with_arch)
+AC_SUBST(WITH_ABI, --with-abi=$with_abi)
 
 AC_ARG_ENABLE(multilib,
 	[AS_HELP_STRING([--enable-multilib],
@@ -124,11 +93,83 @@ AC_ARG_ENABLE(multilib,
 	)
 
 AS_IF([test "x$enable_multilib" != xno],
-        [AC_SUBST(multilib_flags,)],
+        [AC_SUBST(multilib_flags,--enable-multilib)],
 	[AC_SUBST(multilib_flags,--disable-multilib)])
+
+AS_IF([test "x$enable_multilib" != xno],
+        [AC_SUBST(glibc_multilib_names,"rv32imac-ilp32 rv32imafdc-ilp32d rv64imac-lp64 rv64imafdc-lp64d")],
+        [AC_SUBST(glibc_multilib_names,"$with_arch-$with_abi")])
+
+AS_IF([test "x$enable_multilib" != xno],
+        [AC_SUBST(newlib_multilib_names,"rv32i-ilp32 rv32iac-ilp32 rv32im-ilp32 rv32imac-ilp32 rv32imafc-ilp32f rv64imac-lp64 rv64imafdc-lp64d")],
+        [AC_SUBST(newlib_multilib_names,"$with_arch-$with_abi")])
+
+AC_ARG_ENABLE(gcc-checking,
+        [AS_HELP_STRING([--enable-gcc-checking],
+		[Enable gcc internal checking, it will make gcc very slow, only enable it when developing gcc @<:@--disable-gcc-checking@:>@])],
+        [],
+        [enable_gcc_checking=yes]
+        )
+AS_IF([test "x$enable_gcc_checking" != xno],
+	[AC_SUBST(gcc_checking, --enable-checking=yes)],
+	[AC_SUBST(gcc_checking, --enable-checking=release)])
+
+AC_ARG_WITH(cmodel,
+	[AS_HELP_STRING([--with-cmodel],
+		[Select the code model to use when building libc and libgcc @<:@--with-cmodel=medlow@:>@])],
+	[],
+	[enable_gcc_checking=yes]
+	)
+AS_IF([test "x$with_cmodel" != x],
+	[AC_SUBST(cmodel, -mcmodel=$with_cmodel)],
+	[AC_SUBST(cmodel, -mcmodel=medlow)])
 
 AC_CONFIG_FILES([Makefile])
 AC_CONFIG_FILES([scripts/wrapper/awk/awk], [chmod +x scripts/wrapper/awk])
 AC_CONFIG_FILES([scripts/wrapper/sed/sed], [chmod +x scripts/wrapper/sed])
+
+AC_ARG_WITH(host,
+	[AS_HELP_STRING([--with-host=x86_64-w64-mingw32],
+			[Sets the host for the tools, you probably want nothing])],
+	[],
+	[with_host=default]
+	)
+
+AS_IF([test "x$with_host" != xdefault],
+	[AC_SUBST(configure_host,--host=$with_host)],
+	[AC_SUBST(configure_host,"")])
+
+AC_ARG_WITH(system-zlib,
+	[AS_HELP_STRING([--without-system-zlib],
+		[use the builtin copy of zlib from GCC])],
+	[],
+	[with_system_zlib=yes]
+	)
+
+AS_IF([test "x$with_system_zlib" != xno],
+	[AC_SUBST(with_system_zlib,--with-system-zlib)],
+	[AC_SUBST(with_system_zlib,--without-system-zlib)])
+
+AC_ARG_WITH(guile,
+	[AC_HELP_STRING([--with-guile],
+			[Set which guile to use, if any])],
+	[],
+	[with_guile=default]
+	)
+
+AS_IF([test "x$with_guile" != xdefault],
+	[AC_SUBST(with_guile,--with-guile=$with_guile)],
+	[AC_SUBST(with_guile,"")])
+
+AC_ARG_ENABLE(gdb,
+	[AS_HELP_STRING([--disable-gdb],
+		[Don't build GDB, as it's not upstream])],
+	[],
+	[enable_gdb=yes]
+	)
+
+AS_IF([test "x$enable_gdb" != xno],
+	[AC_SUBST(enable_gdb, --enable-gdb)],
+	[AC_SUBST(enable_gdb, --disable-gdb)])
 
 AC_OUTPUT

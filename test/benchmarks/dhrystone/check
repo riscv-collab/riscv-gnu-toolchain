@@ -1,0 +1,66 @@
+#!/bin/bash
+
+set -e
+
+unset cc
+unset objdump
+unset march
+unset mabi
+unset specs
+unset sim
+unset out
+c=()
+while [[ "$1" != "" ]]
+do
+    case "$1" in
+    -cc=*) cc="$(echo "$1" | cut -d= -f2-)";;
+    -objdump=*) objdump="$(echo "$1" | cut -d= -f2-)";;
+    -march=*) march="$(echo "$1" | cut -d= -f2-)";;
+    -mabi=*) mabi="$(echo "$1" | cut -d= -f2-)";;
+    -specs=*) specs=("$1");;
+    -sim=*) sim="$(echo "$1" | cut -d= -f2-)";;
+    -out=*) out="$(echo "$1" | cut -d= -f2-)";;
+    *.c) c+=("$1");;
+    *) echo "unknown argument $1" >&2; exit 1;;
+    esac
+    shift
+done
+
+echo "ERROR: $march-$mabi failed to run" >$out
+
+tempdir=$(mktemp -d)
+trap "rm -rf $tempdir" EXIT
+for f in ${c[@]}
+do
+  $cc -c $f -march=$march -mabi=$mabi $specs -O3 -fno-common -fno-inline -o $tempdir/$(basename $f).o -static -Wno-all
+done
+$cc -march=$march -mabi=$mabi $specs $tempdir/*.o -o $tempdir/dhrystone
+
+$objdump -d $tempdir/dhrystone > ~/dump
+begin_pc=$($objdump -d $tempdir/dhrystone | grep 'Begin_Time' | grep -e 'sd' -e 'sw' | cut -d: -f1 | xargs echo)
+end_pc=$($objdump -d $tempdir/dhrystone | grep 'End_Time' | grep -e 'sd' -e 'sw' | cut -d: -f1 | xargs echo)
+
+$sim -Wq,-singlestep -Wq,-d -Wq,exec $tempdir/dhrystone >& $tempdir/log
+begin_cycle="$(grep -n 00$begin_pc $tempdir/log | cut -d: -f1)"
+end_cycle="$(grep -n 00$end_pc $tempdir/log | cut -d: -f1)"
+cycles="$(echo $((end_cycle - begin_cycle)) | rev | cut -c4- | rev)"
+
+unset max_cycles
+case "$march-$mabi" in
+rv32i-ilp32)     max_cycles=377;;
+rv32iac-ilp32)   max_cycles=377;;
+rv32im-ilp32)    max_cycles=304;;
+rv32imac-ilp32)  max_cycles=304;;
+rv32imafc-ilp32f)max_cycles=304;;
+rv64imac-lp64)   max_cycles=287;;
+rv64imafdc-lp64) max_cycles=287;;
+rv64imafdc-lp64d)max_cycles=287;;
+*) echo "ERROR: Unknown ISA-ABI pair: $march-$mabi" >$out; exit 0;;
+esac
+
+if test $cycles -le $max_cycles
+then
+  echo "PASS: $march-mabi in $cycles instructions (max is $max_cycles)" >$out
+else
+  echo "FAIL: $march-mabi in $cycles instructions (max is $max_cycles)" >$out
+fi
