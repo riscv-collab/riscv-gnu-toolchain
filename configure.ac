@@ -166,4 +166,20 @@ AS_IF([test "x$enable_gdb" != xno],
 	[AC_SUBST(enable_gdb, --enable-gdb)],
 	[AC_SUBST(enable_gdb, --disable-gdb)])
 
+AC_ARG_ENABLE([newlib-io-float],
+    AS_HELP_STRING([--enable-newlib-io-float], [enable float type support in IO functions printf/scanf]))
+
+AS_IF([test "x$enable_newlib_io_float" = "xyes"], 
+	[AC_SUBST(newlib_io_float, --enable-newlib-io-float=yes)]
+)
+
+AC_ARG_ENABLE(newlib-io-long-double,
+    [AS_HELP_STRING([--disable-newlib-io-long-double], [disable long double type support in IO functions printf/scanf])],
+    [],
+    [enable_newlib_io_long_double=yes]	
+)
+AS_IF([test "x$enable_newlib_io_long_double" != "xno"],
+	[AC_SUBST(newlib_io_long_double, --enable-newlib-io-long-double=yes)],
+	[AC_SUBST(newlib_io_long_double, --enable-newlib-io-long-double=no)]
+)
 AC_OUTPUT
