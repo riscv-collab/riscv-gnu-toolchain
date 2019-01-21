@@ -166,4 +166,10 @@ AS_IF([test "x$enable_gdb" != xno],
 	[AC_SUBST(enable_gdb, --enable-gdb)],
 	[AC_SUBST(enable_gdb, --disable-gdb)])
 
+AC_ARG_ENABLE([newlib-formatted-io],
+    AS_HELP_STRING([--enable-newlib-formatted-io], [enable formatted IO functions]))
+
+AS_IF([test "x$enable_newlib_formatted_io" = "xyes"], 
+	[AC_SUBST(newlib_formatted_io, --enable-newlib-formatted-io=yes)]
+)
 AC_OUTPUT
