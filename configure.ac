@@ -64,6 +64,13 @@ AC_ARG_WITH(abi,
 	[with_abi=default]
 	)
 
+AC_ARG_WITH(tune,
+	[AS_HELP_STRING([--with-tune=rocket],
+		[Set the base RISC-V CPU, defaults to rocket])],
+	[],
+	[with_tune=rocket]
+	)
+
 AS_IF([test "x$with_abi" == xdefault],
 	[AS_CASE([$with_arch],
 		[*rv64g* | *rv64*d*], [with_abi=lp64d],
@@ -78,6 +85,7 @@ AS_IF([test "x$with_abi" == xdefault],
 
 AC_SUBST(WITH_ARCH, --with-arch=$with_arch)
 AC_SUBST(WITH_ABI, --with-abi=$with_abi)
+AC_SUBST(WITH_TUNE, --with-tune=$with_tune)
 
 AC_ARG_ENABLE(multilib,
 	[AS_HELP_STRING([--enable-multilib],
