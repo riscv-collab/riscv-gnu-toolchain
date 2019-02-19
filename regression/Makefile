@@ -49,12 +49,21 @@ build-%: stamps/build-%
 
 .PHONY: report
 report: check
-	$(MAKE) $(addprefix report-,$(TARGETS))
+	$(MAKE) $(addprefix report-gcc-,$(TARGETS))
 
-.PHONY: report-%
-report-%: stamps/check-%
-	$(eval $@_BUILDDIR := build/$(patsubst report-%,%,$(notdir $@)))
+.PHONY: report-gcc-%
+report-gcc-%: stamps/check-%
+	$(eval $@_BUILDDIR := build/$(patsubst report-gcc-%,%,$(notdir $@)))
 	$(MAKE) -C $($@_BUILDDIR) report
+
+.PHONY: report-binutils
+report-binutils: check
+	$(MAKE) $(addprefix report-binutils-,$(TARGETS))
+
+.PHONY: report-binutils-%
+report-binutils-%: stamps/check-%
+	$(eval $@_BUILDDIR := build/$(patsubst report-binutils-%,%,$(notdir $@)))
+	$(MAKE) -C $($@_BUILDDIR) report-binutils
 
 # These rules call into the above Makefile to actually test the various
 # toolchain targets we care about.
