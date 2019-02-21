@@ -21,6 +21,7 @@ newlib_url := ftp://sourceware.org/pub/newlib/newlib-$(newlib_version).tar.gz
 
 WITH_ARCH ?= @WITH_ARCH@
 WITH_ABI ?= @WITH_ABI@
+WITH_TUNE ?= @WITH_TUNE@
 SYSROOT := $(INSTALL_DIR)/sysroot
 
 SHELL := /bin/sh
@@ -53,28 +54,37 @@ endif
 make_tuple = riscv$(1)-unknown-$(2)
 LINUX_TUPLE  ?= $(call make_tuple,$(XLEN),linux-gnu)
 NEWLIB_TUPLE ?= $(call make_tuple,$(XLEN),elf)
+MUSL_TUPLE ?= $(call make_tuple,$(XLEN),linux-musl)
 
 CFLAGS_FOR_TARGET := $(CFLAGS_FOR_TARGET_EXTRA) @cmodel@
+CXXFLAGS_FOR_TARGET := $(CXXFLAGS_FOR_TARGET_EXTRA) @cmodel@
 ASFLAGS_FOR_TARGET := $(ASFLAGS_FOR_TARGET_EXTRA) @cmodel@
 # --with-expat is required to enable XML support used by OpenOCD.
 BINUTILS_TARGET_FLAGS := --with-expat=yes $(BINUTILS_TARGET_FLAGS_EXTRA)
 BINUTILS_NATIVE_FLAGS := $(BINUTILS_NATIVE_FLAGS_EXTRA)
 GDB_TARGET_FLAGS := --with-expat=yes $(GDB_TARGET_FLAGS_EXTRA)
 GDB_NATIVE_FLAGS := $(GDB_NATIVE_FLAGS_EXTRA)
+
 GLIBC_TARGET_FLAGS := $(GLIBC_TARGET_FLAGS_EXTRA)
 GLIBC_CC_FOR_TARGET ?= $(LINUX_TUPLE)-gcc
 GLIBC_CXX_FOR_TARGET ?= $(LINUX_TUPLE)-g++
 GLIBC_TARGET_BOARDS ?= $(shell echo "$(GLIBC_MULTILIB_NAMES)" | sed 's!\([a-z0-9]*\)-\([a-z0-9]*\)!riscv-sim/-march=\1/-mabi=\2/@cmodel@!g')
+
 NEWLIB_CC_FOR_TARGET ?= $(NEWLIB_TUPLE)-gcc
 NEWLIB_CXX_FOR_TARGET ?= $(NEWLIB_TUPLE)-g++
 NEWLIB_TARGET_BOARDS ?= $(shell echo "$(NEWLIB_MULTILIB_NAMES)" | sed 's!\([a-z0-9]*\)-\([a-z0-9]*\)!riscv-sim/-march=\1/-mabi=\2/@cmodel@!g')
 NEWLIB_NANO_TARGET_BOARDS ?= $(shell echo "$(NEWLIB_MULTILIB_NAMES)" | sed 's!\([a-z0-9]*\)-\([a-z0-9]*\)!riscv-sim-nano/-march=\1/-mabi=\2/@cmodel@!g')
+
+MUSL_TARGET_FLAGS := $(MUSL_TARGET_FLAGS_EXTRA)
+MUSL_CC_FOR_TARGET ?= $(MUSL_TUPLE)-gcc
+MUSL_CXX_FOR_TARGET ?= $(MUSL_TUPLE)-g++
 
 CONFIGURE_HOST   = @configure_host@
 
 all: @default_target@
 newlib: stamps/build-gcc-newlib-stage2
 linux: stamps/build-gcc-linux-stage2
+musl: stamps/build-gcc-musl-stage2
 ifeq (@enable_gdb@,--enable-gdb)
 newlib: stamps/build-gdb-newlib
 linux: stamps/build-gdb-linux
@@ -156,6 +166,17 @@ $(addprefix $(srcdir)/patches/,$(PACKAGES)): $(srcdir)/patches/%: src/%
 
 patches: $(addprefix $(srcdir)/patches/,$(PACKAGES))
 
+
+stamps/build-linux-headers:
+	mkdir -p $(SYSROOT)/usr/
+	cp -a $(srcdir)/linux-headers/include $(SYSROOT)/usr/
+	mkdir -p $(dir $@) && touch $@
+
+
+#
+# GLIBC
+#
+
 stamps/build-binutils-linux: $(srcdir)/riscv-binutils
 	rm -rf $@ $(notdir $@)
 	mkdir $(notdir $@)
@@ -173,7 +194,7 @@ stamps/build-binutils-linux: $(srcdir)/riscv-binutils
 		--disable-gdb \
 		--disable-sim \
 		--disable-libdecnumber \
-		--disable-libreadline
+		--disable-readline
 	$(MAKE) -C $(notdir $@)
 	$(MAKE) -C $(notdir $@) install
 	mkdir -p $(dir $@) && touch $@
@@ -200,11 +221,6 @@ stamps/build-gdb-linux: $(srcdir)/riscv-gdb
 		--disable-gprof
 	$(MAKE) -C $(notdir $@)
 	$(MAKE) -C $(notdir $@) install
-	mkdir -p $(dir $@) && touch $@
-
-stamps/build-linux-headers:
-	mkdir -p $(SYSROOT)/usr/
-	cp -a $(srcdir)/linux-headers/include $(SYSROOT)/usr/
 	mkdir -p $(dir $@) && touch $@
 
 stamps/build-glibc-linux-headers: $(srcdir)/riscv-glibc stamps/build-gcc-linux-stage1
@@ -236,7 +252,9 @@ endif
 	mkdir $(notdir $@)
 	cd $(notdir $@) && \
 		CC="$(GLIBC_CC_FOR_TARGET) $($@_CFLAGS)" \
+		CXX="$(GLIBC_CXX_FOR_TARGET) $($@_CFLAGS)" \
 		CFLAGS="$(CFLAGS_FOR_TARGET) -g -O2 $($@_CFLAGS)" \
+		CXXFLAGS="$(CXXFLAGS_FOR_TARGET) -g -O2 $($@_CFLAGS)" \
 		ASFLAGS="$(ASFLAGS_FOR_TARGET) $($@_CFLAGS)" \
 		$</configure \
 		--host=$(call make_tuple,$($@_XLEN),linux-gnu) \
@@ -281,7 +299,10 @@ stamps/build-gcc-linux-stage1: $(srcdir)/riscv-gcc stamps/build-binutils-linux \
 		$(GCC_CHECKING_FLAGS) \
 		$(MULTILIB_FLAGS) \
 		$(WITH_ABI) \
-		$(WITH_ARCH)
+		$(WITH_ARCH) \
+		$(WITH_TUNE) \
+		CFLAGS_FOR_TARGET="-O2 $(CFLAGS_FOR_TARGET)" \
+		CXXFLAGS_FOR_TARGET="-O2 $(CXXFLAGS_FOR_TARGET)"
 	$(MAKE) -C $(notdir $@) inhibit-libc=true all-gcc
 	$(MAKE) -C $(notdir $@) inhibit-libc=true install-gcc
 	$(MAKE) -C $(notdir $@) inhibit-libc=true all-target-libgcc
@@ -310,7 +331,10 @@ stamps/build-gcc-linux-stage2: $(srcdir)/riscv-gcc $(addprefix stamps/build-glib
 		$(GCC_CHECKING_FLAGS) \
 		$(MULTILIB_FLAGS) \
 		$(WITH_ABI) \
-		$(WITH_ARCH)
+		$(WITH_ARCH) \
+		$(WITH_TUNE) \
+		CFLAGS_FOR_TARGET="-O2 $(CFLAGS_FOR_TARGET)" \
+		CXXFLAGS_FOR_TARGET="-O2 $(CXXFLAGS_FOR_TARGET)"
 	$(MAKE) -C $(notdir $@)
 	$(MAKE) -C $(notdir $@) install
 	cp -a $(INSTALL_DIR)/$(LINUX_TUPLE)/lib* $(SYSROOT)
@@ -332,7 +356,7 @@ stamps/build-binutils-linux-native: $(srcdir)/riscv-binutils stamps/build-gcc-li
 		--disable-gdb \
 		--disable-sim \
 		--disable-libdecnumber \
-		--disable-libreadline
+		--disable-readline
 	$(MAKE) -C $(notdir $@)
 	$(MAKE) -C $(notdir $@) install
 	mkdir -p $(dir $@) && touch $@
@@ -359,11 +383,16 @@ stamps/build-gcc-linux-native: $(srcdir)/riscv-gcc stamps/build-gcc-linux-stage2
 		$(GCC_CHECKING_FLAGS) \
 		$(MULTILIB_FLAGS) \
 		$(WITH_ABI) \
-		$(WITH_ARCH)
+		$(WITH_ARCH) \
+		$(WITH_TUNE)
 	$(MAKE) -C $(notdir $@)
 	$(MAKE) -C $(notdir $@) install
 	cp -a $(INSTALL_DIR)/$(LINUX_TUPLE)/lib* $(SYSROOT)
 	mkdir -p $(dir $@) && touch $@
+
+#
+# NEWLIB
+#
 
 stamps/build-binutils-newlib: $(srcdir)/riscv-binutils
 	rm -rf $@ $(notdir $@)
@@ -379,7 +408,7 @@ stamps/build-binutils-newlib: $(srcdir)/riscv-binutils
 		--disable-gdb \
 		--disable-sim \
 		--disable-libdecnumber \
-		--disable-libreadline
+		--disable-readline
 	$(MAKE) -C $(notdir $@)
 	$(MAKE) -C $(notdir $@) install
 	mkdir -p $(dir $@) && touch $@
@@ -430,7 +459,9 @@ stamps/build-gcc-newlib-stage1: $(srcdir)/riscv-gcc stamps/build-binutils-newlib
 		$(MULTILIB_FLAGS) \
 		$(WITH_ABI) \
 		$(WITH_ARCH) \
-		CFLAGS_FOR_TARGET="-Os $(CFLAGS_FOR_TARGET)"
+		$(WITH_TUNE) \
+		CFLAGS_FOR_TARGET="-Os $(CFLAGS_FOR_TARGET)" \
+		CXXFLAGS_FOR_TARGET="-Os $(CXXFLAGS_FOR_TARGET)"
 	$(MAKE) -C $(notdir $@) all-gcc
 	$(MAKE) -C $(notdir $@) install-gcc
 	mkdir -p $(dir $@) && touch $@
@@ -445,7 +476,8 @@ stamps/build-newlib: $(srcdir)/riscv-newlib stamps/build-gcc-newlib-stage1
 		--enable-newlib-io-long-double \
 		--enable-newlib-io-long-long \
 		--enable-newlib-io-c99-formats \
-		CFLAGS_FOR_TARGET="-Os $(CFLAGS_FOR_TARGET)"
+		CFLAGS_FOR_TARGET="-Os $(CFLAGS_FOR_TARGET)" \
+		CXXFLAGS_FOR_TARGET="-Os $(CXXFLAGS_FOR_TARGET)"
 	$(MAKE) -C $(notdir $@)
 	$(MAKE) -C $(notdir $@) install
 	mkdir -p $(dir $@) && touch $@
@@ -469,7 +501,8 @@ stamps/build-newlib-nano: $(srcdir)/riscv-newlib stamps/build-gcc-newlib-stage1
 		--disable-newlib-supplied-syscalls \
 		--disable-nls \
 		--enable-newlib-register-fini \
-		CFLAGS_FOR_TARGET="-Os -ffunction-sections -fdata-sections $(CFLAGS_FOR_TARGET)"
+		CFLAGS_FOR_TARGET="-Os -ffunction-sections -fdata-sections $(CFLAGS_FOR_TARGET)" \
+		CXXFLAGS_FOR_TARGET="-Os -ffunction-sections -fdata-sections $(CXXFLAGS_FOR_TARGET)"
 	$(MAKE) -C $(notdir $@)
 	$(MAKE) -C $(notdir $@) install
 	mkdir -p $(dir $@) && touch $@
@@ -519,10 +552,138 @@ stamps/build-gcc-newlib-stage2: $(srcdir)/riscv-gcc stamps/build-newlib \
 		$(MULTILIB_FLAGS) \
 		$(WITH_ABI) \
 		$(WITH_ARCH) \
-		CFLAGS_FOR_TARGET="-Os $(CFLAGS_FOR_TARGET)"
+		$(WITH_TUNE) \
+		CFLAGS_FOR_TARGET="-Os $(CFLAGS_FOR_TARGET)" \
+		CXXFLAGS_FOR_TARGET="-Os $(CXXFLAGS_FOR_TARGET)"
 	$(MAKE) -C $(notdir $@)
 	$(MAKE) -C $(notdir $@) install
 	mkdir -p $(dir $@) && touch $@
+
+#
+# MUSL
+#
+
+stamps/build-binutils-musl: $(srcdir)/riscv-binutils
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+# CC_FOR_TARGET is required for the ld testsuite.
+	cd $(notdir $@) && CC_FOR_TARGET=$(MUSL_CC_FOR_TARGET) $</configure \
+		--target=$(MUSL_TUPLE) \
+		$(CONFIGURE_HOST) \
+		--prefix=$(INSTALL_DIR) \
+		--with-sysroot=$(SYSROOT) \
+		$(MULTILIB_FLAGS) \
+		@with_guile@ \
+		--disable-werror \
+		--disable-nls \
+		$(BINUTILS_TARGET_FLAGS) \
+		--disable-gdb \
+		--disable-sim \
+		--disable-libdecnumber \
+		--disable-readline
+	$(MAKE) -C $(notdir $@)
+	$(MAKE) -C $(notdir $@) install
+	mkdir -p $(dir $@) && touch $@
+
+stamps/build-gcc-musl-stage1: $(srcdir)/riscv-gcc stamps/build-binutils-musl \
+                               stamps/build-linux-headers
+	if test -f $</contrib/download_prerequisites && test "@NEED_GCC_EXTERNAL_LIBRARIES@" == "true"; then cd $< && ./contrib/download_prerequisites; fi
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	cd $(notdir $@) && $</configure \
+		--target=$(MUSL_TUPLE) \
+		$(CONFIGURE_HOST) \
+		--prefix=$(INSTALL_DIR) \
+		--without-headers \
+		--disable-shared \
+		--disable-threads \
+		@with_system_zlib@ \
+		--enable-tls \
+		--enable-languages=c \
+		--disable-libatomic \
+		--disable-libmudflap \
+		--disable-libssp \
+		--disable-libquadmath \
+		--disable-libgomp \
+		--disable-nls \
+		--disable-bootstrap \
+		--src=$(gccsrcdir) \
+		$(GCC_CHECKING_FLAGS) \
+		--disable-multilib \
+		$(WITH_ABI) \
+		$(WITH_ARCH) \
+		$(WITH_TUNE) \
+		CFLAGS_FOR_TARGET="-O2 $(CFLAGS_FOR_TARGET)" \
+		CXXFLAGS_FOR_TARGET="-O2 $(CXXFLAGS_FOR_TARGET)"
+	$(MAKE) -C $(notdir $@) inhibit-libc=true all-gcc
+	$(MAKE) -C $(notdir $@) inhibit-libc=true install-gcc
+	$(MAKE) -C $(notdir $@) inhibit-libc=true all-target-libgcc
+	$(MAKE) -C $(notdir $@) inhibit-libc=true install-target-libgcc
+	mkdir -p $(dir $@) && touch $@
+
+stamps/build-musl-linux-headers: $(srcdir)/riscv-musl stamps/build-gcc-musl-stage1
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	cd $(notdir $@) && CC="$(MUSL_CC_FOR_TARGET)" $</configure \
+		--host=$(MUSL_TUPLE) \
+		--prefix=$(SYSROOT)/usr \
+		--enable-shared \
+		--with-headers=$(srcdir)/linux-headers/include \
+		--disable-multilib \
+		--enable-kernel=3.0.0
+	$(MAKE) -C $(notdir $@) install-headers
+	mkdir -p $(dir $@) && touch $@
+
+stamps/build-musl-linux: $(srcdir)/riscv-musl stamps/build-gcc-musl-stage1
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	cd $(notdir $@) && \
+		CC="$(MUSL_CC_FOR_TARGET) $($@_CFLAGS)" \
+		CXX="$(MUSL_CXX_FOR_TARGET) $($@_CFLAGS)" \
+		CFLAGS="$(CFLAGS_FOR_TARGET) -g -O2 $($@_CFLAGS)" \
+		CXXFLAGS="$(CXXFLAGS_FOR_TARGET) -g -O2 $($@_CFLAGS)" \
+		ASFLAGS="$(ASFLAGS_FOR_TARGET) $($@_CFLAGS)" \
+		$</configure \
+		--host=$(MUSL_TUPLE) \
+		--prefix=$(SYSROOT) \
+		--disable-werror \
+		--enable-shared \
+		$(MUSL_TARGET_FLAGS)
+	$(MAKE) -C $(notdir $@)
+	+flock $(SYSROOT)/.lock $(MAKE) -C $(notdir $@) install
+	mkdir -p $(dir $@) && touch $@
+
+stamps/build-gcc-musl-stage2: $(srcdir)/riscv-gcc stamps/build-musl-linux \
+                               stamps/build-musl-linux-headers
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	cd $(notdir $@) && $</configure \
+		--target=$(MUSL_TUPLE) \
+		$(CONFIGURE_HOST) \
+		--prefix=$(INSTALL_DIR) \
+		--with-sysroot=$(SYSROOT) \
+		@with_system_zlib@ \
+		--enable-shared \
+		--enable-tls \
+		--enable-languages=c,c++ \
+		--disable-libmudflap \
+		--disable-libssp \
+		--disable-libquadmath \
+		--disable-nls \
+		--disable-bootstrap \
+		--src=$(gccsrcdir) \
+		$(GCC_CHECKING_FLAGS) \
+		--disable-multilib \
+		$(WITH_ABI) \
+		$(WITH_ARCH) \
+		$(WITH_TUNE) \
+		CFLAGS_FOR_TARGET="-O2 $(CFLAGS_FOR_TARGET)" \
+		CXXFLAGS_FOR_TARGET="-O2 $(CXXFLAGS_FOR_TARGET)"
+	$(MAKE) -C $(notdir $@)
+	$(MAKE) -C $(notdir $@) install
+	cp -a $(INSTALL_DIR)/$(MUSL_TUPLE)/lib* $(SYSROOT)
+	mkdir -p $(dir $@) && touch $@
+
 
 stamps/build-qemu: $(srcdir)/riscv-qemu
 	rm -rf $@ $(notdir $@)
@@ -623,19 +784,25 @@ stamps/check-gdb-linux: stamps/build-gcc-linux-stage2 stamps/build-gdb-linux sta
 .PHONY: report-gcc-newlib report-gcc-newlib-nano
 report-gcc-newlib: stamps/check-gcc-newlib
 	stat $(patsubst %,$(srcdir)/test/gcc-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)) || exit 1
+# Fail if there are blank lines in the log file used as input for grep below.
+	if grep '^$$' $(patsubst %,$(srcdir)/test/gcc-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)); then exit 1; fi
 	if find build-gcc-newlib-stage2/gcc/testsuite/ -iname '*.sum' | xargs grep ^FAIL | sort | grep -F -v $(patsubst %,--file=$(srcdir)/test/gcc-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)); then false; else true; fi
-	if [[ "$$(find build-gcc-newlib-stage2/gcc/testsuite/ -iname '*.sum' | xargs cat | wc -l)" -lt 100 ]]; then false; else true; fi
+	if test "$$(find build-gcc-newlib-stage2/gcc/testsuite/ -iname '*.sum' | xargs cat | wc -l)" -lt 100; then false; else true; fi
 
 report-gcc-newlib-nano: stamps/check-gcc-newlib-nano
 	stat $(patsubst %,$(srcdir)/test/gcc-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)) || exit 1
+# Fail if there are blank lines in the log file used as input for grep below.
+	if grep '^$$' $(patsubst %,$(srcdir)/test/gcc-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)); then exit 1; fi
 	if find build-gcc-newlib-stage2/gcc/testsuite/ -iname '*.sum' | xargs grep ^FAIL | sort | grep -F -v $(patsubst %,--file=$(srcdir)/test/gcc-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)); then false; else true; fi
-	if [[ "$$(find build-gcc-newlib-stage2/gcc/testsuite/ -iname '*.sum' | xargs cat | wc -l)" -lt 100 ]]; then false; else true; fi
+	if test "$$(find build-gcc-newlib-stage2/gcc/testsuite/ -iname '*.sum' | xargs cat | wc -l)" -lt 100; then false; else true; fi
 
 .PHONY: report-gcc-linux
 report-gcc-linux: stamps/check-gcc-linux
 	stat $(patsubst %,$(srcdir)/test/gcc-linux/%.log,$(GLIBC_MULTILIB_NAMES)) || exit 1
+# Fail if there are blank lines in the log file used as input for grep below.
+	if grep '^$$' $(patsubst %,$(srcdir)/test/gcc-linux/%.log,$(GLIBC_MULTILIB_NAMES)); then exit 1; fi
 	if find build-gcc-linux-stage2/gcc/testsuite/ -iname '*.sum' | xargs grep ^FAIL | sort | grep -F -v $(patsubst %,--file=$(srcdir)/test/gcc-linux/%.log,$(GLIBC_MULTILIB_NAMES)); then false; else true; fi
-	if [[ "$$(find build-gcc-linux-stage2/gcc/testsuite/ -iname '*.sum' | xargs cat | wc -l)" -lt 100 ]]; then false; else true; fi
+	if test "$$(find build-gcc-linux-stage2/gcc/testsuite/ -iname '*.sum' | xargs cat | wc -l)" -lt 100; then false; else true; fi
 
 .PHONY: report-dhrystone-newlib report-dhrystone-newlib-nano
 report-dhrystone-newlib: $(patsubst %,stamps/check-dhrystone-newlib-%,$(NEWLIB_MULTILIB_NAMES))
@@ -650,15 +817,21 @@ report-dhrystone-linux: $(patsubst %,stamps/check-dhrystone-linux-%,$(GLIBC_MULT
 .PHONY: report-binutils-newlib report-binutils-newlib-nano
 report-binutils-newlib: stamps/check-binutils-newlib
 	stat $(patsubst %,$(srcdir)/test/binutils-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)) || exit 1
+# Fail if there are blank lines in the log file used as input for grep below.
+	if grep '^$$' $(patsubst %,$(srcdir)/test/binutils-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)); then exit 1; fi
 	if find build-binutils-newlib -iname '*.sum' | xargs grep ^FAIL | sort | grep -F -v $(patsubst %,--file=$(srcdir)/test/binutils-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)); then false; else true; fi
 
 report-binutils-newlib-nano: stamps/check-binutils-newlib-nano
 	stat $(patsubst %,$(srcdir)/test/binutils-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)) || exit 1
+# Fail if there are blank lines in the log file used as input for grep below.
+	if grep '^$$' $(patsubst %,$(srcdir)/test/binutils-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)); then exit 1; fi
 	if find build-binutils-newlib -iname '*.sum' | xargs grep ^FAIL | sort | grep -F -v $(patsubst %,--file=$(srcdir)/test/binutils-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)); then false; else true; fi
 
 .PHONY: report-binutils-linux
 report-binutils-linux: stamps/check-binutils-linux
 	stat $(patsubst %,$(srcdir)/test/binutils-linux/%.log,$(GLIBC_MULTILIB_NAMES)) || exit 1
+# Fail if there are blank lines in the log file used as input for grep below.
+	if grep '^$$' $(patsubst %,$(srcdir)/test/binutils-linux/%.log,$(GLIBC_MULTILIB_NAMES)); then exit 1; fi
 	if find build-binutils-linux -iname '*.sum' | xargs grep ^FAIL | sort | grep -F -v $(patsubst %,--file=$(srcdir)/test/binutils-linux/%.log,$(GLIBC_MULTILIB_NAMES)); then false; else true; fi
 
 clean:
@@ -667,15 +840,21 @@ clean:
 .PHONY: report-gdb-newlib report-gdb-newlib-nano
 report-gdb-newlib: stamps/check-gdb-newlib
 	stat $(patsubst %,$(srcdir)/test/gdb-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)) || exit 1
+# Fail if there are blank lines in the log file used as input for grep below.
+	if grep '^$$' $(patsubst %,$(srcdir)/test/gdb-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)); then exit 1; fi
 	if find build-gdb-newlib -iname '*.sum' | xargs grep ^FAIL | sort | grep -F -v $(patsubst %,--file=$(srcdir)/test/gdb-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)); then false; else true; fi
 
 report-gdb-newlib-nano: stamps/check-gdb-newlib-nano
 	stat $(patsubst %,$(srcdir)/test/gdb-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)) || exit 1
+# Fail if there are blank lines in the log file used as input for grep below.
+	if grep '^$$' $(patsubst %,$(srcdir)/test/gdb-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)); then exit 1; fi
 	if find build-gdb-newlib -iname '*.sum' | xargs grep ^FAIL | sort | grep -F -v $(patsubst %,--file=$(srcdir)/test/gdb-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)); then false; else true; fi
 
 .PHONY: report-gdb-linux
 report-gdb-linux: stamps/check-gdb-linux
 	stat $(patsubst %,$(srcdir)/test/gdb-linux/%.log,$(GLIBC_MULTILIB_NAMES)) || exit 1
+# Fail if there are blank lines in the log file used as input for grep below.
+	if grep '^$$' $(patsubst %,$(srcdir)/test/gdb-linux/%.log,$(GLIBC_MULTILIB_NAMES)); then exit 1; fi
 	if find build-gdb-linux -iname '*.sum' | xargs grep ^FAIL | sort | grep -F -v $(patsubst %,--file=$(srcdir)/test/gdb-linux/%.log,$(GLIBC_MULTILIB_NAMES)); then false; else true; fi
 
 distclean: clean
@@ -687,3 +866,6 @@ install:
 # Rebuilding Makefile.
 Makefile: $(srcdir)/Makefile.in config.status
 	CONFIG_FILES=$@ CONFIG_HEADERS= $(SHELL) ./config.status
+
+config.status: $(srcdir)/configure
+	CONFIG_SHELL="$(SHELL)" $(SHELL) ./config.status --recheck
