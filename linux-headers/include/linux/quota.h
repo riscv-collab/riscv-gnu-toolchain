@@ -33,7 +33,6 @@
 #ifndef _LINUX_QUOTA_
 #define _LINUX_QUOTA_
 
-#include <linux/errno.h>
 #include <linux/types.h>
 
 #define __DQUOT_VERSION__	"dquot_6.6.0"

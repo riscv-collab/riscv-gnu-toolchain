@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: ((GPL-2.0 WITH Linux-syscall-note) OR Linux-OpenIB) */
 /*
  * Copyright (c) 2016 Mellanox Technologies, LTD. All rights reserved.
  *
@@ -33,13 +34,10 @@
 #ifndef RDMA_USER_IOCTL_H
 #define RDMA_USER_IOCTL_H
 
-#include <linux/types.h>
-#include <linux/ioctl.h>
 #include <rdma/ib_user_mad.h>
 #include <rdma/hfi/hfi1_ioctl.h>
+#include <rdma/rdma_user_ioctl_cmds.h>
 
-/* Documentation/ioctl/ioctl-number.txt */
-#define RDMA_IOCTL_MAGIC	0x1b
 /* Legacy name, for user space application which already use it */
 #define IB_IOCTL_MAGIC		RDMA_IOCTL_MAGIC
 

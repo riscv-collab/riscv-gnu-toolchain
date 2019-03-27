@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 #ifndef _LINUX_SEG6_HMAC_H
 #define _LINUX_SEG6_HMAC_H
 

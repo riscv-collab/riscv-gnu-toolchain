@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 /* fou.h - FOU Interface */
 
 #ifndef _LINUX_FOU_H
