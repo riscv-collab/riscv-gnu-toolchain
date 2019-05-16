@@ -60,8 +60,17 @@ You should now be able to use riscv64-unknown-elf-gcc and its cousins.
 ### Installation (Linux)
 
 To build the Linux cross-compiler, pick an install path.  If you choose,
-say, `/opt/riscv`, then add `/opt/riscv/bin` to your `PATH` now.  Then, simply
-run the following command:
+say, `/opt/riscv`, then add `/opt/riscv/bin` to your `PATH` now. 
+You can add this command via command line when adding your path.
+
+	$ export PATH = $ PATH: / opt / riscv / binopt / riscv / bin
+
+But your permission may be incomplete. So entering the .bashrc file ($ nano .bashrc);
+
+	export RISCV_INSTALL = / opt / riscv
+	export PATH = $ PATH: $ RISCV_INSTAL / bin
+
+Then, simply run the following command:
 
     ./configure --prefix=/opt/riscv
     make linux
@@ -78,6 +87,13 @@ Supported architectures are rv32i or rv64i plus standard extensions (a)tomics,
 Supported ABIs are ilp32 (32-bit soft-float), ilp32d (32-bit hard-float),
 ilp32f (32-bit with single-precision in registers and double in memory, niche
 use only), lp64 lp64f lp64d (same but with 64-bit long and pointers).
+
+
+##ADVICE
+
+You can get an opcode error in the Ubuntu distribution of Linux. 
+This may be because your gcc version is less than 7.3. Upgrade your gcc version to 7.3 and later. 
+With Debian 9.9 deployment you can complete transactions without any problems.
 
 ### Installation (Linux multilib)
 
