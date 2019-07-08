@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 #ifndef __LINUX_NETFILTER_H
 #define __LINUX_NETFILTER_H
 
@@ -32,10 +33,6 @@
 #define NF_DROP_ERR(x) (((-x) << 16) | NF_DROP)
 
 /* only for userspace compatibility */
-/* Generic cache responses from hook functions.
-   <= 0x2000 is used for protocol-flags. */
-#define NFC_UNKNOWN 0x4000
-#define NFC_ALTERED 0x8000
 
 /* NF_VERDICT_BITS should be 8 now, but userspace might break if this changes */
 #define NF_VERDICT_BITS 16

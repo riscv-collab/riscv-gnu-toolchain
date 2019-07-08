@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 #ifndef CCISS_IOCTLH
 #define CCISS_IOCTLH
 
