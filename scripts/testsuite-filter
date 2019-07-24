@@ -49,6 +49,8 @@ def get_white_list_files(raw_arch, abi, libc, white_list_base_dir):
             print ("Try append: %s" % filename)
         filepath = os.path.join(white_list_base_dir, filename)
         if os.path.exists(filepath):
+            if debug:
+                print ("Got: %s" % filename)
             white_list_files.append(filepath)
 
     libc_filename = "common.log"
@@ -103,8 +105,11 @@ def get_white_list_files(raw_arch, abi, libc, white_list_base_dir):
     return white_list_files
 
 
-def read_white_lists(white_list_files):
-    white_lists = dict()
+def read_white_lists(white_list_files, is_gcc):
+    if is_gcc:
+        white_lists = dict()
+    else:
+        white_lists = set()
     for fname in white_list_files:
         with open(fname) as f:
             content = f.readlines()
@@ -114,18 +119,23 @@ def read_white_lists(white_list_files):
                     continue
                 if l[0] == '#':
                     continue
-                try:
-                    key = l.split(' ')[1]
-                except:
-                    print ("Corrupt whitelist file?")
-                    print ("Each line must contail <STATUS>: .*")
-                    print ("e.g. FAIL: g++.dg/pr83239.C")
-                    print ("Or starts with # for comment")
-                white_lists[key] = l
+
+                if is_gcc:
+                    try:
+                        key = l.split(' ')[1]
+                    except:
+                        print ("Corrupt whitelist file?")
+                        print ("Each line must contail <STATUS>: .*")
+                        print ("e.g. FAIL: g++.dg/pr83239.C")
+                        print ("Or starts with # for comment")
+                    white_lists[key] = l
+                else:
+                    white_lists.add(l)
+
     return white_lists
 
 
-def read_gcc_sum(sum_files):
+def read_sum(sum_files):
     unexpected_results = dict()
     for sum_file in sum_files:
         with open(sum_file) as f:
@@ -155,10 +165,10 @@ def read_gcc_sum(sum_files):
     return unexpected_results
 
 
-def get_white_list(arch, abi, libc, white_list_base_dir):
+def get_white_list(arch, abi, libc, white_list_base_dir, is_gcc):
     white_list_files = \
         get_white_list_files(arch, abi, libc, white_list_base_dir)
-    white_list = read_white_lists(white_list_files)
+    white_list = read_white_lists(white_list_files, is_gcc)
     return white_list
 
 
@@ -166,6 +176,7 @@ def get_white_list(arch, abi, libc, white_list_base_dir):
 def filter_result(tool, libc, white_list_base_dir, unexpected_results):
     summary = dict()
     any_fail = False
+    is_gcc = tool == 'gcc'
     # Filter with white list.
     for testtool, variation_unexpected_result in unexpected_results.iteritems():
         for variation, unexpected_result in variation_unexpected_result.iteritems():
@@ -183,26 +194,40 @@ def filter_result(tool, libc, white_list_base_dir, unexpected_results):
 
             white_list = \
                 get_white_list(arch, abi, libc,
-                               os.path.join(white_list_base_dir, tool))
+                               os.path.join(white_list_base_dir, tool),
+                               is_gcc)
             # filter!
             config = (arch, abi, cmodel)
             fail_count = 0
-            case_count = set()
             unexpected_result_list = []
-            for ur in unexpected_result:
-                key = ur.split(' ')[1]
-                if key in white_list and \
-                   ur.startswith(white_list[key]):
-                    # This item can be ignored
-                    continue
-                else:
-                    unexpected_result_list.append(ur)
-                    fail_count += 1
-                    case_count.add(key)
-                    any_fail = True
-            if config not in summary:
-                summary[config] = dict()
-            summary[config][testtool] = (fail_count, len(case_count))
+            if is_gcc:
+                case_count = set()
+                for ur in unexpected_result:
+                    key = ur.split(' ')[1]
+                    if key in white_list and \
+                       ur.startswith(white_list[key]):
+                        # This item can be ignored
+                        continue
+                    else:
+                        unexpected_result_list.append(ur)
+                        fail_count += 1
+                        case_count.add(key)
+                        any_fail = True
+
+                if config not in summary:
+                    summary[config] = dict()
+                summary[config][testtool] = (fail_count, len(case_count))
+            else:
+                for ur in unexpected_result:
+                    if ur not in white_list:
+                        unexpected_result_list.append(ur)
+                        fail_count += 1
+                        any_fail = True
+
+                if config not in summary:
+                    summary[config] = dict()
+                summary[config][testtool] = fail_count
+
 
             if len(unexpected_result_list) != 0:
                 print ("\t\t=== %s: Unexpected fails for %s %s %s ===" \
@@ -214,24 +239,33 @@ def filter_result(tool, libc, white_list_base_dir, unexpected_results):
     # Generate summary report.
     if tool == 'gcc':
         toollist = ['gcc', 'g++', 'gfortran']
+    elif tool == 'binutils':
+        toollist = ['binutils', 'ld', 'gas']
     else:
         raise Exception("Unsupported tool `%s`" % tool)
 
     bar_item = map(lambda x: "%13s" % x, toollist)
     bar = " |".join(bar_item)
-    print ("\n               ========= Summary of gcc testsuite =========")
-    print ("                            | # of unexpected case / # of unique unexpected case")
+    print ("\n               ========= Summary of %s testsuite =========" % tool)
+    if is_gcc:
+        print ("                            | # of unexpected case / # of unique unexpected case")
+    else:
+        print ("                            | # of unexpected case")
     print ("                            |%s |" % bar)
     for config, result in summary.iteritems():
         arch, abi, cmodel = config
         print (" %10s/ %6s/ %6s |" % (arch, abi, cmodel), end='')
         for tool in toollist:
             if tool not in summary[config]:
-                print ("%13s |" % '-', end='')
+                print ("%7s |" % '-', end='')
                 continue
 
-            fail_count, case_count = summary[config][tool]
-            print ("%5d / %5d |" % (fail_count, case_count), end='')
+            if is_gcc:
+                fail_count, case_count = summary[config][tool]
+                print ("%5d / %5d |" % (fail_count, case_count), end='')
+            else:
+                fail_count = summary[config][tool]
+                print ("%13d |" % fail_count, end='')
         print ("")
     if any_fail:
         return 1
@@ -248,8 +282,8 @@ def main():
     rv = 0
 
     sum_files = sum_files.split(',')
-    unexpected_results = read_gcc_sum(sum_files)
-    if tool in ['gcc']:
+    unexpected_results = read_sum(sum_files)
+    if tool in ['gcc', 'binutils']:
         rv = filter_result(tool, libc, white_list_base_dir,
                            unexpected_results)
     else:
