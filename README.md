@@ -1,4 +1,4 @@
-Currently NOT ACTIVATED ..... RISC-V GNU Compiler Toolchain
+!!!! Note: Currently NOT ACTIVATED!!!! ..... RISC-V GNU Compiler Toolchain
 =============================
 
 [![Build Status](https://travis-ci.org/riscv/riscv-gnu-toolchain.svg?branch=master)](https://travis-ci.org/riscv/riscv-gnu-toolchain)
