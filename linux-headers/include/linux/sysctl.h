@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 /*
  * sysctl.h: General linux system control interface
  *
@@ -25,8 +26,6 @@
 #include <linux/kernel.h>
 #include <linux/types.h>
 
-
-#include <stddef.h>		/* For size_t. */
 
 #define CTL_MAXNAME 10		/* how many path components do we allow in a
 				   call to sysctl?   In other words, what is
@@ -154,6 +153,7 @@ enum
 	KERN_NMI_WATCHDOG=75, /* int: enable/disable nmi watchdog */
 	KERN_PANIC_ON_NMI=76, /* int: whether we will panic on an unrecovered */
 	KERN_PANIC_ON_WARN=77, /* int: call panic() in WARN() functions */
+	KERN_PANIC_PRINT=78, /* ulong: bitmask to print system info on panic */
 };
 
 
@@ -576,7 +576,8 @@ enum {
 
 /* /proc/sys/net/ipv6/icmp */
 enum {
-	NET_IPV6_ICMP_RATELIMIT=1
+	NET_IPV6_ICMP_RATELIMIT = 1,
+	NET_IPV6_ICMP_ECHO_IGNORE_ALL = 2
 };
 
 /* /proc/sys/net/<protocol>/neigh/<dev> */
@@ -779,24 +780,6 @@ enum {
 	NET_BRIDGE_NF_CALL_IP6TABLES = 3,
 	NET_BRIDGE_NF_FILTER_VLAN_TAGGED = 4,
 	NET_BRIDGE_NF_FILTER_PPPOE_TAGGED = 5,
-};
-
-/* proc/sys/net/irda */
-enum {
-	NET_IRDA_DISCOVERY=1,
-	NET_IRDA_DEVNAME=2,
-	NET_IRDA_DEBUG=3,
-	NET_IRDA_FAST_POLL=4,
-	NET_IRDA_DISCOVERY_SLOTS=5,
-	NET_IRDA_DISCOVERY_TIMEOUT=6,
-	NET_IRDA_SLOT_TIMEOUT=7,
-	NET_IRDA_MAX_BAUD_RATE=8,
-	NET_IRDA_MIN_TX_TURN_TIME=9,
-	NET_IRDA_MAX_TX_DATA_SIZE=10,
-	NET_IRDA_MAX_TX_WINDOW=11,
-	NET_IRDA_MAX_NOREPLY_TIME=12,
-	NET_IRDA_WARN_NOREPLY_TIME=13,
-	NET_IRDA_LAP_KEEPALIVE_TIME=14,
 };
 
 

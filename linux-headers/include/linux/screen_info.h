@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 #ifndef _SCREEN_INFO_H
 #define _SCREEN_INFO_H
 
