@@ -90,6 +90,18 @@ To build the Linux cross-compiler with support for both 32-bit and
 The multilib compiler will have the prefix riscv64-unknown-linux-gnu-,
 but will be able to target both 32-bit and 64-bit systems.
 
+### Troubleshooting Build Problems
+
+Builds work best if installing into an empty directory.  If you build a
+hard-float toolchain and then try to build a soft-float toolchain with
+the same --prefix directory, then the build scripts may get confused
+and exit with a linker error complaining that hard float code can't be
+linked with soft float code.  Removing the existing toolchain first, or
+using a different prefix for the second build, avoids the problem.  It
+is OK to build one newlib and one linux toolchain with the same prefix.
+But you should avoid building two newlib or two linux toolchains with
+the same prefix.
+
 ### Advanced Options
 
 There are a number of additional options that may be passed to
