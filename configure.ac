@@ -174,4 +174,36 @@ AS_IF([test "x$enable_gdb" != xno],
 	[AC_SUBST(enable_gdb, --enable-gdb)],
 	[AC_SUBST(enable_gdb, --disable-gdb)])
 
+AC_DEFUN([AX_ARG_WITH_SRC],
+	[{m4_pushdef([opt_name], with_$1_src)
+	  AC_ARG_WITH($1-src,
+		[AC_HELP_STRING([--with-$1-src],
+				[Set $1 source path, use builtin source by default])],
+		[],
+		[opt_name=default]
+		)
+	  AS_IF([test "x$opt_name" != xdefault],
+		[AC_SUBST(opt_name,$opt_name)],
+		[AC_SUBST(opt_name,"\$(srcdir)/riscv-$1")])
+	  m4_popdef([opt_name])
+	}])
+
+AX_ARG_WITH_SRC(gcc)
+AX_ARG_WITH_SRC(binutils)
+AX_ARG_WITH_SRC(newlib)
+AX_ARG_WITH_SRC(glibc)
+AX_ARG_WITH_SRC(musl)
+AX_ARG_WITH_SRC(gdb)
+
+AC_ARG_WITH(linux-headers-src,
+	[AC_HELP_STRING([--with-linux-headers-src],
+			[Set linux-headers source path, use builtin source by default])],
+	[],
+	[with_linux_headers_src=default]
+	)
+
+AS_IF([test "x$with_linux_headers_src" != xdefault],
+	[AC_SUBST(with_linux_headers_src,$with_linux_headers_src)],
+	[AC_SUBST(with_linux_headers_src,"\$(srcdir)/linux-headers")])
+
 AC_OUTPUT
