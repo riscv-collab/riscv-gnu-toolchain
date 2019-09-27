@@ -127,8 +127,8 @@ AS_IF([test "x$with_cmodel" != x],
 	[AC_SUBST(cmodel, -mcmodel=medlow)])
 
 AC_CONFIG_FILES([Makefile])
-AC_CONFIG_FILES([scripts/wrapper/awk/awk], [chmod +x scripts/wrapper/awk])
-AC_CONFIG_FILES([scripts/wrapper/sed/sed], [chmod +x scripts/wrapper/sed])
+AC_CONFIG_FILES([scripts/wrapper/awk/awk], [chmod +x scripts/wrapper/awk/awk])
+AC_CONFIG_FILES([scripts/wrapper/sed/sed], [chmod +x scripts/wrapper/sed/sed])
 
 AC_ARG_WITH(host,
 	[AS_HELP_STRING([--with-host=x86_64-w64-mingw32],
