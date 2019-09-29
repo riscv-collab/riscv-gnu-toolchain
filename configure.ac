@@ -204,6 +204,6 @@ AC_ARG_WITH(linux-headers-src,
 
 AS_IF([test "x$with_linux_headers_src" != xdefault],
 	[AC_SUBST(with_linux_headers_src,$with_linux_headers_src)],
-	[AC_SUBST(with_linux_headers_src,"\$(srcdir)/linux-headers")])
+	[AC_SUBST(with_linux_headers_src,"\$(srcdir)/linux-headers/include")])
 
 AC_OUTPUT
