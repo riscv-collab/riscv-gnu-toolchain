@@ -102,6 +102,12 @@ is OK to build one newlib and one linux toolchain with the same prefix.
 But you should avoid building two newlib or two linux toolchains with
 the same prefix.
 
+If building a linux toolchain on a MacOS system, or on a Windows system
+using the Linux subsystem or cygwin, you must ensure that the filesystem
+is case-sensitive.  A build on a case-insensitive filesystem will fail when
+building glibc because \*.os and \*.oS files will clobber each other during
+the build eventually resulting in confusing link errors.
+
 ### Advanced Options
 
 There are a number of additional options that may be passed to
