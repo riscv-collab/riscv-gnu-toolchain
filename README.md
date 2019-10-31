@@ -108,6 +108,15 @@ is case-sensitive.  A build on a case-insensitive filesystem will fail when
 building glibc because \*.os and \*.oS files will clobber each other during
 the build eventually resulting in confusing link errors.
 
+Centos (and RHEL) provide old GNU tools versions that may be too old to build
+a RISC-V toolchain.  There is an alternate toolset provided that includes
+current versions of the GNU tools.  This is the devtoolset provided as part
+of the Software Collection service.  For more info, see the
+[devtoolset-7](https://www.softwarecollections.org/en/scls/rhscl/devtoolset-7/)
+URL.  There are various versions of the devtoolset that are available, so you
+can also try other versions of it, but we have at least one report that
+devtoolset-7 works.
+
 ### Advanced Options
 
 There are a number of additional options that may be passed to
