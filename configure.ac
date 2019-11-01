@@ -126,6 +126,21 @@ AS_IF([test "x$with_cmodel" != x],
 	[AC_SUBST(cmodel, -mcmodel=$with_cmodel)],
 	[AC_SUBST(cmodel, -mcmodel=medlow)])
 
+AC_ARG_WITH(target_cflags,
+	[AS_HELP_STRING([--with-target-cflags],
+		[Add extra target flags for C for library code])],
+	[],
+	[]
+	)
+AC_SUBST(target_cflags, $with_target_cflags)
+AC_ARG_WITH(target_cxxflags,
+	[AS_HELP_STRING([--with-target-cxxflags],
+		[Add extra target flags for C++ for library code])],
+	[],
+	[]
+	)
+AC_SUBST(target_cxxflags, $with_target_cxxflags)
+
 AC_CONFIG_FILES([Makefile])
 AC_CONFIG_FILES([scripts/wrapper/awk/awk], [chmod +x scripts/wrapper/awk/awk])
 AC_CONFIG_FILES([scripts/wrapper/sed/sed], [chmod +x scripts/wrapper/sed/sed])
