@@ -110,17 +110,17 @@ AC_ARG_ENABLE(gcc-checking,
         [AS_HELP_STRING([--enable-gcc-checking],
 		[Enable gcc internal checking, it will make gcc very slow, only enable it when developing gcc @<:@--disable-gcc-checking@:>@])],
         [],
-        [enable_gcc_checking=yes]
+        []
         )
-AS_IF([test "x$enable_gcc_checking" != xno],
-	[AC_SUBST(gcc_checking, --enable-checking=yes)],
-	[AC_SUBST(gcc_checking, --enable-checking=release)])
+AS_IF([test "x$enable_gcc_checking" != x],
+	[AC_SUBST(gcc_checking, --enable-checking=$enable_gcc_checking)],
+	[AC_SUBST(gcc_checking, "")])
 
 AC_ARG_WITH(cmodel,
 	[AS_HELP_STRING([--with-cmodel],
 		[Select the code model to use when building libc and libgcc @<:@--with-cmodel=medlow@:>@])],
 	[],
-	[enable_gcc_checking=yes]
+	[]
 	)
 AS_IF([test "x$with_cmodel" != x],
 	[AC_SUBST(cmodel, -mcmodel=$with_cmodel)],
