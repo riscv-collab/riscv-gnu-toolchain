@@ -30,11 +30,11 @@ executing the following command should suffice:
 
 On Fedora/CentOS/RHEL OS, executing the following command should suffice:
 
-    $ sudo yum install autoconf automake libmpc-devel mpfr-devel gmp-devel gawk  bison flex texinfo patchutils gcc gcc-c++ zlib-devel expat-devel
+    $ sudo yum install autoconf automake python3 libmpc-devel mpfr-devel gmp-devel gawk  bison flex texinfo patchutils gcc gcc-c++ zlib-devel expat-devel
 
 On OS X, you can use [Homebrew](http://brew.sh) to install the dependencies:
 
-    $ brew install gawk gnu-sed gmp mpfr libmpc isl zlib expat
+    $ brew install python3 gawk gnu-sed gmp mpfr libmpc isl zlib expat
 
 To build the glibc (Linux) on OS X, you will need to build within a case-sensitive file
 system.  The simplest approach is to create and mount a new disk image with
