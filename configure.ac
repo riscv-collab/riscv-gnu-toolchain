@@ -71,7 +71,7 @@ AC_ARG_WITH(tune,
 	[with_tune=rocket]
 	)
 
-AS_IF([test "x$with_abi" == xdefault],
+AS_IF([test "x$with_abi" = xdefault],
 	[AS_CASE([$with_arch],
 		[*rv64g* | *rv64*d*], [with_abi=lp64d],
 		[*rv64*f*], [with_abi=lp64f],
