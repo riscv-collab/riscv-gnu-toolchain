@@ -1,6 +1,6 @@
-This folder contain all whitelist files for testsuite result,
+This folder contain all allowlist files for testsuite result,
 it used for `riscv-gnu-toolchain/scripts/testsuite-filter`,
-naming rule of whitelist file as below:
+naming rule of allowlist file as below:
 
 ```
 <toolname>/common.log
@@ -10,10 +10,10 @@ naming rule of whitelist file as below:
 - `toolname` can be `gcc`, `binutils` or `gdb`.
 
 - `<toolname>/common.log`: Every target/library combination for the `<toolname>`
-  will use this whitelist file.
+  will use this allowlist file.
 
 - `<toolname>/[<lib>.][rv(32|64|128).][<ext>.][<abi>.]log`: `testsuite-filter`
-  will according the target/library combination to match corresponding whitelist
+  will according the target/library combination to match corresponding allowlist
   files.
 
 - For example, rv32im,ilp32/newlib will match following 24 files, and ignored if
