@@ -19,7 +19,7 @@ Alternatively :
     $ cd riscv-gnu-toolchain
     $ git submodule update --init --recursive
     
-    
+**Warning: git clone takes around 6.65 GB of disk and download size**
 
 ### Prerequisites
 
