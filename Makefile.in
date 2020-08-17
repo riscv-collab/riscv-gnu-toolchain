@@ -1,6 +1,8 @@
 srcdir := @abs_top_srcdir@
 builddir := @abs_top_builddir@
 INSTALL_DIR := @prefix@
+SRC_EXPAT := @abs_top_srcdir@/libexpat/expat
+OBJDIR = obj
 
 # We need a relative source dir for the gcc configure, to make msys2 mingw64
 # builds work.  Mayberelsrcdir is relative if a relative path was used to run
@@ -21,13 +23,14 @@ newlib_url := ftp://sourceware.org/pub/newlib/newlib-$(newlib_version).tar.gz
 
 WITH_ARCH ?= @WITH_ARCH@
 WITH_ABI ?= @WITH_ABI@
-WITH_TUNE ?= @WITH_TUNE@
+WITH_HOST ?= @configure_host@
 SYSROOT := $(INSTALL_DIR)/sysroot
 
 SHELL := /bin/sh
 AWK := @GAWK@
 SED := @GSED@
 PATH := $(INSTALL_DIR)/bin:$(PATH)
+EXPAT_PATHS := $(INSTALL_DIR):$(INSTALL_DIR)/include:$(INSTALL_DIR)/lib
 
 # Check to see if we need wrapper scripts for awk/sed (which point to
 # gawk/gsed on platforms where these aren't the default), otherwise
@@ -82,7 +85,8 @@ MUSL_CXX_FOR_TARGET ?= $(MUSL_TUPLE)-g++
 CONFIGURE_HOST   = @configure_host@
 
 all: @default_target@
-newlib: stamps/build-gcc-newlib-stage2
+#newlib: $(OBJDIR)/stamps/expat/install.stamp
+newlib: stamps/riscv-gcc-gmp $(OBJDIR)/stamps/expat/install.stamp stamps/build-gcc-newlib-stage2 
 linux: stamps/build-gcc-linux-stage2
 musl: stamps/build-gcc-musl-stage2
 ifeq (@enable_gdb@,--enable-gdb)
@@ -165,6 +169,45 @@ $(addprefix $(srcdir)/patches/,$(PACKAGES)): $(srcdir)/patches/%: src/%
 	$(srcdir)/scripts/cp_s $(srcdir)/$(notdir $@) $<
 
 patches: $(addprefix $(srcdir)/patches/,$(PACKAGES))
+
+
+$(WIN64)-expat-configure  := --host=$(WIN64)
+
+# OpenOCD requires a GDB that's been build with expat support so it can read
+# the target XML files.
+$(OBJDIR)/stamps/expat/install.stamp: \
+		$(OBJDIR)/build/expat/configure
+	$(info "-------------------------- Expat phase 2--------------------------")
+	$(eval $@_TARGET := $(patsubst $(OBJDIR)/%/stamps/expat/install.stamp,%,$@))
+	$(eval $@_BUILD := $(patsubst %/stamps/expat/install.stamp,%/build/expat,$@))
+	$(eval $@_INSTALL := $(patsubst %/stamps/expat/install.stamp,%/install/riscv64-unknown-elf-gcc-$(RGT_VERSION)-$($@_TARGET),$@))
+	$(eval $@HOST := $(patsubst --with-host=%,%,$(WITH_HOST)))
+	mkdir -p $($@_BUILD)
+	#cd $($@_BUILD); ./configure --prefix=$(abspath $($@_INSTALL)) $($($@_TARGET)-expat-configure)
+	cd $($@_BUILD); ./configure --prefix=$(INSTALL_DIR) $($($@_TARGET)-expat-configure) $($@HOST)
+
+	#$(MAKE) -C $($@_BUILD) buildlib
+	#$(MAKE) -C $($@_BUILD) installlib
+	$(MAKE) -C $($@_BUILD) 
+	$(MAKE) -C $($@_BUILD) install
+	mkdir -p $(dir $@)
+	date > $@
+	$(info "-------------------------- Expat phase 3 install--------------------------")
+	
+$(OBJDIR)/build/expat/configure:
+	$(info "-------------------------- Expat phase 1 build/expat/configure --------------------------")
+	$(eval export PATH=$(PATH):$(EXPAT_PATHS))	
+	rm -rf $(dir $@)
+	mkdir -p $(dir $@)
+	cp -a $(SRC_EXPAT)/* $(dir $@)
+	cd $(dir $@); ./buildconf.sh
+	touch -c $@
+
+
+stamps/riscv-gcc-gmp:	
+	$(info "-------------------------- download contrib prerequisites --------------------------")
+	cd $(srcdir)/riscv-gcc/; ./contrib/download_prerequisites
+
 
 
 stamps/build-linux-headers:
@@ -300,7 +343,6 @@ stamps/build-gcc-linux-stage1: $(srcdir)/riscv-gcc stamps/build-binutils-linux \
 		$(MULTILIB_FLAGS) \
 		$(WITH_ABI) \
 		$(WITH_ARCH) \
-		$(WITH_TUNE) \
 		CFLAGS_FOR_TARGET="-O2 $(CFLAGS_FOR_TARGET)" \
 		CXXFLAGS_FOR_TARGET="-O2 $(CXXFLAGS_FOR_TARGET)"
 	$(MAKE) -C $(notdir $@) inhibit-libc=true all-gcc
@@ -332,7 +374,6 @@ stamps/build-gcc-linux-stage2: $(srcdir)/riscv-gcc $(addprefix stamps/build-glib
 		$(MULTILIB_FLAGS) \
 		$(WITH_ABI) \
 		$(WITH_ARCH) \
-		$(WITH_TUNE) \
 		CFLAGS_FOR_TARGET="-O2 $(CFLAGS_FOR_TARGET)" \
 		CXXFLAGS_FOR_TARGET="-O2 $(CXXFLAGS_FOR_TARGET)"
 	$(MAKE) -C $(notdir $@)
@@ -383,8 +424,7 @@ stamps/build-gcc-linux-native: $(srcdir)/riscv-gcc stamps/build-gcc-linux-stage2
 		$(GCC_CHECKING_FLAGS) \
 		$(MULTILIB_FLAGS) \
 		$(WITH_ABI) \
-		$(WITH_ARCH) \
-		$(WITH_TUNE)
+		$(WITH_ARCH)
 	$(MAKE) -C $(notdir $@)
 	$(MAKE) -C $(notdir $@) install
 	cp -a $(INSTALL_DIR)/$(LINUX_TUPLE)/lib* $(SYSROOT)
@@ -454,13 +494,11 @@ stamps/build-gcc-newlib-stage1: $(srcdir)/riscv-gcc stamps/build-binutils-newlib
 		--disable-libquadmath \
 		--disable-libgomp \
 		--disable-nls \
-		--disable-tm-clone-registry \
 		--src=$(gccsrcdir) \
 		$(GCC_CHECKING_FLAGS) \
 		$(MULTILIB_FLAGS) \
 		$(WITH_ABI) \
 		$(WITH_ARCH) \
-		$(WITH_TUNE) \
 		CFLAGS_FOR_TARGET="-Os $(CFLAGS_FOR_TARGET)" \
 		CXXFLAGS_FOR_TARGET="-Os $(CXXFLAGS_FOR_TARGET)"
 	$(MAKE) -C $(notdir $@) all-gcc
@@ -477,9 +515,8 @@ stamps/build-newlib: $(srcdir)/riscv-newlib stamps/build-gcc-newlib-stage1
 		--enable-newlib-io-long-double \
 		--enable-newlib-io-long-long \
 		--enable-newlib-io-c99-formats \
-		--enable-newlib-register-fini \
-		CFLAGS_FOR_TARGET="-O2 -D_POSIX_MODE $(CFLAGS_FOR_TARGET)" \
-		CXXFLAGS_FOR_TARGET="-O2 -D_POSIX_MODE $(CXXFLAGS_FOR_TARGET)"
+		CFLAGS_FOR_TARGET="-Os $(CFLAGS_FOR_TARGET)" \
+		CXXFLAGS_FOR_TARGET="-Os $(CXXFLAGS_FOR_TARGET)"
 	$(MAKE) -C $(notdir $@)
 	$(MAKE) -C $(notdir $@) install
 	mkdir -p $(dir $@) && touch $@
@@ -502,6 +539,7 @@ stamps/build-newlib-nano: $(srcdir)/riscv-newlib stamps/build-gcc-newlib-stage1
 		--enable-newlib-nano-formatted-io \
 		--disable-newlib-supplied-syscalls \
 		--disable-nls \
+		--enable-newlib-register-fini \
 		CFLAGS_FOR_TARGET="-Os -ffunction-sections -fdata-sections $(CFLAGS_FOR_TARGET)" \
 		CXXFLAGS_FOR_TARGET="-Os -ffunction-sections -fdata-sections $(CXXFLAGS_FOR_TARGET)"
 	$(MAKE) -C $(notdir $@)
@@ -520,8 +558,6 @@ stamps/merge-newlib-nano: stamps/build-newlib-nano stamps/build-newlib
 		$(INSTALL_DIR)/$(NEWLIB_TUPLE)/lib/$${mld}/libg_nano.a; \
 	    cp $(builddir)/install-newlib-nano/$(NEWLIB_TUPLE)/lib/$${mld}/libgloss.a\
 		$(INSTALL_DIR)/$(NEWLIB_TUPLE)/lib/$${mld}/libgloss_nano.a; \
-	    cp $(builddir)/install-newlib-nano/$(NEWLIB_TUPLE)/lib/$${mld}/crt0.o\
-		$(INSTALL_DIR)/$(NEWLIB_TUPLE)/lib/$${mld}/crt0.o; \
 	done
 # Copy nano header files into newlib install dir.
 	mkdir -p $(INSTALL_DIR)/$(NEWLIB_TUPLE)/include/newlib-nano; \
@@ -550,13 +586,11 @@ stamps/build-gcc-newlib-stage2: $(srcdir)/riscv-gcc stamps/build-newlib \
 		--disable-libquadmath \
 		--disable-libgomp \
 		--disable-nls \
-		--disable-tm-clone-registry \
 		--src=$(gccsrcdir) \
 		$(GCC_CHECKING_FLAGS) \
 		$(MULTILIB_FLAGS) \
 		$(WITH_ABI) \
 		$(WITH_ARCH) \
-		$(WITH_TUNE) \
 		CFLAGS_FOR_TARGET="-Os $(CFLAGS_FOR_TARGET)" \
 		CXXFLAGS_FOR_TARGET="-Os $(CXXFLAGS_FOR_TARGET)"
 	$(MAKE) -C $(notdir $@)
@@ -616,7 +650,6 @@ stamps/build-gcc-musl-stage1: $(srcdir)/riscv-gcc stamps/build-binutils-musl \
 		--disable-multilib \
 		$(WITH_ABI) \
 		$(WITH_ARCH) \
-		$(WITH_TUNE) \
 		CFLAGS_FOR_TARGET="-O2 $(CFLAGS_FOR_TARGET)" \
 		CXXFLAGS_FOR_TARGET="-O2 $(CXXFLAGS_FOR_TARGET)"
 	$(MAKE) -C $(notdir $@) inhibit-libc=true all-gcc
@@ -680,7 +713,6 @@ stamps/build-gcc-musl-stage2: $(srcdir)/riscv-gcc stamps/build-musl-linux \
 		--disable-multilib \
 		$(WITH_ABI) \
 		$(WITH_ARCH) \
-		$(WITH_TUNE) \
 		CFLAGS_FOR_TARGET="-O2 $(CFLAGS_FOR_TARGET)" \
 		CXXFLAGS_FOR_TARGET="-O2 $(CXXFLAGS_FOR_TARGET)"
 	$(MAKE) -C $(notdir $@)
@@ -689,7 +721,8 @@ stamps/build-gcc-musl-stage2: $(srcdir)/riscv-gcc stamps/build-musl-linux \
 	mkdir -p $(dir $@) && touch $@
 
 
-stamps/build-qemu: $(srcdir)/qemu
+
+stamps/build-qemu: $(srcdir)/riscv-qemu
 	rm -rf $@ $(notdir $@)
 	mkdir $(notdir $@)
 	cd $(notdir $@) && $</configure \
@@ -787,14 +820,26 @@ stamps/check-gdb-linux: stamps/build-gcc-linux-stage2 stamps/build-gdb-linux sta
 
 .PHONY: report-gcc-newlib report-gcc-newlib-nano
 report-gcc-newlib: stamps/check-gcc-newlib
-	$(srcdir)/scripts/testsuite-filter gcc newlib $(srcdir)/test/whitelist `find build-gcc-newlib-stage2/gcc/testsuite/ -name *.sum |paste -sd "," -`
+	stat $(patsubst %,$(srcdir)/test/gcc-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)) || exit 1
+# Fail if there are blank lines in the log file used as input for grep below.
+	if grep '^$$' $(patsubst %,$(srcdir)/test/gcc-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)); then exit 1; fi
+	if find build-gcc-newlib-stage2/gcc/testsuite/ -iname '*.sum' | xargs grep ^FAIL | sort | grep -F -v $(patsubst %,--file=$(srcdir)/test/gcc-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)); then false; else true; fi
+	if test "$$(find build-gcc-newlib-stage2/gcc/testsuite/ -iname '*.sum' | xargs cat | wc -l)" -lt 100; then false; else true; fi
 
 report-gcc-newlib-nano: stamps/check-gcc-newlib-nano
-	$(srcdir)/scripts/testsuite-filter gcc newlib-nano $(srcdir)/test/whitelist `find build-gcc-newlib-stage2/gcc/testsuite/ -name *.sum |paste -sd "," -`
+	stat $(patsubst %,$(srcdir)/test/gcc-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)) || exit 1
+# Fail if there are blank lines in the log file used as input for grep below.
+	if grep '^$$' $(patsubst %,$(srcdir)/test/gcc-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)); then exit 1; fi
+	if find build-gcc-newlib-stage2/gcc/testsuite/ -iname '*.sum' | xargs grep ^FAIL | sort | grep -F -v $(patsubst %,--file=$(srcdir)/test/gcc-newlib/%.log,$(NEWLIB_MULTILIB_NAMES)); then false; else true; fi
+	if test "$$(find build-gcc-newlib-stage2/gcc/testsuite/ -iname '*.sum' | xargs cat | wc -l)" -lt 100; then false; else true; fi
 
 .PHONY: report-gcc-linux
 report-gcc-linux: stamps/check-gcc-linux
-	$(srcdir)/scripts/testsuite-filter gcc glibc $(srcdir)/test/whitelist `find build-gcc-linux-stage2/gcc/testsuite/ -name *.sum |paste -sd "," -`
+	stat $(patsubst %,$(srcdir)/test/gcc-linux/%.log,$(GLIBC_MULTILIB_NAMES)) || exit 1
+# Fail if there are blank lines in the log file used as input for grep below.
+	if grep '^$$' $(patsubst %,$(srcdir)/test/gcc-linux/%.log,$(GLIBC_MULTILIB_NAMES)); then exit 1; fi
+	if find build-gcc-linux-stage2/gcc/testsuite/ -iname '*.sum' | xargs grep ^FAIL | sort | grep -F -v $(patsubst %,--file=$(srcdir)/test/gcc-linux/%.log,$(GLIBC_MULTILIB_NAMES)); then false; else true; fi
+	if test "$$(find build-gcc-linux-stage2/gcc/testsuite/ -iname '*.sum' | xargs cat | wc -l)" -lt 100; then false; else true; fi
 
 .PHONY: report-dhrystone-newlib report-dhrystone-newlib-nano
 report-dhrystone-newlib: $(patsubst %,stamps/check-dhrystone-newlib-%,$(NEWLIB_MULTILIB_NAMES))
