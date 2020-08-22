@@ -23,14 +23,19 @@ Alternatively :
 
 ### Prerequisites
 
-Several standard packages are needed to build the toolchain.  On Ubuntu,
-executing the following command should suffice:
+Several standard packages are needed to build the toolchain.  
+
+On Ubuntu, executing the following command should suffice:
 
     $ sudo apt-get install autoconf automake autotools-dev curl python3 libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo gperf libtool patchutils bc zlib1g-dev libexpat-dev
 
 On Fedora/CentOS/RHEL OS, executing the following command should suffice:
 
     $ sudo yum install autoconf automake python3 libmpc-devel mpfr-devel gmp-devel gawk  bison flex texinfo patchutils gcc gcc-c++ zlib-devel expat-devel
+    
+On Arch Linux, executing the following command should suffice:
+
+    $ pacman -Syyu autoconf automake curl python3 mpc mpfr gmp gawk build-essential bison flex texinfo gperf libtool patchutils bc zlib expat
 
 On OS X, you can use [Homebrew](http://brew.sh) to install the dependencies:
 
