@@ -129,15 +129,21 @@ configure.  See './configure --help' for more details.
 
 ### Test Suite
 
-The DejaGnu test suite has been ported to RISC-V.  This can run with GDB
-simulator for elf toolchain or Qemu for linux toolchain, and GDB simulator
-doesn't support floating-point.
+The Dejagnu test suite has been ported to RISC-V. This can be run with a
+simulator for the elf and linux toolchains. The simulator can be selected
+by the SIM variable in the Makefile, e.g. SIM=qemu, SIM=gdb, or SIM=spike
+(experimental). However, the testsuite allowlist is only mintained for qemu.
+Other simulators might get extra failures.
 To test GCC, run the following commands:
 
     ./configure --prefix=$RISCV --disable-linux --with-arch=rv64ima # or --with-arch=rv32ima
     make newlib
-    make report-newlib
+    make report-newlib SIM=gdb # Run with gdb simulator
 
     ./configure --prefix=$RISCV
     make linux
-    make report-linux
+    make report-linux SIM=qemu # Run with qemu
+
+Note:
+- spike only support rv64* bare-metal/elf toolchain.
+- gdb simulator only support bare-metal/elf toolchain.
