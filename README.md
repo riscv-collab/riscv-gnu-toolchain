@@ -127,6 +127,42 @@ devtoolset-7 works.
 There are a number of additional options that may be passed to
 configure.  See './configure --help' for more details.
 
+#### Build with customized multi-lib configure.
+
+`--with-multilib-generator=` can specify what multilibs to build.  The argument
+is a semicolon separated list of values, possibly consisting of a single value.
+Currently only supported for riscv*-*-elf*.  The accepted values and meanings
+are given below.
+
+Every config is constructed with four components: architecture string, ABI,
+reuse rule with architecture string and reuse rule with sub-extension.
+
+Re-use part support expansion operator (*) to simplify the combination of
+different sub-extensions, example 4 demonstrate how it uses and works.
+
+Example 1: Add multi-lib suppport for rv32i with ilp32.
+```
+./configure --with-multilib-generator="rv32i-ilp32--"
+```
+
+Example 2: Add multi-lib suppport for rv32i with ilp32 and rv32imafd with ilp32.
+
+```
+./configure --with-multilib-generator="rv32i-ilp32--;rv32imafd-ilp32--"
+```
+
+Example 3: Add multi-lib suppport for rv32i with ilp32; rv32im with ilp32 and
+rv32ic with ilp32 will reuse this multi-lib set.
+```
+./configure --with-multilib-generator="rv32i-ilp32-rv32im-c"
+```
+
+Example 4: Add multi-lib suppport for rv64ima with lp64; rv64imaf with lp64,
+rv64imac with lp64 and rv64imafc with lp64 will reuse this multi-lib set.
+```
+./configure --with-multilib-generator="rv64ima-lp64--f*c"
+```
+
 ### Test Suite
 
 The Dejagnu test suite has been ported to RISC-V. This can be run with a

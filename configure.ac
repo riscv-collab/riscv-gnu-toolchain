@@ -94,7 +94,19 @@ AC_ARG_ENABLE(multilib,
 	[enable_multilib=no]
 	)
 
-AS_IF([test "x$enable_multilib" != xno],
+AC_ARG_WITH(multilib-generator,
+	[AS_HELP_STRING([--with-multilib-generator],
+		[Multi-libs configuration string, only supported for bare-metal/elf toolchaih, this option implied --enable-multilib])],
+	[],
+	[with_multilib_generator=no]
+	)
+
+AS_IF([test "x$with_multilib_generator" != xno],
+        [AC_SUBST(multilib_gen,"$with_multilib_generator")],
+        [AC_SUBST(multilib_gen,"")])
+
+
+AS_IF([test "x$enable_multilib" != xno || test "x$with_multilib_generator" != xno],
         [AC_SUBST(multilib_flags,--enable-multilib)],
 	[AC_SUBST(multilib_flags,--disable-multilib)])
 
