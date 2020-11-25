@@ -11,11 +11,11 @@ toolchain.
 
 This repository uses submodules. You need the --recursive option to fetch the submodules automatically
 
-    $ git clone --recursive https://github.com/westerndigitalcorporation/riscv-gnu-toolchain/
+    $ git clone --recursive https://github.com/westerndigitalcorporation/riscv-gnu-toolchain.git
     
 Alternatively :
 
-    $ git clone https://github.com/westerndigitalcorporation/riscv-gnu-toolchain/
+    $ git clone https://github.com/westerndigitalcorporation/riscv-gnu-toolchain.git
     $ cd riscv-gnu-toolchain
     $ git submodule update --init --recursive
     
