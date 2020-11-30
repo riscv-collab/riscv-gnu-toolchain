@@ -140,24 +140,24 @@ reuse rule with architecture string and reuse rule with sub-extension.
 Re-use part support expansion operator (*) to simplify the combination of
 different sub-extensions, example 4 demonstrate how it uses and works.
 
-Example 1: Add multi-lib suppport for rv32i with ilp32.
+Example 1: Add multi-lib support for rv32i with ilp32.
 ```
 ./configure --with-multilib-generator="rv32i-ilp32--"
 ```
 
-Example 2: Add multi-lib suppport for rv32i with ilp32 and rv32imafd with ilp32.
+Example 2: Add multi-lib support for rv32i with ilp32 and rv32imafd with ilp32.
 
 ```
 ./configure --with-multilib-generator="rv32i-ilp32--;rv32imafd-ilp32--"
 ```
 
-Example 3: Add multi-lib suppport for rv32i with ilp32; rv32im with ilp32 and
+Example 3: Add multi-lib support for rv32i with ilp32; rv32im with ilp32 and
 rv32ic with ilp32 will reuse this multi-lib set.
 ```
 ./configure --with-multilib-generator="rv32i-ilp32-rv32im-c"
 ```
 
-Example 4: Add multi-lib suppport for rv64ima with lp64; rv64imaf with lp64,
+Example 4: Add multi-lib support for rv64ima with lp64; rv64imaf with lp64,
 rv64imac with lp64 and rv64imafc with lp64 will reuse this multi-lib set.
 ```
 ./configure --with-multilib-generator="rv64ima-lp64--f*c"
