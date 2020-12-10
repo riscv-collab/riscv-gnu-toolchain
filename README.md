@@ -35,7 +35,7 @@ On Fedora/CentOS/RHEL OS, executing the following command should suffice:
     
 On Arch Linux, executing the following command should suffice:
 
-    $ pacman -Syyu autoconf automake curl python3 mpc mpfr gmp gawk build-essential bison flex texinfo gperf libtool patchutils bc zlib expat
+    $ pacman -Syyu autoconf automake curl python3 mpc mpfr gmp gawk base-devel bison flex texinfo gperf libtool patchutils bc zlib expat
 
 On OS X, you can use [Homebrew](http://brew.sh) to install the dependencies:
 
