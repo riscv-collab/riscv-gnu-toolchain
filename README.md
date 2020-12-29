@@ -84,16 +84,18 @@ Supported ABIs are ilp32 (32-bit soft-float), ilp32d (32-bit hard-float),
 ilp32f (32-bit with single-precision in registers and double in memory, niche
 use only), lp64 lp64f lp64d (same but with 64-bit long and pointers).
 
-### Installation (Linux multilib)
+### Installation (Newlib/Linux multilib)
 
-To build the Linux cross-compiler with support for both 32-bit and
-64-bit, run the following commands:
+To build either cross-compiler with support for both 32-bit and
+64-bit, run the following command:
 
     ./configure --prefix=/opt/riscv --enable-multilib
-    make linux
+    
+And then either `make` or `make linux` for the Newlib or Linux cross-compiler respectively.
 
-The multilib compiler will have the prefix riscv64-unknown-linux-gnu-,
-but will be able to target both 32-bit and 64-bit systems.
+The multilib compiler will have the prefix riscv64-unknown-elf- or riscv64-unknown-linux-gnu-,
+but will be able to target both 32-bit and 64-bit systems. It will support
+the most common `-march`/`-mabi` options, which can be seen by using the `--print-multi-lib` flag on either cross-compiler.
 
 ### Troubleshooting Build Problems
 
