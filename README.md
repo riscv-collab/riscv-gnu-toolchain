@@ -9,16 +9,11 @@ toolchain.
 
 ###  Getting the sources
 
-This repository uses submodules. You need the --recursive option to fetch the submodules automatically
-
-    $ git clone --recursive https://github.com/riscv/riscv-gnu-toolchain
-    
-Alternatively :
+This repository uses submodules, but submodules will fetch automatically on demand,
+so `--recursive` or `git submodule update --init --recursive` is not needed.
 
     $ git clone https://github.com/riscv/riscv-gnu-toolchain
-    $ cd riscv-gnu-toolchain
-    $ git submodule update --init --recursive
-    
+
 **Warning: git clone takes around 6.65 GB of disk and download size**
 
 ### Prerequisites
