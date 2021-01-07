@@ -180,3 +180,62 @@ To test GCC, run the following commands:
 Note:
 - spike only support rv64* bare-metal/elf toolchain.
 - gdb simulator only support bare-metal/elf toolchain.
+
+### Development
+
+This section is only for developer or advanced user, or you want to build
+toolchain with your own source tree.
+
+#### Update Source Tree
+
+`riscv-gnu-toolchain` contain stable but not latest source for each submodule,
+in case you want to using latest develoment tree, you can use following command
+to upgrade all submodule.
+
+    git submodule update --remote
+
+Or you can upgrade specific submodule only.
+
+    git submodule update --remote <component>
+
+For example, upgrade riscv-gcc only, you can using following command:
+
+    git submodule update --remote riscv-gcc
+
+#### How to Check Which Branch are Used for Specific submodule
+
+The branch info has recorded in `.gitmodules` file, which can set or update via
+`git submodule add -b` or `git submodule set-branch`.
+
+However the only way to check which branch are using is to check `.gitmodules`
+file, here is the example for `riscv-gcc`, it using riscv-gcc-10.2.0 branch, so
+it will has a section named `riscv-gcc` and has a field `branch` is
+`riscv-gcc-10.2.0`.
+
+```
+[submodule "riscv-gcc"]
+        path = riscv-gcc
+        url = ../riscv-gcc.git
+        branch = riscv-gcc-10.2.0
+```
+
+#### Use Source Tree Other Than `riscv-gnu-toolchain`
+
+`riscv-gnu-toolchain` also support using out-of-tree source to build toolchain,
+there is couple configure option to specify the source tree of each
+submodule/component.
+
+For example you have a gcc in `$HOME/gcc`, use `--with-gcc-src` can specify that:
+
+    ./configure --with-gcc-src=$HOME/gcc
+
+Here is the list of configure option for specify source tree:
+
+    --with-gcc-src
+    --with-binutils-src
+    --with-newlib-src
+    --with-glibc-src
+    --with-musl-src
+    --with-gdb-src
+    --with-linux-headers-src
+
