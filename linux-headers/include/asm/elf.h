@@ -9,8 +9,8 @@
  * (at your option) any later version.
  */
 
-#ifndef _ASM_ELF_H
-#define _ASM_ELF_H
+#ifndef _ASM_RISCV_ELF_H
+#define _ASM_RISCV_ELF_H
 
 #include <asm/ptrace.h>
 
@@ -95,4 +95,4 @@ typedef union __riscv_fp_state elf_fpregset_t;
 #define R_RISCV_32_PCREL	57
 
 
-#endif /* _ASM_ELF_H */
+#endif /* _ASM_RISCV_ELF_H */

@@ -289,7 +289,10 @@ struct cdrom_generic_command
 	unsigned char		data_direction;
 	int			quiet;
 	int			timeout;
-	void			*reserved[1];	/* unused, actually */
+	union {
+		void		*reserved[1];	/* unused, actually */
+		void            *unused;
+	};
 };
 
 /*
