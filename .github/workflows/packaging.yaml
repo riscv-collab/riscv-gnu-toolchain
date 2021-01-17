@@ -6,8 +6,13 @@ on:
       - master
 
 jobs:
-  checkout:
-    runs-on: ubuntu-latest
+  package:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os:     [ubuntu-18.04, ubuntu-20.04]
+        mode:   [newlib, linux]
+        target: [rv32gc-ilp32d, rv64gc-lp64d]
     steps:
       - uses: actions/checkout@v2
 
@@ -15,132 +20,27 @@ jobs:
         run: |
           git submodule init
           git submodule update --recursive --progress --recommend-shallow
-      
-      # workaround https://github.com/actions/upload-artifact/issues/38
-      - name: tarball source
-        run: |
-          base=$(basename $PWD)
-          cd ..
-          tar czvf source.tar.gz --exclude-vcs -C $base .
-          mv source.tar.gz $base/
-
-      - uses: actions/upload-artifact@v2
-        with:
-          name: source-code-full
-          path: source.tar.gz
-
-
-  build-riscv32-ubuntu_18_04:
-    needs: checkout
-    runs-on: ubuntu-18.04
-    steps:
-      - uses: actions/download-artifact@v2
-        with:
-          name: source-code-full
-      
-      # workaround https://github.com/actions/upload-artifact/issues/38
-      - name: tarball source
-        run: tar -xvf source.tar.gz
 
       - name: install dependencies
         run: sudo ./.github/setup-apt.sh
-      
-      - name: Build Toolchain
+
+      - name: build toolchain
         run: |
-          ./configure --prefix=/opt/riscv --with-arch=rv32gc --with-abi=ilp32d
-          sudo make -j $(nproc) linux
+          TARGET_TUPLE=($(echo ${{ matrix.target }} | tr "-" "\n"))
+          ./configure --prefix=/opt/riscv --with-arch=${TARGET_TUPLE[0]} --with-abi=${TARGET_TUPLE[1]}
+          sudo make -j $(nproc) ${{ matrix.mode }}
 
       - name: tarball build
         run: tar czvf riscv.tar.gz -C /opt/ riscv/
-      
-      - uses: actions/upload-artifact@v2
-        with:
-          name: riscv32-glibc-ubuntu_18_04-nightly
-          path: riscv.tar.gz
 
-
-  build-riscv64-ubuntu_18_04:
-    needs: checkout
-    runs-on: ubuntu-18.04
-    steps:
-      - uses: actions/download-artifact@v2
-        with:
-          name: source-code-full
-
-      # workaround https://github.com/actions/upload-artifact/issues/38
-      - name: tarball source
-        run: tar -xvf source.tar.gz
-      
-      - name: install dependencies
-        run: sudo ./.github/setup-apt.sh
-
-      - name: Build Toolchain
+      - name: generate prebuilt toolchain name
+        id:   toolchain-name-generator
         run: |
-          ./configure --prefix=/opt/riscv
-          sudo make -j $(nproc) linux
+          if [[ "${{ matrix.target }}" == *"32"* ]]; then BITS=32; else BITS=64; fi
+          if [[ "${{ matrix.mode }}" == "linux" ]]; then MODE="glibc"; else MODE="elf"; fi
+          echo ::set-output name=TOOLCHAIN_NAME::riscv$BITS-$MODE-${{ matrix.os }}-nightly
 
-      - name: tarball build
-        run: tar czvf riscv.tar.gz -C /opt/ riscv/
-      
       - uses: actions/upload-artifact@v2
         with:
-          name: riscv64-glibc-ubuntu_18_04-nightly
-          path: riscv.tar.gz   
-
-
-  build-riscv32-ubuntu_20_04:
-    needs: checkout
-    runs-on: ubuntu-20.04
-    steps:
-      - uses: actions/download-artifact@v2
-        with:
-          name: source-code-full
-      
-      # workaround https://github.com/actions/upload-artifact/issues/38
-      - name: tarball source
-        run: tar -xvf source.tar.gz
-
-      - name: install dependencies
-        run: sudo ./.github/setup-apt.sh
-      
-      - name: Build Toolchain
-        run: |
-          ./configure --prefix=/opt/riscv --with-arch=rv32gc --with-abi=ilp32d
-          sudo make -j $(nproc) linux
-
-      - name: tarball build
-        run: tar czvf riscv.tar.gz -C /opt/ riscv/
-      
-      - uses: actions/upload-artifact@v2
-        with:
-          name: riscv32-glibc-ubuntu_20_04-nightly
-          path: riscv.tar.gz
-
-
-  build-riscv64-ubuntu_20_04:
-    needs: checkout
-    runs-on: ubuntu-20.04
-    steps:
-      - uses: actions/download-artifact@v2
-        with:
-          name: source-code-full
-
-      # workaround https://github.com/actions/upload-artifact/issues/38
-      - name: tarball source
-        run: tar -xvf source.tar.gz
-      
-      - name: install dependencies
-        run: sudo ./.github/setup-apt.sh
-
-      - name: Build Toolchain
-        run: |
-          ./configure --prefix=/opt/riscv
-          sudo make -j $(nproc) linux
-
-      - name: tarball build
-        run: tar czvf riscv.tar.gz -C /opt/ riscv/
-      
-      - uses: actions/upload-artifact@v2
-        with:
-          name: riscv64-glibc-ubuntu_20_04-nightly
+          name: ${{ steps.toolchain-name-generator.outputs.TOOLCHAIN_NAME }}
           path: riscv.tar.gz
