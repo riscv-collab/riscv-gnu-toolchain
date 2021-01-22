@@ -42,10 +42,15 @@ jobs:
         shell: bash
 
 
-  checkout:
+  build:
     needs: activity-check
     if: needs.activity-check.outputs.stale != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os:     [ubuntu-18.04, ubuntu-20.04]
+        mode:   [newlib, linux]
+        target: [rv32gc-ilp32d, rv64gc-lp64d]
     steps:
       - uses: actions/checkout@v2
 
@@ -53,76 +58,34 @@ jobs:
         run: |
           git submodule init
           git submodule update --recursive --progress --recommend-shallow
-      
-      # workaround https://github.com/actions/upload-artifact/issues/38
-      - name: tarball source
-        run: |
-          base=$(basename $PWD)
-          cd ..
-          tar czvf source.tar.gz --exclude-vcs -C $base .
-          mv source.tar.gz $base/
-
-      - uses: actions/upload-artifact@v2
-        with:
-          name: full-source
-          path: source.tar.gz
-
-
-  build-ubuntu:
-    needs: checkout
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ ubuntu-18.04, ubuntu-20.04 ]
-        bits: [ 64, 32 ]
-    name: build riscv${{ matrix.bits }}-${{ matrix.os }}
-    env:
-      BUILD_BITS: ${{ matrix.bits }}
-    
-    steps:
-      - name: Set build environment variables
-        run: |
-          if [ "$BUILD_BITS" = "64" ]
-          then
-            echo BUILD_ARCH="rv64imafdc" >> $GITHUB_ENV
-            echo BUILD_ABI="lp64d" >> $GITHUB_ENV
-          elif [ "$BUILD_BITS" = "32" ]
-          then
-            echo BUILD_ARCH="rv32gc" >> $GITHUB_ENV
-            echo BUILD_ABI="ilp32d" >> $GITHUB_ENV
-          else
-            echo "Unsupported architecture: $BUILD_BITS bits"
-            exit 1
-          fi
-
-      - uses: actions/download-artifact@v2
-        with:
-          name: full-source
-      
-      # workaround https://github.com/actions/upload-artifact/issues/38
-      - name: tarball source
-        run: tar -xvf source.tar.gz
 
       - name: install apt dependencies
         run: sudo ./.github/setup-apt.sh
       
-      - name: Build Toolchain
+      - name: build toolchain
         run: |
-          ./configure --prefix=/opt/riscv --with-arch=${BUILD_ARCH} --with-abi=${BUILD_ABI}
-          sudo make -j $(nproc) linux
+          TARGET_TUPLE=($(echo ${{ matrix.target }} | tr "-" "\n"))
+          ./configure --prefix=/opt/riscv --with-arch=${TARGET_TUPLE[0]} --with-abi=${TARGET_TUPLE[1]}
+          sudo make -j $(nproc) ${{ matrix.mode }}
 
       - name: tarball build
         run: tar czvf riscv.tar.gz -C /opt/ riscv/
-      
+
+      - name: generate prebuilt toolchain name
+        id:   toolchain-name-generator
+        run: |
+          if [[ "${{ matrix.target }}" == *"32"* ]]; then BITS=32; else BITS=64; fi
+          if [[ "${{ matrix.mode }}" == "linux" ]]; then MODE="glibc"; else MODE="elf"; fi
+          echo ::set-output name=TOOLCHAIN_NAME::riscv$BITS-$MODE-${{ matrix.os }}-nightly
+
       - uses: actions/upload-artifact@v2
-        name: upload build as an artifact
         with:
-          name: riscv${{ matrix.bits }}-${{ matrix.os }}
+          name: ${{ steps.toolchain-name-generator.outputs.TOOLCHAIN_NAME }}
           path: riscv.tar.gz
 
 
   create-release:
-    needs: [ build-ubuntu ]
+    needs: build
     runs-on: ubuntu-latest
     outputs:
       upload_url: ${{ steps.create_release.outputs.upload_url }}
