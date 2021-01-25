@@ -1,0 +1,178 @@
+name: Nightly Release
+
+on:
+  schedule:
+    - cron:  '0 0 * * ?'
+
+
+jobs:
+  activity-check:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    outputs:
+      stale: ${{ steps.activity_check.outputs.stale }}
+    steps:
+      - name:  Activity check
+        id: activity_check
+        run:   |
+          curl -sL https://api.github.com/repos/$GITHUB_REPOSITORY/commits | jq -r '[.[]][0]' > $HOME/commit.json
+          date="$(jq -r '.commit.author.date' $HOME/commit.json)"
+          timestamp=$(date --utc -d "$date" +%s)
+          author="$(jq -r '.commit.author.name' $HOME/commit.json)"
+          url="$(jq -r '.html_url' $HOME/commit.json)"
+          hours=$(( ( $(date --utc +%s) - $timestamp ) / 3600 ))
+          rm -f $HOME/commit.json
+          echo "Latest Repository activity : $timestamp $author $url"
+
+          STALE=false
+          if [ "${{ github.event_name }}" == "repository_dispatch" ]; then
+              echo "[WARNING] Ignoring activity limits : workflow triggered manually"
+          else
+              echo Repository active last $hours hours ago
+              if [ $hours -ge 24 ]; then
+                echo "[ERROR] Repository not updated : event<${{ github.event_name }}> not allowed to modify stale repository"
+                STALE=true
+              fi
+          fi
+          echo "::set-output name=stale::$STALE"
+          
+          if [ "$STALE" == "true" ]; then
+            exit 1
+          fi
+        shell: bash
+
+
+  build:
+    needs: activity-check
+    if: needs.activity-check.outputs.stale != 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os:     [ubuntu-18.04, ubuntu-20.04]
+        mode:   [newlib, linux]
+        target: [rv32gc-ilp32d, rv64gc-lp64d]
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: initialize submodules
+        run: |
+          git submodule init
+          git submodule update --recursive --progress --recommend-shallow
+
+      - name: install apt dependencies
+        run: sudo ./.github/setup-apt.sh
+      
+      - name: build toolchain
+        run: |
+          TARGET_TUPLE=($(echo ${{ matrix.target }} | tr "-" "\n"))
+          ./configure --prefix=/opt/riscv --with-arch=${TARGET_TUPLE[0]} --with-abi=${TARGET_TUPLE[1]}
+          sudo make -j $(nproc) ${{ matrix.mode }}
+
+      - name: tarball build
+        run: tar czvf riscv.tar.gz -C /opt/ riscv/
+
+      - name: generate prebuilt toolchain name
+        id:   toolchain-name-generator
+        run: |
+          if [[ "${{ matrix.target }}" == *"32"* ]]; then BITS=32; else BITS=64; fi
+          if [[ "${{ matrix.mode }}" == "linux" ]]; then MODE="glibc"; else MODE="elf"; fi
+          echo ::set-output name=TOOLCHAIN_NAME::riscv$BITS-$MODE-${{ matrix.os }}-nightly
+
+      - uses: actions/upload-artifact@v2
+        with:
+          name: ${{ steps.toolchain-name-generator.outputs.TOOLCHAIN_NAME }}
+          path: riscv.tar.gz
+
+
+  create-release:
+    needs: build
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      asset_matrix: ${{ steps.asset_names.outputs.asset_matrix }}
+      datestamp: ${{ env.DATESTAMP }}
+    steps:
+
+      - name:  Run Configuration Commands
+        run: |
+          DATESTAMP="$(date --utc '+%Y.%m.%d')"
+          echo "Version: ${DATESTAMP}-nightly"
+
+          # Setup Artifacts Directory
+          ARTIFACTS_DIR="/opt/artifacts/"
+          mkdir -p $ARTIFACTS_DIR
+
+          # Setup environment variables
+          echo "DATESTAMP=${DATESTAMP}" >> $GITHUB_ENV
+          echo "DATEWORD=$(date --utc '+%B %d, %Y')" >> $GITHUB_ENV
+          echo "ARTIFACTS_DIR=${ARTIFACTS_DIR}" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ env.DATESTAMP }}
+          release_name: "Nightly: ${{ env.DATEWORD }}"
+          body: |
+            **Automated Nightly Release**
+            ${{ env.DATESTAMP }}-nightly
+          draft: false
+          prerelease: true
+
+      - name: Download Built Artifacts
+        uses: actions/download-artifact@v2
+        with:
+          path: ${{ env.ARTIFACTS_DIR }}
+
+      # IMPORTANT: Each artifact must only have one file
+      - name: Designate Asset Names
+        id: asset_names
+        run: |
+          ASSET_MATRIX=$(
+            find ${ARTIFACTS_DIR} -mindepth 2 -maxdepth 2 -type f |
+            awk '{
+              fs_n=split($0, fs, "/")   # Split file paths
+              art_name=fs[fs_n-1]       # Get artifact name
+              fname=fs[fs_n]            # Get file name from the artifact
+              ext = substr(fs[fs_n], index(fs[fs_n],"."))   # File Extension
+
+              print art_name ":" fname ":" ext # format <artifact name : artifact file : file extension>
+            }' |
+            jq -R -s -c 'split("\n") | .[:-1] | {   # Split by newlines (remove last entry)
+              include: [
+                .[] | split(":") | {    # Put it in JSON format
+                  artifact: .[0],
+                  file: .[1],
+                  extension: .[2]
+                }
+              ] 
+            }'
+          )
+
+          echo "::set-output name=asset_matrix::${ASSET_MATRIX}"
+        shell: bash
+
+
+  upload-assets:
+    needs: create-release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{ fromJson( needs.create-release.outputs.asset_matrix ) }}
+    name: upload ${{ matrix.artifact }}
+    steps:
+
+      - uses: actions/download-artifact@v2
+        with:
+          name: ${{ matrix.artifact }}
+
+      - uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ${{ matrix.file }}
+          asset_name: ${{ matrix.artifact }}-${{ needs.create-release.outputs.datestamp }}-nightly${{ matrix.extension }}
+          asset_content_type: application/gzip
