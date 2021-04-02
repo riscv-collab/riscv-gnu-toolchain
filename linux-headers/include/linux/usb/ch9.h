@@ -138,11 +138,11 @@
  * Test Mode Selectors
  * See USB 2.0 spec Table 9-7
  */
-#define	TEST_J		1
-#define	TEST_K		2
-#define	TEST_SE0_NAK	3
-#define	TEST_PACKET	4
-#define	TEST_FORCE_EN	5
+#define	USB_TEST_J		1
+#define	USB_TEST_K		2
+#define	USB_TEST_SE0_NAK	3
+#define	USB_TEST_PACKET		4
+#define	USB_TEST_FORCE_ENABLE	5
 
 /* Status Type */
 #define USB_STATUS_TYPE_STANDARD	0
@@ -326,6 +326,10 @@ struct usb_device_descriptor {
 #define USB_CLASS_CONTENT_SEC		0x0d	/* content security */
 #define USB_CLASS_VIDEO			0x0e
 #define USB_CLASS_WIRELESS_CONTROLLER	0xe0
+#define USB_CLASS_PERSONAL_HEALTHCARE	0x0f
+#define USB_CLASS_AUDIO_VIDEO		0x10
+#define USB_CLASS_BILLBOARD		0x11
+#define USB_CLASS_USB_TYPE_C_BRIDGE	0x12
 #define USB_CLASS_MISC			0xef
 #define USB_CLASS_APP_SPEC		0xfe
 #define USB_CLASS_VENDOR_SPEC		0xff
@@ -363,6 +367,9 @@ struct usb_config_descriptor {
 #define USB_CONFIG_ATT_BATTERY		(1 << 4)	/* battery powered */
 
 /*-------------------------------------------------------------------------*/
+
+/* USB String descriptors can contain at most 126 characters. */
+#define USB_MAX_STRING_LEN	126
 
 /* USB_DT_STRING: String descriptor */
 struct usb_string_descriptor {
@@ -894,6 +901,8 @@ struct usb_ext_cap_descriptor {		/* Link Power Management */
 #define USB_BESL_SUPPORT		(1 << 2)	/* supports BESL */
 #define USB_BESL_BASELINE_VALID		(1 << 3)	/* Baseline BESL valid*/
 #define USB_BESL_DEEP_VALID		(1 << 4)	/* Deep BESL valid */
+#define USB_SET_BESL_BASELINE(p)	(((p) & 0xf) << 8)
+#define USB_SET_BESL_DEEP(p)		(((p) & 0xf) << 12)
 #define USB_GET_BESL_BASELINE(p)	(((p) & (0xf << 8)) >> 8)
 #define USB_GET_BESL_DEEP(p)		(((p) & (0xf << 12)) >> 12)
 } __attribute__((packed));
@@ -1220,7 +1229,7 @@ struct usb_set_sel_req {
  * As per USB compliance update, a device that is actively drawing
  * more than 100mA from USB must report itself as bus-powered in
  * the GetStatus(DEVICE) call.
- * http://compliance.usb.org/index.asp?UpdateFile=Electrical&Format=Standard#34
+ * https://compliance.usb.org/index.asp?UpdateFile=Electrical&Format=Standard#34
  */
 #define USB_SELF_POWER_VBUS_MAX_DRAW		100
 

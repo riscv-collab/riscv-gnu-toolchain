@@ -270,6 +270,8 @@ struct ib_uverbs_ex_query_device_resp {
 	struct ib_uverbs_tm_caps tm_caps;
 	struct ib_uverbs_cq_moderation_caps cq_moderation_caps;
 	__aligned_u64 max_dm_size;
+	__u32 xrc_odp_caps;
+	__u32 reserved;
 };
 
 struct ib_uverbs_query_port {
@@ -453,6 +455,17 @@ struct ib_uverbs_poll_cq {
 	__aligned_u64 response;
 	__u32 cq_handle;
 	__u32 ne;
+};
+
+enum ib_uverbs_wc_opcode {
+	IB_UVERBS_WC_SEND = 0,
+	IB_UVERBS_WC_RDMA_WRITE = 1,
+	IB_UVERBS_WC_RDMA_READ = 2,
+	IB_UVERBS_WC_COMP_SWAP = 3,
+	IB_UVERBS_WC_FETCH_ADD = 4,
+	IB_UVERBS_WC_BIND_MW = 5,
+	IB_UVERBS_WC_LOCAL_INV = 6,
+	IB_UVERBS_WC_TSO = 7,
 };
 
 struct ib_uverbs_wc {
