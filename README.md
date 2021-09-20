@@ -30,6 +30,8 @@ On Arch Linux, executing the following command should suffice:
 
     $ pacman -Syyu autoconf automake curl python3 mpc mpfr gmp gawk base-devel bison flex texinfo gperf libtool patchutils bc zlib expat
 
+Also available for Arch users on the AUR: [https://aur.archlinux.org/packages/riscv-gnu-toolchain/](https://aur.archlinux.org/packages/riscv-gnu-toolchain/)
+
 On OS X, you can use [Homebrew](http://brew.sh) to install the dependencies:
 
     $ brew install python3 gawk gnu-sed gmp mpfr libmpc isl zlib expat
