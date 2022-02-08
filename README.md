@@ -240,4 +240,5 @@ Here is the list of configure option for specify source tree:
     --with-musl-src
     --with-gdb-src
     --with-linux-headers-src
+    --with-qemu-src
 

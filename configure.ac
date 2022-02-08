@@ -221,6 +221,7 @@ AX_ARG_WITH_SRC(newlib)
 AX_ARG_WITH_SRC(glibc)
 AX_ARG_WITH_SRC(musl)
 AX_ARG_WITH_SRC(gdb)
+AX_ARG_WITH_SRC(qemu)
 
 AC_ARG_WITH(linux-headers-src,
 	[AC_HELP_STRING([--with-linux-headers-src],
