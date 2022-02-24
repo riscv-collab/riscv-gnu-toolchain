@@ -68,11 +68,14 @@ run the following command:
     ./configure --prefix=/opt/riscv
     make linux
 
-The build defaults to targetting RV64GC (64-bit), even on a 32-bit build
-environment.  To build the 32-bit RV32GC toolchain, use:
+The build defaults to targeting RV64GC (64-bit) with glibc, even on a 32-bit
+build environment. To build the 32-bit RV32GC toolchain, use:
 
     ./configure --prefix=/opt/riscv --with-arch=rv32gc --with-abi=ilp32d
     make linux
+
+In case you prefer musl libc over glibc, configure just like above and opt for
+`make musl` instead of `make linux`.
 
 Supported architectures are rv32i or rv64i plus standard extensions (a)tomics,
 (m)ultiplication and division, (f)loat, (d)ouble, or (g)eneral for MAFD.
@@ -88,11 +91,14 @@ To build either cross-compiler with support for both 32-bit and
 
     ./configure --prefix=/opt/riscv --enable-multilib
     
-And then either `make` or `make linux` for the Newlib or Linux cross-compiler respectively.
+And then either `make`, `make linux` or `make musl` for the Newlib, Linux
+glibc-based or Linux musl libc-based cross-compiler, respectively.
 
-The multilib compiler will have the prefix riscv64-unknown-elf- or riscv64-unknown-linux-gnu-,
+The multilib compiler will have the prefix riscv64-unknown-elf-,
+riscv64-unknown-linux-gnu- or riscv64-unknown-linux-musl-
 but will be able to target both 32-bit and 64-bit systems. It will support
-the most common `-march`/`-mabi` options, which can be seen by using the `--print-multi-lib` flag on either cross-compiler.
+the most common `-march`/`-mabi` options, which can be seen by using the
+`--print-multi-lib` flag on either cross-compiler.
 
 ### Troubleshooting Build Problems
 
@@ -241,4 +247,3 @@ Here is the list of configure option for specify source tree:
     --with-gdb-src
     --with-linux-headers-src
     --with-qemu-src
-
