@@ -217,8 +217,8 @@ AC_DEFUN([AX_ARG_WITH_SRC],
 
 AX_ARG_WITH_SRC(gcc, riscv-gcc)
 AX_ARG_WITH_SRC(binutils, riscv-binutils)
-AX_ARG_WITH_SRC(newlib, riscv-newlib)
-AX_ARG_WITH_SRC(glibc, riscv-glibc)
+AX_ARG_WITH_SRC(newlib, newlib)
+AX_ARG_WITH_SRC(glibc, glibc)
 AX_ARG_WITH_SRC(musl, riscv-musl)
 AX_ARG_WITH_SRC(gdb, riscv-gdb)
 AX_ARG_WITH_SRC(qemu, qemu)
