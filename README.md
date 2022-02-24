@@ -94,11 +94,16 @@ To build either cross-compiler with support for both 32-bit and
 And then either `make`, `make linux` or `make musl` for the Newlib, Linux
 glibc-based or Linux musl libc-based cross-compiler, respectively.
 
-The multilib compiler will have the prefix riscv64-unknown-elf-,
-riscv64-unknown-linux-gnu- or riscv64-unknown-linux-musl-
-but will be able to target both 32-bit and 64-bit systems. It will support
-the most common `-march`/`-mabi` options, which can be seen by using the
-`--print-multi-lib` flag on either cross-compiler.
+The multilib compiler will have the prefix riscv64-unknown-elf- or
+riscv64-unknown-linux-gnu- but will be able to target both 32-bit and 64-bit
+systems.
+It will support the most common `-march`/`-mabi` options, which can be seen by
+using the `--print-multi-lib` flag on either cross-compiler.
+
+The musl compiler (riscv64-unknown-linux-musl-) will only be able to target
+64-bit systems due to limitations in the upstream musl architecture support.
+The `--enable-multilib` flag therefore does not actually enable multilib support
+for musl libc.
 
 ### Troubleshooting Build Problems
 
