@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 #ifndef _LINUX_BCACHE_H
 #define _LINUX_BCACHE_H
 
@@ -29,10 +30,10 @@ struct bkey {
 	BITMASK(name, struct bkey, field, offset, size)
 
 #define PTR_FIELD(name, offset, size)					\
-static __inline__ __u64 name(const struct bkey *k, unsigned i)		\
+static __inline__ __u64 name(const struct bkey *k, unsigned int i)		\
 { return (k->ptr[i] >> offset) & ~(~0ULL << size); }			\
 									\
-static __inline__ void SET_##name(struct bkey *k, unsigned i, __u64 v)	\
+static __inline__ void SET_##name(struct bkey *k, unsigned int i, __u64 v)	\
 {									\
 	k->ptr[i] &= ~(~(~0ULL << size) << offset);			\
 	k->ptr[i] |= (v & ~(~0ULL << size)) << offset;			\
@@ -90,7 +91,7 @@ PTR_FIELD(PTR_GEN,			0,  8)
 
 #define PTR_CHECK_DEV			((1 << PTR_DEV_BITS) - 1)
 
-#define PTR(gen, offset, dev)						\
+#define MAKE_PTR(gen, offset, dev)					\
 	((((__u64) dev) << 51) | ((__u64) offset) << 8 | gen)
 
 /* Bkey utility code */
@@ -116,12 +117,14 @@ static __inline__ void bkey_copy_key(struct bkey *dest, const struct bkey *src)
 static __inline__ struct bkey *bkey_next(const struct bkey *k)
 {
 	__u64 *d = (void *) k;
+
 	return (struct bkey *) (d + bkey_u64s(k));
 }
 
-static __inline__ struct bkey *bkey_idx(const struct bkey *k, unsigned nr_keys)
+static __inline__ struct bkey *bkey_idx(const struct bkey *k, unsigned int nr_keys)
 {
 	__u64 *d = (void *) k;
+
 	return (struct bkey *) (d + nr_keys);
 }
 /* Enough for a key with 6 pointers */
@@ -138,13 +141,16 @@ static __inline__ struct bkey *bkey_idx(const struct bkey *k, unsigned nr_keys)
  * Version 3: Cache device with new UUID format
  * Version 4: Backing device with data offset
  */
-#define BCACHE_SB_VERSION_CDEV		0
-#define BCACHE_SB_VERSION_BDEV		1
-#define BCACHE_SB_VERSION_CDEV_WITH_UUID 3
-#define BCACHE_SB_VERSION_BDEV_WITH_OFFSET 4
-#define BCACHE_SB_MAX_VERSION		4
+#define BCACHE_SB_VERSION_CDEV			0
+#define BCACHE_SB_VERSION_BDEV			1
+#define BCACHE_SB_VERSION_CDEV_WITH_UUID	3
+#define BCACHE_SB_VERSION_BDEV_WITH_OFFSET	4
+#define BCACHE_SB_VERSION_CDEV_WITH_FEATURES	5
+#define BCACHE_SB_VERSION_BDEV_WITH_FEATURES	6
+#define BCACHE_SB_MAX_VERSION			6
 
 #define SB_SECTOR			8
+#define SB_OFFSET			(SB_SECTOR << SECTOR_SHIFT)
 #define SB_SIZE				4096
 #define SB_LABEL_SIZE			32
 #define SB_JOURNAL_BUCKETS		256U
@@ -153,8 +159,70 @@ static __inline__ struct bkey *bkey_idx(const struct bkey *k, unsigned nr_keys)
 
 #define BDEV_DATA_START_DEFAULT		16	/* sectors */
 
+struct cache_sb_disk {
+	__le64			csum;
+	__le64			offset;	/* sector where this sb was written */
+	__le64			version;
+
+	__u8			magic[16];
+
+	__u8			uuid[16];
+	union {
+		__u8		set_uuid[16];
+		__le64		set_magic;
+	};
+	__u8			label[SB_LABEL_SIZE];
+
+	__le64			flags;
+	__le64			seq;
+
+	__le64			feature_compat;
+	__le64			feature_incompat;
+	__le64			feature_ro_compat;
+
+	__le64			pad[5];
+
+	union {
+	struct {
+		/* Cache devices */
+		__le64		nbuckets;	/* device size */
+
+		__le16		block_size;	/* sectors */
+		__le16		bucket_size;	/* sectors */
+
+		__le16		nr_in_set;
+		__le16		nr_this_dev;
+	};
+	struct {
+		/* Backing devices */
+		__le64		data_offset;
+
+		/*
+		 * block_size from the cache device section is still used by
+		 * backing devices, so don't add anything here until we fix
+		 * things to not need it for backing devices anymore
+		 */
+	};
+	};
+
+	__le32			last_mount;	/* time overflow in y2106 */
+
+	__le16			first_bucket;
+	union {
+		__le16		njournal_buckets;
+		__le16		keys;
+	};
+	__le64			d[SB_JOURNAL_BUCKETS];	/* journal buckets */
+	__le16			bucket_size_hi;
+};
+
+/*
+ * This is for in-memory bcache super block.
+ * NOTE: cache_sb is NOT exactly mapping to cache_sb_disk, the member
+ *       size, ordering and even whole struct size may be different
+ *       from cache_sb_disk.
+ */
 struct cache_sb {
-	__u64			csum;
 	__u64			offset;	/* sector where this sb was written */
 	__u64			version;
 
@@ -169,7 +237,10 @@ struct cache_sb {
 
 	__u64			flags;
 	__u64			seq;
-	__u64			pad[8];
+
+	__u64			feature_compat;
+	__u64			feature_incompat;
+	__u64			feature_ro_compat;
 
 	union {
 	struct {
@@ -177,10 +248,9 @@ struct cache_sb {
 		__u64		nbuckets;	/* device size */
 
 		__u16		block_size;	/* sectors */
-		__u16		bucket_size;	/* sectors */
-
 		__u16		nr_in_set;
 		__u16		nr_this_dev;
+		__u32		bucket_size;	/* sectors */
 	};
 	struct {
 		/* Backing devices */
@@ -194,7 +264,7 @@ struct cache_sb {
 	};
 	};
 
-	__u32			last_mount;	/* time_t */
+	__u32			last_mount;	/* time overflow in y2106 */
 
 	__u16			first_bucket;
 	union {
@@ -207,7 +277,8 @@ struct cache_sb {
 static __inline__ _Bool SB_IS_BDEV(const struct cache_sb *sb)
 {
 	return sb->version == BCACHE_SB_VERSION_BDEV
-		|| sb->version == BCACHE_SB_VERSION_BDEV_WITH_OFFSET;
+		|| sb->version == BCACHE_SB_VERSION_BDEV_WITH_OFFSET
+		|| sb->version == BCACHE_SB_VERSION_BDEV_WITH_FEATURES;
 }
 
 BITMASK(CACHE_SYNC,			struct cache_sb, flags, 0, 1);
@@ -317,7 +388,7 @@ struct uuid_entry {
 		struct {
 			__u8	uuid[16];
 			__u8	label[32];
-			__u32	first_reg;
+			__u32	first_reg; /* time overflow in y2106 */
 			__u32	last_reg;
 			__u32	invalidated;
 

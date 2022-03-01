@@ -1,0 +1,49 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os:     [ubuntu-18.04, ubuntu-20.04]
+        mode:   [newlib, linux]
+        target: [rv32gc-ilp32d, rv64gc-lp64d]
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: initialize submodules
+        run: |
+          git submodule init
+          git submodule update --recursive --progress --recommend-shallow
+
+      - name: install dependencies
+        run: sudo ./.github/setup-apt.sh
+
+      - name: build toolchain
+        run: |
+          TARGET_TUPLE=($(echo ${{ matrix.target }} | tr "-" "\n"))
+          ./configure --prefix=/opt/riscv --with-arch=${TARGET_TUPLE[0]} --with-abi=${TARGET_TUPLE[1]}
+          sudo make -j $(nproc) ${{ matrix.mode }}
+
+      - name: tarball build
+        run: tar czvf riscv.tar.gz -C /opt/ riscv/
+
+      - name: generate prebuilt toolchain name
+        id:   toolchain-name-generator
+        run: |
+          if [[ "${{ matrix.target }}" == *"32"* ]]; then BITS=32; else BITS=64; fi
+          if [[ "${{ matrix.mode }}" == "linux" ]]; then MODE="glibc"; else MODE="elf"; fi
+          echo ::set-output name=TOOLCHAIN_NAME::riscv$BITS-$MODE-${{ matrix.os }}-nightly
+
+      - uses: actions/upload-artifact@v2
+        with:
+          name: ${{ steps.toolchain-name-generator.outputs.TOOLCHAIN_NAME }}
+          path: riscv.tar.gz

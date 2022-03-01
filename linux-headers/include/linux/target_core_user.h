@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 #ifndef __TARGET_CORE_USER_H
 #define __TARGET_CORE_USER_H
 
@@ -8,21 +9,22 @@
 
 #define TCMU_VERSION "2.0"
 
-/*
+/**
+ * DOC: Ring Design
  * Ring Design
  * -----------
  *
  * The mmaped area is divided into three parts:
- * 1) The mailbox (struct tcmu_mailbox, below)
- * 2) The command ring
- * 3) Everything beyond the command ring (data)
+ * 1) The mailbox (struct tcmu_mailbox, below);
+ * 2) The command ring;
+ * 3) Everything beyond the command ring (data).
  *
  * The mailbox tells userspace the offset of the command ring from the
  * start of the shared memory region, and how big the command ring is.
  *
  * The kernel passes SCSI commands to userspace by putting a struct
  * tcmu_cmd_entry in the ring, updating mailbox->cmd_head, and poking
- * userspace via uio's interrupt mechanism.
+ * userspace via UIO's interrupt mechanism.
  *
  * tcmu_cmd_entry contains a header. If the header type is PAD,
  * userspace should skip hdr->length bytes (mod cmdr_size) to find the
@@ -42,6 +44,8 @@
 #define TCMU_MAILBOX_VERSION 2
 #define ALIGN_SIZE 64 /* Should be enough for most CPUs */
 #define TCMU_MAILBOX_FLAG_CAP_OOOC (1 << 0) /* Out-of-order completions */
+#define TCMU_MAILBOX_FLAG_CAP_READ_LEN (1 << 1) /* Read data length */
+#define TCMU_MAILBOX_FLAG_CAP_TMR (1 << 2) /* TMR notifications */
 
 struct tcmu_mailbox {
 	__u16 version;
@@ -59,6 +63,7 @@ struct tcmu_mailbox {
 enum tcmu_opcode {
 	TCMU_OP_PAD = 0,
 	TCMU_OP_CMD,
+	TCMU_OP_TMR,
 };
 
 /*
@@ -69,6 +74,7 @@ struct tcmu_cmd_entry_hdr {
 	__u16 cmd_id;
 	__u8 kflags;
 #define TCMU_UFLAG_UNKNOWN_OP 0x1
+#define TCMU_UFLAG_READ_LEN   0x2
 	__u8 uflags;
 
 } __attribute__((packed));
@@ -117,11 +123,34 @@ struct tcmu_cmd_entry {
 			__u8 scsi_status;
 			__u8 __pad1;
 			__u16 __pad2;
-			__u32 __pad3;
+			__u32 read_len;
 			char sense_buffer[TCMU_SENSE_BUFFERSIZE];
 		} rsp;
 	};
 
+} __attribute__((packed));
+
+struct tcmu_tmr_entry {
+	struct tcmu_cmd_entry_hdr hdr;
+
+#define TCMU_TMR_UNKNOWN		0
+#define TCMU_TMR_ABORT_TASK		1
+#define TCMU_TMR_ABORT_TASK_SET		2
+#define TCMU_TMR_CLEAR_ACA		3
+#define TCMU_TMR_CLEAR_TASK_SET		4
+#define TCMU_TMR_LUN_RESET		5
+#define TCMU_TMR_TARGET_WARM_RESET	6
+#define TCMU_TMR_TARGET_COLD_RESET	7
+/* Pseudo reset due to received PR OUT */
+#define TCMU_TMR_LUN_RESET_PRO		128
+	__u8 tmr_type;
+
+	__u8 __pad1;
+	__u16 __pad2;
+	__u32 cmd_cnt;
+	__u64 __pad3;
+	__u64 __pad4;
+	__u16 cmd_ids[0];
 } __attribute__((packed));
 
 #define TCMU_OP_ALIGN_SIZE sizeof(__u64)

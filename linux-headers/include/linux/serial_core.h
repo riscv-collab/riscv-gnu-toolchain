@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0+ WITH Linux-syscall-note */
 /*
  *  linux/drivers/char/serial_core.h
  *
@@ -25,20 +26,6 @@
 /*
  * The type definitions.  These are from Ted Ts'o's serial.h
  */
-#define PORT_UNKNOWN	0
-#define PORT_8250	1
-#define PORT_16450	2
-#define PORT_16550	3
-#define PORT_16550A	4
-#define PORT_CIRRUS	5
-#define PORT_16650	6
-#define PORT_16650V2	7
-#define PORT_16750	8
-#define PORT_STARTECH	9
-#define PORT_16C950	10
-#define PORT_16654	11
-#define PORT_16850	12
-#define PORT_RSA	13
 #define PORT_NS16550A	14
 #define PORT_XSCALE	15
 #define PORT_RM9000	16	/* PMC-Sierra RM9xxx internal UART */
@@ -56,8 +43,6 @@
 #define PORT_ALTR_16550_F128 28 /* Altera 16550 UART with 128 FIFOs */
 #define PORT_RT2880	29	/* Ralink RT2880 internal UART */
 #define PORT_16550A_FSL64 30	/* Freescale 16550 UART with 64 FIFOs */
-#define PORT_DA830	31	/* TI DA8xx/66AK2x */
-#define PORT_MAX_8250	31	/* max port ID */
 
 /*
  * ARM specific type numbers.  These are not currently guaranteed
@@ -76,6 +61,16 @@
 /* Sparc type numbers.  */
 #define PORT_SUNZILOG	38
 #define PORT_SUNSAB	39
+
+/* Nuvoton UART */
+#define PORT_NPCM	40
+
+/* NVIDIA Tegra Combined UART */
+#define PORT_TEGRA_TCU	41
+
+/* Intel EG20 */
+#define PORT_PCH_8LINE	44
+#define PORT_PCH_2LINE	45
 
 /* DEC */
 #define PORT_DZ		46
@@ -120,7 +115,7 @@
 /* Motorola i.MX SoC */
 #define PORT_IMX	62
 
-/* Marvell MPSC */
+/* Marvell MPSC (obsolete unused) */
 #define PORT_MPSC	63
 
 /* TXX9 type number */
@@ -141,9 +136,6 @@
 
 #define PORT_PNX8XXX	70
 
-/* Hilscher netx */
-#define PORT_NETX	71
-
 /* SUN4V Hypervisor Console */
 #define PORT_SUNHV	72
 
@@ -154,9 +146,6 @@
 
 /* Blackfin bf5xx */
 #define PORT_BFIN	75
-
-/* Micrel KS8695 */
-#define PORT_KS8695	76
 
 /* Broadcom SB1250, etc. SOC */
 #define PORT_SB1250_DUART	77
@@ -206,8 +195,8 @@
 /* MAX310X */
 #define PORT_MAX310X	94
 
-/* High Speed UART for Medfield */
-#define PORT_MFD	95
+/* TI DA8xx/66AK2x */
+#define PORT_DA830	95
 
 /* TI OMAP-UART */
 #define PORT_OMAP	96
@@ -271,5 +260,23 @@
 
 /* MPS2 UART */
 #define PORT_MPS2UART	116
+
+/* MediaTek BTIF */
+#define PORT_MTK_BTIF	117
+
+/* RDA UART */
+#define PORT_RDA	118
+
+/* Socionext Milbeaut UART */
+#define PORT_MLB_USIO	119
+
+/* SiFive UART */
+#define PORT_SIFIVE_V0	120
+
+/* Sunix UART */
+#define PORT_SUNIX	121
+
+/* Freescale LINFlexD UART */
+#define PORT_LINFLEXUART	122
 
 #endif /* LINUX_SERIAL_CORE_H */

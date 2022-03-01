@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 #ifndef _LINUX_WAIT_H
 #define _LINUX_WAIT_H
 
@@ -16,6 +17,7 @@
 #define P_ALL		0
 #define P_PID		1
 #define P_PGID		2
+#define P_PIDFD		3
 
 
 #endif /* _LINUX_WAIT_H */

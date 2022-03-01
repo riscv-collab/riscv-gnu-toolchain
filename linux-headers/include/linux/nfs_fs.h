@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 /*
  *  linux/include/linux/nfs_fs.h
  *
@@ -55,6 +56,7 @@
 #define NFSDBG_PNFS		0x1000
 #define NFSDBG_PNFS_LD		0x2000
 #define NFSDBG_STATE		0x4000
+#define NFSDBG_XATTRCACHE	0x8000
 #define NFSDBG_ALL		0xFFFF
 
 

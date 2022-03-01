@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 /* $Revision: 3.0 $$Date: 1998/11/02 14:20:59 $
  * linux/include/linux/cyclades.h
  *
@@ -82,9 +83,9 @@ struct cyclades_monitor {
  * open)
  */
 struct cyclades_idle_stats {
-    __kernel_time_t in_use;	/* Time device has been in use (secs) */
-    __kernel_time_t recv_idle;	/* Time since last char received (secs) */
-    __kernel_time_t xmit_idle;	/* Time since last char transmitted (secs) */
+    __kernel_old_time_t in_use;	/* Time device has been in use (secs) */
+    __kernel_old_time_t recv_idle; /* Time since last char received (secs) */
+    __kernel_old_time_t xmit_idle; /* Time since last char transmitted (secs) */
     unsigned long  recv_bytes;	/* Bytes received */
     unsigned long  xmit_bytes;	/* Bytes transmitted */
     unsigned long  overruns;	/* Input overruns */

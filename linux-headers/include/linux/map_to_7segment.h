@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0+ WITH Linux-syscall-note */
 /*
  * Copyright (c) 2005 Henk Vergonet <Henk.Vergonet@gmail.com>
  *
@@ -23,7 +24,7 @@
  * of (ASCII) characters to a 7-segments notation.
  *
  * The 7 segment's wikipedia notation below is used as standard.
- * See: http://en.wikipedia.org/wiki/Seven_segment_display
+ * See: https://en.wikipedia.org/wiki/Seven_segment_display
  *
  * Notation:	+-a-+
  *		f   b

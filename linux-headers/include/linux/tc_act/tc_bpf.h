@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0+ WITH Linux-syscall-note */
 /*
  * Copyright (c) 2015 Jiri Pirko <jiri@resnulli.us>
  *
@@ -11,8 +12,6 @@
 #define __LINUX_TC_BPF_H
 
 #include <linux/pkt_cls.h>
-
-#define TCA_ACT_BPF 13
 
 struct tc_act_bpf {
 	tc_gen;

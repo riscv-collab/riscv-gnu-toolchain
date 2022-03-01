@@ -50,13 +50,6 @@ AS_IF([test "x$enable_linux" != xno],
 	[AC_SUBST(default_target, linux)],
 	[AC_SUBST(default_target, newlib)])
 
-AC_ARG_ENABLE(atomic,
-	[AS_HELP_STRING([--disable-atomic],
-		[disable use of atomic memory instructions in glibc @<:@--enable-atomic@:>@])],
-	[],
-	[enable_atomic=yes]
-	)
-
 AC_ARG_WITH(arch,
 	[AS_HELP_STRING([--with-arch=rv64imafdc],
 		[Sets the base RISC-V ISA, defaults to rv64imafdc])],
@@ -71,11 +64,19 @@ AC_ARG_WITH(abi,
 	[with_abi=default]
 	)
 
-AS_IF([test "x$with_abi" == xdefault],
+AC_ARG_WITH(tune,
+	[AS_HELP_STRING([--with-tune=rocket],
+		[Set the base RISC-V CPU, defaults to rocket])],
+	[],
+	[with_tune=rocket]
+	)
+
+AS_IF([test "x$with_abi" = xdefault],
 	[AS_CASE([$with_arch],
 		[*rv64g* | *rv64*d*], [with_abi=lp64d],
 		[*rv64*f*], [with_abi=lp64f],
 		[*rv64*], [with_abi=lp64],
+		[*rv32e*], [with_abi=ilp32e],
 		[*rv32g* | *rv32*d*], [with_abi=ilp32d],
 		[*rv32*f*], [with_abi=ilp32f],
 		[*rv32*], [with_abi=ilp32],
@@ -84,6 +85,7 @@ AS_IF([test "x$with_abi" == xdefault],
 
 AC_SUBST(WITH_ARCH, --with-arch=$with_arch)
 AC_SUBST(WITH_ABI, --with-abi=$with_abi)
+AC_SUBST(WITH_TUNE, --with-tune=$with_tune)
 
 AC_ARG_ENABLE(multilib,
 	[AS_HELP_STRING([--enable-multilib],
@@ -92,7 +94,19 @@ AC_ARG_ENABLE(multilib,
 	[enable_multilib=no]
 	)
 
-AS_IF([test "x$enable_multilib" != xno],
+AC_ARG_WITH(multilib-generator,
+	[AS_HELP_STRING([--with-multilib-generator],
+		[Multi-libs configuration string, only supported for bare-metal/elf toolchaih, this option implied --enable-multilib])],
+	[],
+	[with_multilib_generator=no]
+	)
+
+AS_IF([test "x$with_multilib_generator" != xno],
+        [AC_SUBST(multilib_gen,"$with_multilib_generator")],
+        [AC_SUBST(multilib_gen,"")])
+
+
+AS_IF([test "x$enable_multilib" != xno || test "x$with_multilib_generator" != xno],
         [AC_SUBST(multilib_flags,--enable-multilib)],
 	[AC_SUBST(multilib_flags,--disable-multilib)])
 
@@ -108,25 +122,40 @@ AC_ARG_ENABLE(gcc-checking,
         [AS_HELP_STRING([--enable-gcc-checking],
 		[Enable gcc internal checking, it will make gcc very slow, only enable it when developing gcc @<:@--disable-gcc-checking@:>@])],
         [],
-        [enable_gcc_checking=yes]
+        []
         )
-AS_IF([test "x$enable_gcc_checking" != xno],
-	[AC_SUBST(gcc_checking, --enable-checking=yes)],
-	[AC_SUBST(gcc_checking, --enable-checking=release)])
+AS_IF([test "x$enable_gcc_checking" != x],
+	[AC_SUBST(gcc_checking, --enable-checking=$enable_gcc_checking)],
+	[AC_SUBST(gcc_checking, "")])
 
 AC_ARG_WITH(cmodel,
 	[AS_HELP_STRING([--with-cmodel],
 		[Select the code model to use when building libc and libgcc @<:@--with-cmodel=medlow@:>@])],
 	[],
-	[enable_gcc_checking=yes]
+	[]
 	)
 AS_IF([test "x$with_cmodel" != x],
 	[AC_SUBST(cmodel, -mcmodel=$with_cmodel)],
 	[AC_SUBST(cmodel, -mcmodel=medlow)])
 
+AC_ARG_WITH(target_cflags,
+	[AS_HELP_STRING([--with-target-cflags],
+		[Add extra target flags for C for library code])],
+	[],
+	[]
+	)
+AC_SUBST(target_cflags, $with_target_cflags)
+AC_ARG_WITH(target_cxxflags,
+	[AS_HELP_STRING([--with-target-cxxflags],
+		[Add extra target flags for C++ for library code])],
+	[],
+	[]
+	)
+AC_SUBST(target_cxxflags, $with_target_cxxflags)
+
 AC_CONFIG_FILES([Makefile])
-AC_CONFIG_FILES([scripts/wrapper/awk/awk], [chmod +x scripts/wrapper/awk])
-AC_CONFIG_FILES([scripts/wrapper/sed/sed], [chmod +x scripts/wrapper/sed])
+AC_CONFIG_FILES([scripts/wrapper/awk/awk], [chmod +x scripts/wrapper/awk/awk])
+AC_CONFIG_FILES([scripts/wrapper/sed/sed], [chmod +x scripts/wrapper/sed/sed])
 
 AC_ARG_WITH(host,
 	[AS_HELP_STRING([--with-host=x86_64-w64-mingw32],
@@ -171,5 +200,38 @@ AC_ARG_ENABLE(gdb,
 AS_IF([test "x$enable_gdb" != xno],
 	[AC_SUBST(enable_gdb, --enable-gdb)],
 	[AC_SUBST(enable_gdb, --disable-gdb)])
+
+AC_DEFUN([AX_ARG_WITH_SRC],
+	[{m4_pushdef([opt_name], with_$1_src)
+	  AC_ARG_WITH($1-src,
+		[AC_HELP_STRING([--with-$1-src],
+				[Set $1 source path, use builtin source by default])],
+		[],
+		[opt_name=default]
+		)
+	  AS_IF([test "x$opt_name" != xdefault],
+		[AC_SUBST(opt_name,$opt_name)],
+		[AC_SUBST(opt_name,"\$(srcdir)/$2")])
+	  m4_popdef([opt_name])
+	}])
+
+AX_ARG_WITH_SRC(gcc, riscv-gcc)
+AX_ARG_WITH_SRC(binutils, riscv-binutils)
+AX_ARG_WITH_SRC(newlib, riscv-newlib)
+AX_ARG_WITH_SRC(glibc, riscv-glibc)
+AX_ARG_WITH_SRC(musl, riscv-musl)
+AX_ARG_WITH_SRC(gdb, riscv-gdb)
+AX_ARG_WITH_SRC(qemu, qemu)
+
+AC_ARG_WITH(linux-headers-src,
+	[AC_HELP_STRING([--with-linux-headers-src],
+			[Set linux-headers source path, use builtin source by default])],
+	[],
+	[with_linux_headers_src=default]
+	)
+
+AS_IF([test "x$with_linux_headers_src" != xdefault],
+	[AC_SUBST(with_linux_headers_src,$with_linux_headers_src)],
+	[AC_SUBST(with_linux_headers_src,"\$(srcdir)/linux-headers/include")])
 
 AC_OUTPUT

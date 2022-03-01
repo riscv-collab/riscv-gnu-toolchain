@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 #ifndef _LINUX_ELF_H
 #define _LINUX_ELF_H
 
@@ -35,6 +36,7 @@ typedef __s64	Elf64_Sxword;
 #define PT_LOPROC  0x70000000
 #define PT_HIPROC  0x7fffffff
 #define PT_GNU_EH_FRAME		0x6474e550
+#define PT_GNU_PROPERTY		0x6474e553
 
 #define PT_GNU_STACK	(PT_LOOS + 0x474e551)
 
@@ -51,7 +53,7 @@ typedef __s64	Elf64_Sxword;
  *
  * - Oracle: Linker and Libraries.
  *   Part No: 817–1984–19, August 2011.
- *   http://docs.oracle.com/cd/E18752_01/pdf/817-1984.pdf
+ *   https://docs.oracle.com/cd/E18752_01/pdf/817-1984.pdf
  *
  * - System V ABI AMD64 Architecture Processor Supplement
  *   Draft Version 0.99.4,
@@ -366,6 +368,7 @@ typedef struct elf64_shdr {
  * Notes used in ET_CORE. Architectures export some of the arch register sets
  * using the corresponding note types via the PTRACE_GETREGSET and
  * PTRACE_SETREGSET requests.
+ * The note name for all these is "LINUX".
  */
 #define NT_PRSTATUS	1
 #define NT_PRFPREG	2
@@ -395,6 +398,7 @@ typedef struct elf64_shdr {
 #define NT_PPC_TM_CTAR	0x10d		/* TM checkpointed Target Address Register */
 #define NT_PPC_TM_CPPR	0x10e		/* TM checkpointed Program Priority Register */
 #define NT_PPC_TM_CDSCR	0x10f		/* TM checkpointed Data Stream Control Register */
+#define NT_PPC_PKEY	0x110		/* Memory Protection Keys registers */
 #define NT_386_TLS	0x200		/* i386 TLS slots (struct user_desc) */
 #define NT_386_IOPERM	0x201		/* x86 io permission bitmap (1=deny) */
 #define NT_X86_XSTATE	0x202		/* x86 extended state using xsave */
@@ -411,15 +415,25 @@ typedef struct elf64_shdr {
 #define NT_S390_VXRS_HIGH	0x30a	/* s390 vector registers 16-31 */
 #define NT_S390_GS_CB	0x30b		/* s390 guarded storage registers */
 #define NT_S390_GS_BC	0x30c		/* s390 guarded storage broadcast control block */
+#define NT_S390_RI_CB	0x30d		/* s390 runtime instrumentation */
 #define NT_ARM_VFP	0x400		/* ARM VFP/NEON registers */
 #define NT_ARM_TLS	0x401		/* ARM TLS register */
 #define NT_ARM_HW_BREAK	0x402		/* ARM hardware breakpoint registers */
 #define NT_ARM_HW_WATCH	0x403		/* ARM hardware watchpoint registers */
 #define NT_ARM_SYSTEM_CALL	0x404	/* ARM system call number */
-#define NT_METAG_CBUF	0x500		/* Metag catch buffer registers */
-#define NT_METAG_RPIPE	0x501		/* Metag read pipeline state */
-#define NT_METAG_TLS	0x502		/* Metag TLS pointer */
+#define NT_ARM_SVE	0x405		/* ARM Scalable Vector Extension registers */
+#define NT_ARM_PAC_MASK		0x406	/* ARM pointer authentication code masks */
+#define NT_ARM_PACA_KEYS	0x407	/* ARM pointer authentication address keys */
+#define NT_ARM_PACG_KEYS	0x408	/* ARM pointer authentication generic key */
+#define NT_ARM_TAGGED_ADDR_CTRL	0x409	/* arm64 tagged address control (prctl()) */
 #define NT_ARC_V2	0x600		/* ARCv2 accumulator/extra registers */
+#define NT_VMCOREDD	0x700		/* Vmcore Device Dump Note */
+#define NT_MIPS_DSP	0x800		/* MIPS DSP ASE registers */
+#define NT_MIPS_FP_MODE	0x801		/* MIPS floating-point mode */
+#define NT_MIPS_MSA	0x802		/* MIPS SIMD registers */
+
+/* Note types with note name "GNU" */
+#define NT_GNU_PROPERTY_TYPE_0	5
 
 /* Note header in a PT_NOTE section */
 typedef struct elf32_note {
@@ -434,5 +448,11 @@ typedef struct elf64_note {
   Elf64_Word n_descsz;	/* Content size */
   Elf64_Word n_type;	/* Content type */
 } Elf64_Nhdr;
+
+/* .note.gnu.property types for EM_AARCH64: */
+#define GNU_PROPERTY_AARCH64_FEATURE_1_AND	0xc0000000
+
+/* Bits for GNU_PROPERTY_AARCH64_FEATURE_1_BTI */
+#define GNU_PROPERTY_AARCH64_FEATURE_1_BTI	(1U << 0)
 
 #endif /* _LINUX_ELF_H */

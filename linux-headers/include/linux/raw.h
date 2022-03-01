@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 #ifndef __LINUX_RAW_H
 #define __LINUX_RAW_H
 
@@ -12,7 +13,5 @@ struct raw_config_request
 	__u64	block_major;
 	__u64	block_minor;
 };
-
-#define MAX_RAW_MINORS CONFIG_MAX_RAW_DEVS
 
 #endif /* __LINUX_RAW_H */
