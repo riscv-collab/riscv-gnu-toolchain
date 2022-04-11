@@ -89,7 +89,7 @@ AC_SUBST(WITH_TUNE, --with-tune=$with_tune)
 
 AC_ARG_ENABLE(multilib,
 	[AS_HELP_STRING([--enable-multilib],
-		[build both RV32 and RV64 runtime libraries @<:@--disable-multilib@:>@])],
+		[build both RV32 and RV64 runtime libraries (only RV64 for musl libc) @<:@--disable-multilib@:>@])],
 	[],
 	[enable_multilib=no]
 	)
@@ -117,6 +117,10 @@ AS_IF([test "x$enable_multilib" != xno],
 AS_IF([test "x$enable_multilib" != xno],
         [AC_SUBST(newlib_multilib_names,"rv32i-ilp32 rv32iac-ilp32 rv32im-ilp32 rv32imac-ilp32 rv32imafc-ilp32f rv64imac-lp64 rv64imafdc-lp64d")],
         [AC_SUBST(newlib_multilib_names,"$with_arch-$with_abi")])
+
+AS_IF([test "x$enable_multilib" != xno],
+        [AC_SUBST(musl_multilib_names,"rv64imac-lp64 rv64imafdc-lp64d")],
+        [AC_SUBST(musl_multilib_names,"$with_arch-$with_abi")])
 
 AC_ARG_ENABLE(gcc-checking,
         [AS_HELP_STRING([--enable-gcc-checking],
@@ -217,9 +221,9 @@ AC_DEFUN([AX_ARG_WITH_SRC],
 
 AX_ARG_WITH_SRC(gcc, riscv-gcc)
 AX_ARG_WITH_SRC(binutils, riscv-binutils)
-AX_ARG_WITH_SRC(newlib, riscv-newlib)
-AX_ARG_WITH_SRC(glibc, riscv-glibc)
-AX_ARG_WITH_SRC(musl, riscv-musl)
+AX_ARG_WITH_SRC(newlib, newlib)
+AX_ARG_WITH_SRC(glibc, glibc)
+AX_ARG_WITH_SRC(musl, musl)
 AX_ARG_WITH_SRC(gdb, riscv-gdb)
 AX_ARG_WITH_SRC(qemu, qemu)
 
