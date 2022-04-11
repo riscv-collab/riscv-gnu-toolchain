@@ -126,6 +126,17 @@ devtoolset-7 works.
 There are a number of additional options that may be passed to
 configure.  See './configure --help' for more details.
 
+#### Set default ISA spec version
+
+`--with-isa-spec=` can specify the default version of the RISC-V Unprivileged
+(formerly User-Level) ISA specification.
+
+Possible options are: `2.2`, `20190608` and `20191213`.
+
+The default version is `2.2`.
+
+More details about this option you can refer this post [RISC-V GNU toolchain bumping default ISA spec to 20191213](https://groups.google.com/a/groups.riscv.org/g/sw-dev/c/aE1ZeHHCYf4).
+
 #### Build with customized multi-lib configure.
 
 `--with-multilib-generator=` can specify what multilibs to build.  The argument
