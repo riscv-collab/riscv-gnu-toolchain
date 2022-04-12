@@ -71,6 +71,13 @@ AC_ARG_WITH(tune,
 	[with_tune=rocket]
 	)
 
+AC_ARG_WITH(isa-spec,
+	[AS_HELP_STRING([--with-isa-spec=2.2],
+		[Set the default ISA spec version, default to 2.2, available options: 2.2, 20190608, 20191213])],
+	[],
+	[with_isa_spec=2.2]
+	)
+
 AS_IF([test "x$with_abi" = xdefault],
 	[AS_CASE([$with_arch],
 		[*rv64g* | *rv64*d*], [with_abi=lp64d],
@@ -86,6 +93,7 @@ AS_IF([test "x$with_abi" = xdefault],
 AC_SUBST(WITH_ARCH, --with-arch=$with_arch)
 AC_SUBST(WITH_ABI, --with-abi=$with_abi)
 AC_SUBST(WITH_TUNE, --with-tune=$with_tune)
+AC_SUBST(WITH_ISA_SPEC, --with-isa-spec=$with_isa_spec)
 
 AC_ARG_ENABLE(multilib,
 	[AS_HELP_STRING([--enable-multilib],
