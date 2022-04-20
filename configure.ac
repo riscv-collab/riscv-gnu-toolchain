@@ -104,7 +104,7 @@ AC_ARG_ENABLE(multilib,
 
 AC_ARG_WITH(multilib-generator,
 	[AS_HELP_STRING([--with-multilib-generator],
-		[Multi-libs configuration string, only supported for bare-metal/elf toolchaih, this option implied --enable-multilib])],
+		[Multi-libs configuration string, only supported for bare-metal/elf toolchain, this option implied --enable-multilib])],
 	[],
 	[with_multilib_generator=no]
 	)
