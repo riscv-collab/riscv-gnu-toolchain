@@ -242,6 +242,17 @@ AC_ARG_WITH(linux-headers-src,
 	[with_linux_headers_src=default]
 	)
 
+AC_ARG_ENABLE(libsanitizer,
+	[AS_HELP_STRING([--enable-libsanitizer],
+		[Build libsanitizer, which only supports rv64])],
+	[],
+	[enable_libsanitizer=no]
+	)
+
+AS_IF([test "x$enable_libsanitizer" != xno],
+	[AC_SUBST(enable_libsanitizer, --enable-libsanitizer)],
+	[AC_SUBST(enable_libsanitizer, --disable-libsanitizer)])
+
 AS_IF([test "x$with_linux_headers_src" != xdefault],
 	[AC_SUBST(with_linux_headers_src,$with_linux_headers_src)],
 	[AC_SUBST(with_linux_headers_src,"\$(srcdir)/linux-headers/include")])
