@@ -257,4 +257,15 @@ AS_IF([test "x$enable_libsanitizer" != xno],
 	[AC_SUBST(enable_libsanitizer, --enable-libsanitizer)],
 	[AC_SUBST(enable_libsanitizer, --disable-libsanitizer)])
 
+AC_ARG_ENABLE(qemu_system,
+	[AS_HELP_STRING([--enable-qemu-system],
+		[Build qemu with system-mode emulation])],
+	[],
+	[enable_qemu_system=no]
+	)
+
+AS_IF([test "x$enable_qemu_system" != xno],
+	[AC_SUBST(qemu_targets, [riscv64-linux-user,riscv32-linux-user,riscv64-softmmu,riscv32-softmmu])],
+	[AC_SUBST(qemu_targets, [riscv64-linux-user,riscv32-linux-user])])
+
 AC_OUTPUT
