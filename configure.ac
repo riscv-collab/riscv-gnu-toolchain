@@ -242,6 +242,10 @@ AC_ARG_WITH(linux-headers-src,
 	[with_linux_headers_src=default]
 	)
 
+AS_IF([test "x$with_linux_headers_src" != xdefault],
+	[AC_SUBST(with_linux_headers_src,$with_linux_headers_src)],
+	[AC_SUBST(with_linux_headers_src,"\$(srcdir)/linux-headers/include")])
+
 AC_ARG_ENABLE(libsanitizer,
 	[AS_HELP_STRING([--enable-libsanitizer],
 		[Build libsanitizer, which only supports rv64])],
@@ -253,8 +257,15 @@ AS_IF([test "x$enable_libsanitizer" != xno],
 	[AC_SUBST(enable_libsanitizer, --enable-libsanitizer)],
 	[AC_SUBST(enable_libsanitizer, --disable-libsanitizer)])
 
-AS_IF([test "x$with_linux_headers_src" != xdefault],
-	[AC_SUBST(with_linux_headers_src,$with_linux_headers_src)],
-	[AC_SUBST(with_linux_headers_src,"\$(srcdir)/linux-headers/include")])
+AC_ARG_ENABLE(qemu_system,
+	[AS_HELP_STRING([--enable-qemu-system],
+		[Build qemu with system-mode emulation])],
+	[],
+	[enable_qemu_system=no]
+	)
+
+AS_IF([test "x$enable_qemu_system" != xno],
+	[AC_SUBST(qemu_targets, [riscv64-linux-user,riscv32-linux-user,riscv64-softmmu,riscv32-softmmu])],
+	[AC_SUBST(qemu_targets, [riscv64-linux-user,riscv32-linux-user])])
 
 AC_OUTPUT
