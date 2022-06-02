@@ -78,6 +78,13 @@ AC_ARG_WITH(isa-spec,
 	[with_isa_spec=2.2]
 	)
 
+AC_ARG_WITH(sim,
+	[AS_HELP_STRING([--with-sim=qemu],
+		[Sets the base RISC-V Simulator, defaults to qemu])],
+	[],
+	[with_sim=qemu]
+	)
+
 AS_IF([test "x$with_abi" = xdefault],
 	[AS_CASE([$with_arch],
 		[*rv64g* | *rv64*d*], [with_abi=lp64d],
@@ -94,6 +101,7 @@ AC_SUBST(WITH_ARCH, --with-arch=$with_arch)
 AC_SUBST(WITH_ABI, --with-abi=$with_abi)
 AC_SUBST(WITH_TUNE, --with-tune=$with_tune)
 AC_SUBST(WITH_ISA_SPEC, --with-isa-spec=$with_isa_spec)
+AC_SUBST(WITH_SIM, $with_sim)
 
 AC_ARG_ENABLE(multilib,
 	[AS_HELP_STRING([--enable-multilib],
@@ -234,6 +242,8 @@ AX_ARG_WITH_SRC(glibc, glibc)
 AX_ARG_WITH_SRC(musl, musl)
 AX_ARG_WITH_SRC(gdb, riscv-gdb)
 AX_ARG_WITH_SRC(qemu, qemu)
+AX_ARG_WITH_SRC(spike, spike)
+AX_ARG_WITH_SRC(pk, pk)
 
 AC_ARG_WITH(linux-headers-src,
 	[AC_HELP_STRING([--with-linux-headers-src],

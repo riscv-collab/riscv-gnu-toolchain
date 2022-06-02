@@ -189,8 +189,9 @@ rv64imac with lp64 and rv64imafc with lp64 will reuse this multi-lib set.
 The Dejagnu test suite has been ported to RISC-V. This can be run with a
 simulator for the elf and linux toolchains. The simulator can be selected
 by the SIM variable in the Makefile, e.g. SIM=qemu, SIM=gdb, or SIM=spike
-(experimental). However, the testsuite allowlist is only mintained for qemu.
-Other simulators might get extra failures.
+(experimental).In addition, the simulator can also be selected with the 
+configure time option `--with-sim=`.However, the testsuite allowlist is 
+only mintained for qemu.Other simulators might get extra failures.
 To test GCC, run the following commands:
 
     ./configure --prefix=$RISCV --disable-linux --with-arch=rv64ima # or --with-arch=rv32ima
@@ -200,6 +201,10 @@ To test GCC, run the following commands:
     ./configure --prefix=$RISCV
     make linux
     make report-linux SIM=qemu # Run with qemu
+
+    ./configure --prefix=$RISCV --with-sim=spike
+    make linux
+    make report               # Run with spike
 
 Note:
 - spike only support rv64* bare-metal/elf toolchain.
@@ -263,3 +268,5 @@ Here is the list of configure option for specify source tree:
     --with-gdb-src
     --with-linux-headers-src
     --with-qemu-src
+    --with-spike-src
+    --with-pk-src
