@@ -1,0 +1,144 @@
+#!/usr/bin/python3
+
+import argparse
+import sys
+
+EXT_OPTS = {
+  "zba":             "zba=true",
+  "zbb":             "zbb=true",
+  "zbc":             "zbc=true",
+  "zbs":             "zbs=true",
+  "v":               "v=true",
+  "zve32f":          "Zve32f=true",
+  "zve64f":          "Zve64f=true",
+  "zfh":             "Zfh=true",
+  "zfhmin":             "Zfhmin=true",
+}
+
+SUPPORTTED_EXTS = "iemafdcbvph"
+MC_EXT_PREFIX = "zsx"
+
+def parse_opt(argv):
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-march', '--with-arch', type=str, dest='march')
+    parser.add_argument('-selftest', action='store_true')
+    opt = parser.parse_args()
+    return opt
+
+def parse_mc_ext(ext_str, idx):
+    end_idx = ext_str[idx+1:].find('_')
+    if end_idx == -1:
+        end_idx = len(ext_str)
+    else:
+        end_idx = end_idx + idx + 1
+    major = 0
+    minor = 0
+    version_begin_idx = end_idx
+    if ext_str[end_idx-1].isdigit():
+        # This ext is come with version.
+        v_idx = end_idx - 1
+        while (ext_str[v_idx].isdigit()) and v_idx > idx:
+            v_idx -= 1
+        major = int(ext_str[v_idx+1:end_idx])
+        version_begin_idx = v_idx+1
+        if (ext_str[v_idx] == 'p'):
+            minor = major
+            major_v_idx = v_idx - 1
+            while (ext_str[major_v_idx].isdigit()) and major_v_idx > idx:
+                major_v_idx -= 1
+            major = int(ext_str[major_v_idx+1:v_idx])
+            version_begin_idx = major_v_idx+1
+
+    return end_idx, ext_str[idx:version_begin_idx], major, minor
+
+def parse_version(ext_str, idx):
+    major = 2
+    minor = 0
+    strlen = len(ext_str)
+    end_idx = idx + 1
+    if idx+1 < strlen and ext_str[idx+1].isdigit():
+        v_idx = idx + 1
+        while v_idx < strlen and (ext_str[v_idx].isdigit()):
+            v_idx += 1
+        major = int(ext_str[idx+1:v_idx])
+        end_idx = v_idx
+        if (ext_str[v_idx] == 'p'):
+            minor_v_idx = v_idx + 1
+            while minor_v_idx < strlen and  (ext_str[minor_v_idx].isdigit()):
+                minor_v_idx += 1
+            minor = int(ext_str[v_idx+1:minor_v_idx])
+            end_idx = minor_v_idx
+
+    return end_idx, ext_str[idx], major, minor
+
+def parse_march(march):
+    if len(march) < 5:
+        return None
+    march = march.replace("rv64g", "rv64imafd").replace("rv32g", "rv32imafd")
+    if march[0:5] not in ['rv64i', 'rv32i', 'rv32e']:
+        print (march[0:5])
+        return None
+
+    ext_str = march[4:]
+    idx = 0
+    extstrlens = len(ext_str)
+    exts = dict()
+    while idx < extstrlens:
+        if ext_str[idx] in SUPPORTTED_EXTS:
+            idx, ext_name, major, minor = parse_version(ext_str, idx)
+        elif ext_str[idx] in MC_EXT_PREFIX:
+            idx, ext_name, major, minor = parse_mc_ext(ext_str, idx)
+        elif ext_str[idx] == '_':
+            idx = idx + 1
+            continue
+        else:
+            raise Exception("Unrecognized ext : `%s`, %s" %
+                            (ext_str[idx], ext_str))
+        exts[ext_name] = (major, minor)
+    return exts
+
+def get_vlen(ext_dict):
+    vlen = 0
+    for ext in ext_dict.keys():
+        if ext == 'v':
+            vlen = max(vlen, 128)
+        elif (ext.startswith('zvl') and ext[-1] == 'b'):
+            zvlen = int(arch[3:-1])
+            vlen = max(vlen, zvlen)
+        elif ext.startswith("zve"):
+            zvelen = int(arch[3:-1])
+            vlen = max(vlen, zvelen)
+    return vlen
+
+def conver_arch_to_qemu_cpu_opt(march):
+    if len(march) < 5:
+        return None
+
+    ext_dict = parse_march(march)
+
+    cpu_opt = []
+    cpu_opt.append(march[0:4]) # rv32 or rv64
+
+    vlen = get_vlen(ext_dict)
+
+    if vlen != 0:
+        cpu_opt.append("vlen=%d" % vlen)
+
+    for ext in ext_dict.keys():
+        if ext in EXT_OPTS:
+            cpu_opt.append(EXT_OPTS[ext])
+    return ",".join(cpu_opt)
+
+def selftest():
+    print(parse_march("rv64gc"))
+
+def main(argv):
+    opt = parse_opt(argv)
+    if opt.selftest:
+        selftest()
+        return 0
+    cpu_opt = conver_arch_to_qemu_cpu_opt(opt.march)
+    print (cpu_opt)
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv))
