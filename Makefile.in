@@ -10,12 +10,10 @@ MUSL_SRCDIR := @with_musl_src@
 LINUX_HEADERS_SRCDIR := @with_linux_headers_src@
 GDB_SRCDIR := @with_gdb_src@
 QEMU_SRCDIR := @with_qemu_src@
+SPIKE_SRCDIR := @with_spike_src@
+PK_SRCDIR := @with_pk_src@
 
-SIM:=qemu
-
-# Default branch for proxy kernel and spike
-SPIKE_BRANCH:=master
-PK_BRANCH:=master
+SIM ?= @WITH_SIM@
 
 ifeq ($(srcdir)/riscv-gcc,$(GCC_SRCDIR))
 # We need a relative source dir for the gcc configure, to make msys2 mingw64
@@ -36,6 +34,7 @@ WITH_TUNE ?= @WITH_TUNE@
 WITH_ISA_SPEC ?= @WITH_ISA_SPEC@
 SYSROOT := $(INSTALL_DIR)/sysroot
 ENABLE_LIBSANITIZER ?= @enable_libsanitizer@
+QEMU_TARGETS ?= @qemu_targets@
 
 SHELL := /bin/sh
 AWK := @GAWK@
@@ -172,14 +171,15 @@ report-gdb: report-gdb-@default_target@
 
 .PHONY: build-sim
 ifeq ($(SIM),qemu)
+QEMU_CPU=$(shell $(srcdir)/scripts/march-to-cpu-opt $(WITH_ARCH))
 SIM_PATH:=$(srcdir)/scripts/wrapper/qemu
-SIM_PREPARE:=PATH="$(SIM_PATH):$(INSTALL_DIR)/bin:$(PATH)" RISC_V_SYSROOT="$(SYSROOT)"
+SIM_PREPARE:=PATH="$(SIM_PATH):$(INSTALL_DIR)/bin:$(PATH)" RISC_V_SYSROOT="$(SYSROOT)" QEMU_CPU="$(QEMU_CPU)"
 SIM_STAMP:= stamps/build-qemu
 else
 ifeq ($(SIM),spike)
 # Using spike simulator.
 SIM_PATH:=$(srcdir)/scripts/wrapper/spike
-SIM_PREPARE:=PATH="$(SIM_PATH):$(INSTALL_DIR)/bin:$(PATH)" PK_PATH="$(INSTALL_DIR)/$(NEWLIB_TUPLE)/bin/"
+SIM_PREPARE:=PATH="$(SIM_PATH):$(INSTALL_DIR)/bin:$(PATH)" PK_PATH="$(INSTALL_DIR)/$(NEWLIB_TUPLE)/bin/" ARCH_STR="$(WITH_ARCH)"
 SIM_STAMP:= stamps/build-spike
 ifneq (,$(findstring rv32,$(NEWLIB_MULTILIB_NAMES)))
 SIM_STAMP+= stamps/build-pk32
@@ -256,6 +256,12 @@ ifeq ($(findstring $(srcdir),$(QEMU_SRCDIR)),$(srcdir))
 QEMU_SRC_GIT := $(QEMU_SRCDIR)/.git
 else
 QEMU_SRC_GIT :=
+endif
+
+ifeq ($(findstring $(srcdir),$(SPIKE_SRCDIR)),$(srcdir))
+SPIKE_SRC_GIT := $(SPIKE_SRCDIR)/.git
+else
+SPIKE_SRC_GIT :=
 endif
 
 ifneq ("$(wildcard $(GCC_SRCDIR)/.git)","")
@@ -803,26 +809,20 @@ stamps/build-gcc-musl-stage2: $(GCC_SRCDIR) $(GCC_SRC_GIT) stamps/build-musl-lin
 	cp -a $(INSTALL_DIR)/$(MUSL_TUPLE)/lib* $(SYSROOT)
 	mkdir -p $(dir $@) && touch $@
 
-spike-src:
-	git clone https://github.com/riscv/riscv-isa-sim.git -b $(SPIKE_BRANCH) $@
-
-pk-src:
-	git clone https://github.com/riscv/riscv-pk.git -b $(PK_BRANCH) $@
-
-stamps/build-spike: spike-src
+stamps/build-spike: $(SPIKE_SRCDIR) $(SPIKE_SRC_GIT)
 	rm -rf $@ $(notdir $@)
 	mkdir $(notdir $@)
-	cd $(notdir $@) && ../$</configure \
+	cd $(notdir $@) && $</configure \
 		--prefix=$(INSTALL_DIR)
 	$(MAKE) -C $(notdir $@)
 	$(MAKE) -C $(notdir $@) install
 	mkdir -p $(dir $@)
 	date > $@
 
-stamps/build-pk32: pk-src stamps/build-gcc-newlib-stage2
+stamps/build-pk32: $(PK_SRCDIR) stamps/build-gcc-newlib-stage2
 	rm -rf $@ $(notdir $@)
 	mkdir $(notdir $@)
-	cd $(notdir $@) && ../$</configure \
+	cd $(notdir $@) && $</configure \
 		--prefix=$(INSTALL_DIR) \
 		--host=$(NEWLIB_TUPLE) \
 		--with-arch=rv32gc
@@ -831,10 +831,10 @@ stamps/build-pk32: pk-src stamps/build-gcc-newlib-stage2
 	mkdir -p $(dir $@)
 	date > $@
 
-stamps/build-pk64: pk-src stamps/build-gcc-newlib-stage2
+stamps/build-pk64: $(PK_SRCDIR) stamps/build-gcc-newlib-stage2
 	rm -rf $@ $(notdir $@)
 	mkdir $(notdir $@)
-	cd $(notdir $@) && ../$</configure \
+	cd $(notdir $@) && $</configure \
 		--prefix=$(INSTALL_DIR) \
 		--host=$(NEWLIB_TUPLE) \
 		--with-arch=rv64gc
@@ -848,7 +848,7 @@ stamps/build-qemu: $(QEMU_SRCDIR) $(QEMU_SRC_GIT)
 	mkdir $(notdir $@)
 	cd $(notdir $@) && $</configure \
 		--prefix=$(INSTALL_DIR) \
-		--target-list=riscv64-linux-user,riscv32-linux-user \
+		--target-list=$(QEMU_TARGETS) \
 		--interp-prefix=$(INSTALL_DIR)/sysroot \
 		--python=python3
 	$(MAKE) -C $(notdir $@)
