@@ -5,6 +5,7 @@ INSTALL_DIR := @prefix@
 GCC_SRCDIR := @with_gcc_src@
 BINUTILS_SRCDIR := @with_binutils_src@
 NEWLIB_SRCDIR := @with_newlib_src@
+PICOLIBC_SRCDIR := @with_picolibc_src@
 GLIBC_SRCDIR := @with_glibc_src@
 MUSL_SRCDIR := @with_musl_src@
 LINUX_HEADERS_SRCDIR := @with_linux_headers_src@
@@ -59,9 +60,11 @@ MULTILIB_FLAGS := @multilib_flags@
 MULTILIB_GEN := @multilib_gen@
 ifeq ($(MULTILIB_GEN),)
 NEWLIB_MULTILIB_NAMES := @newlib_multilib_names@
+PICOLIBC_MULTILIB_NAMES := @picolibc_multilib_names@
 GCC_MULTILIB_FLAGS := $(MULTILIB_FLAGS)
 else
 NEWLIB_MULTILIB_NAMES := $(shell echo "$(MULTILIB_GEN)" | $(SED) 's/;/\n/g'| $(AWK) '{split($$0,a,"-"); printf "%s-%s ", a[1],a[2]}')
+PICOLIBC_MULTILIB_NAMES := $(shell echo "$(MULTILIB_GEN)" | $(SED) 's/;/\n/g'| $(AWK) '{split($$0,a,"-"); printf "%s-%s ", a[1],a[2]}')
 GCC_MULTILIB_FLAGS := $(MULTILIB_FLAGS) --with-multilib-generator="$(MULTILIB_GEN)"
 endif
 GLIBC_MULTILIB_NAMES := @glibc_multilib_names@
@@ -75,6 +78,7 @@ endif
 make_tuple = riscv$(1)-unknown-$(2)
 LINUX_TUPLE  ?= $(call make_tuple,$(XLEN),linux-gnu)
 NEWLIB_TUPLE ?= $(call make_tuple,$(XLEN),elf)
+PICOLIBC_TUPLE ?= $(call make_tuple,$(XLEN),elf)
 MUSL_TUPLE ?= $(call make_tuple,$(XLEN),linux-musl)
 
 CFLAGS_FOR_TARGET := $(CFLAGS_FOR_TARGET_EXTRA) @target_cflags@ @cmodel@
@@ -96,6 +100,10 @@ NEWLIB_CXX_FOR_TARGET ?= $(NEWLIB_TUPLE)-g++
 NEWLIB_TARGET_BOARDS ?= $(shell echo "$(NEWLIB_MULTILIB_NAMES)" | sed 's!\([_a-z0-9]*\)-\([_a-z0-9]*\)!riscv-sim/-march=\1/-mabi=\2/@cmodel@!g')
 NEWLIB_NANO_TARGET_BOARDS ?= $(shell echo "$(NEWLIB_MULTILIB_NAMES)" | sed 's!\([_a-z0-9]*\)-\([_a-z0-9]*\)!riscv-sim-nano/-march=\1/-mabi=\2/@cmodel@!g')
 
+PICOLIBC_CC_FOR_TARGET ?= $(PICOLIBC_TUPLE)-gcc
+PICOLIBC_CXX_FOR_TARGET ?= $(PICOLIBC_TUPLE)-g++
+PICOLIBC_TARGET_BOARDS ?= $(shell echo "$(PICOLIBC_MULTILIB_NAMES)" | sed 's!\([_a-z0-9]*\)-\([_a-z0-9]*\)!riscv-sim/-march=\1/-mabi=\2/@cmodel@!g')
+
 MUSL_TARGET_FLAGS := $(MUSL_TARGET_FLAGS_EXTRA)
 MUSL_CC_FOR_TARGET ?= $(MUSL_TUPLE)-gcc
 MUSL_CXX_FOR_TARGET ?= $(MUSL_TUPLE)-g++
@@ -104,6 +112,7 @@ CONFIGURE_HOST   = @configure_host@
 
 all: @default_target@
 newlib: stamps/build-gcc-newlib-stage2
+picolibc: stamps/build-gcc-picolibc-stage2
 linux: stamps/build-gcc-linux-stage2
 ifneq (,$(findstring riscv32,$(MUSL_TUPLE)))
 .PHONY: musl
@@ -114,6 +123,7 @@ musl: stamps/build-gcc-musl-stage2
 endif
 ifeq (@enable_gdb@,--enable-gdb)
 newlib: stamps/build-gdb-newlib
+picolibc: stamps/build-gdb-picolibc
 linux: stamps/build-gdb-linux
 endif
 linux-native: stamps/build-gcc-linux-native
@@ -125,8 +135,12 @@ build-gcc%: stamps/build-gcc-@default_target@-stage%
 ifeq (@default_target@,linux)
 build-libc: $(addprefix stamps/build-glibc-linux-,$(GLIBC_MULTILIB_NAMES))
 else
+ifeq (@default_target@,picolibc)
+build-libc: stamps/build-picolibc
+else
 build-libc: stamps/build-newlib stamps/build-newlib-nano \
 	stamps/merge-newlib-nano
+endif
 endif
 build-qemu: stamps/build-qemu
 
@@ -134,24 +148,27 @@ REGRESSION_TEST_LIST = gcc
 
 .PHONY: check
 check: check-@default_target@
-.PHONY: check-linux check-newlib
+.PHONY: check-linux check-newlib check-picolibc
 check-linux: $(patsubst %,check-%-linux,$(REGRESSION_TEST_LIST))
 check-newlib: $(patsubst %,check-%-newlib,$(REGRESSION_TEST_LIST))
 check-newlib-nano: $(patsubst %,check-%-newlib-nano,$(REGRESSION_TEST_LIST))
-.PHONY: check-gcc check-gcc-linux check-gcc-newlib check-gcc-newlib-nano
+check-picolibc: $(patsubst %,check-%-picolibc,$(REGRESSION_TEST_LIST))
+.PHONY: check-gcc check-gcc-linux check-gcc-newlib check-gcc-newlib-nano check-gcc-picolibc
 check-gcc: check-gcc-@default_target@
 check-gcc-linux: stamps/check-gcc-linux
 check-gcc-newlib: stamps/check-gcc-newlib
 check-gcc-newlib-nano: stamps/check-gcc-newlib-nano
+check-gcc-picolibc: stamps/check-gcc-picolibc
 .PHONY: check-glibc-linux
 check-glibc-linux: $(addprefix stamps/check-glibc-linux-,$(GLIBC_MULTILIB_NAMES))
 .PHONY: check-dhrystone check-dhrystone-linux check-dhrystone-newlib
 check-dhrystone: check-dhrystone-@default_target@
-.PHONY: check-binutils check-binutils-linux check-binutils-newlib
+.PHONY: check-binutils check-binutils-linux check-binutils-newlib check-binutils-picolibc
 check-binutils: check-binutils-@default_target@
 check-binutils-linux: stamps/check-binutils-linux
 check-binutils-newlib: stamps/check-binutils-newlib
 check-binutils-newlib-nano: stamps/check-binutils-newlib-nano
+check-binutils-picolibc: stamps/check-binutils-picolibc
 .PHONY: check-gdb check-gdb-linux check-gdb-newlib
 check-gdb: check-gdb-@default_target@
 check-gdb-linux: stamps/check-gdb-linux
@@ -689,6 +706,119 @@ stamps/build-gcc-newlib-stage2: $(GCC_SRCDIR) $(GCC_SRC_GIT) stamps/build-newlib
 	mkdir -p $(dir $@) && touch $@
 
 #
+# PICOLIBC
+#
+
+stamps/build-binutils-picolibc: $(BINUTILS_SRCDIR) $(BINUTILS_SRC_GIT) stamps/check-write-permission
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+# CC_FOR_TARGET is required for the ld testsuite.
+	cd $(notdir $@) && CC_FOR_TARGET=$(PICOLIBC_CC_FOR_TARGET) $</configure \
+		--target=$(PICOLIBC_TUPLE) \
+		$(CONFIGURE_HOST) \
+		--prefix=$(INSTALL_DIR) \
+		@with_guile@ \
+		--disable-werror \
+		$(BINUTILS_TARGET_FLAGS) \
+		--disable-gdb \
+		--disable-sim \
+		--disable-libdecnumber \
+		--disable-readline \
+		$(WITH_ISA_SPEC)
+	$(MAKE) -C $(notdir $@)
+	$(MAKE) -C $(notdir $@) install
+	mkdir -p $(dir $@) && touch $@
+
+stamps/build-gdb-picolibc: $(GDB_SRCDIR) $(GDB_SRC_GIT)
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+# CC_FOR_TARGET is required for the ld testsuite.
+	cd $(notdir $@) && CC_FOR_TARGET=$(PICOLIBC_CC_FOR_TARGET) $</configure \
+		--target=$(PICOLIBC_TUPLE) \
+		$(CONFIGURE_HOST) \
+		--prefix=$(INSTALL_DIR) \
+		@with_guile@ \
+		--disable-werror \
+		$(GDB_TARGET_FLAGS) \
+		--enable-gdb \
+		--disable-gas \
+		--disable-binutils \
+		--disable-ld \
+		--disable-gold \
+		--disable-gprof
+	$(MAKE) -C $(notdir $@)
+	$(MAKE) -C $(notdir $@) install
+	mkdir -p $(dir $@) && touch $@
+
+GCC_PICOLIBC_ARGS = \
+		--target=$(PICOLIBC_TUPLE) \
+		$(CONFIGURE_HOST) \
+		--disable-wchar_t \
+		--prefix=$(INSTALL_DIR) \
+		--disable-shared \
+		--disable-threads \
+		--enable-languages=c,c++ \
+		--with-pkgversion="$(GCCPKGVER)" \
+		@with_system_zlib@ \
+		--enable-tls \
+		--with-newlib \
+		--with-sysroot=$(INSTALL_DIR)/$(PICOLIBC_TUPLE) \
+		--disable-libmudflap \
+		--disable-libssp \
+		--disable-libquadmath \
+		--disable-libgomp \
+		--disable-nls \
+		--disable-tm-clone-registry \
+		--src=$(gccsrcdir) \
+		$(GCC_CHECKING_FLAGS) \
+		$(GCC_MULTILIB_FLAGS) \
+		$(WITH_ABI) \
+		$(WITH_ARCH) \
+		$(WITH_TUNE) \
+		$(WITH_ISA_SPEC) \
+		CFLAGS_FOR_TARGET="-Os $(CFLAGS_FOR_TARGET)" \
+		CXXFLAGS_FOR_TARGET="-Os $(CXXFLAGS_FOR_TARGET)"
+
+stamps/build-gcc-picolibc-stage1: $(GCC_SRCDIR) $(GCC_SRC_GIT) stamps/build-binutils-picolibc
+	if test -f $</contrib/download_prerequisites && test "@NEED_GCC_EXTERNAL_LIBRARIES@" = "true"; then cd $< && ./contrib/download_prerequisites; fi
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	cd $(notdir $@) && $</configure $(GCC_PICOLIBC_ARGS)
+	$(MAKE) -C $(notdir $@) all-gcc
+	$(MAKE) -C $(notdir $@) install-gcc
+	mkdir -p $(dir $@) && touch $@
+
+stamps/build-picolibc: $(PICOLIBC_SRCDIR) $(PICOLIBC_SRC_GIT) stamps/build-gcc-picolibc-stage1 picolibc-cross.txt
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	meson setup --cross-file picolibc-cross.txt \
+		--prefix=$(INSTALL_DIR)/$(PICOLIBC_TUPLE) \
+		-Dincludedir=include \
+		-Dlibdir=lib \
+		-Dsysroot-install=true \
+		-Dsystem-libc=true \
+		$(PICOLIBC_SRCDIR) \
+		$(notdir $@)
+	ninja -C $(notdir $@) install
+	mkdir -p $(dir $@) && touch $@
+
+picolibc-cross.txt: make-picolibc-cross Makefile
+	sh ./make-picolibc-cross $(INSTALL_DIR)/bin/$(PICOLIBC_TUPLE) -Os $(CFLAGS_FOR_TARGET) > $@
+
+stamps/build-gcc-picolibc-stage2: $(GCC_SRCDIR) $(GCC_SRC_GIT) stamps/build-picolibc
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	cd $(notdir $@) && $</configure \
+		$(GCC_PICOLIBC_ARGS) \
+		--enable-stdio=stdio_pure \
+		--with-default-libc=picolibc \
+		--with-native-system-header-dir=/include
+	$(MAKE) -C $(notdir $@)
+	$(MAKE) -C $(notdir $@) install
+	mkdir -p $(dir $@) && touch $@
+
+
+#
 # MUSL
 #
 
@@ -888,6 +1018,12 @@ stamps/check-gcc-newlib-nano: stamps/build-gcc-newlib-stage2 $(SIM_STAMP) stamps
 	mkdir -p $(dir $@)
 	date > $@
 
+stamps/check-gcc-picolibc: stamps/build-gcc-picolibc-stage2 stamps/build-qemu
+	cd build-picolibc && meson configure -Dtests=true
+	ninja -C build-picolibc test
+	mkdir -p $(dir $@)
+	date > $@
+
 stamps/check-gcc-linux: stamps/build-gcc-linux-stage2 $(SIM_STAMP) stamps/build-dejagnu
 	$(SIM_PREPARE) $(MAKE) -C build-gcc-linux-stage2 check-gcc "RUNTESTFLAGS=$(RUNTESTFLAGS) --target_board='$(GLIBC_TARGET_BOARDS)'"
 	mkdir -p $(dir $@)
@@ -942,6 +1078,10 @@ stamps/check-binutils-newlib-nano: stamps/build-gcc-newlib-stage2 $(SIM_STAMP) s
 	$(SIM_PREPARE) $(MAKE) -C build-binutils-newlib check-binutils check-gas check-ld -k "RUNTESTFLAGS=--target_board='$(NEWLIB_NANO_TARGET_BOARDS)'" || true
 	date > $@
 
+stamps/check-binutils-picolibc: stamps/build-gcc-picolibc-stage2 $(SIM_STAMP) stamps/build-dejagnu
+	$(SIM_PREPARE) $(MAKE) -C build-binutils-picolibc check-binutils check-gas check-ld -k "RUNTESTFLAGS=--target_board='$(PICOLIBC_TARGET_BOARDS)'" || true
+	date > $@
+
 stamps/check-binutils-linux: stamps/build-gcc-linux-stage2 $(SIM_STAMP) stamps/build-dejagnu
 	$(SIM_PREPARE) $(MAKE) -C build-binutils-linux check-binutils check-gas check-ld -k "RUNTESTFLAGS=--target_board='$(GLIBC_TARGET_BOARDS)'" || true
 	date > $@
@@ -990,6 +1130,12 @@ report-binutils-newlib-nano: stamps/check-binutils-newlib-nano
 	    $(srcdir)/test/allowlist \
 	    `find build-binutils-newlib/ -name *.sum |paste -sd "," -`
 
+.PHONY: report-binutils-picolibc
+report-binutils-picolibc: stamps/check-binutils-picolibc
+	$(srcdir)/scripts/testsuite-filter binutils picolibc \
+	    $(srcdir)/test/allowlist \
+	    `find build-binutils-picolibc/ -name *.sum |paste -sd "," -`
+
 .PHONY: report-binutils-linux
 report-binutils-linux: stamps/check-binutils-linux
 	$(srcdir)/scripts/testsuite-filter binutils glibc \
@@ -997,7 +1143,7 @@ report-binutils-linux: stamps/check-binutils-linux
 	    `find build-binutils-linux/ -name *.sum |paste -sd "," -`
 
 clean:
-	rm -rf build-* stamps install-newlib-nano
+	rm -rf build-* stamps install-newlib-nano picolibc-cross.txt
 
 .PHONY: report-gdb-newlib report-gdb-newlib-nano
 report-gdb-newlib: stamps/check-gdb-newlib
