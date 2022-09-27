@@ -221,6 +221,17 @@ AS_IF([test "x$enable_gdb" != xno],
 	[AC_SUBST(enable_gdb, --enable-gdb)],
 	[AC_SUBST(enable_gdb, --disable-gdb)])
 
+AC_ARG_ENABLE(llvm,
+	[AS_HELP_STRING([--enable-llvm],
+		[Build LLVM (clang)])],
+	[enable_llvm=yes],
+	[]
+	)
+
+AS_IF([test "x$enable_llvm" != xyes],
+	[AC_SUBST(enable_llvm, --disable-llvm)],
+	[AC_SUBST(enable_llvm, --enable-llvm)])
+
 AC_DEFUN([AX_ARG_WITH_SRC],
 	[{m4_pushdef([opt_name], with_$1_src)
 	  AC_ARG_WITH($1-src,
@@ -244,6 +255,7 @@ AX_ARG_WITH_SRC(gdb, gdb)
 AX_ARG_WITH_SRC(qemu, qemu)
 AX_ARG_WITH_SRC(spike, spike)
 AX_ARG_WITH_SRC(pk, pk)
+AX_ARG_WITH_SRC(llvm, llvm)
 
 AC_ARG_WITH(linux-headers-src,
 	[AC_HELP_STRING([--with-linux-headers-src],

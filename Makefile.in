@@ -12,6 +12,7 @@ GDB_SRCDIR := @with_gdb_src@
 QEMU_SRCDIR := @with_qemu_src@
 SPIKE_SRCDIR := @with_spike_src@
 PK_SRCDIR := @with_pk_src@
+LLVM_SRCDIR := @with_llvm_src@
 
 SIM ?= @WITH_SIM@
 
@@ -115,8 +116,16 @@ newlib: stamps/build-gdb-newlib
 linux: stamps/build-gdb-linux
 endif
 linux-native: stamps/build-gcc-linux-native
+ifeq (@enable_llvm@,--enable-llvm)
+all: stamps/build-llvm-@default_target@
+newlib: stamps/build-llvm-newlib
+linux: stamps/build-llvm-linux
+ifeq (@multilib_flags@,--enable-multilib)
+$(error "Setting multilib flags for LLVM builds is not supported.")
+endif
+endif
 
-.PHONY: build-binutils build-gdb build-gcc1 build-libc build-gcc2 build-qemu
+.PHONY: build-binutils build-gdb build-gcc1 build-libc build-gcc2 build-qemu build-llvm
 build-binutils: stamps/build-binutils-@default_target@
 build-gdb: stamps/build-gdb-@default_target@
 build-gcc%: stamps/build-gcc-@default_target@-stage%
@@ -127,6 +136,7 @@ build-libc: stamps/build-newlib stamps/build-newlib-nano \
 	stamps/merge-newlib-nano
 endif
 build-qemu: stamps/build-qemu
+build-llvm: stamps/build-llvm-@default_target@
 
 REGRESSION_TEST_LIST = gcc
 
@@ -270,6 +280,12 @@ ifeq ($(findstring $(srcdir),$(SPIKE_SRCDIR)),$(srcdir))
 SPIKE_SRC_GIT := $(SPIKE_SRCDIR)/.git
 else
 SPIKE_SRC_GIT :=
+endif
+
+ifeq ($(findstring $(srcdir),$(LLVM_SRCDIR)),$(srcdir))
+LLVM_SRC_GIT := $(LLVM_SRCDIR)/.git
+else
+LLVM_SRC_GIT :=
 endif
 
 ifneq ("$(wildcard $(GCC_SRCDIR)/.git)","")
@@ -864,6 +880,42 @@ stamps/build-qemu: $(QEMU_SRCDIR) $(QEMU_SRC_GIT)
 	$(MAKE) -C $(notdir $@) install
 	mkdir -p $(dir $@)
 	date > $@
+
+stamps/build-llvm-linux: $(LLVM_SRCDIR) $(LLVM_SRC_GIT) \
+                         stamps/build-gcc-linux-stage2
+	# We have the following situation:
+	# - sysroot directory: $(INSTALL_DIR)/sysroot
+	# - GCC install directory: $(INSTALL_DIR)
+	# However, LLVM does not allow to set a GCC install prefix
+	# (-DGCC_INSTALL_PREFIX) if a sysroot (-DDEFAULT_SYSROOT) is set
+	# (the GCC install prefix will be ignored silently).
+	# Without a proper sysroot path feature.h won't be found by clang.
+	# Without a proper GCC install directory libgcc won't be found.
+	# As a workaround we have to merge both paths:
+	mkdir -p $(SYSROOT)/lib/
+	ln -s $(INSTALL_DIR)/lib/gcc $(SYSROOT)/lib/gcc
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	cd $(notdir $@) && \
+	    cmake $(LLVM_SRCDIR)/llvm \
+	    -DCMAKE_INSTALL_PREFIX=$(INSTALL_DIR) \
+	    -DCMAKE_BUILD_TYPE=Release \
+	    -DLLVM_TARGETS_TO_BUILD="RISCV" \
+	    -DLLVM_ENABLE_PROJECTS="clang;lld" \
+	    -DLLVM_ENABLE_RUNTIMES="compiler-rt;libcxx;libcxxabi;libunwind" \
+	    -DLLVM_DEFAULT_TARGET_TRIPLE="$(LINUX_TUPLE)" \
+	    -DDEFAULT_SYSROOT="$(INSTALL_DIR)/sysroot" \
+	    -DLLVM_RUNTIME_TARGETS=$(call make_tuple,$(XLEN),linux-gnu) \
+	    -DLLVM_INSTALL_TOOLCHAIN_ONLY=On \
+	    -DLLVM_PARALLEL_LINK_JOBS=4
+	$(MAKE) -C $(notdir $@)
+	$(MAKE) -C $(notdir $@) install
+	cd $(INSTALL_DIR)/bin && ln -s clang $(LINUX_TUPLE)-clang
+	mkdir -p $(dir $@) && touch $@
+
+stamps/build-llvm-newlib:
+	echo "Building LLVM is only supported in combination with a Linux toolchain."
+	exit 1
 
 stamps/build-dejagnu: $(srcdir)/dejagnu $(srcdir)/dejagnu/.git
 	rm -rf $@ $(notdir $@)
