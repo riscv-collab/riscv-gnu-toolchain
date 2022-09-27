@@ -246,6 +246,37 @@ The command below can be used to run the glibc tests:
 
     make check-glibc-linux
 
+### LLVM / clang
+
+LLVM can be used in combination with the RISC-V GNU Compiler Toolchain
+to build RISC-V applications. To build LLVM with C and C++ support the
+configure flag `--enable-llvm` can be used.
+
+E.g. to build LLVM on top of a RV64 Linux toolchain the following commands
+can be used:
+
+  ./configure --prefix=$RISCV --enable-llvm --enable-linux
+  make
+
+Note, that a combination of `--enable-llvm` and multilib configuration flags
+is not supported.
+Also note, that building LLVM is only supported in combination with building
+a Linux toolchain.
+
+Below is an example how to build a rv64gc Linux toolchain with LLVM support,
+how to use it to build a C and a C++ application using clang, and how to
+execute the generated binaries using QEMU:
+
+    # Build rv64gc toolchain with LLVM
+    ./configure --prefix=$RISCV --enable-llvm --enable-linux --with-arch=rv64gc --with-abi=lp64d
+    make -j$(nproc) all build-sim SIM=qemu
+    # Build C application with clang
+    $RISCV/bin/clang -march=rv64imafdc -o hello_world hello_world.c
+    $RISCV/bin/qemu-riscv64 ./hello-world
+    # Build C++ application with clang
+    $RISCV/bin/clang++ -march=rv64imafdc -stdlib=libc++ -o hello_world_cpp hello_world_cpp.cxx
+    $RISCV/bin/qemu-riscv64 ./hello-world_cpp
+
 ### Development
 
 This section is only for developer or advanced user, or you want to build
@@ -296,13 +327,14 @@ For example you have a gcc in `$HOME/gcc`, use `--with-gcc-src` can specify that
 
 Here is the list of configure option for specify source tree:
 
-    --with-gcc-src
     --with-binutils-src
-    --with-newlib-src
-    --with-glibc-src
-    --with-musl-src
+    --with-gcc-src
     --with-gdb-src
+    --with-glibc-src
     --with-linux-headers-src
+    --with-llvm-src
+    --with-musl-src
+    --with-newlib-src
+    --with-pk-src
     --with-qemu-src
     --with-spike-src
-    --with-pk-src
