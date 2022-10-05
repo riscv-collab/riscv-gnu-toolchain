@@ -210,6 +210,22 @@ Note:
 - spike only support rv64* bare-metal/elf toolchain.
 - gdb simulator only support bare-metal/elf toolchain.
 
+#### Testing GCC, Binutils, and glibc of a Linux toolchain
+
+The default Makefile target to run toolchain tests is `report`.
+This will run all tests of the GCC regression test suite.
+Alternatively, the following command can be used to do the same:
+
+    make check-gcc
+
+The following command can be used to run the Binutils tests:
+
+    make check-binutils
+
+The command below can be used to run the glibc tests:
+
+    make check-glibc-linux
+
 ### Development
 
 This section is only for developer or advanced user, or you want to build
