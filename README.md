@@ -30,7 +30,7 @@ On Arch Linux, executing the following command should suffice:
 
     $ sudo pacman -Syyu autoconf automake curl python3 libmpc mpfr gmp gawk base-devel bison flex texinfo gperf libtool patchutils bc zlib expat
 
-Also available for Arch users on the AUR: [https://aur.archlinux.org/packages/riscv-gnu-toolchain/](https://aur.archlinux.org/packages/riscv-gnu-toolchain/)
+Also available for Arch users on the AUR: [https://aur.archlinux.org/packages/riscv-gnu-toolchain-bin](https://aur.archlinux.org/packages/riscv-gnu-toolchain-bin)
 
 On OS X, you can use [Homebrew](http://brew.sh) to install the dependencies:
 
