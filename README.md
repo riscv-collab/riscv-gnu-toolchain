@@ -210,6 +210,25 @@ Note:
 - spike only support rv64* bare-metal/elf toolchain.
 - gdb simulator only support bare-metal/elf toolchain.
 
+#### Selecting the tests to run in GCC's regression test suite
+
+By default GCC will execute all tests of its regression test suite.
+While running them in parallel (e.g. `make -j$(nproc) report`) will
+significanlty speed up the execution time on multi-processor systems,
+the required time for executing all tests is usually too high for
+typical development cycles. Therefore GCC allows to select the tests
+that are being executed using the environment variable `RUNTESTFLAGS`.
+
+To restrict a test run to only RISC-V specific tests
+the following command can be used:
+
+ RUNTESTFLAGS="riscv.exp" make report
+
+To to restrict a test run to only RISC-V specific tests with match the
+pattern "zb*.c" and "sm*.c" the following command can be used:
+
+ RUNTESTFLAGS="riscv.exp=zb*.c\ sm*.c" make report
+
 #### Testing GCC, Binutils, and glibc of a Linux toolchain
 
 The default Makefile target to run toolchain tests is `report`.
