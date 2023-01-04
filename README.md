@@ -61,9 +61,9 @@ You should now be able to use riscv64-unknown-elf-gcc and its cousins.
 
 ### Installation (Linux)
 
-To build the Linux cross-compiler, pick an install path.  If you choose,
-say, `/opt/riscv`, then add `/opt/riscv/bin` to your `PATH` now.  Then, simply
-run the following command:
+To build the Linux cross-compiler, pick an install path (that is writeable.)
+If you choose, say, `/opt/riscv`, then add `/opt/riscv/bin` to your `PATH`.
+Then, simply run the following command:
 
     ./configure --prefix=/opt/riscv
     make linux
