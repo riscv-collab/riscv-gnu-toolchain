@@ -34,9 +34,7 @@ Also available for Arch users on the AUR: [https://aur.archlinux.org/packages/ri
 
 On OS X, you can use [Homebrew](http://brew.sh) to install the dependencies:
 
-    $ brew install python3 gawk gnu-sed gmp mpfr libmpc isl zlib expat
-    $ brew tap discoteq/discoteq
-    $ brew install flock
+    $ brew install python3 gawk gnu-sed gmp mpfr libmpc isl zlib expat texinfo flock
 
 To build the glibc (Linux) on OS X, you will need to build within a case-sensitive file
 system.  The simplest approach is to create and mount a new disk image with
@@ -50,9 +48,9 @@ complete the process.
 
 ### Installation (Newlib)
 
-To build the Newlib cross-compiler, pick an install path.  If you choose,
-say, `/opt/riscv`, then add `/opt/riscv/bin` to your `PATH` now.  Then, simply
-run the following command:
+To build the Newlib cross-compiler, pick an install path (that is writeable).
+If you choose, say, `/opt/riscv`, then add `/opt/riscv/bin` to your `PATH`.
+Then, simply run the following command:
 
     ./configure --prefix=/opt/riscv
     make
@@ -61,7 +59,7 @@ You should now be able to use riscv64-unknown-elf-gcc and its cousins.
 
 ### Installation (Linux)
 
-To build the Linux cross-compiler, pick an install path (that is writeable.)
+To build the Linux cross-compiler, pick an install path (that is writeable).
 If you choose, say, `/opt/riscv`, then add `/opt/riscv/bin` to your `PATH`.
 Then, simply run the following command:
 
