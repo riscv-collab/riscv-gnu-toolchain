@@ -244,6 +244,7 @@ AX_ARG_WITH_SRC(gdb, gdb)
 AX_ARG_WITH_SRC(qemu, qemu)
 AX_ARG_WITH_SRC(spike, spike)
 AX_ARG_WITH_SRC(pk, pk)
+AX_ARG_WITH_SRC(dejagnu, dejagnu)
 
 AC_ARG_WITH(linux-headers-src,
 	[AC_HELP_STRING([--with-linux-headers-src],
