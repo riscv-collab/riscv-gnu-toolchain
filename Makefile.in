@@ -907,8 +907,43 @@ stamps/build-qemu: $(QEMU_SRCDIR) $(QEMU_SRC_GIT)
 	mkdir -p $(dir $@)
 	date > $@
 
+stamps/build-llvm-linux-stage1: $(LLVM_SRCDIR) $(LLVM_SRC_GIT) \
+                                stamps/build-gcc-linux-stage2
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	# Build clang and lld (and nothing else)
+	cd $(notdir $@) && cmake $(LLVM_SRCDIR)/llvm \
+		-DCLANG_INCLUDE_DOCS=OFF \
+		-DCLANG_TOOL_CLANG_IMPORT_TEST_BUILD=OFF \
+		-DCLANG_TOOL_C_INDEX_TEST_BUILD=OFF \
+		-DCLANG_TOOL_ARCMT_TEST_BUILD=OFF \
+		-DCLANG_TOOL_C_ARCMT_TEST_BUILD=OFF \
+		-DCMAKE_INSTALL_PREFIX=$(INSTALL_DIR)/host \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DLLVM_ENABLE_BINDINGS=OFF \
+		-DLLVM_ENABLE_LIBXML2=OFF \
+		-DLLVM_ENABLE_OCAMLDOC=OFF \
+		-DLLVM_ENABLE_PROJECTS="clang;lld" \
+		-DLLVM_ENABLE_Z3_SOLVER=OFF \
+		-DLLVM_ENABLE_ZSTD=OFF \
+		-DLLVM_INCLUDE_BENCHMARKS=OFF \
+		-DLLVM_INCLUDE_DOCS=OFF \
+		-DLLVM_INCLUDE_EXAMPLES=OFF \
+		-DLLVM_INCLUDE_GO_TESTS=OFF \
+		-DLLVM_INCLUDE_TESTS=OFF \
+		-DLLVM_INSTALL_TOOLCHAIN_ONLY=On \
+		-DLLVM_TOOL_LLVM_LTO_BUILD=OFF \
+		-DLLVM_TOOL_LLVM_LTO2_BUILD=OFF \
+		-DLLVM_TOOL_REMARKS_SHLIB_BUILD=OFF \
+		-DLLVM_TOOL_LTO_BUILD=OFF
+	$(MAKE) -C $(notdir $@)
+	$(MAKE) -C $(notdir $@) install
+	mkdir -p $(dir $@) && touch $@
+
 stamps/build-llvm-linux: $(LLVM_SRCDIR) $(LLVM_SRC_GIT) \
-                         stamps/build-gcc-linux-stage2
+                         stamps/build-llvm-linux-stage1
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
 	# We have the following situation:
 	# - sysroot directory: $(INSTALL_DIR)/sysroot
 	# - GCC install directory: $(INSTALL_DIR)
@@ -919,24 +954,38 @@ stamps/build-llvm-linux: $(LLVM_SRCDIR) $(LLVM_SRC_GIT) \
 	# Without a proper GCC install directory libgcc won't be found.
 	# As a workaround we have to merge both paths:
 	mkdir -p $(SYSROOT)/lib/
-	ln -s $(INSTALL_DIR)/lib/gcc $(SYSROOT)/lib/gcc
-	rm -rf $@ $(notdir $@)
-	mkdir $(notdir $@)
-	cd $(notdir $@) && \
-	    cmake $(LLVM_SRCDIR)/llvm \
-	    -DCMAKE_INSTALL_PREFIX=$(INSTALL_DIR) \
-	    -DCMAKE_BUILD_TYPE=Release \
-	    -DLLVM_TARGETS_TO_BUILD="RISCV" \
-	    -DLLVM_ENABLE_PROJECTS="clang;lld" \
-	    -DLLVM_ENABLE_RUNTIMES="compiler-rt;libcxx;libcxxabi;libunwind" \
-	    -DLLVM_DEFAULT_TARGET_TRIPLE="$(LINUX_TUPLE)" \
-	    -DDEFAULT_SYSROOT="$(INSTALL_DIR)/sysroot" \
-	    -DLLVM_RUNTIME_TARGETS=$(call make_tuple,$(XLEN),linux-gnu) \
-	    -DLLVM_INSTALL_TOOLCHAIN_ONLY=On \
-	    -DLLVM_PARALLEL_LINK_JOBS=4
+	ln -sf $(INSTALL_DIR)/lib/gcc $(SYSROOT)/lib/gcc
+	# Build runtime libs
+	cd $(notdir $@) && cmake $(LLVM_SRCDIR)/llvm \
+		-DCMAKE_AR=$(INSTALL_DIR)/host/bin/llvm-ar \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_C_COMPILER=$(INSTALL_DIR)/host/bin/clang \
+		-DCMAKE_CXX_COMPILER=$(INSTALL_DIR)/host/bin/clang++ \
+		-DCMAKE_INSTALL_PREFIX=$(INSTALL_DIR) \
+		-DCMAKE_NM=$(INSTALL_DIR)/host/bin/llvm-nm \
+		-DCMAKE_RANLIB=$(INSTALL_DIR)/host/bin/llvm-ranlib \
+		-DDEFAULT_SYSROOT="$(INSTALL_DIR)/sysroot" \
+		-DLLVM_CONFIG_PATH=$(INSTALL_DIR)/host/bin/llvm-config \
+		-DLLVM_DEFAULT_TARGET_TRIPLE="$(LINUX_TUPLE)" \
+		-DLLVM_ENABLE_PIC=False \
+		-DLLVM_ENABLE_PROJECTS="clang;lld" \
+		-DLLVM_ENABLE_RUNTIMES="compiler-rt;libcxx;libcxxabi" \
+		-DLLVM_INSTALL_TOOLCHAIN_ONLY=On \
+		-DLLVM_RUNTIME_TARGETS="$(LINUX_TUPLE)" \
+		-DLLVM_TARGETS_TO_BUILD="RISCV" \
+		-DLLVM_USE_LINKER=lld \
+		-DCOMPILER_RT_BUILD_BUILTINS=ON \
+		-DCOMPILER_RT_BUILD_LIBFUZZER=OFF \
+		-DCOMPILER_RT_BUILD_MEMPROF=OFF \
+		-DCOMPILER_RT_BUILD_PROFILE=OFF \
+		-DCOMPILER_RT_BUILD_SANITIZERS=OFF \
+		-DCOMPILER_RT_BUILD_XRAY=OFF
 	$(MAKE) -C $(notdir $@)
 	$(MAKE) -C $(notdir $@) install
-	cd $(INSTALL_DIR)/bin && ln -s clang $(LINUX_TUPLE)-clang
+	# Add symlinks with target-triplet prefix
+	cd $(INSTALL_DIR)/bin && ln -sf clang $(LINUX_TUPLE)-clang
+	cd $(INSTALL_DIR)/bin && ln -sf clang++ $(LINUX_TUPLE)-clang++
+	cd $(INSTALL_DIR)/bin && ln -sf flang $(LINUX_TUPLE)-flang
 	mkdir -p $(dir $@) && touch $@
 
 stamps/build-llvm-newlib:
