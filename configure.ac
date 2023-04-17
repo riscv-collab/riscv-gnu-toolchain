@@ -72,10 +72,10 @@ AC_ARG_WITH(tune,
 	)
 
 AC_ARG_WITH(isa-spec,
-	[AS_HELP_STRING([--with-isa-spec=2.2],
-		[Set the default ISA spec version, default to 2.2, available options: 2.2, 20190608, 20191213])],
+	[AS_HELP_STRING([--with-isa-spec=20191213],
+		[Set the default ISA spec version, default to 20191213, available options: 2.2, 20190608, 20191213])],
 	[],
-	[with_isa_spec=2.2]
+	[with_isa_spec=20191213]
 	)
 
 AC_ARG_WITH(sim,
