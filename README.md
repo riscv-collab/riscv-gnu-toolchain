@@ -263,9 +263,9 @@ Or you can upgrade specific submodule only.
 
     git submodule update --remote <component>
 
-For example, upgrade riscv-gcc only, you can using following command:
+For example, upgrade gcc only, you can using following command:
 
-    git submodule update --remote riscv-gcc
+    git submodule update --remote gcc
 
 #### How to Check Which Branch are Used for Specific submodule
 
@@ -273,15 +273,15 @@ The branch info has recorded in `.gitmodules` file, which can set or update via
 `git submodule add -b` or `git submodule set-branch`.
 
 However the only way to check which branch are using is to check `.gitmodules`
-file, here is the example for `riscv-gcc`, it using riscv-gcc-10.2.0 branch, so
-it will has a section named `riscv-gcc` and has a field `branch` is
-`riscv-gcc-10.2.0`.
+file, here is the example for `gcc`, it's using releases/gcc-12 branch, so
+it will has a section named `gcc` and has a field `branch` is
+`releases/gcc-12`.
 
 ```
-[submodule "riscv-gcc"]
-        path = riscv-gcc
-        url = ../riscv-gcc.git
-        branch = riscv-gcc-10.2.0
+[submodule "gcc"]
+        path = gcc
+        url = ../gcc.git
+        branch = releases/gcc-12
 ```
 
 #### Use Source Tree Other Than `riscv-gnu-toolchain`
