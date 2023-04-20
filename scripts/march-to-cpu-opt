@@ -3,6 +3,9 @@
 import argparse
 import sys
 import unittest
+import elftools.elf.elffile
+import elftools.elf.enums
+import elftools.elf.sections
 
 EXT_OPTS = {
   "zba":             "zba=true",
@@ -26,6 +29,7 @@ def parse_opt(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument('-march', '--with-arch', type=str, dest='march')
     parser.add_argument('-selftest', action='store_true')
+    parser.add_argument('--get-riscv-tag', type=str)
     opt = parser.parse_args()
     return opt
 
@@ -156,12 +160,51 @@ class TestArchStringParse(unittest.TestCase):
 def selftest():
     unittest.main(argv=sys.argv[1:])
 
+def read_arch_attr (path):
+    try:
+        elffile = elftools.elf.elffile.ELFFile(open(path, 'rb'))
+    except elftools.common.exceptions.ELFError:
+        raise Exception("%s is not ELF file!" % path)
+
+    attr_sec = elffile.get_section_by_name(".riscv.attributes")
+    if attr_sec:
+        # pyelftools has support RISC-V attribute but not contain in any
+        # release yet, so use ARMAttributesSection for now...
+        xattr_section = \
+            elftools.elf.sections.ARMAttributesSection (
+                attr_sec.header,
+                attr_sec.name,
+                elffile)
+        for subsec in xattr_section.subsections:
+            for subsubsec in subsec.subsubsections:
+                for attr in subsubsec.iter_attributes():
+                    val = attr.value
+                    if (not isinstance(val, str)):
+                        continue
+                    pos32 = val.find("rv32")
+                    pos64 = val.find("rv64")
+                    # MAGIC WORKAROUND
+                    # Some version of pyelftools has issue for parsing
+                    # Tag number = 5, it will wrongly parse it become
+                    # Tag number = 4 + 0x10 + 0x5
+                    if (pos32 == 2) or (pos64 == 2):
+                        val = val[2:]
+                    # End of MAGIC WORKAROUND
+
+                    if (pos32 != -1 or pos64 != -1):
+                        return val
+    raise Exception("Not found ELF attribute in %s?" % path)
+
 def main(argv):
     opt = parse_opt(argv)
     if opt.selftest:
         selftest()
         return 0
-    cpu_opt = conver_arch_to_qemu_cpu_opt(opt.march)
+    if (opt.with_elf):
+        march = read_arch_attr (opt.with_elf)
+    else:
+        march = opt.march
+    cpu_opt = conver_arch_to_qemu_cpu_opt(march)
     print (cpu_opt)
 
 if __name__ == '__main__':
