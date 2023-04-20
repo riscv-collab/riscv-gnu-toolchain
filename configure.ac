@@ -46,9 +46,19 @@ AC_ARG_ENABLE(linux,
         [enable_linux=no]
         )
 
+AC_ARG_ENABLE(picolibc,
+	[AS_HELP_STRING([--enable-picolibc],
+		[set picolibc as the default make target])],
+	[enable_picolibc=yes],
+	[enable_picolibc=no]
+	)
+
 AS_IF([test "x$enable_linux" != xno],
 	[AC_SUBST(default_target, linux)],
-	[AC_SUBST(default_target, newlib)])
+	[AS_IF([test "x$enable_picolibc" != xno],
+		[AC_SUBST(default_target, picolibc)],
+		[AC_SUBST(default_target, newlib)]
+		)])
 
 AC_ARG_WITH(arch,
 	[AS_HELP_STRING([--with-arch=rv64imafdc],
@@ -133,6 +143,10 @@ AS_IF([test "x$enable_multilib" != xno],
 AS_IF([test "x$enable_multilib" != xno],
         [AC_SUBST(newlib_multilib_names,"rv32i-ilp32 rv32iac-ilp32 rv32im-ilp32 rv32imac-ilp32 rv32imafc-ilp32f rv64imac-lp64 rv64imafdc-lp64d")],
         [AC_SUBST(newlib_multilib_names,"$with_arch-$with_abi")])
+
+AS_IF([test "x$enable_multilib" != xno],
+        [AC_SUBST(picolibc_multilib_names,"rv32i-ilp32 rv32iac-ilp32 rv32im-ilp32 rv32imac-ilp32 rv32imafc-ilp32f rv64imac-lp64 rv64imafdc-lp64d")],
+        [AC_SUBST(picolibc_multilib_names,"$with_arch-$with_abi")])
 
 AS_IF([test "x$enable_multilib" != xno],
         [AC_SUBST(musl_multilib_names,"rv64imac-lp64 rv64imafdc-lp64d")],
@@ -238,6 +252,7 @@ AC_DEFUN([AX_ARG_WITH_SRC],
 AX_ARG_WITH_SRC(gcc, gcc)
 AX_ARG_WITH_SRC(binutils, binutils)
 AX_ARG_WITH_SRC(newlib, newlib)
+AX_ARG_WITH_SRC(picolibc, picolibc)
 AX_ARG_WITH_SRC(glibc, glibc)
 AX_ARG_WITH_SRC(musl, musl)
 AX_ARG_WITH_SRC(gdb, gdb)
@@ -268,11 +283,16 @@ AS_IF([test "x$enable_libsanitizer" != xno],
 	[AC_SUBST(enable_libsanitizer, --enable-libsanitizer)],
 	[AC_SUBST(enable_libsanitizer, --disable-libsanitizer)])
 
+AS_IF([test "x$enable_picolibc" != xno],
+	[default_enable_qemu_system=yes],
+	[default_enable_qemu_system=no]
+	)
+
 AC_ARG_ENABLE(qemu_system,
 	[AS_HELP_STRING([--enable-qemu-system],
 		[Build qemu with system-mode emulation])],
 	[],
-	[enable_qemu_system=no]
+	[enable_qemu_system="$default_enable_qemu_system"]
 	)
 
 AS_IF([test "x$enable_qemu_system" != xno],
