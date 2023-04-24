@@ -50,6 +50,17 @@ AS_IF([test "x$enable_linux" != xno],
 	[AC_SUBST(default_target, linux)],
 	[AC_SUBST(default_target, newlib)])
 
+AC_ARG_ENABLE(debug_info,
+        [AS_HELP_STRING([--disable-debug-info],
+		[build glibc and musl without debug infromation])],
+        [disable_debug_info=yes],
+        [disable_debug_info=no]
+        )
+
+AS_IF([test "x$disable_debug_info" != xno],
+	[AC_SUBST(debug_info, "")],
+	[AC_SUBST(debug_info, "-g")])
+
 AC_ARG_WITH(arch,
 	[AS_HELP_STRING([--with-arch=rv64imafdc],
 		[Sets the base RISC-V ISA, defaults to rv64imafdc])],
