@@ -145,7 +145,7 @@ Example: ```GCC_EXTRA_CONFIGURE_FLAGS=--with-gmp=/opt/gmp make linux```
 
 Possible options are: `2.2`, `20190608` and `20191213`.
 
-The default version is `2.2`.
+The default version is `20191213`.
 
 More details about this option you can refer this post [RISC-V GNU toolchain bumping default ISA spec to 20191213](https://groups.google.com/a/groups.riscv.org/g/sw-dev/c/aE1ZeHHCYf4).
 
