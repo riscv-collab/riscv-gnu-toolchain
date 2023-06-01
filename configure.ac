@@ -50,6 +50,24 @@ AS_IF([test "x$enable_linux" != xno],
 	[AC_SUBST(default_target, linux)],
 	[AC_SUBST(default_target, newlib)])
 
+AC_ARG_ENABLE(debug_info,
+        [AS_HELP_STRING([--enable-debug-info],
+		[build glibc/musl/newlibc/libgcc with debug information])],
+        [enable_debug_info=yes],
+        [enable_debug_info=no]
+        )
+
+AS_IF([test "x$enable_debug_info" != xyes],
+        [AS_HELP_STRING([--disable-debug-info],
+		[build glibc and musl without debug infromation])],
+        [disable_debug_info=yes],
+        [disable_debug_info=no]
+        )
+
+AS_IF([test "x$enable_debug_info" != xyes],
+	[AC_SUBST(debug_info, "")],
+	[AC_SUBST(debug_info, "-g")])
+
 AC_ARG_WITH(arch,
 	[AS_HELP_STRING([--with-arch=rv64imafdc],
 		[Sets the base RISC-V ISA, defaults to rv64imafdc])],
@@ -72,10 +90,10 @@ AC_ARG_WITH(tune,
 	)
 
 AC_ARG_WITH(isa-spec,
-	[AS_HELP_STRING([--with-isa-spec=2.2],
-		[Set the default ISA spec version, default to 2.2, available options: 2.2, 20190608, 20191213])],
+	[AS_HELP_STRING([--with-isa-spec=20191213],
+		[Set the default ISA spec version, default to 20191213, available options: 2.2, 20190608, 20191213])],
 	[],
-	[with_isa_spec=2.2]
+	[with_isa_spec=20191213]
 	)
 
 AC_ARG_WITH(sim,
@@ -256,6 +274,7 @@ AX_ARG_WITH_SRC(qemu, qemu)
 AX_ARG_WITH_SRC(spike, spike)
 AX_ARG_WITH_SRC(pk, pk)
 AX_ARG_WITH_SRC(llvm, llvm)
+AX_ARG_WITH_SRC(dejagnu, dejagnu)
 
 AC_ARG_WITH(linux-headers-src,
 	[AC_HELP_STRING([--with-linux-headers-src],

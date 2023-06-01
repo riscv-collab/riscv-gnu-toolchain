@@ -20,7 +20,7 @@ Several standard packages are needed to build the toolchain.
 
 On Ubuntu, executing the following command should suffice:
 
-    $ sudo apt-get install autoconf automake autotools-dev curl python3 libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo gperf libtool patchutils bc zlib1g-dev libexpat-dev ninja-build
+    $ sudo apt-get install autoconf automake autotools-dev curl python3 libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo gperf libtool patchutils bc zlib1g-dev libexpat-dev ninja-build git cmake ibglib2.0-dev
 
 On Fedora/CentOS/RHEL OS, executing the following command should suffice:
 
@@ -34,9 +34,7 @@ Also available for Arch users on the AUR: [https://aur.archlinux.org/packages/ri
 
 On OS X, you can use [Homebrew](http://brew.sh) to install the dependencies:
 
-    $ brew install python3 gawk gnu-sed gmp mpfr libmpc isl zlib expat
-    $ brew tap discoteq/discoteq
-    $ brew install flock
+    $ brew install python3 gawk gnu-sed gmp mpfr libmpc isl zlib expat texinfo flock
 
 To build the glibc (Linux) on OS X, you will need to build within a case-sensitive file
 system.  The simplest approach is to create and mount a new disk image with
@@ -50,9 +48,9 @@ complete the process.
 
 ### Installation (Newlib)
 
-To build the Newlib cross-compiler, pick an install path.  If you choose,
-say, `/opt/riscv`, then add `/opt/riscv/bin` to your `PATH` now.  Then, simply
-run the following command:
+To build the Newlib cross-compiler, pick an install path (that is writeable).
+If you choose, say, `/opt/riscv`, then add `/opt/riscv/bin` to your `PATH`.
+Then, simply run the following command:
 
     ./configure --prefix=/opt/riscv
     make
@@ -61,9 +59,9 @@ You should now be able to use riscv64-unknown-elf-gcc and its cousins.
 
 ### Installation (Linux)
 
-To build the Linux cross-compiler, pick an install path.  If you choose,
-say, `/opt/riscv`, then add `/opt/riscv/bin` to your `PATH` now.  Then, simply
-run the following command:
+To build the Linux cross-compiler, pick an install path (that is writeable).
+If you choose, say, `/opt/riscv`, then add `/opt/riscv/bin` to your `PATH`.
+Then, simply run the following command:
 
     ./configure --prefix=/opt/riscv
     make linux
@@ -137,6 +135,9 @@ devtoolset-7 works.
 There are a number of additional options that may be passed to
 configure.  See './configure --help' for more details.
 
+Also you can define extra flags to pass to specific projects: ```BINUTILS_NATIVE_FLAGS_EXTRA, BINUTILS_TARGET_FLAGS_EXTRA, GCC_EXTRA_CONFIGURE_FLAGS, GDB_NATIVE_FLAGS_EXTRA, GDB_TARGET_FLAGS_EXTRA, GLIBC_NATIVE_FLAGS_EXTRA, GLIBC_TARGET_FLAGS_EXTRA```.
+Example: ```GCC_EXTRA_CONFIGURE_FLAGS=--with-gmp=/opt/gmp make linux```
+
 #### Set default ISA spec version
 
 `--with-isa-spec=` can specify the default version of the RISC-V Unprivileged
@@ -144,7 +145,7 @@ configure.  See './configure --help' for more details.
 
 Possible options are: `2.2`, `20190608` and `20191213`.
 
-The default version is `2.2`.
+The default version is `20191213`.
 
 More details about this option you can refer this post [RISC-V GNU toolchain bumping default ISA spec to 20191213](https://groups.google.com/a/groups.riscv.org/g/sw-dev/c/aE1ZeHHCYf4).
 
@@ -271,10 +272,10 @@ execute the generated binaries using QEMU:
     make -j$(nproc) all build-sim SIM=qemu
     # Build C application with clang
     $RISCV/bin/clang -march=rv64imafdc -o hello_world hello_world.c
-    $RISCV/bin/qemu-riscv64 ./hello-world
+    $RISCV/bin/qemu-riscv64 -L $RISCV/sysroot ./hello_world
     # Build C++ application with clang
     $RISCV/bin/clang++ -march=rv64imafdc -stdlib=libc++ -o hello_world_cpp hello_world_cpp.cxx
-    $RISCV/bin/qemu-riscv64 ./hello-world_cpp
+    $RISCV/bin/qemu-riscv64 -L $RISCV/sysroot ./hello_world_cpp
 
 ### Development
 
@@ -293,9 +294,9 @@ Or you can upgrade specific submodule only.
 
     git submodule update --remote <component>
 
-For example, upgrade riscv-gcc only, you can using following command:
+For example, upgrade gcc only, you can using following command:
 
-    git submodule update --remote riscv-gcc
+    git submodule update --remote gcc
 
 #### How to Check Which Branch are Used for Specific submodule
 
@@ -303,15 +304,15 @@ The branch info has recorded in `.gitmodules` file, which can set or update via
 `git submodule add -b` or `git submodule set-branch`.
 
 However the only way to check which branch are using is to check `.gitmodules`
-file, here is the example for `riscv-gcc`, it using riscv-gcc-10.2.0 branch, so
-it will has a section named `riscv-gcc` and has a field `branch` is
-`riscv-gcc-10.2.0`.
+file, here is the example for `gcc`, it's using releases/gcc-12 branch, so
+it will has a section named `gcc` and has a field `branch` is
+`releases/gcc-12`.
 
 ```
-[submodule "riscv-gcc"]
-        path = riscv-gcc
-        url = ../riscv-gcc.git
-        branch = riscv-gcc-10.2.0
+[submodule "gcc"]
+        path = gcc
+        url = ../gcc.git
+        branch = releases/gcc-12
 ```
 
 #### Use Source Tree Other Than `riscv-gnu-toolchain`

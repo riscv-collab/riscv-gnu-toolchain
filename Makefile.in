@@ -13,17 +13,20 @@ QEMU_SRCDIR := @with_qemu_src@
 SPIKE_SRCDIR := @with_spike_src@
 PK_SRCDIR := @with_pk_src@
 LLVM_SRCDIR := @with_llvm_src@
+DEJAGNU_SRCDIR := @with_dejagnu_src@
+DEBUG_INFO := @debug_info@
+DEJAGNU_SRCDIR := @with_dejagnu_src@
 
 SIM ?= @WITH_SIM@
 
-ifeq ($(srcdir)/riscv-gcc,$(GCC_SRCDIR))
+ifeq ($(srcdir)/gcc,$(GCC_SRCDIR))
 # We need a relative source dir for the gcc configure, to make msys2 mingw64
 # builds work.  Mayberelsrcdir is relative if a relative path was used to run
 # configure, otherwise absolute, so we have to check.
 mayberelsrcdir := @top_srcdir@
 gccsrcdir := $(shell case $(mayberelsrcdir) in \
-		  ([\\/]* | ?:[\\/]*)  echo $(mayberelsrcdir)/riscv-gcc ;; \
-		  (*)  echo ../$(mayberelsrcdir)/riscv-gcc ;; \
+		  ([\\/]* | ?:[\\/]*)  echo $(mayberelsrcdir)/gcc ;; \
+		  (*)  echo ../$(mayberelsrcdir)/gcc ;; \
 		esac)
 else
 gccsrcdir := $(abspath $(GCC_SRCDIR))
@@ -76,9 +79,9 @@ LINUX_TUPLE  ?= $(call make_tuple,$(XLEN),linux-gnu)
 NEWLIB_TUPLE ?= $(call make_tuple,$(XLEN),elf)
 MUSL_TUPLE ?= $(call make_tuple,$(XLEN),linux-musl)
 
-CFLAGS_FOR_TARGET := $(CFLAGS_FOR_TARGET_EXTRA) @target_cflags@ @cmodel@
-CXXFLAGS_FOR_TARGET := $(CXXFLAGS_FOR_TARGET_EXTRA) @target_cxxflags@ @cmodel@
-ASFLAGS_FOR_TARGET := $(ASFLAGS_FOR_TARGET_EXTRA) @cmodel@
+CFLAGS_FOR_TARGET := $(CFLAGS_FOR_TARGET_EXTRA) $(DEBUG_INFO) @target_cflags@ @cmodel@
+CXXFLAGS_FOR_TARGET := $(CXXFLAGS_FOR_TARGET_EXTRA) $(DEBUG_INFO) @target_cxxflags@ @cmodel@
+ASFLAGS_FOR_TARGET := $(ASFLAGS_FOR_TARGET_EXTRA) $(DEBUG_INFO) @cmodel@
 # --with-expat is required to enable XML support used by OpenOCD.
 BINUTILS_TARGET_FLAGS := --with-expat=yes $(BINUTILS_TARGET_FLAGS_EXTRA)
 BINUTILS_NATIVE_FLAGS := $(BINUTILS_NATIVE_FLAGS_EXTRA)
@@ -94,6 +97,7 @@ NEWLIB_CC_FOR_TARGET ?= $(NEWLIB_TUPLE)-gcc
 NEWLIB_CXX_FOR_TARGET ?= $(NEWLIB_TUPLE)-g++
 NEWLIB_TARGET_BOARDS ?= $(shell echo "$(NEWLIB_MULTILIB_NAMES)" | sed 's!\([_a-z0-9]*\)-\([_a-z0-9]*\)!riscv-sim/-march=\1/-mabi=\2/@cmodel@!g')
 NEWLIB_NANO_TARGET_BOARDS ?= $(shell echo "$(NEWLIB_MULTILIB_NAMES)" | sed 's!\([_a-z0-9]*\)-\([_a-z0-9]*\)!riscv-sim-nano/-march=\1/-mabi=\2/@cmodel@!g')
+NEWLIB_CC_FOR_MULTILIB_INFO := $(NEWLIB_CC_FOR_TARGET)
 
 MUSL_TARGET_FLAGS := $(MUSL_TARGET_FLAGS_EXTRA)
 MUSL_CC_FOR_TARGET ?= $(MUSL_TUPLE)-gcc
@@ -183,10 +187,9 @@ report-gdb: report-gdb-@default_target@
 
 .PHONY: build-sim
 ifeq ($(SIM),qemu)
-QEMU_CPU=$(shell $(srcdir)/scripts/march-to-cpu-opt $(WITH_ARCH))
-SIM_PATH:=$(srcdir)/scripts/wrapper/qemu
-SIM_PREPARE:=PATH="$(SIM_PATH):$(INSTALL_DIR)/bin:$(PATH)" RISC_V_SYSROOT="$(SYSROOT)" QEMU_CPU="$(QEMU_CPU)"
-SIM_STAMP:= stamps/build-qemu
+SIM_PATH:=$(srcdir)/scripts/wrapper/qemu:$(srcdir)/scripts
+SIM_PREPARE:=PATH="$(SIM_PATH):$(INSTALL_DIR)/bin:$(PATH)" RISC_V_SYSROOT="$(SYSROOT)"
+SIM_STAMP:= stamps/build-qemu stamps/install-python-package
 else
 ifeq ($(SIM),spike)
 # Using spike simulator.
@@ -278,6 +281,7 @@ endif
 
 ifeq ($(findstring $(srcdir),$(SPIKE_SRCDIR)),$(srcdir))
 SPIKE_SRC_GIT := $(SPIKE_SRCDIR)/.git
+PK_SRC_GIT := $(PK_SRCDIR)/.git
 else
 SPIKE_SRC_GIT :=
 endif
@@ -286,6 +290,12 @@ ifeq ($(findstring $(srcdir),$(LLVM_SRCDIR)),$(srcdir))
 LLVM_SRC_GIT := $(LLVM_SRCDIR)/.git
 else
 LLVM_SRC_GIT :=
+endif
+
+ifeq ($(findstring $(srcdir),$(DEJAGNU_SRCDIR)),$(srcdir))
+DEJAGNU_SRC_GIT := $(DEJAGNU_SRCDIR)/.git
+else
+DEJAGNU_SRC_GIT :=
 endif
 
 ifneq ("$(wildcard $(GCC_SRCDIR)/.git)","")
@@ -380,8 +390,8 @@ endif
 	cd $(notdir $@) && \
 		CC="$(GLIBC_CC_FOR_TARGET) $($@_CFLAGS)" \
 		CXX="this-is-not-the-compiler-youre-looking-for" \
-		CFLAGS="$(CFLAGS_FOR_TARGET) -g -O2 $($@_CFLAGS)" \
-		CXXFLAGS="$(CXXFLAGS_FOR_TARGET) -g -O2 $($@_CFLAGS)" \
+		CFLAGS="$(CFLAGS_FOR_TARGET) -O2 $($@_CFLAGS)" \
+		CXXFLAGS="$(CXXFLAGS_FOR_TARGET) -O2 $($@_CFLAGS)" \
 		ASFLAGS="$(ASFLAGS_FOR_TARGET) $($@_CFLAGS)" \
 		$</configure \
 		--host=$(call make_tuple,$($@_XLEN),linux-gnu) \
@@ -429,6 +439,7 @@ stamps/build-gcc-linux-stage1: $(GCC_SRCDIR) $(GCC_SRC_GIT) stamps/build-binutil
 		$(WITH_ARCH) \
 		$(WITH_TUNE) \
 		$(WITH_ISA_SPEC) \
+		$(GCC_EXTRA_CONFIGURE_FLAGS) \
 		CFLAGS_FOR_TARGET="-O2 $(CFLAGS_FOR_TARGET)" \
 		CXXFLAGS_FOR_TARGET="-O2 $(CXXFLAGS_FOR_TARGET)"
 	$(MAKE) -C $(notdir $@) inhibit-libc=true all-gcc
@@ -464,6 +475,7 @@ stamps/build-gcc-linux-stage2: $(GCC_SRCDIR) $(GCC_SRC_GIT) $(addprefix stamps/b
 		$(WITH_ARCH) \
 		$(WITH_TUNE) \
 		$(WITH_ISA_SPEC) \
+		$(GCC_EXTRA_CONFIGURE_FLAGS) \
 		CFLAGS_FOR_TARGET="-O2 $(CFLAGS_FOR_TARGET)" \
 		CXXFLAGS_FOR_TARGET="-O2 $(CXXFLAGS_FOR_TARGET)"
 	$(MAKE) -C $(notdir $@)
@@ -518,6 +530,7 @@ stamps/build-gcc-linux-native: $(GCC_SRCDIR) $(GCC_SRC_GIT) stamps/build-gcc-lin
 		$(WITH_ARCH) \
 		$(WITH_TUNE) \
 		$(WITH_ISA_SPEC) \
+		$(GCC_EXTRA_CONFIGURE_FLAGS) \
 	$(MAKE) -C $(notdir $@)
 	$(MAKE) -C $(notdir $@) install
 	cp -a $(INSTALL_DIR)/$(LINUX_TUPLE)/lib* $(SYSROOT)
@@ -596,6 +609,7 @@ stamps/build-gcc-newlib-stage1: $(GCC_SRCDIR) $(GCC_SRC_GIT) stamps/build-binuti
 		$(WITH_ARCH) \
 		$(WITH_TUNE) \
 		$(WITH_ISA_SPEC) \
+		$(GCC_EXTRA_CONFIGURE_FLAGS) \
 		CFLAGS_FOR_TARGET="-Os $(CFLAGS_FOR_TARGET)" \
 		CXXFLAGS_FOR_TARGET="-Os $(CXXFLAGS_FOR_TARGET)"
 	$(MAKE) -C $(notdir $@) all-gcc
@@ -645,8 +659,13 @@ stamps/build-newlib-nano: $(NEWLIB_SRCDIR) $(NEWLIB_SRC_GIT) stamps/build-gcc-ne
 
 stamps/merge-newlib-nano: stamps/build-newlib-nano stamps/build-newlib
 # Copy nano library files into newlib install dir.
+	if [ -f $(INSTALL_DIR)/bin/$(NEWLIB_TUPLE)-gcc ] ; then \
+		export NEWLIB_CC_FOR_MULTILIB_INFO="$(INSTALL_DIR)/bin/$(NEWLIB_TUPLE)-gcc"; \
+	else \
+		export NEWLIB_CC_FOR_MULTILIB_INFO="$(NEWLIB_CC_FOR_TARGET)"; \
+	fi
 	set -e; \
-        for ml in `$(INSTALL_DIR)/bin/$(NEWLIB_TUPLE)-gcc --print-multi-lib`; \
+        for ml in `${NEWLIB_CC_FOR_MULTILIB_INFO} --print-multi-lib`; \
 	do \
 	    mld=`echo $${ml} | sed -e 's/;.*$$//'`; \
 	    cp $(builddir)/install-newlib-nano/$(NEWLIB_TUPLE)/lib/$${mld}/libc.a \
@@ -696,6 +715,7 @@ stamps/build-gcc-newlib-stage2: $(GCC_SRCDIR) $(GCC_SRC_GIT) stamps/build-newlib
 		$(WITH_ARCH) \
 		$(WITH_TUNE) \
 		$(WITH_ISA_SPEC) \
+		$(GCC_EXTRA_CONFIGURE_FLAGS) \
 		CFLAGS_FOR_TARGET="-Os $(CFLAGS_FOR_TARGET)" \
 		CXXFLAGS_FOR_TARGET="-Os $(CXXFLAGS_FOR_TARGET)"
 	$(MAKE) -C $(notdir $@)
@@ -758,6 +778,7 @@ stamps/build-gcc-musl-stage1: $(GCC_SRCDIR) $(GCC_SRC_GIT) stamps/build-binutils
 		$(WITH_ARCH) \
 		$(WITH_TUNE) \
 		$(WITH_ISA_SPEC) \
+		$(GCC_EXTRA_CONFIGURE_FLAGS) \
 		CFLAGS_FOR_TARGET="-O2 $(CFLAGS_FOR_TARGET)" \
 		CXXFLAGS_FOR_TARGET="-O2 $(CXXFLAGS_FOR_TARGET)"
 	$(MAKE) -C $(notdir $@) inhibit-libc=true all-gcc
@@ -785,8 +806,8 @@ stamps/build-musl-linux: $(MUSL_SRCDIR) $(MUSL_SRC_GIT) stamps/build-gcc-musl-st
 	cd $(notdir $@) && \
 		CC="$(MUSL_CC_FOR_TARGET) $($@_CFLAGS)" \
 		CXX="$(MUSL_CXX_FOR_TARGET) $($@_CFLAGS)" \
-		CFLAGS="$(CFLAGS_FOR_TARGET) -g -O2 $($@_CFLAGS)" \
-		CXXFLAGS="$(CXXFLAGS_FOR_TARGET) -g -O2 $($@_CFLAGS)" \
+		CFLAGS="$(CFLAGS_FOR_TARGET) -O2 $($@_CFLAGS)" \
+		CXXFLAGS="$(CXXFLAGS_FOR_TARGET) -O2 $($@_CFLAGS)" \
 		ASFLAGS="$(ASFLAGS_FOR_TARGET) $($@_CFLAGS)" \
 		$</configure \
 		--host=$(MUSL_TUPLE) \
@@ -826,6 +847,7 @@ stamps/build-gcc-musl-stage2: $(GCC_SRCDIR) $(GCC_SRC_GIT) stamps/build-musl-lin
 		$(WITH_ARCH) \
 		$(WITH_TUNE) \
 		$(WITH_ISA_SPEC) \
+		$(GCC_EXTRA_CONFIGURE_FLAGS) \
 		CFLAGS_FOR_TARGET="-O2 $(CFLAGS_FOR_TARGET)" \
 		CXXFLAGS_FOR_TARGET="-O2 $(CXXFLAGS_FOR_TARGET)"
 	$(MAKE) -C $(notdir $@)
@@ -843,7 +865,7 @@ stamps/build-spike: $(SPIKE_SRCDIR) $(SPIKE_SRC_GIT)
 	mkdir -p $(dir $@)
 	date > $@
 
-stamps/build-pk32: $(PK_SRCDIR) stamps/build-gcc-newlib-stage2
+stamps/build-pk32: $(PK_SRCDIR) $(PK_SRC_GIT) stamps/build-gcc-newlib-stage2
 	rm -rf $@ $(notdir $@)
 	mkdir $(notdir $@)
 	cd $(notdir $@) && $</configure \
@@ -856,7 +878,7 @@ stamps/build-pk32: $(PK_SRCDIR) stamps/build-gcc-newlib-stage2
 	mkdir -p $(dir $@)
 	date > $@
 
-stamps/build-pk64: $(PK_SRCDIR) stamps/build-gcc-newlib-stage2
+stamps/build-pk64: $(PK_SRCDIR) $(PK_SRC_GIT) stamps/build-gcc-newlib-stage2
 	rm -rf $@ $(notdir $@)
 	mkdir $(notdir $@)
 	cd $(notdir $@) && $</configure \
@@ -866,6 +888,10 @@ stamps/build-pk64: $(PK_SRCDIR) stamps/build-gcc-newlib-stage2
 	$(MAKE) -C $(notdir $@)
 	cp $(notdir $@)/pk $(INSTALL_DIR)/$(NEWLIB_TUPLE)/bin/pk64
 	mkdir -p $(dir $@)
+	date > $@
+
+stamps/install-python-package:
+	python3 -m pip install --user pyelftools
 	date > $@
 
 stamps/build-qemu: $(QEMU_SRCDIR) $(QEMU_SRC_GIT)
@@ -893,9 +919,10 @@ stamps/build-llvm-linux: $(LLVM_SRCDIR) $(LLVM_SRC_GIT) \
 	# Without a proper GCC install directory libgcc won't be found.
 	# As a workaround we have to merge both paths:
 	mkdir -p $(SYSROOT)/lib/
-	ln -s $(INSTALL_DIR)/lib/gcc $(SYSROOT)/lib/gcc
+	ln -s -f $(INSTALL_DIR)/lib/gcc $(SYSROOT)/lib/gcc
 	rm -rf $@ $(notdir $@)
 	mkdir $(notdir $@)
+	cd $(notdir $@) && ln -f -s $(SYSROOT) sysroot
 	cd $(notdir $@) && \
 	    cmake $(LLVM_SRCDIR)/llvm \
 	    -DCMAKE_INSTALL_PREFIX=$(INSTALL_DIR) \
@@ -904,12 +931,13 @@ stamps/build-llvm-linux: $(LLVM_SRCDIR) $(LLVM_SRC_GIT) \
 	    -DLLVM_ENABLE_PROJECTS="clang;lld" \
 	    -DLLVM_ENABLE_RUNTIMES="compiler-rt;libcxx;libcxxabi;libunwind" \
 	    -DLLVM_DEFAULT_TARGET_TRIPLE="$(LINUX_TUPLE)" \
-	    -DDEFAULT_SYSROOT="$(INSTALL_DIR)/sysroot" \
+	    -DDEFAULT_SYSROOT="../sysroot" \
 	    -DLLVM_RUNTIME_TARGETS=$(call make_tuple,$(XLEN),linux-gnu) \
 	    -DLLVM_INSTALL_TOOLCHAIN_ONLY=On \
 	    -DLLVM_PARALLEL_LINK_JOBS=4
 	$(MAKE) -C $(notdir $@)
 	$(MAKE) -C $(notdir $@) install
+	cp $(notdir $@)/lib/riscv64-unknown-linux-gnu/libc++* $(SYSROOT)/lib
 	cd $(INSTALL_DIR)/bin && ln -s clang $(LINUX_TUPLE)-clang
 	mkdir -p $(dir $@) && touch $@
 
@@ -917,7 +945,7 @@ stamps/build-llvm-newlib:
 	echo "Building LLVM is only supported in combination with a Linux toolchain."
 	exit 1
 
-stamps/build-dejagnu: $(srcdir)/dejagnu $(srcdir)/dejagnu/.git
+stamps/build-dejagnu: $(DEJAGNU_SRCDIR) $(DEJAGNU_SRC_GIT)
 	rm -rf $@ $(notdir $@)
 	mkdir $(notdir $@)
 	cd $(notdir $@) && $</configure \
