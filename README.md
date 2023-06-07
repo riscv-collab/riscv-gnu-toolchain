@@ -46,6 +46,22 @@ upstream sources exists in $(DISTDIR), it will be used; the default location
 is /var/cache/distfiles.  Your computer will need about 8 GiB of disk space to
 complete the process.
 
+### Clean Installation
+
+It is recommended to do clean builds to avoid problems with outdated stamp 
+files. This can be done with the following commands where `$RISCV` is the 
+install path used by the previous build:
+
+    rm -r $RISCV
+    git clean -fXd
+    
+`configure` can then be rerun.
+
+Partial rebuilds can be done by deleting the respective files in `stamps/` and 
+rerunning `make` but is not recommended if the sources have changed due to 
+possible interdependencies of the steps.
+
+
 ### Installation (Newlib)
 
 To build the Newlib cross-compiler, pick an install path (that is writeable).
