@@ -61,7 +61,6 @@ Partial rebuilds can be done by deleting the respective files in `stamps/` and
 rerunning `make` but is not recommended if the sources have changed due to 
 possible interdependencies of the steps.
 
-
 ### Installation (Newlib)
 
 To build the Newlib cross-compiler, pick an install path (that is writeable).
