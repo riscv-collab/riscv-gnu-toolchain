@@ -260,12 +260,12 @@ can be used:
 
 Note, that a combination of `--enable-llvm` and multilib configuration flags
 is not supported.
-Also note, that building LLVM is only supported in combination with building
-a Linux toolchain.
 
-Below is an example how to build a rv64gc Linux toolchain with LLVM support,
+Below are examples how to build a rv64gc Linux/newlib toolchain with LLVM support,
 how to use it to build a C and a C++ application using clang, and how to
-execute the generated binaries using QEMU:
+execute the generated binaries using QEMU.
+
+Build Linux toolchain and run examples:
 
     # Build rv64gc toolchain with LLVM
     ./configure --prefix=$RISCV --enable-llvm --enable-linux --with-arch=rv64gc --with-abi=lp64d
@@ -275,6 +275,18 @@ execute the generated binaries using QEMU:
     $RISCV/bin/qemu-riscv64 -L $RISCV/sysroot ./hello_world
     # Build C++ application with clang
     $RISCV/bin/clang++ -march=rv64imafdc -stdlib=libc++ -o hello_world_cpp hello_world_cpp.cxx
+    $RISCV/bin/qemu-riscv64 -L $RISCV/sysroot ./hello_world_cpp
+
+Build newlib toolchain and run examples (don't work with `--with-multilib-generator=`):
+
+    # Build rv64gc bare-metal toolchain with LLVM
+    ./configure --prefix=$RISCV --enable-llvm --disable-linux --with-arch=rv64gc --with-abi=lp64d
+    make -j$(nproc) all build-sim SIM=qemu
+    # Build C application with clang
+    $RISCV/bin/clang -march=rv64imafdc -o hello_world hello_world.c
+    $RISCV/bin/qemu-riscv64 -L $RISCV/sysroot ./hello_world
+    # Build C++ application with clang using static link
+    $RISCV/bin/clang++ -march=rv64imafdc -static -o hello_world_cpp hello_world_cpp.cxx
     $RISCV/bin/qemu-riscv64 -L $RISCV/sysroot ./hello_world_cpp
 
 ### Development
