@@ -1,0 +1,206 @@
+on:
+  workflow_call:
+    inputs:
+      mode:
+        required: true
+        type: string
+      target:
+        required: true
+        type: string
+      gcchash:
+        required: true
+        type: string
+      multilib:
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    environment: production
+    steps:
+      - name: Remove unneeded frameworks to recover disk space
+        run: |
+          echo "-- Before --"
+          df -h
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          echo "-- After --"
+          df -h
+
+      - uses: actions/checkout@v3
+
+      - name: Restore submodules from cache
+        uses: actions/download-artifact@v3
+        with:
+          name: gcc-sources-${{ inputs.gcchash }}
+
+      - name: Restore submodules
+        run: |
+          rm -rf .git binutils dejagnu gcc gdb glibc musl newlib pk qemu
+          unzip cache.zip
+
+      - name: Checkout gcc hash
+        run: |
+          cd gcc
+          git fetch
+          git checkout ${{ inputs.gcchash }}
+
+      - name: Install dependencies
+        run: sudo ./.github/setup-apt.sh
+
+      - name: Configure
+        run: |
+          mkdir build
+          cd build
+          if [ "${{ inputs.multilib }}" == "multilib" ]; then
+            ../configure --prefix=$(pwd) --enable-multilib --with-multilib-generator="rv64gc-lp64d--;rv32gc-ilp32d--"
+          else
+            TARGET_TUPLE=($(echo ${{ inputs.target }} | tr "-" "\n"))
+            ../configure --prefix=$(pwd) --with-arch=${TARGET_TUPLE[0]} --with-abi=${TARGET_TUPLE[1]}
+          fi
+
+      - name: Make gcc
+        run: |
+          cd build
+          make -j $(nproc) ${{ inputs.mode }}
+
+      - name: Remove sources to reclaim disk space
+        run: |
+          rm -rf .git binutils dejagnu gcc gdb glibc musl newlib pk qemu
+
+      - name: Zip binaries
+        run: |
+          zip -r bin.zip build/bin
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: gcc-${{ inputs.mode }}-${{ inputs.target }}-${{ inputs.gcchash }}-${{ inputs.multilib }}
+          path: |
+            bin.zip
+          retention-days: 5
+
+      # Running testsuite (stamps/check-gcc-*) only uses stage2 & assorted folders
+      - name: Zip stage2
+        if: inputs.mode != 'musl'
+        run: |
+          zip -r stage2.zip build/build-gcc-${{ inputs.mode }}-stage2 \
+                 build/riscv64-unknown-elf/bin build/riscv64-unknown-linux-gnu/bin \
+                 build/riscv32-unknown-elf/bin build/riscv32-unknown-linux-gnu/bin
+
+      - name: Upload stage2 artifact
+        if: inputs.mode != 'musl'
+        uses: actions/upload-artifact@v3
+        with:
+          name: gcc-${{ inputs.mode }}-${{ inputs.target }}-${{ inputs.gcchash }}-${{ inputs.multilib }}-stage2
+          path: |
+            stage2.zip
+          retention-days: 5
+
+  test:
+    if: ${{ inputs.mode != 'musl' }}
+    runs-on: ubuntu-22.04
+    environment: production
+    needs: [build]
+    steps:
+      - name: Remove unneeded frameworks to recover disk space
+        run: |
+          echo "-- Before --"
+          df -h
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          echo "-- After --"
+          df -h
+
+      - uses: actions/checkout@v3
+
+      - name: Restore submodules from cache
+        uses: actions/download-artifact@v3
+        with:
+          name: gcc-sources-${{ inputs.gcchash }}
+
+      - name: Restore submodules
+        run: |
+          rm -rf .git binutils dejagnu gcc gdb glibc musl newlib pk qemu
+          unzip cache.zip
+
+      - name: Checkout gcc hash
+        run: |
+          cd gcc
+          git fetch
+          git checkout ${{ inputs.gcchash }}
+
+      - name: Install dependencies
+        run: sudo ./.github/setup-apt.sh
+
+      - name: Configure
+        run: |
+          mkdir build
+          cd build
+          if [ "${{ inputs.multilib }}" == "multilib" ]; then
+            ../configure --prefix=$(pwd) --with-multilib-generator="rv64gc-lp64d--;rv32gc-ilp32d--"
+          else
+            TARGET_TUPLE=($(echo ${{ inputs.target }} | tr "-" "\n"))
+            ../configure --prefix=$(pwd) --with-arch=${TARGET_TUPLE[0]} --with-abi=${TARGET_TUPLE[1]}
+          fi
+
+      - name: Restore stage2
+        uses: actions/download-artifact@v3
+        with:
+          name: gcc-${{ inputs.mode }}-${{ inputs.target }}-${{ inputs.gcchash }}-${{ inputs.multilib }}-stage2
+
+      - name: Unzip artifacts
+        run: |
+          unzip stage2.zip
+
+      # We need to use future timestamps since some stamps are generated during build process and invalidate the stamps here.
+      # Future timestamps prevent that invalidation.
+      - name: Generate fake stamps to prevent rebuilding
+        run: |
+          mkdir build/stamps
+          cd build/stamps
+          touch -d "+2 days" check-write-permission
+          touch -d "+2 days" build-gdb-${{ inputs.mode }}
+          touch -d "+2 days" build-binutils-${{ inputs.mode }}
+          touch -d "+2 days" build-linux-headers
+          touch -d "+2 days" build-gcc-${{ inputs.mode }}-stage1
+          touch -d "+2 days" build-glibc-linux-headers
+          touch -d "+2 days" build-glibc-linux-rv32gc-ilp32d
+          touch -d "+2 days" build-glibc-linux-rv32imac-ilp32
+          touch -d "+2 days" build-glibc-linux-rv32imafdc-ilp32d
+          touch -d "+2 days" build-glibc-linux-rv64gc-lp64d
+          touch -d "+2 days" build-glibc-linux-rv64imac-lp64
+          touch -d "+2 days" build-glibc-linux-rv64imafdc-lp64d
+          touch -d "+2 days" build-newlib-nano
+          touch -d "+2 days" build-${{ inputs.mode }}
+          touch -d "+2 days" merge-newlib-nano
+          touch -d "+2 days" build-gcc-${{ inputs.mode }}-stage2
+
+      # Checks that the cache has been properly setup (make doesn't try rebuilding)
+      - name: Build sanity check (should be instant)
+        run: |
+          cd build
+          make -d ${{ inputs.mode }}
+
+      - name: Run testsuite
+        run: |
+          cd build
+          make -j $(nproc) report-${{ inputs.mode }} || true
+
+      - name: Save results
+        run: |
+          if [ "${{ inputs.mode }}" == "newlib" ]; then
+            PARSE_EXISTING_REPORT="./scripts/testsuite-filter gcc newlib test/allowlist `find build/build-gcc-newlib-stage2/gcc/testsuite/ -name *.sum |paste -sd "," -`"
+          else
+            PARSE_EXISTING_REPORT="./scripts/testsuite-filter gcc glibc test/allowlist `find build/build-gcc-linux-stage2/gcc/testsuite/ -name *.sum |paste -sd "," -`"
+          fi
+          $PARSE_EXISTING_REPORT | tee gcc-${{ inputs.mode }}-${{ inputs.target }}-${{ inputs.gcchash }}-${{ inputs.multilib }}-report.log
+
+      - name: Upload results artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: gcc-${{ inputs.mode }}-${{ inputs.target }}-${{ inputs.gcchash }}-${{ inputs.multilib }}-report.log
+          path: |
+            gcc-${{ inputs.mode }}-${{ inputs.target }}-${{ inputs.gcchash }}-${{ inputs.multilib }}-report.log
+          retention-days: 90

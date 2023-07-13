@@ -1,0 +1,134 @@
+name: Build-Frequent
+
+on:
+  push:
+    branches:
+      - build-frequent
+  pull_request:
+    branches:
+      - build-frequent
+  schedule:
+    # Run 4 times a day
+    - cron: 0 0,6,12,18 * * *
+  workflow_dispatch:
+    branches:
+      - build-frequent
+    inputs:
+      gcchash:
+        description: 'GCC Hash'
+        required: true
+
+jobs:
+  init-submodules:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Retrieve cache
+        id: retrieve-cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            .git
+            binutils
+            dejagnu
+            gcc
+            gdb
+            glibc
+            musl
+            newlib
+            pk
+            qemu
+          key: submodules
+
+      - name: Initalize submodules cache
+        if: steps.retrieve-cache.outputs.cache-hit != 'true'
+        run: |
+          git submodule init
+          rm -rf gcc
+          git clone git://gcc.gnu.org/git/gcc.git
+          git submodule update --recursive --progress --recommend-shallow
+
+      - name: Get GCC hash
+        id: gcc-hash
+        run: |
+          cd gcc
+          git checkout master
+          git pull
+          if [ "${{ github.event.inputs.gcchash }}" == "" ]; then
+            export GCCHASH=$(git rev-parse HEAD)
+          else
+            export GCCHASH=${{ github.event.inputs.gcchash }}
+          fi
+          echo $GCCHASH
+          echo "gcchash=$GCCHASH" >> "$GITHUB_OUTPUT"
+
+      - name: Cache submodules
+        if: steps.retrieve-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v3
+        with:
+          path: |
+            .git
+            binutils
+            dejagnu
+            gcc
+            gdb
+            glibc
+            musl
+            newlib
+            pk
+            qemu
+          key: submodules
+
+      - name: Make cache zip
+        run: |
+          zip -r cache.zip .git binutils dejagnu gcc gdb glibc musl newlib pk qemu
+
+      # Use artifact rather than cache since cache downloads are flaky/hang.
+      # Artifacts are reliable but ~30 min slower to set up.
+      # Setup is done on one runner, so this isn't a show stopper.
+      - name: Upload git cache
+        uses: actions/upload-artifact@v3
+        with:
+          name: gcc-sources-${{ steps.gcc-hash.outputs.gcchash }}
+          path: |
+            cache.zip
+          retention-days: 5
+
+    outputs:
+      gcchash: ${{ steps.gcc-hash.outputs.gcchash }}
+
+  creg: # Check Regressions. Short name so I can see the matrix string in github
+    needs: [init-submodules]
+    strategy:
+      fail-fast: false
+      matrix:
+        mode:   [newlib, linux, musl]
+        target: [rv32gc-ilp32d, rv64gc-lp64d]
+        multilib: [multilib, non-multilib]
+        exclude:
+          - mode: musl
+            target: rv32gc-ilp32d
+          - mode: musl
+            multilib: multilib
+          # Multilib ignores the target.
+          # Aribtrarily use rv64 as the single multilib runner.
+          # If we add more targets in the future, just exclude those cases from the multilib case.
+          - target: rv32gc-ilp32d
+            multilib: multilib
+    uses: ./.github/workflows/regression-runner.yaml
+    with:
+      mode: ${{ matrix.mode }}
+      target: ${{ matrix.target }}
+      gcchash: ${{ needs.init-submodules.outputs.gcchash }}
+      multilib: ${{ matrix.multilib }}
+
+  generate-issues:
+    if: always() # Generate github issues even when some (or all) targets fail to build
+    runs-on: ubuntu-22.04
+    needs: [creg]
+    steps:
+      - name: Generate summary
+        run: |
+          echo Filing issue...
