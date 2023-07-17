@@ -19,6 +19,20 @@ def gcc_hashes(hash: str, subsequent: bool):
 
     return commits
 
+def get_valid_artifact_hash(hashes:List[str], token: str, artifact_name: str):
+    auth = Auth.Token(token)
+    g = Github(auth=auth)
+
+    repo = g.get_repo('patrick-rivos/riscv-gnu-toolchain')
+
+    for hash in hashes:
+        artifacts = repo.get_artifacts(artifact_name.format(hash)).get_page(0)
+        if len(artifacts) != 0:
+            return hash, artifacts[0].id
+
+    return "No valid hash", -1
+  
+
 def get_valid_hash(hashes: List[str], token: str):
     auth = Auth.Token(token)
     g = Github(auth=auth)
