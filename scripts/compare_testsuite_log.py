@@ -345,6 +345,8 @@ def is_result_valid(log_path: str):
         summary_flag = False
         while True:
             line = file.readline()
+            if not line:
+                break
             if line.startswith(
                 "               ========= Summary of gcc testsuite ========="
             ):
@@ -369,17 +371,20 @@ def is_result_valid(log_path: str):
                     return False
         return True
 
+def run(previous_hash: str, previous_log: str, current_hash: str, current_log: str, output_markdown: str):
+    if not is_result_valid(previous_log):
+        raise RuntimeError(f"{previous_log} doesn't include Summary of the testsuite")
+    if not is_result_valid(current_log):
+        raise RuntimeError(f"{current_log} doesn't include Summary of the testsuite")
+    failures = compare_testsuite_log(previous_log, current_log)
+    markdown = failures_to_markdown(failures, previous_hash, current_hash)
+    with open(output_markdown, "w") as markdown_file:
+        markdown_file.write(markdown)
+    
 
 def main():
     args = parse_arguments()
-    if not is_result_valid(args.previous_log):
-        raise RuntimeError("Previous Log doesn't include Summary of the testsuite")
-    if not is_result_valid(args.current_log):
-        raise RuntimeError("Current Log doesn't include Summary of the testsuite")
-    failures = compare_testsuite_log(args.previous_log, args.current_log)
-    markdown = failures_to_markdown(failures, args.previous_hash, args.current_hash)
-    with open(args.output_markdown, "w") as markdown_file:
-        markdown_file.write(markdown)
+    run(args.previous_hash, args.previous_log, args.current_hash, args.current_log, args.output_markdown)
 
 
 if __name__ == "__main__":

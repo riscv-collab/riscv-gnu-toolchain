@@ -20,6 +20,10 @@ def gcc_hashes(hash: str, subsequent: bool):
     return commits
 
 def get_valid_artifact_hash(hashes:List[str], token: str, artifact_name: str):
+    """ 
+    Searches for the most recent GCC hash that has the artifact specified by
+    @param artifact_name. Also returns id of found artifact for download
+    """
     auth = Auth.Token(token)
     g = Github(auth=auth)
 

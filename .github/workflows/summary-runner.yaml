@@ -1,0 +1,85 @@
+on:
+  workflow_call:
+    inputs:
+      gcchash:
+        required: true
+        type: string
+
+jobs:
+  compare-artifacts:
+    runs-on: ubuntu-22.04
+    environment: production
+    steps:
+      - uses: actions/checkout@v3
+          
+      - name: Download and compare
+        run: |
+          pip install pygithub requests
+          mkdir logs
+          mkdir summaries
+          python ./scripts/download_artifacts.py -hash ${{ inputs.gcchash }} -token ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Make artifact zips
+        run: |
+          zip -r summaries.zip summaries
+          zip -r logs.zip logs
+
+      - name: Upload compare summaries
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ inputs.gcchash }}-summaries
+          path: |
+            summaries.zip
+          retention-days: 5
+
+      - name: Upload log failures
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ inputs.gcchash }}-logs
+          path: |
+            logs.zip
+          retention-days: 5
+
+    outputs:
+      gcchash: ${{ inputs.gcchash }}
+
+  
+  generate-issues:
+    needs: [compare-artifacts]
+    runs-on: ubuntu-22.04
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Download summaries artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: ${{ needs.compare-artifacts.outputs.gcchash }}-summaries
+
+      - name: Download logs artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: ${{ needs.compare-artifacts.outputs.gcchash }}-logs
+
+      - name: Aggregate information
+        run: |
+          unzip summaries.zip
+          unzip logs.zip
+          python ./scripts/aggregate.py \
+            -chash ${{ needs.compare-artifacts.outputs.gcchash }} \
+            -o out.md
+          cat out.md
+
+      - name: trim script output (same hash)
+        run: |
+          head -100 out.md > test.md
+          cat test.md
+
+      - uses: JasonEtco/create-an-issue@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          filename: test.md
+          assignees: patrick-rivos, kevinl-rivosinc, ewlu
+          update_existing: true
