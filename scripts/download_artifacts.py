@@ -6,7 +6,7 @@ import importlib
 from github import Auth, Github, Repository
 from zipfile import ZipFile
 from get_most_recent_ci_hash import gcc_hashes, get_valid_artifact_hash
-from compare_testsuite_log import run
+from compare_testsuite_log import compare_logs
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Download valid log artifacts")
@@ -58,13 +58,13 @@ def check_artifact_exists(artifact_name: str, repo: Repository):
     build_name = artifact_name
     build_failed = False
     artifact = repo.get_artifacts(artifact_name).get_page(0)
-    # check build failed
+    # check if the build failed
     if len(artifact) == 0:
         print(f"build failed for {build_name}")
         build_failed = True
         with open("./logs/failed_build.txt", "a+") as f:
             f.write(f"{build_name}|Check logs\n")
-    # check testsuite failed
+    # check if the testsuite failed
     artifact_name += "-report.log"
     artifact = repo.get_artifacts(artifact_name).get_page(0)
     if len(artifact) == 0:
@@ -94,7 +94,7 @@ def download_artifact(artifact_name: str, artifact_id: str, token: str):
         zf.extractall(path=f"./{artifact_name.split('.log')[0]}")
     os.rename(f"./{artifact_name.split('.log')[0]}/{artifact_name}", f"./logs/{artifact_name}")
 
-def download_all_artifacts(current_hash: str, token: str):
+def download_and_compare_all_artifacts(current_hash: str, token: str):
     """
     Goes through all possible artifact targets and downloads it
     if it exists. Downloads previous successful hash's artifact
@@ -128,14 +128,15 @@ def download_all_artifacts(current_hash: str, token: str):
                 f.write(f"{artifact}\n")
             base_hash = current_hash + "-no-baseline"
             try:
-                run(base_hash, f"./logs/{artifact}", base_hash, f"./logs/{artifact}", compare_path)
+                compare_logs(base_hash, f"./logs/{artifact}", base_hash, f"./logs/{artifact}", compare_path)
             except (RuntimeError, ValueError) as err:
                 with open("./logs/failed_testsuite.txt", "a+") as f:
                     f.write(f"{artifact}|{err}\n")
             continue
+            
         download_artifact(artifact_name.format(base_hash), str(base_id), token)
         try:
-            run(base_hash, f"./logs/{artifact_name.format(base_hash)}",
+            compare_logs(base_hash, f"./logs/{artifact_name.format(base_hash)}",
                    current_hash, f"./logs/{artifact}", compare_path)
         except (RuntimeError, ValueError) as err:
             with open("./logs/failed_testsuite.txt", "a+") as f:
@@ -145,7 +146,7 @@ def download_all_artifacts(current_hash: str, token: str):
 
 def main():
     args = parse_arguments()
-    download_all_artifacts(args.hash, args.token)
+    download_and_compare_all_artifacts(args.hash, args.token)
 
 if __name__ == "__main__":
     main()

@@ -36,22 +36,6 @@ def get_valid_artifact_hash(hashes:List[str], token: str, artifact_name: str):
 
     return "No valid hash", -1
   
-
-def get_valid_hash(hashes: List[str], token: str):
-    auth = Auth.Token(token)
-    g = Github(auth=auth)
-
-    repo = g.get_repo('patrick-rivos/riscv-gnu-toolchain')
-
-    for hash in hashes:
-        # Arbitrarily use gcc-newlib-rv32gc-ilp32d. It seems to always build.
-        artifact_name = f'gcc-newlib-rv32gc-ilp32d-{hash}-non-multilib-report.log'
-        artifacts = repo.get_artifacts(artifact_name).get_page(0)
-        if len(artifacts) != 0:
-            return hash
-
-    return "No valid hash"
-
 def main(hash: str, subsequent: bool, token: str):
     commits = gcc_hashes(hash, subsequent)
     print(get_valid_hash(commits, token))

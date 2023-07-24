@@ -371,7 +371,7 @@ def is_result_valid(log_path: str):
                     return False
         return True
 
-def run(previous_hash: str, previous_log: str, current_hash: str, current_log: str, output_markdown: str):
+def compare_logs(previous_hash: str, previous_log: str, current_hash: str, current_log: str, output_markdown: str):
     if not is_result_valid(previous_log):
         raise RuntimeError(f"{previous_log} doesn't include Summary of the testsuite")
     if not is_result_valid(current_log):
@@ -384,7 +384,7 @@ def run(previous_hash: str, previous_log: str, current_hash: str, current_log: s
 
 def main():
     args = parse_arguments()
-    run(args.previous_hash, args.previous_log, args.current_hash, args.current_log, args.output_markdown)
+    compare_logs(args.previous_hash, args.previous_log, args.current_hash, args.current_log, args.output_markdown)
 
 
 if __name__ == "__main__":
