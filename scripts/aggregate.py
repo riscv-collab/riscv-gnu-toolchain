@@ -43,7 +43,7 @@ def failures_to_summary(failures: dict):
     seen_failures = set()
     additional_result, seen_failures = get_additional_failures("failed_build.txt", "Build Failures", seen_failures)
     result += additional_result
-    additional_result, seen_failures = get_additional_failures("failed_testsuite", "Testsuite Failures", seen_failures)
+    additional_result, seen_failures = get_additional_failures("failed_testsuite.txt", "Testsuite Failures", seen_failures)
     result += additional_result
 
     result += build_summary(failures, "Resolved Failures")

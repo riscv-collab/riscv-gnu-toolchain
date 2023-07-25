@@ -8,6 +8,7 @@ from compare_testsuite_log import compare_logs
 
 
 def parse_arguments():
+    """ parse command line arguments """
     parser = argparse.ArgumentParser(description="Download valid log artifacts")
     parser.add_argument(
         "-hash",
@@ -54,37 +55,37 @@ def get_possible_artifact_names():
     return all_names
 
 
-def check_artifact_exists(artifact_name: str, repo: Repository):
+def check_artifact_exists(artifact_name: str):
     """
     @param artifact_name is the artifact associated with build success
     If the artifact does not exist, something failed and logs error into
-    appropriate file; else returns artifact id for downloading
+    appropriate file
     """
     build_name = artifact_name
     build_failed = False
-    artifact = repo.get_artifacts(artifact_name).get_page(0)
     # check if the build failed
-    if len(artifact) == 0:
+    if not os.path.exists(os.path.join("./temp", artifact_name)):
         print(f"build failed for {build_name}")
         build_failed = True
         with open("./logs/failed_build.txt", "a+") as f:
             f.write(f"{build_name}|Check logs\n")
+
     # check if the testsuite failed
     artifact_name += "-report.log"
-    artifact = repo.get_artifacts(artifact_name).get_page(0)
-    if len(artifact) == 0:
+    if not os.path.exists(os.path.join("./logs", artifact_name)):
         print(f"testsuite failed for {build_name}")
         if not build_failed:
             with open("./logs/failed_testsuite.txt", "a+") as f:
                 f.write(f"{build_name}|Cannot find testsuite artifact\n")
-        return -1
-    return artifact[0].id
+        return False
+    return True
 
 
 def download_artifact(artifact_name: str, artifact_id: str, token: str):
     """
-    Uses GitHub api endpoint to download and extract the log artifact into
-    directory called ./logs
+    Uses GitHub api endpoint to download and extract the previous workflow
+    log artifacts into directory called ./logs. Current workflow log artifacts
+    are already stored in ./logs
     """
     params = {
         "Accept": "application/vnd.github+json",
@@ -92,19 +93,17 @@ def download_artifact(artifact_name: str, artifact_id: str, token: str):
         "X-Github-Api-Version": "2022-11-28",
     }
     artifact_zip_name = artifact_name.replace(".log", ".zip")
-    print(artifact_zip_name)
-    print(f"downloading: {artifact_id}")
     r = requests.get(
         f"https://api.github.com/repos/patrick-rivos/riscv-gnu-toolchain/actions/artifacts/{artifact_id}/zip",
         headers=params,
     )
     print(r.status_code)
-    with open(f"./{artifact_zip_name}", "wb") as f:
+    with open(f"./temp/{artifact_zip_name}", "wb") as f:
         f.write(r.content)
-    with ZipFile(f"./{artifact_zip_name}", "r") as zf:
-        zf.extractall(path=f"./{artifact_name.split('.log')[0]}")
+    with ZipFile(f"./temp/{artifact_zip_name}", "r") as zf:
+        zf.extractall(path=f"./temp/{artifact_name.split('.log')[0]}")
     os.rename(
-        f"./{artifact_name.split('.log')[0]}/{artifact_name}", f"./logs/{artifact_name}"
+        f"./temp/{artifact_name.split('.log')[0]}/{artifact_name}", f"./logs/{artifact_name}"
     )
 
 
@@ -115,24 +114,17 @@ def download_and_compare_all_artifacts(current_hash: str, token: str):
     as well. Runs comparison on the downloaded artifacts
     """
 
-    auth = Auth.Token(token)
-    g = Github(auth=auth)
-
-    repo = g.get_repo("patrick-rivos/riscv-gnu-toolchain")
-
     prev_commits = gcc_hashes(current_hash, False)
     artifact_names = get_possible_artifact_names()
     for artifact_name in artifact_names:
         artifact = artifact_name.format(current_hash)
-        artifact_id = check_artifact_exists(artifact, repo)
-        if artifact_id == -1:
+        if not check_artifact_exists(artifact):
             continue
+
         # comparison output path
         compare_path = f"./summaries/{artifact + '-report-summary.md'}"
         artifact += "-report.log"
         artifact_name += "-report.log"
-        # download current artifact
-        download_artifact(artifact, str(artifact_id), token)
 
         # download previous artifact
         base_hash, base_id = get_valid_artifact_hash(prev_commits, token, artifact_name)
@@ -156,6 +148,8 @@ def download_and_compare_all_artifacts(current_hash: str, token: str):
 
         download_artifact(artifact_name.format(base_hash), str(base_id), token)
         try:
+            print(f"./logs/{artifact_name.format(base_hash)}")
+            print(f"./logs/{artifact}")
             compare_logs(
                 base_hash,
                 f"./logs/{artifact_name.format(base_hash)}",
@@ -166,8 +160,6 @@ def download_and_compare_all_artifacts(current_hash: str, token: str):
         except (RuntimeError, ValueError) as err:
             with open("./logs/failed_testsuite.txt", "a+") as f:
                 f.write(f"{artifact}|{err}\n")
-
-    return
 
 
 def main():
