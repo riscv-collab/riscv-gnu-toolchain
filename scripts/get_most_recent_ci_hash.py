@@ -9,7 +9,7 @@ def gcc_hashes(hash: str, subsequent: bool):
     """ Get the most recent GCC hashes within a 100 commits (in order from closest to furthest)"""
     if subsequent is False: # Get prior commit
         old_commit = os.popen(f'cd gcc && git checkout master --quiet && git pull --quiet && git rev-parse {hash}~100').read().strip()
-        print(f'git rev-list --format=short --ancestry-path {old_commit}~1..{hash}~1')
+        print(f'git rev-list --ancestry-path {old_commit}~1..{hash}~1')
         commits = os.popen(f'cd gcc && git rev-list --ancestry-path {old_commit}^..{hash}^').read()
         commits = commits.splitlines()
     else:
@@ -20,7 +20,7 @@ def gcc_hashes(hash: str, subsequent: bool):
     return commits
 
 def get_valid_artifact_hash(hashes:List[str], token: str, artifact_name: str):
-    """ 
+    """
     Searches for the most recent GCC hash that has the artifact specified by
     @param artifact_name. Also returns id of found artifact for download
     """
@@ -35,10 +35,10 @@ def get_valid_artifact_hash(hashes:List[str], token: str, artifact_name: str):
             return hash, artifacts[0].id
 
     return "No valid hash", -1
-  
+
 def main(hash: str, subsequent: bool, token: str):
     commits = gcc_hashes(hash, subsequent)
-    print(get_valid_hash(commits, token))
+    print(get_valid_artifact_hash(commits, token, artifact_name="gcc-newlib-rv32gc-ilp32d-{}-non-multilib-report.log"))
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Get closest valid GCC hash")
