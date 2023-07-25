@@ -62,16 +62,17 @@ def check_artifact_exists(artifact_name: str):
     appropriate file
     """
     build_name = artifact_name
+    artifact_name += "-report.log"
     build_failed = False
     # check if the build failed
-    if not os.path.exists(os.path.join("./temp", f"{artifact_name}.zip")):
+    if (not os.path.exists(os.path.join("./temp", f"{build_name}.zip")) and
+        not os.path.exists(os.path.join("./logs", artifact_name))):
         print(f"build failed for {build_name}")
         build_failed = True
         with open("./logs/failed_build.txt", "a+") as f:
             f.write(f"{build_name}|Check logs\n")
 
     # check if the testsuite failed
-    artifact_name += "-report.log"
     if not os.path.exists(os.path.join("./logs", artifact_name)):
         print(f"testsuite failed for {build_name}")
         if not build_failed:
