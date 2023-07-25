@@ -300,26 +300,26 @@ def compare_testsuite_log(previous_log_path: str, current_log_path: str):
     return classified_gcc_failures
 
 
-def gccfailure_to_summary(failure: Dict[LibName, GccFailure], failure_name):
+def gccfailure_to_summary(failure: Dict[LibName, GccFailure], failure_name: str, previous_hash: str):
     tools = ("gcc", "g++", "gfortran")
-    result = f"|{failure_name}|{tools[0]}|{tools[1]}|{tools[2]}|\n"
-    result +="|---|---|---|---|\n"
+    result = f"|{failure_name}|{tools[0]}|{tools[1]}|{tools[2]}|Previous Hash|\n"
+    result +="|---|---|---|---|---|\n"
     for libname, gccfailure in failure.items():
         result += f"|{libname}|"
         for tool in tools:
             tool_failure_key = f"{tool}_failure_count"
             # convert tuple of counts to string
             result += f"{'/'.join(gccfailure[tool_failure_key])}|"
-        result += "\n"
+        result += f"{previous_hash}|\n"
     result += "\n"
     return result
 
 
-def failures_to_summary(failures: ClassifedGccFailures):
+def failures_to_summary(failures: ClassifedGccFailures, previous_hash: str):
     result = "# Summary\n"
-    result += gccfailure_to_summary(failures.resolved, "Resolved Failures")
-    result += gccfailure_to_summary(failures.unresolved, "Unresolved Failures")
-    result += gccfailure_to_summary(failures.new, "New Failures")
+    result += gccfailure_to_summary(failures.resolved, "Resolved Failures", previous_hash)
+    result += gccfailure_to_summary(failures.unresolved, "Unresolved Failures", previous_hash)
+    result += gccfailure_to_summary(failures.new, "New Failures", previous_hash)
     result += "\n"
     return result
 
@@ -333,7 +333,7 @@ title: {previous_hash}->{current_hash}
 assignees: {str(assignees)}
 labels: bug
 ---\n"""
-    result += failures_to_summary(failures)
+    result += failures_to_summary(failures, previous_hash)
     result += str(failures)
     return result
 
