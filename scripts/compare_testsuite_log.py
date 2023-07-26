@@ -300,7 +300,7 @@ def compare_testsuite_log(previous_log_path: str, current_log_path: str):
     return classified_gcc_failures
 
 
-def gccfailure_to_summary(failure: Dict[LibName, GccFailure], failure_name: str, previous_hash: str):
+def gccfailure_to_summary(failure: Dict[LibName, GccFailure], failure_name: str, previous_hash: str, current_hash: str):
     tools = ("gcc", "g++", "gfortran")
     result = f"|{failure_name}|{tools[0]}|{tools[1]}|{tools[2]}|Previous Hash|\n"
     result +="|---|---|---|---|---|\n"
@@ -310,16 +310,16 @@ def gccfailure_to_summary(failure: Dict[LibName, GccFailure], failure_name: str,
             tool_failure_key = f"{tool}_failure_count"
             # convert tuple of counts to string
             result += f"{'/'.join(gccfailure[tool_failure_key])}|"
-        result += f"{previous_hash}|\n"
+        result += f"[{previous_hash}](https://github.com/gcc-mirror/gcc/compare/{previous_hash}...{current_hash})|\n"
     result += "\n"
     return result
 
 
-def failures_to_summary(failures: ClassifedGccFailures, previous_hash: str):
+def failures_to_summary(failures: ClassifedGccFailures, previous_hash: str, current_hash: str):
     result = "# Summary\n"
-    result += gccfailure_to_summary(failures.resolved, "Resolved Failures", previous_hash)
-    result += gccfailure_to_summary(failures.unresolved, "Unresolved Failures", previous_hash)
-    result += gccfailure_to_summary(failures.new, "New Failures", previous_hash)
+    result += gccfailure_to_summary(failures.resolved, "Resolved Failures", previous_hash, current_hash)
+    result += gccfailure_to_summary(failures.unresolved, "Unresolved Failures", previous_hash, current_hash)
+    result += gccfailure_to_summary(failures.new, "New Failures", previous_hash, current_hash)
     result += "\n"
     return result
 
@@ -333,7 +333,7 @@ title: {previous_hash}->{current_hash}
 assignees: {str(assignees)}
 labels: bug
 ---\n"""
-    result += failures_to_summary(failures, previous_hash)
+    result += failures_to_summary(failures, previous_hash, current_hash)
     result += str(failures)
     return result
 
@@ -380,7 +380,7 @@ def compare_logs(previous_hash: str, previous_log: str, current_hash: str, curre
     markdown = failures_to_markdown(failures, previous_hash, current_hash)
     with open(output_markdown, "w") as markdown_file:
         markdown_file.write(markdown)
-    
+
 
 def main():
     args = parse_arguments()
