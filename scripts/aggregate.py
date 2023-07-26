@@ -1,17 +1,18 @@
 import argparse
 import os
 from collections import defaultdict
+from typing import Dict, List, Set
 
 SUMMARIES = "./summaries"
 FAILURES = "./logs"
 
 
-def get_additional_failures(file_name: str, failure_name: str, seen_failures: set):
+def get_additional_failures(file_name: str, failure_name: str, seen_failures: Set[str]):
     """ Search for build and testsuite failures """
     result = f"|{failure_name}|Additional Info|\n"
     result += "|---|---|\n"
     file_path = os.path.join(FAILURES, f"{file_name}")
-    failures = defaultdict(set)
+    failures: Dict[str, Set[str]] = defaultdict(set)
     if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
         with open(file_path, "r") as f:
             while True:
@@ -28,7 +29,7 @@ def get_additional_failures(file_name: str, failure_name: str, seen_failures: se
         return result, seen_failures
     return "", seen_failures
 
-def build_summary(failures: dict, failure_name: str):
+def build_summary(failures: Dict[str, List[str]], failure_name: str):
     """ Builds table in summary section """
     tools = ("gcc", "g++", "gfortran")
     result = f"|{failure_name}|{tools[0]}|{tools[1]}|{tools[2]}|Previous Hash|\n"
@@ -37,10 +38,10 @@ def build_summary(failures: dict, failure_name: str):
     result += "\n"
     return result
 
-def failures_to_summary(failures: dict):
+def failures_to_summary(failures: Dict[str, List[str]]):
     """ Builds summary section """
     result = "# Summary\n"
-    seen_failures = set()
+    seen_failures: Set[str] = set()
     additional_result, seen_failures = get_additional_failures("failed_build.txt", "Build Failures", seen_failures)
     result += additional_result
     additional_result, seen_failures = get_additional_failures("failed_testsuite.txt", "Testsuite Failures", seen_failures)
@@ -52,14 +53,14 @@ def failures_to_summary(failures: dict):
     result += "\n"
     return result
 
-def assign_labels(file_name, label):
+def assign_labels(file_name: str, label: str):
     """Creates label for issue"""
     file_path = os.path.join(FAILURES, f"{file_name}")
     if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
         return label
     return ""
 
-def failures_to_markdown(failures: dict, current_hash: str):
+def failures_to_markdown(failures: Dict[str, List[str]], current_hash: str):
     assignees = ["patrick-rivos", "kevinl-rivosinc", "ewlu"]
     result = f"""---
 title: Testsuite Status {current_hash}
@@ -75,7 +76,7 @@ assignees: {", ".join(assignees)}
     result += failures_to_summary(failures)
     return result
 
-def aggregate_summary(failures: dict, file_name: str):
+def aggregate_summary(failures: Dict[str, List[str]], file_name: str):
     """
     Reads file and adds the new failures to the current
     list of failures
@@ -99,7 +100,7 @@ def aggregate_summary(failures: dict, file_name: str):
                 index = line.split("Failures")[0][1:-1]
                 continue
             if line != "\n" and "---" not in line:
-                failures[index].add(line)
+                failures[index].append(line)
     return failures
 
 def parse_arguments():
@@ -125,7 +126,7 @@ def parse_arguments():
 
 def main():
     args = parse_arguments()
-    failures = { "Resolved": set(), "Unresolved": set(), "New": set() }
+    failures: Dict[str, List[str]] = { "Resolved": [], "Unresolved": [], "New": [] }
     for file in os.listdir(SUMMARIES):
         failures = aggregate_summary(failures, os.path.join(SUMMARIES, file))
     markdown = failures_to_markdown(failures, args.current_hash)

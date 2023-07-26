@@ -12,17 +12,19 @@ class LibName:
     arch: str
     abi: str
     model: str
+    multilib: bool
 
-    def __init__(self, arch: str, abi: str, model: str):
+    def __init__(self, arch: str, abi: str, model: str, multilib: bool):
         self.arch = arch.strip().lower()
         self.abi = abi.strip().lower()
         self.model = model.strip().lower()
+        self.multilib = multilib
 
     def __str__(self):
-        return " ".join((self.arch, self.abi, self.model))
+        return " ".join((self.arch, self.abi, self.model)) + (" multilib" if self.multilib else "")
 
     def __hash__(self):
-        return hash((self.arch, self.abi, self.model))
+        return hash((self.arch, self.abi, self.model, self.multilib))
 
 
 @dataclass
@@ -74,7 +76,7 @@ class GccFailure:
             total_count += len(unique_failure_dict[unique_failures])
         return (str(total_count), str(unique_count))
 
-    def __setitem__(self, key, value: Dict[str, Set[str]]):
+    def __setitem__(self, key: str, value: Dict[str, Set[str]]):
         if key == "gcc":
             self.gcc = value
             self.gcc_failure_count = self.count_failures(value)
@@ -87,7 +89,7 @@ class GccFailure:
             self.gfortran = value
             self.gfortran_failure_count = self.count_failures(value)
 
-    def __getitem__(self, key):
+    def __getitem__(self, key: str):
         if key == "gcc":
             return self.gcc
         elif key == "g++":
@@ -111,7 +113,7 @@ class ClassifedGccFailures:
     new: Dict[LibName, GccFailure] = field(default_factory=dict)
 
     def failure_dict_to_string(
-        self, failure_dict: Dict[LibName, GccFailure], failure_name
+        self, failure_dict: Dict[LibName, GccFailure], failure_name: str
     ):
         result = f"# {failure_name}\n"
         for libname, gccfailure in failure_dict.items():
@@ -182,14 +184,14 @@ def is_description(line: str) -> bool:
     return False
 
 
-def parse_description(line: str) -> Description:
+def parse_description(line: str, multilib: bool) -> Description:
     """returns 'tool arch abi model'"""
     descriptions = line.split(" ")
     tool = descriptions[1][:-1]
     arch = descriptions[5]
     abi = descriptions[6]
     model = descriptions[7]
-    description = Description(tool, LibName(arch, abi, model))
+    description = Description(tool, LibName(arch, abi, model, multilib))
     return description
 
 
@@ -200,28 +202,28 @@ def parse_failure_name(failure_line: str) -> str:
     return failure_components[1]
 
 
-def parse_testsuite_failures(log_path) -> Dict[Description, Set[str]]:
+def parse_testsuite_failures(log_path: str) -> Dict[Description, Set[str]]:
     """
     parse testsuite failures from the log in the path
     """
     if not Path(log_path).exists():
         raise ValueError(f"Invalid Path: {log_path}")
-    failures = {}
+    failures: Dict[Description, Set[str]] = {}
     with open(log_path, "r") as file:
         description = None
         for line in file:
             if line == "\n":
                 break
             if is_description(line):
-                description = parse_description(line)
+                description = parse_description(line, "non-multilib" not in log_path)
                 failures[description] = set()
                 continue
             failures[description].add(line)
     return failures
 
 
-def classify_by_unique_failure(failure_set):
-    failure_dictionary = {}
+def classify_by_unique_failure(failure_set: Set[str]):
+    failure_dictionary: Dict[str, Set[str]] = {}
     for failure in failure_set:
         failure_name = parse_failure_name(failure)
         if failure_name not in failure_dictionary:
@@ -325,7 +327,7 @@ def failures_to_summary(failures: ClassifedGccFailures, previous_hash: str, curr
 
 
 def failures_to_markdown(
-    failures: ClassifedGccFailures, previous_hash, current_hash
+    failures: ClassifedGccFailures, previous_hash: str, current_hash: str
 ) -> str:
     assignees = ("patrick-rivos", "kevinl-rivos")
     result = f"""---
