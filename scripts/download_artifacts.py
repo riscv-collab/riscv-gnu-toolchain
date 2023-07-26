@@ -65,7 +65,7 @@ def check_artifact_exists(artifact_name: str):
     artifact_name += "-report.log"
     build_failed = False
     # check if the build failed
-    if (not os.path.exists(os.path.join("./temp", f"{build_name}.zip")) and
+    if (not os.path.exists(os.path.join("./temp", build_name)) and
         not os.path.exists(os.path.join("./logs", artifact_name))):
         print(f"build failed for {build_name}")
         build_failed = True
