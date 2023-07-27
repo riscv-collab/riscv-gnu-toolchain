@@ -82,7 +82,7 @@ def check_artifact_exists(artifact_name: str):
     return True
 
 
-def download_artifact(artifact_name: str, artifact_id: str, token: str):
+def download_artifact(artifact_name: str, artifact_id: str, token: str, outdir: str = "logs"):
     """
     Uses GitHub api endpoint to download and extract the previous workflow
     log artifacts into directory called ./logs. Current workflow log artifacts
@@ -104,7 +104,7 @@ def download_artifact(artifact_name: str, artifact_id: str, token: str):
     with ZipFile(f"./temp/{artifact_zip_name}", "r") as zf:
         zf.extractall(path=f"./temp/{artifact_name.split('.log')[0]}")
     os.rename(
-        f"./temp/{artifact_name.split('.log')[0]}/{artifact_name}", f"./logs/{artifact_name}"
+        f"./temp/{artifact_name.split('.log')[0]}/{artifact_name}", f"./{outdir}/{artifact_name}"
     )
 
 
