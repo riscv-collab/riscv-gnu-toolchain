@@ -47,9 +47,9 @@ def failures_to_summary(failures: Dict[str, List[str]]):
     additional_result, seen_failures = get_additional_failures("failed_testsuite.txt", "Testsuite Failures", seen_failures)
     result += additional_result
 
+    result += build_summary(failures, "New Failures")
     result += build_summary(failures, "Resolved Failures")
     result += build_summary(failures, "Unresolved Failures")
-    result += build_summary(failures, "New Failures")
     result += "\n"
     return result
 
@@ -100,7 +100,12 @@ def aggregate_summary(failures: Dict[str, List[str]], file_name: str):
                 index = line.split("Failures")[0][1:-1]
                 continue
             if line != "\n" and "---" not in line:
-                failures[index].append(line)
+                cells = line.split("|")
+                if "linux" in file_name:
+                    cells[1] = "linux: " + cells[1]
+                else:
+                    cells[1] = "newlib: " + cells[1]
+                failures[index].append("|".join(cells))
     return failures
 
 def parse_arguments():
