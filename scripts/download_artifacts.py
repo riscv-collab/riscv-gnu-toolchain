@@ -39,7 +39,11 @@ def get_possible_artifact_names():
     arch = ["rv32{}-ilp32d-{}", "rv64{}-lp64d-{}"]
     multilib = ["multilib", "non-multilib"]
 
-    arch_extensions = ["gc"]
+    arch_extensions = [
+        "gc",
+        "gcv",
+        "gc_zba_zbb_zbc_zbs"
+    ]
 
     all_lists = [
         "-".join([i, j, k])
@@ -48,9 +52,11 @@ def get_possible_artifact_names():
         for k in multilib
         if not ("rv32" in j and k == "multilib")
     ]
-
+    
     all_names = [
         name.format(ext, "{}") for name in all_lists for ext in arch_extensions
+        if not ("gcv" in ext and "non-multilib" not in name)
+        and not ("gc_" in ext and "non-multilib" not in name)
     ]
     return all_names
 

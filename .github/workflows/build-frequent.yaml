@@ -32,6 +32,10 @@ on:
         options:
         - rv32gc-ilp32d
         - rv64gc-lp64d
+        - rv32gcv-ilp32d
+        - rv64gcv-lp64d
+        - rv32gc_zba_zbb_zbc_zbs-ilp32d
+        - rv64gc_zba_zbb_zbc_zbs-lp64d
 
 jobs:
   init-submodules:
@@ -120,19 +124,40 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode:   [newlib, linux, musl]
-        target: [rv32gc-ilp32d, rv64gc-lp64d]
-        multilib: [multilib, non-multilib]
+        mode: [newlib, linux, musl]
+        target:
+          [
+            rv32gc-ilp32d, # rv32
+            rv64gc-lp64d, # rv64
+            rv32gcv-ilp32d, # rv32 vector
+            rv64gcv-lp64d, # rv64 vector
+            rv32gc_zba_zbb_zbc_zbs-ilp32d, # rv32 bitmanip
+            rv64gc_zba_zbb_zbc_zbs-lp64d, # rv64 bitmanip
+          ]
+        multilib: [non-multilib]
         exclude:
           - mode: musl
             target: rv32gc-ilp32d
           - mode: musl
-            multilib: multilib
-          # Multilib ignores the target.
-          # Aribtrarily use rv64 as the single multilib runner.
-          # If we add more targets in the future, just exclude those cases from the multilib case.
-          - target: rv32gc-ilp32d
-            multilib: multilib
+            target: rv32gcv-ilp32d
+          - mode: musl
+            target: rv32gc_zba_zbb_zbc_zbs-ilp32d
+    uses: ./.github/workflows/regression-runner.yaml
+    with:
+      mode: ${{ matrix.mode }}
+      target: ${{ matrix.target }}
+      gcchash: ${{ needs.init-submodules.outputs.gcchash }}
+      multilib: ${{ matrix.multilib }}
+
+  cmreg: # Check Multilib Regressions. Short name so I can see the matrix string in github
+    if: ${{ github.event.inputs.run_single_target != 'true' || github.event.inputs.single_mode == '' || github.event.inputs.single_target == '' }}
+    needs: [init-submodules]
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [newlib, linux]
+        target: [rv64gc-lp64d] # Dummy placeholder. Actually runs rv32/rv64 multilib
+        multilib: [multilib]
     uses: ./.github/workflows/regression-runner.yaml
     with:
       mode: ${{ matrix.mode }}
@@ -151,15 +176,15 @@ jobs:
       multilib: non-multilib
 
   build-x86:
-    if: failure() # Only check x86 if riscv fails
-    needs: [init-submodules, creg]
+    if: failure() # Only check x86 if a riscv build fails
+    needs: [init-submodules, creg, cmreg]
     uses: ./.github/workflows/bootstrap-x86.yaml
     with:
       gcchash: ${{ needs.init-submodules.outputs.gcchash }}
 
   summarize:
-    if: '!cancelled()' # Generate github issues even when some (or all) targets fail to build
-    needs: [init-submodules, creg, csreg]
+    if: "!cancelled()" # Generate github issues even when some (or all) targets fail to build
+    needs: [init-submodules, creg, cmreg, csreg]
     permissions:
       issues: write
     uses: ./.github/workflows/generate-summary.yaml
