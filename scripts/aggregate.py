@@ -105,6 +105,12 @@ def aggregate_summary(failures: Dict[str, List[str]], file_name: str):
                     cells[1] = "linux: " + cells[1]
                 else:
                     cells[1] = "newlib: " + cells[1]
+
+                # Apply nicknames
+
+                cells[1] = cells[1].replace("gc_zba_zbb_zbc_zbs", " Bitmanip")
+                cells[1] = cells[1].replace("gcv_zvbb_zvbc_zvkg_zvkn_zvknc_zvkned_zvkng_zvknha_zvknhb_zvks_zvksc_zvksed_zvksg_zvksh_zvkt", " Vector Crypto")
+                cells[1] = cells[1].replace("rv64gcv_zvbb_zvbc_zvkg_zvkn_zvknc_zvkned_zvkng_zvknha_zvknhb_zvks_zvksc_zvksed_zvksg_zvksh_zvkt", "RVA23U64 profile")
                 failures[index].append("|".join(cells))
     return failures
 
