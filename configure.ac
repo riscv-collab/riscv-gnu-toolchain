@@ -1,3 +1,4 @@
+## Process this file with autoconf 2.69. Other versions may not work.
 AC_INIT(riscv-toolchain, 1.0)
 
 AC_PROG_CC
@@ -58,8 +59,6 @@ AC_ARG_ENABLE(debug_info,
         )
 
 AS_IF([test "x$enable_debug_info" != xyes],
-        [AS_HELP_STRING([--disable-debug-info],
-		[build glibc and musl without debug infromation])],
         [disable_debug_info=yes],
         [disable_debug_info=no]
         )
