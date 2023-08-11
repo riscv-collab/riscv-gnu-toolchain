@@ -76,6 +76,60 @@ assignees: {", ".join(assignees)}
     result += failures_to_summary(failures)
     return result
 
+def parse_arch_info(name: str):
+    """
+    Extract libc, arch, abi, multilib from file name
+    """
+    parts = name.split("-")[1:4]
+    if "non-multilib" not in name:
+        parts.append("multilib")
+    return " ".join(parts)
+
+def get_common_intersection(failures: Dict[str, Set[str]]):
+    """
+    get common failures across all affected targets (ones that appear in the tables)
+    """
+    common = [i for i in failures.values() if len(i) != 0]
+    if len(common) == 0:
+        return set()
+    intersect = set.intersection(*common)
+    return intersect
+
+def get_unique_failures(failure_type: str, intersect: Set[str], failures: Dict[str, Set[str]]):
+    """
+    get set difference between common failures and failures for target libc/arch/abi
+    """
+    result = ""
+    additional_failures = False
+    for file_name, all_failures in failures.items():
+        diff = all_failures - intersect
+        if len(diff) > 0:
+            if not additional_failures:
+                result += f"## Architecture Specific {failure_type} Failures\n"
+                additional_failures = True
+            arch_info = parse_arch_info(file_name)
+            result += f"{arch_info}:\n"
+            result += "```\n"
+            result += "".join(sorted(list(diff)))
+            result += "```\n"
+    return result
+
+def additional_failures_to_markdown(failure_type: str, failures: Dict[str, Set[str]]):
+    """
+    Adds new sections to issue displaying what failures were added/resolved
+    """
+    intersect = get_common_intersection(failures)
+    result = ""
+    if len(intersect) > 0:
+        found_failures = sorted(list(intersect))
+        result = f"## {failure_type} Failures Across All Targets\n"
+        result += "```\n"
+        result += "".join(found_failures)
+        result += "```\n"
+    result += get_unique_failures(failure_type, intersect, failures)
+    result += "\n"
+    return result
+
 def aggregate_summary(failures: Dict[str, List[str]], file_name: str):
     """
     Reads file and adds the new failures to the current
@@ -84,16 +138,12 @@ def aggregate_summary(failures: Dict[str, List[str]], file_name: str):
     with open(file_name, "r") as f:
         while True:
             line = f.readline()
-            if not line:
-                break
-            if line.startswith("# Summary"):
+            if not line or line.startswith("# Summary"):
                 break
         while True:
             line = f.readline()
-            if not line:
-                break
-            if "#" in line:
-                # exited Summary section and going to New Failures section
+            if not line or line.startswith("# Resolved Failures"):
+                # exited Summary section and going to Resolved Failures section
                 # TODO: add support for consolidating these sections
                 break
             if "Failures" in line:
@@ -112,7 +162,33 @@ def aggregate_summary(failures: Dict[str, List[str]], file_name: str):
                 cells[1] = cells[1].replace("gcv_zvbb_zvbc_zvkg_zvkn_zvknc_zvkned_zvkng_zvknha_zvknhb_zvks_zvksc_zvksed_zvksg_zvksh_zvkt", " Vector Crypto")
                 cells[1] = cells[1].replace("rv64imafdcv_zicond_zawrs_zbc_zvkng_zvksg_zvbb_zvbc_zicsr_zba_zbb_zbs_zicbom_zicbop_zicboz_zfhmin_zkt", "RVA23U64 profile")
                 failures[index].append("|".join(cells))
-    return failures
+        # begin resolved failures
+        resolved: Set[str] = set()
+        while True:
+            line = f.readline()
+            if not line or line.startswith("# Unresolved Failures"):
+                break
+            if line.startswith("##"): 
+                continue
+            if line != "\n":
+                resolved.add(line)
+        # begin unresolved failures
+        while True:
+            line = f.readline()
+            if not line or line.startswith("# New Failures"):
+                break
+        # begin new failures
+        new: Set[str] = set()
+        while True:
+            line = f.readline()
+            if not line:
+                break
+            if line.startswith("##"):
+                continue
+            if line != "\n":
+                new.add(line)
+           
+    return failures, resolved, new
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Testsuite Compare Options")
@@ -138,11 +214,22 @@ def parse_arguments():
 def main():
     args = parse_arguments()
     failures: Dict[str, List[str]] = { "Resolved": [], "Unresolved": [], "New": [] }
+    all_resolved: Dict[str, Set[str]] = defaultdict(set)
+    all_new: Dict[str, Set[str]] = defaultdict(set)
     for file in os.listdir(SUMMARIES):
-        failures = aggregate_summary(failures, os.path.join(SUMMARIES, file))
-    markdown = failures_to_markdown(failures, args.current_hash)
+        failures, resolved, new = aggregate_summary(failures, os.path.join(SUMMARIES, file))
+        all_resolved[file] = resolved
+        all_new[file] = new
+        
+    summary_markdown = failures_to_markdown(failures, args.current_hash)
+    resolved_markdown = additional_failures_to_markdown("Resolved", all_resolved)
+    new_markdown = additional_failures_to_markdown("New", all_new)
+    
+    markdown = summary_markdown + resolved_markdown + new_markdown
+
     with open(args.output_markdown, "w") as markdown_file:
         markdown_file.write(markdown)
+        
 
 if __name__ == "__main__":
     main()
