@@ -110,7 +110,7 @@ def aggregate_summary(failures: Dict[str, List[str]], file_name: str):
 
                 cells[1] = cells[1].replace("gc_zba_zbb_zbc_zbs", " Bitmanip")
                 cells[1] = cells[1].replace("gcv_zvbb_zvbc_zvkg_zvkn_zvknc_zvkned_zvkng_zvknha_zvknhb_zvks_zvksc_zvksed_zvksg_zvksh_zvkt", " Vector Crypto")
-                cells[1] = cells[1].replace("rv64gcv_zvbb_zvbc_zvkg_zvkn_zvknc_zvkned_zvkng_zvknha_zvknhb_zvks_zvksc_zvksed_zvksg_zvksh_zvkt", "RVA23U64 profile")
+                cells[1] = cells[1].replace("rv64imafdcv_zicond_zawrs_zbc_zvkng_zvksg_zvbb_zvbc_zicsr_zba_zbb_zbs_zicbom_zicbop_zicboz_zfhmin_zkt", "RVA23U64 profile")
                 failures[index].append("|".join(cells))
     return failures
 

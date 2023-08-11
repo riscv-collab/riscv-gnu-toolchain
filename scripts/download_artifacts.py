@@ -44,7 +44,7 @@ def get_possible_artifact_names():
         "gcv",
         "gc_zba_zbb_zbc_zbs",
         "gcv_zvbb_zvbc_zvkg_zvkn_zvknc_zvkned_zvkng_zvknha_zvknhb_zvks_zvksc_zvksed_zvksg_zvksh_zvkt",
-        "mafdc_zicsr_zicntr_zihpm_ziccif_ziccrse_ziccamoa_zicclsm_za64rs_zihintpause_zba_zbb_zbs_zic64b_zicbom_zicbop_zicboz_zfhmin_zkt_v_zvfhmin_zihintntl_zicond_zcb_zfa_zawrs_zjpm_zfh_zbc_zvfh_zfbfmin_zvfbfwma_zvkng_zvksg_zvbb_zvbc"
+        "imafdcv_zicond_zawrs_zbc_zvkng_zvksg_zvbb_zvbc_zicsr_zba_zbb_zbs_zicbom_zicbop_zicboz_zfhmin_zkt"
     ]
 
     all_lists = [
@@ -59,8 +59,8 @@ def get_possible_artifact_names():
         name.format(ext, "{}") for name in all_lists for ext in arch_extensions
         if not ("gcv" in ext and "non-multilib" not in name)
         and not ("gc_" in ext and "non-multilib" not in name)
-        and not ("mafdc_" in ext and "non-multilib" not in name)
-        and not ("rv32" in name and "mafdc_zicsr_zicntr_zihpm_ziccif_ziccrse_ziccamoa_zicclsm_za64rs_zihintpause_zba_zbb_zbs_zic64b_zicbom_zicbop_zicboz_zfhmin_zkt_v_zvfhmin_zihintntl_zicond_zcb_zfa_zawrs_zjpm_zfh_zbc_zvfh_zfbfmin_zvfbfwma_zvkng_zvksg_zvbb_zvbc" in ext)
+        and not ("imafdcv_" in ext and "non-multilib" not in name)
+        and not ("rv32" in name and "imafdcv_zicond_zawrs_zbc_zvkng_zvksg_zvbb_zvbc_zicsr_zba_zbb_zbs_zicbom_zicbop_zicboz_zfhmin_zkt" in ext)
     ]
     return all_names
 
