@@ -1,0 +1,79 @@
+# syntax=docker/dockerfile:1
+
+# This dockerfile approximates the multi-stage pipeline and allows us to test
+# changes before pushing.
+
+FROM ubuntu:22.04 as get-sources
+RUN apt update
+RUN apt install git -y
+RUN git clone https://github.com/patrick-rivos/riscv-gnu-toolchain.git tc
+RUN cd tc && git submodule update --init --recursive
+RUN cd tc && rm -rf gcc
+RUN cd tc && git clone git://gcc.gnu.org/git/gcc.git
+RUN cd tc && cd gcc && git checkout 7879f589af911ea6a910d08919014b0b2df1b4b1
+RUN apt install zip -y
+RUN cd tc && zip -r sources.zip .git binutils dejagnu gcc gdb glibc musl newlib pk qemu
+
+FROM ubuntu:22.04 as build
+RUN apt update
+RUN apt install git -y
+RUN git clone https://github.com/patrick-rivos/riscv-gnu-toolchain.git tc
+RUN cd tc && rm -rf rm -rf .git binutils dejagnu gcc gdb glibc musl newlib pk qemu
+COPY --from=get-sources tc/sources.zip tc/sources.zip
+RUN apt install unzip -y
+RUN cd tc && unzip sources.zip
+RUN DEBIAN_FRONTEND=noninteractive ./tc/.github/setup-apt.sh
+RUN cd tc && mkdir build
+RUN cd tc && cd build && ../configure --prefix=$(pwd)
+RUN cd tc && cd build && make newlib -j32
+RUN apt install zip -y
+RUN cd tc && zip -1 -r stage2.zip build
+
+FROM ubuntu:22.04 as test
+RUN apt update
+RUN apt install git -y
+RUN git clone https://github.com/patrick-rivos/riscv-gnu-toolchain.git tc
+RUN cd tc && rm -rf rm -rf .git binutils dejagnu gcc gdb glibc musl newlib pk qemu
+COPY --from=get-sources tc/sources.zip tc/sources.zip
+RUN apt install unzip -y
+RUN cd tc && unzip sources.zip
+RUN DEBIAN_FRONTEND=noninteractive ./tc/.github/setup-apt.sh
+RUN cd tc && mkdir build
+RUN cd tc && cd build && ../configure --prefix=$(pwd)
+COPY --from=build tc/stage2.zip tc/stage2.zip
+RUN cd tc && unzip -n stage2.zip
+# Fake stamps
+RUN cd tc && mkdir -p build/stamps
+RUN cd tc && cd build/stamps && \
+	touch -d "+2 days" check-write-permission && \
+	touch -d "+2 days" build-gdb-newlib && \
+	touch -d "+2 days" build-binutils-newlib && \
+	touch -d "+2 days" build-linux-headers && \
+	touch -d "+2 days" build-gcc-newlib-stage1 && \
+	touch -d "+2 days" build-glibc-linux-headers && \
+	touch -d "+2 days" build-glibc-linux-rv32gc-ilp32d && \
+	touch -d "+2 days" build-glibc-linux-rv32imac-ilp32 && \
+	touch -d "+2 days" build-glibc-linux-rv32imafdc-ilp32d && \
+	touch -d "+2 days" build-glibc-linux-rv32gcv-ilp32d && \
+	touch -d "+2 days" build-glibc-linux-rv32gc_zba_zbb_zbc_zbs-ilp32d && \
+	touch -d "+2 days" build-glibc-linux-rv32gcv_zvbb_zvbc_zvkg_zvkn_zvknc_zvkned_zvkng_zvknha_zvknhb_zvks_zvksc_zvksed_zvksg_zvksh_zvkt-ilp32d && \
+	touch -d "+2 days" build-glibc-linux-rv64gc-lp64d && \
+	touch -d "+2 days" build-glibc-linux-rv64imac-lp64 && \
+	touch -d "+2 days" build-glibc-linux-rv64imafdc-lp64d && \
+	touch -d "+2 days" build-glibc-linux-rv64gcv-lp64d && \
+	touch -d "+2 days" build-glibc-linux-rv64gc_zba_zbb_zbc_zbs-lp64d && \
+	touch -d "+2 days" build-glibc-linux-rv64gcv_zvbb_zvbc_zvkg_zvkn_zvknc_zvkned_zvkng_zvknha_zvknhb_zvks_zvksc_zvksed_zvksg_zvksh_zvkt-lp64d && \
+	touch -d "+2 days" build-glibc-linux-rv64imafdcv_zicond_zawrs_zbc_zvkng_zvksg_zvbb_zvbc_zicsr_zba_zbb_zbs_zicbom_zicbop_zicboz_zfhmin_zkt-lp64d && \
+	touch -d "+2 days" build-newlib-nano && \
+	touch -d "+2 days" build-newlib && \
+	touch -d "+2 days" merge-newlib-nano && \
+	touch -d "+2 days" build-gcc-newlib-stage2
+# Sanity check
+RUN cd tc && cd build && make newlib
+
+# CMD cd tc && cd build && RUNTESTFLAGS="-v -v" make report-newlib -j32
+RUN cd tc && cd build && make report-newlib -j32
+
+RUN apt install python -y
+
+CMD /tc/scripts/testsuite-filter gcc newlib /tc/test/allowlist `find build-gcc-newlib-stage2/gcc/testsuite/ -name *.sum |paste -sd "," -`
