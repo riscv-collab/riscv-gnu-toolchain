@@ -225,7 +225,7 @@ the following command can be used:
 
  RUNTESTFLAGS="riscv.exp" make report
 
-To to restrict a test run to only RISC-V specific tests with match the
+To restrict a test run to only RISC-V specific tests with match the
 pattern "zb*.c" and "sm*.c" the following command can be used:
 
  RUNTESTFLAGS="riscv.exp=zb*.c\ sm*.c" make report
