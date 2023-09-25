@@ -246,6 +246,21 @@ The command below can be used to run the glibc tests:
 
     make check-glibc-linux
 
+##### Adding more arch/abi combination for testing without introducing multilib
+
+`--with-extra-multilib-test` can be used when you want to test more combination
+of arch/ABI, for example: built a linux toolchain with multilib with
+`rv64gc/lp64d` and `rv64imac/lp64`, but you want to test more configuration like
+`rv64gcv/lp64d` or `rv64gcv_zba/lp64d`, then you can use --with-extra-multilib-test
+to specify that via `--with-extra-multilib-test="rv64gcv-lp64d;rv64gcv_zba-lp64d"`,
+then the testing will run for `rv64gc/lp64d`, `rv64imac/lp64`, `rv64gcv/lp64d`
+and `rv64gcv_zba/lp64d`.
+
+`--with-extra-multilib-test` support bare-metal and linux toolchain and support
+even multilib is disable, but the user must ensure extra multilib test
+configuration can be work with existing lib/multilib, e.g. rv32gcv/ilp32 test
+can't work if multilib didn't have any rv32 multilib.
+
 ### LLVM / clang
 
 LLVM can be used in combination with the RISC-V GNU Compiler Toolchain
