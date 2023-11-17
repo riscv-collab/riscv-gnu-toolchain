@@ -261,6 +261,15 @@ even multilib is disable, but the user must ensure extra multilib test
 configuration can be work with existing lib/multilib, e.g. rv32gcv/ilp32 test
 can't work if multilib didn't have any rv32 multilib.
 
+`--with-extra-multilib-test` also allow you append additional build flags after
+the arch/ABI, for example: built a linux toolchain with `rv64gc/lp64d`, and you
+can test more configuration like `rv64gcv/lp64d` with one additional build config
+`--param=riscv-autovec-lmul=dynamic`, then you can use --with-extra-multilib-test
+to specify that via
+`--with-extra-multilib-test="rv64gcv-lp64d:--param=riscv-autovec-lmul=dynamic"`.
+Then the testing will build the run test with option `--param=riscv-autovec-lmul=dynamic`
+before run the `rv64gcv-lp64d` test.
+
 ### LLVM / clang
 
 LLVM can be used in combination with the RISC-V GNU Compiler Toolchain
