@@ -20,6 +20,7 @@
 #define _LINUX_IN_H
 
 #include <linux/types.h>
+#include <linux/stddef.h>
 #include <linux/libc-compat.h>
 #include <linux/socket.h>
 
@@ -68,6 +69,8 @@ enum {
 #define IPPROTO_PIM		IPPROTO_PIM
   IPPROTO_COMP = 108,		/* Compression Header Protocol		*/
 #define IPPROTO_COMP		IPPROTO_COMP
+  IPPROTO_L2TP = 115,		/* Layer 2 Tunnelling Protocol		*/
+#define IPPROTO_L2TP		IPPROTO_L2TP
   IPPROTO_SCTP = 132,		/* Stream Control Transport Protocol	*/
 #define IPPROTO_SCTP		IPPROTO_SCTP
   IPPROTO_UDPLITE = 136,	/* UDP-Lite (RFC 3828)			*/
@@ -159,6 +162,8 @@ struct in_addr {
 #define MCAST_MSFILTER			48
 #define IP_MULTICAST_ALL		49
 #define IP_UNICAST_IF			50
+#define IP_LOCAL_PORT_RANGE		51
+#define IP_PROTOCOL			52
 
 #define MCAST_EXCLUDE	0
 #define MCAST_INCLUDE	1
@@ -192,7 +197,10 @@ struct ip_msfilter {
 	__be32		imsf_interface;
 	__u32		imsf_fmode;
 	__u32		imsf_numsrc;
-	__be32		imsf_slist[1];
+	union {
+		__be32		imsf_slist[1];
+		__DECLARE_FLEX_ARRAY(__be32, imsf_slist_flex);
+	};
 };
 
 #define IP_MSFILTER_SIZE(numsrc) \
@@ -211,11 +219,22 @@ struct group_source_req {
 };
 
 struct group_filter {
-	__u32				 gf_interface;	/* interface index */
-	struct __kernel_sockaddr_storage gf_group;	/* multicast address */
-	__u32				 gf_fmode;	/* filter mode */
-	__u32				 gf_numsrc;	/* number of sources */
-	struct __kernel_sockaddr_storage gf_slist[1];	/* interface index */
+	union {
+		struct {
+			__u32				 gf_interface_aux; /* interface index */
+			struct __kernel_sockaddr_storage gf_group_aux;	   /* multicast address */
+			__u32				 gf_fmode_aux;	   /* filter mode */
+			__u32				 gf_numsrc_aux;	   /* number of sources */
+			struct __kernel_sockaddr_storage gf_slist[1];	   /* interface index */
+		};
+		struct {
+			__u32				 gf_interface;	  /* interface index */
+			struct __kernel_sockaddr_storage gf_group;	  /* multicast address */
+			__u32				 gf_fmode;	  /* filter mode */
+			__u32				 gf_numsrc;	  /* number of sources */
+			struct __kernel_sockaddr_storage gf_slist_flex[]; /* interface index */
+		};
+	};
 };
 
 #define GROUP_FILTER_SIZE(numsrc) \
@@ -288,6 +307,9 @@ struct sockaddr_in {
 
 /* Address indicating an error return. */
 #define	INADDR_NONE		((unsigned long int) 0xffffffff)
+
+/* Dummy address for src of ICMP replies if no real address is set (RFC7600). */
+#define	INADDR_DUMMY		((unsigned long int) 0xc0000008)
 
 /* Network number for local host loopback. */
 #define	IN_LOOPBACKNET		127

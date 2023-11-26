@@ -42,10 +42,6 @@
 #define TEE_IOC_MAGIC	0xa4
 #define TEE_IOC_BASE	0
 
-/* Flags relating to shared memory */
-#define TEE_IOCTL_SHM_MAPPED	0x1	/* memory mapped in normal world */
-#define TEE_IOCTL_SHM_DMA_BUF	0x2	/* dma-buf handle on shared memory */
-
 #define TEE_MAX_ARG_SIZE	1024
 
 #define TEE_GEN_CAP_GP		(1 << 0)/* GlobalPlatform compliant TEE */
@@ -355,7 +351,7 @@ struct tee_iocl_supp_send_arg {
 };
 
 /**
- * TEE_IOC_SUPPL_SEND - Receive a request for a supplicant function
+ * TEE_IOC_SUPPL_SEND - Send a response to a received request
  *
  * Takes a struct tee_ioctl_buf_data which contains a struct
  * tee_iocl_supp_send_arg followed by any array of struct tee_param

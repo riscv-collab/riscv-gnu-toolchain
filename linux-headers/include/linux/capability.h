@@ -41,11 +41,12 @@ typedef struct __user_cap_header_struct {
 	int pid;
 } *cap_user_header_t;
 
-typedef struct __user_cap_data_struct {
+struct __user_cap_data_struct {
         __u32 effective;
         __u32 permitted;
         __u32 inheritable;
-} *cap_user_data_t;
+};
+typedef struct __user_cap_data_struct *cap_user_data_t;
 
 
 #define VFS_CAP_REVISION_MASK	0xFF000000
@@ -241,7 +242,6 @@ struct vfs_ns_cap_data {
 /* Allow examination and configuration of disk quotas */
 /* Allow setting the domainname */
 /* Allow setting the hostname */
-/* Allow calling bdflush() */
 /* Allow mount() and umount(), setting up new smb connection */
 /* Allow some autofs root ioctls */
 /* Allow nfsservctl */
@@ -333,7 +333,8 @@ struct vfs_ns_cap_data {
 
 #define CAP_AUDIT_CONTROL    30
 
-/* Set or remove capabilities on files */
+/* Set or remove capabilities on files.
+   Map uid=0 into a child user namespace. */
 
 #define CAP_SETFCAP	     31
 
@@ -424,7 +425,7 @@ struct vfs_ns_cap_data {
  */
 
 #define CAP_TO_INDEX(x)     ((x) >> 5)        /* 1 << 5 == bits in __u32 */
-#define CAP_TO_MASK(x)      (1 << ((x) & 31)) /* mask for indexed __u32 */
+#define CAP_TO_MASK(x)      (1U << ((x) & 31)) /* mask for indexed __u32 */
 
 
 #endif /* _LINUX_CAPABILITY_H */
