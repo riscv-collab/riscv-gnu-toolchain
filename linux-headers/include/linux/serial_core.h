@@ -25,6 +25,8 @@
 
 /*
  * The type definitions.  These are from Ted Ts'o's serial.h
+ * By historical reasons the values from 0 to 13 are defined
+ * in the include/uapi/linux/serial.h, do not define them here.
  */
 #define PORT_NS16550A	14
 #define PORT_XSCALE	15
@@ -68,6 +70,9 @@
 /* NVIDIA Tegra Combined UART */
 #define PORT_TEGRA_TCU	41
 
+/* ASPEED AST2x00 virtual UART */
+#define PORT_ASPEED_VUART	42
+
 /* Intel EG20 */
 #define PORT_PCH_8LINE	44
 #define PORT_PCH_2LINE	45
@@ -91,14 +96,8 @@
 #define PORT_SCIF	53
 #define PORT_IRDA	54
 
-/* Samsung S3C2410 SoC and derivatives thereof */
-#define PORT_S3C2410    55
-
 /* SGI IP22 aka Indy / Challenge S / Indigo 2 */
 #define PORT_IP22ZILOG	56
-
-/* Sharp LH7a40x -- an ARM9 SoC series */
-#define PORT_LH7A40X	57
 
 /* PPC CPM type number */
 #define PORT_CPM        58
@@ -109,43 +108,23 @@
 /* IBM icom */
 #define PORT_ICOM	60
 
-/* Samsung S3C2440 SoC */
-#define PORT_S3C2440	61
-
 /* Motorola i.MX SoC */
 #define PORT_IMX	62
-
-/* Marvell MPSC (obsolete unused) */
-#define PORT_MPSC	63
 
 /* TXX9 type number */
 #define PORT_TXX9	64
 
-/* NEC VR4100 series SIU/DSIU */
-#define PORT_VR41XX_SIU		65
-#define PORT_VR41XX_DSIU	66
-
-/* Samsung S3C2400 SoC */
-#define PORT_S3C2400	67
-
-/* M32R SIO */
-#define PORT_M32R_SIO	68
-
 /*Digi jsm */
 #define PORT_JSM        69
-
-#define PORT_PNX8XXX	70
 
 /* SUN4V Hypervisor Console */
 #define PORT_SUNHV	72
 
-#define PORT_S3C2412	73
-
 /* Xilinx uartlite */
 #define PORT_UARTLITE	74
 
-/* Blackfin bf5xx */
-#define PORT_BFIN	75
+/* Broadcom BCM7271 UART */
+#define PORT_BCM7271	76
 
 /* Broadcom SB1250, etc. SOC */
 #define PORT_SB1250_DUART	77
@@ -153,22 +132,12 @@
 /* Freescale ColdFire */
 #define PORT_MCF	78
 
-/* Blackfin SPORT */
-#define PORT_BFIN_SPORT		79
-
-/* MN10300 on-chip UART numbers */
-#define PORT_MN10300		80
-#define PORT_MN10300_CTS	81
-
 #define PORT_SC26XX	82
 
 /* SH-SCI */
 #define PORT_SCIFA	83
 
 #define PORT_S3C6400	84
-
-/* NWPSERIAL, now removed */
-#define PORT_NWPSERIAL	85
 
 /* MAX3100 */
 #define PORT_MAX3100    86
@@ -210,8 +179,8 @@
 /* Atheros AR933X SoC */
 #define PORT_AR933X	99
 
-/* Energy Micro efm32 SoC */
-#define PORT_EFMUART   100
+/* MCHP 16550A UART with 256 byte FIFOs */
+#define PORT_MCHP16550A	100
 
 /* ARC (Synopsys) on-chip UART */
 #define PORT_ARC       101
@@ -228,13 +197,10 @@
 /* ST ASC type numbers */
 #define PORT_ASC       105
 
-/* Tilera TILE-Gx UART */
-#define PORT_TILEGX	106
-
 /* MEN 16z135 UART */
 #define PORT_MEN_Z135	107
 
-/* SC16IS74xx */
+/* SC16IS7xx */
 #define PORT_SC16IS7XX   108
 
 /* MESON */
@@ -245,9 +211,6 @@
 
 /* SPRD SERIAL  */
 #define PORT_SPRD	111
-
-/* Cris v10 / v32 SoC */
-#define PORT_CRIS	112
 
 /* STM32 USART */
 #define PORT_STM32	113
@@ -278,5 +241,8 @@
 
 /* Freescale LINFlexD UART */
 #define PORT_LINFLEXUART	122
+
+/* Sunplus UART */
+#define PORT_SUNPLUS	123
 
 #endif /* LINUX_SERIAL_CORE_H */

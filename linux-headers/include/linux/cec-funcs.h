@@ -1568,6 +1568,20 @@ static __inline__ void cec_ops_request_short_audio_descriptor(const struct cec_m
 	}
 }
 
+static __inline__ void cec_msg_set_audio_volume_level(struct cec_msg *msg,
+						  __u8 audio_volume_level)
+{
+	msg->len = 3;
+	msg->msg[1] = CEC_MSG_SET_AUDIO_VOLUME_LEVEL;
+	msg->msg[2] = audio_volume_level;
+}
+
+static __inline__ void cec_ops_set_audio_volume_level(const struct cec_msg *msg,
+						  __u8 *audio_volume_level)
+{
+	*audio_volume_level = msg->msg[2];
+}
+
 
 /* Audio Rate Control Feature */
 static __inline__ void cec_msg_set_audio_rate(struct cec_msg *msg,
@@ -1665,7 +1679,7 @@ static __inline__ void cec_ops_report_current_latency(const struct cec_msg *msg,
 	if (*audio_out_compensated == 3 && msg->len >= 7)
 		*audio_out_delay = msg->msg[6];
 	else
-		*audio_out_delay = 0;
+		*audio_out_delay = 1;
 }
 
 static __inline__ void cec_msg_request_current_latency(struct cec_msg *msg,
