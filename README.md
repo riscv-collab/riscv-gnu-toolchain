@@ -261,14 +261,59 @@ even multilib is disable, but the user must ensure extra multilib test
 configuration can be work with existing lib/multilib, e.g. rv32gcv/ilp32 test
 can't work if multilib didn't have any rv32 multilib.
 
-`--with-extra-multilib-test` also allow you append additional build flags after
-the arch/ABI, for example: built a linux toolchain with `rv64gc/lp64d`, and you
-can test more configuration like `rv64gcv/lp64d` with one additional build config
-`--param=riscv-autovec-lmul=dynamic`, then you can use --with-extra-multilib-test
-to specify that via
-`--with-extra-multilib-test="rv64gcv-lp64d:--param=riscv-autovec-lmul=dynamic"`.
-Then the testing will build the run test with option `--param=riscv-autovec-lmul=dynamic`
-before run the `rv64gcv-lp64d` test.
+`--with-extra-multilib-test` also support more complicated format to fit the
+requirements of end-users. First of all, the argument is a list of test
+configurations. Each test configuration are separated by `;`. For example:
+
+  `rv64gcv-lp64d;rv64_zvl256b_zvfh-lp64d`
+
+For each test configuration, it has two parts, aka required arch-abi part and
+optional build flags. We leverage `:` to separate them with some restrictions.
+
+  * arch-abi should be required and there must be only one at the begining of
+    the test configuration.
+  * build flags is a array-like flags after the arch-abi, there will be two
+    ways to arrange them, aka AND, OR operation.
+  * If you would like the flags in build flags array acts on arch-abi
+    __simultaneously__, you can use `:` to separate them. For example:
+
+   ```
+   rv64gcv-lp64d:--param=riscv-autovec-lmul=dynamic:--param=riscv-autovec-preference=fixed-vlmax
+   ```
+
+   will be consider as one target board same as below:
+
+   ```
+   riscv-sim/-march=rv64gcv/-mabi=lp64d/-mcmodel=medlow/--param=riscv-autovec-lmul=dynamic/--param=riscv-autovec-preference=fixed-vlmax
+   ```
+
+  * If you would like the flags in build flags array acts on arch-abi
+    __respectively__, you can use ',' to separate them. For example:
+
+   ```
+   rv64gcv-lp64d:--param=riscv-autovec-lmul=dynamic,--param=riscv-autovec-preference=fixed-vlmax
+   ```
+
+   will be consider as two target boards same as below:
+
+   ```
+   riscv-sim/-march=rv64gcv/-mabi=lp64d/-mcmodel=medlow/--param=riscv-autovec-preference=fixed-vlmax
+   riscv-sim/-march=rv64gcv/-mabi=lp64d/-mcmodel=medlow/--param=riscv-autovec-lmul=dynamic
+   ```
+
+  * However, you can also leverage AND(`:`), OR(`,`) operator together but the
+    OR(`,`) will always have the higher priority. For example:
+
+   ```
+   rv64gcv-lp64d:--param=riscv-autovec-lmul=dynamic:--param=riscv-autovec-preference=fixed-vlmax,--param=riscv-autovec-lmul=m2
+   ```
+
+   will be consider as tow target boars same as below:
+
+   ```
+   riscv-sim/-march=rv64gcv/-mabi=lp64d/-mcmodel=medlow/--param=riscv-autovec-lmul=dynamic/--param=riscv-autovec-preference=fixed-vlmax
+   riscv-sim/-march=rv64gcv/-mabi=lp64d/-mcmodel=medlow/--param=riscv-autovec-lmul=m2
+   ```
 
 ### LLVM / clang
 
