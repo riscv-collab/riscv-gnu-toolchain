@@ -193,6 +193,34 @@ by the SIM variable in the Makefile, e.g. SIM=qemu, SIM=gdb, or SIM=spike
 (experimental).In addition, the simulator can also be selected with the 
 configure time option `--with-sim=`.However, the testsuite allowlist is 
 only mintained for qemu.Other simulators might get extra failures.
+
+#### Additional Prerequisite
+
+A helper script to setup testing environment requires
+[pyelftools](https://github.com/eliben/pyelftools).
+
+On newer versions of Ubuntu, executing the following command
+should suffice:
+
+    $ sudo apt-get install python3-pyelftools
+
+On newer versions of Fedora and CentOS/RHEL OS (9 or later), executing
+the following command should suffice:
+
+    $ sudo yum install python3-pyelftools
+
+On Arch Linux, executing the following command should suffice:
+
+    $ sudo pacman -Syyu python-pyelftools
+
+If your distribution/OS does not have pyelftools package, you can install
+it using PIP.
+
+    # Assuming that PIP is installed
+    $ pip3 install --user pyelftools
+
+#### Testing GCC
+
 To test GCC, run the following commands:
 
     ./configure --prefix=$RISCV --disable-linux --with-arch=rv64ima # or --with-arch=rv32ima
