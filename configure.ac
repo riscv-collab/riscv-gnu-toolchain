@@ -120,6 +120,13 @@ AC_SUBST(WITH_TUNE, --with-tune=$with_tune)
 AC_SUBST(WITH_ISA_SPEC, --with-isa-spec=$with_isa_spec)
 AC_SUBST(WITH_SIM, $with_sim)
 
+AC_ARG_WITH(test-flags,
+	[AS_HELP_STRING([--with-test-flags],
+		[Adds additional testing flag configurations])],
+	[],
+	[with_test_flags=no]
+	)
+
 AC_ARG_ENABLE(multilib,
 	[AS_HELP_STRING([--enable-multilib],
 		[build both RV32 and RV64 runtime libraries (only RV64 for musl libc) @<:@--disable-multilib@:>@])],
@@ -144,6 +151,10 @@ AC_ARG_WITH(extra-multilib-test,
 AS_IF([test "x$with_multilib_generator" != xno],
         [AC_SUBST(multilib_gen,"$with_multilib_generator")],
         [AC_SUBST(multilib_gen,"")])
+
+AS_IF([test "x$with_test_flags" != xno],
+        [AC_SUBST(test_flags,"$with_test_flags")],
+        [AC_SUBST(test_flags,"")])
 
 AS_IF([test "x$with_extra_multilib_test" != xno],
         [AC_SUBST(extra_multilib_test,"$with_extra_multilib_test")],
