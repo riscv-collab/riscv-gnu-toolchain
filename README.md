@@ -57,6 +57,11 @@ Then, simply run the following command:
 
 You should now be able to use riscv64-unknown-elf-gcc and its cousins.
 
+NB: Pay attention to the core model of your embedded RISC-V target. Some targets (such as Rocket Chip) 
+use the `medany` core model instead of the default `medlow`, meaning the compiler output produced by 
+the toolchain will be incompatible. To fix this, run the configure script with the `--with-cmodel=medany` option. 
+For more information, read [this SiFive blog article](https://www.sifive.com/blog/all-aboard-part-4-risc-v-code-models).
+
 ### Installation (Linux)
 
 To build the Linux cross-compiler, pick an install path (that is writeable).
