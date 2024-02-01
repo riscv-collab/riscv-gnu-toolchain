@@ -57,10 +57,7 @@ Then, simply run the following command:
 
 You should now be able to use riscv64-unknown-elf-gcc and its cousins.
 
-NB: Pay attention to the core model of your embedded RISC-V target. Some targets (such as Rocket Chip) 
-use the `medany` core model instead of the default `medlow`, meaning the compiler output produced by 
-the toolchain will be incompatible. To fix this, run the configure script with the `--with-cmodel=medany` option. 
-For more information, read [this SiFive blog article](https://www.sifive.com/blog/all-aboard-part-4-risc-v-code-models).
+Note: If you're planning to use an external library that replaces part of newlib (for example `libgloss-htif`), [read the FAQ](#ensuring-code-model-consistency).
 
 ### Installation (Linux)
 
@@ -452,3 +449,13 @@ Here is the list of configure option for specify source tree:
     --with-pk-src
     --with-qemu-src
     --with-spike-src
+
+### FAQ
+#### Ensuring Code Model Consistency
+If parts of newlib are going to be replaced with an external library (such as with [libgloss-htif](https://github.com/ucb-bar/libgloss-htif) for Berkeley Host-Target Interface), 
+you should take care to ensure that both newlib and the external library are built using the same code model. For more information about RISC-V code models, 
+[read this SiFive blog article](https://www.sifive.com/blog/all-aboard-part-4-risc-v-code-models).
+
+Errors that indicate a code model mismatch include "relocation overflow" or "relocation truncated" errors from the linker being unable to successfully relocate symbols in the executable.
+
+By default, `riscv-gnu-toolchain` builds newlib with `-mcmodel=medlow`. You can use the alternative `medany` code model (as used in libgloss-htif) by passing `--with-cmodel=medany` to the configure script.
