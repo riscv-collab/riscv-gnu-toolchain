@@ -259,6 +259,16 @@ AS_IF([test "x$enable_llvm" != xyes],
 	[AC_SUBST(enable_llvm, --disable-llvm)],
 	[AC_SUBST(enable_llvm, --enable-llvm)])
 
+AC_ARG_ENABLE(host_gcc,
+	[AS_HELP_STRING([--enable-host-gcc],
+		[Build host GCC to build cross toolchain])],
+	[enable_host_gcc=yes],
+	[])
+
+AS_IF([test "x$enable_host_gcc" != xyes],
+	[AC_SUBST(enable_host_gcc, --disable-host-gcc)],
+	[AC_SUBST(enable_host_gcc, --enable-host-gcc)])
+
 AC_DEFUN([AX_ARG_WITH_SRC],
 	[{m4_pushdef([opt_name], with_$1_src)
 	  AC_ARG_WITH($1-src,
