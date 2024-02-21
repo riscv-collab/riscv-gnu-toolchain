@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdint.h>
 
 static void print_ruyisdk_logo(void) {
 	//  _____             _  _____ _____  _  __
