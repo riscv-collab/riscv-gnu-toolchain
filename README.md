@@ -7,8 +7,8 @@ RUYISDK RV64ILP32 GNU工具链说明
 
     tar zxvf riscv64ilp32-elf-ubuntu-22.04-gcc-nightly-2024.02.21-nightly.tar.gz
     cd riscv/qemu-linux
-    ./start-qemu-rv64ilp32.sh (测试创新32位Linux内核)
-    ./start-qemu-rv32ilp32.sh (测试传统32位Linux内核)
+    ./start-qemu-rv64ilp32.sh rootfs.ext2 (测试创新32位Linux内核)
+    ./start-qemu-rv32ilp32.sh rootfs.ext2 (测试传统32位Linux内核)
 
 基于RV64ILP32工具链构建的新32位Linux内核，ramdisk-fio 提升 40%，loopback-iperf3 提升 15%
 
