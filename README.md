@@ -1,7 +1,7 @@
 RUYISDK RV64ILP32 GNU工具链说明
 =============================
 
-欢迎使用RV64ILP32工具链，你可以从 [release工具](https://github.com/ruyisdk/riscv-gnu-toolchain-rv64ilp32/releases/tag/2024.02.22) 直接下载 或 本地构建
+欢迎使用RV64ILP32工具链，你可以从 [release](https://github.com/ruyisdk/riscv-gnu-toolchain-rv64ilp32/releases) 处直接下载 或 本地构建
 
 直接下载后，即可体验新旧ABI在32位Linux内核上的差异 (s64ilp32 v.s. s32ilp32)
 
