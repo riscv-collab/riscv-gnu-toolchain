@@ -57,6 +57,8 @@ Then, simply run the following command:
 
 You should now be able to use riscv64-unknown-elf-gcc and its cousins.
 
+Note: If you're planning to use an external library that replaces part of newlib (for example `libgloss-htif`), [read the FAQ](#ensuring-code-model-consistency).
+
 ### Installation (Linux)
 
 To build the Linux cross-compiler, pick an install path (that is writeable).
@@ -457,3 +459,13 @@ sources is among them.  The flag `--enable-host-gcc` does exaclty that:
 * Initially a host GCC will be built
 * This host GCC is then used to build the cross compiler
 * The cross compiler will be built with `-Werror` to identify code issues
+
+### FAQ
+#### Ensuring Code Model Consistency
+If parts of newlib are going to be replaced with an external library (such as with [libgloss-htif](https://github.com/ucb-bar/libgloss-htif) for Berkeley Host-Target Interface), 
+you should take care to ensure that both newlib and the external library are built using the same code model. For more information about RISC-V code models, 
+[read this SiFive blog article](https://www.sifive.com/blog/all-aboard-part-4-risc-v-code-models).
+
+Errors that indicate a code model mismatch include "relocation overflow" or "relocation truncated" errors from the linker being unable to successfully relocate symbols in the executable.
+
+By default, `riscv-gnu-toolchain` builds newlib with `-mcmodel=medlow`. You can use the alternative `medany` code model (as used in libgloss-htif) by passing `--with-cmodel=medany` to the configure script.
