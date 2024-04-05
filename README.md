@@ -450,6 +450,16 @@ Here is the list of configure option for specify source tree:
     --with-qemu-src
     --with-spike-src
 
+#### Build host GCC to check for compiler warnings
+
+GCC contributions have to meet several requirements to qualify for upstream
+inclusion.  Warning free compilation with a compiler build from the same
+sources is among them.  The flag `--enable-host-gcc` does exaclty that:
+
+* Initially a host GCC will be built
+* This host GCC is then used to build the cross compiler
+* The cross compiler will be built with `-Werror` to identify code issues
+
 ### FAQ
 #### Ensuring Code Model Consistency
 If parts of newlib are going to be replaced with an external library (such as with [libgloss-htif](https://github.com/ucb-bar/libgloss-htif) for Berkeley Host-Target Interface), 
