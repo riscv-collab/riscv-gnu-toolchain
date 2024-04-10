@@ -20,21 +20,21 @@ Several standard packages are needed to build the toolchain.
 
 On Ubuntu, executing the following command should suffice:
 
-    $ sudo apt-get install autoconf automake autotools-dev curl python3 python3-pip libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo gperf libtool patchutils bc zlib1g-dev libexpat-dev ninja-build git cmake libglib2.0-dev
+    $ sudo apt-get install autoconf automake autotools-dev curl python3 python3-pip libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo gperf libtool patchutils bc zlib1g-dev libexpat-dev ninja-build git cmake libglib2.0-dev libslirp-dev
 
 On Fedora/CentOS/RHEL OS, executing the following command should suffice:
 
-    $ sudo yum install autoconf automake python3 libmpc-devel mpfr-devel gmp-devel gawk  bison flex texinfo patchutils gcc gcc-c++ zlib-devel expat-devel
+    $ sudo yum install autoconf automake python3 libmpc-devel mpfr-devel gmp-devel gawk  bison flex texinfo patchutils gcc gcc-c++ zlib-devel expat-devel libslirp-devel
     
 On Arch Linux, executing the following command should suffice:
 
-    $ sudo pacman -Syyu autoconf automake curl python3 libmpc mpfr gmp gawk base-devel bison flex texinfo gperf libtool patchutils bc zlib expat
+    $ sudo pacman -Syyu autoconf automake curl python3 libmpc mpfr gmp gawk base-devel bison flex texinfo gperf libtool patchutils bc zlib expat libslirp
 
 Also available for Arch users on the AUR: [https://aur.archlinux.org/packages/riscv-gnu-toolchain-bin](https://aur.archlinux.org/packages/riscv-gnu-toolchain-bin)
 
 On OS X, you can use [Homebrew](http://brew.sh) to install the dependencies:
 
-    $ brew install python3 gawk gnu-sed gmp mpfr libmpc isl zlib expat texinfo flock
+    $ brew install python3 gawk gnu-sed gmp mpfr libmpc isl zlib expat texinfo flock libslirp
 
 To build the glibc (Linux) on OS X, you will need to build within a case-sensitive file
 system.  The simplest approach is to create and mount a new disk image with
