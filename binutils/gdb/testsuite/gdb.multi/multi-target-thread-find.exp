@@ -1,0 +1,106 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test "thread find" with multiple inferiors/targets.  Regression test
+# for PR gdb/26631.
+
+source $srcdir/$subdir/multi-target.exp.tcl
+
+if {![multi_target_prepare]} {
+    return
+}
+
+proc test_thread_find {} {
+    global decimal gdb_prompt
+
+    set NUM_INFS 6
+
+    if {![setup "off"]} {
+	untested "setup failed"
+	return
+    }
+
+    # This makes sure we don't crash.  See PR gdb/26631.
+    gdb_test "thread find xxxyyyzzz" \
+	"No threads match 'xxxyyyzzz'"
+
+    # Create thread names.
+    for {set i 1} {$i <= $NUM_INFS} {incr i} {
+	gdb_test "thread apply $i.1 thread name threadname_$i" \
+	    "Thread $i.1 .*" \
+	    "name thread $i"
+    }
+
+    # Collect target ids.
+
+    for {set i 1} {$i <= $NUM_INFS} {incr i} {
+	set target_id($i) ""
+    }
+    set any "\[^\r\n\]*"
+    gdb_test_multiple "info threads" "collect thread id" {
+	-re ". ($decimal).$decimal  (Thread ${any}) \"threadname_\[0-9\]+\" $any" {
+	    set thr_num $expect_out(1,string)
+	    set target_id($thr_num) $expect_out(2,string)
+	    exp_continue
+	}
+	-re ".*$gdb_prompt $" {
+	    pass "collect target id"
+	}
+    }
+
+    # Find the threads by name.  Note we repeat the search with each
+    # inferior selected, so that we're sure that GDB doesn't get
+    # confused with which target stack to consult.
+
+    with_test_prefix "find by name" {
+	for {set sel_inf 1} {$sel_inf <= $NUM_INFS} {incr sel_inf} {
+	    with_test_prefix "inf $sel_inf" {
+
+		gdb_test "inferior $sel_inf" \
+		    "Switching to inferior $sel_inf .*"
+
+		for {set find_inf 1} {$find_inf <= $NUM_INFS} {incr find_inf} {
+		    gdb_test "thread find threadname_$find_inf" \
+			"Thread $find_inf.1 has name 'threadname_$find_inf'" \
+			"find thread name $find_inf"
+		}
+	    }
+	}
+    }
+
+    # Find the threads by target id.  Likewise we repeat the search
+    # with each inferior selected.
+
+    with_test_prefix "find by target id" {
+	for {set sel_inf 1} {$sel_inf <= $NUM_INFS} {incr sel_inf} {
+	    with_test_prefix "inf $sel_inf" {
+
+		gdb_test "inferior $sel_inf" \
+		    "Switching to inferior $sel_inf .*"
+
+		for {set find_inf 1} {$find_inf <= $NUM_INFS} {incr find_inf} {
+		    set target_id_re [string_to_regexp $target_id($find_inf)]
+		    gdb_test "thread find $target_id($find_inf)" \
+			"Thread $find_inf.1 has target id '$target_id_re'.*" \
+			"find thread target id $find_inf"
+		}
+	    }
+	}
+    }
+}
+
+test_thread_find
+
+multi_target_cleanup

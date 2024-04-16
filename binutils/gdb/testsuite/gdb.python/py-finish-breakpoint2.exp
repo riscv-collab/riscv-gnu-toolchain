@@ -1,0 +1,96 @@
+# Copyright (C) 2011-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It tests the mechanism
+# exposing values to Python.
+
+load_lib gdb-python.exp
+
+require allow_python_tests
+
+standard_testfile .cc
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile {debug c++}]} {
+    return -1
+}
+
+if {![runto_main]} {
+    return 0
+}
+
+set pyfile [gdb_remote_download host \
+		${srcdir}/${subdir}/${testfile}.py]
+
+#
+# Check FinishBreakpoints against C++ exceptions
+#
+
+gdb_breakpoint [gdb_get_line_number "Break before exception"]
+gdb_breakpoint [gdb_get_line_number "Break after exception 2"]
+
+gdb_test "source $pyfile" ".*Python script imported.*" \
+         "import python scripts"
+         
+gdb_breakpoint "throw_exception_1"
+
+#
+# Part 1.
+#
+
+gdb_test "continue" "Breakpoint .*throw_exception_1.*" "run to exception 1"
+
+# Count breakpoints before setting finishbreakpoint.
+gdb_test "python print (len(gdb.breakpoints()))" "4" "check BP count"
+
+gdb_test "python ExceptionFinishBreakpoint(gdb.newest_frame())" \
+    "init ExceptionFinishBreakpoint" "set FinishBP after the exception"
+
+gdb_test "continue" "Break before exception.*" \
+    "break before exception"
+
+set need_continue 0
+gdb_test_multiple "continue" "finishBP out-of-scope" {
+    -re -wrap "exception did not finish.*" {
+	# Out-of-scope.  For instance on x86_64 with unix/-m32.
+	pass $gdb_test_name
+    }
+    -re -wrap "stopped at ExceptionFinishBreakpoint.*" {
+	# Triggered despite the fact that the function call never finished.
+	# It just so happens to be that the frame return address at which the
+	# breakpoint is set, is also the first instruction after the exception
+	# has been handled.  For instance on x86_64 with unix/-m64.
+	kfail python/29909 $gdb_test_name
+	set need_continue 1
+    }
+}
+
+# Count breakpoints, check that the finishbreakpoint has been removed.
+gdb_test "python print (len(gdb.breakpoints()))" "4" "check finish BP removal"
+
+#
+# Part 2.
+#
+
+if { $need_continue } {
+    gdb_test "continue" ".*Breakpoint.* throw_exception_1.*" \
+	"continue to second exception"
+}
+gdb_test "python ExceptionFinishBreakpoint(gdb.newest_frame())" \
+    "init ExceptionFinishBreakpoint" "set FinishBP after the exception again"
+
+gdb_test "continue" "Break before exception.*" \
+    "break before exception again"
+
+gdb_test "continue" ".*exception did not finish.*" "FinishBreakpoint with exception thrown not caught"

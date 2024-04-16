@@ -1,0 +1,108 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require allow_shlib_tests
+
+standard_testfile
+
+set libname $testfile-solib
+set srcfile_lib $srcdir/$subdir/$libname.c
+set binfile_lib [standard_output_file $libname.so]
+
+if { [gdb_compile_shlib $srcfile_lib $binfile_lib {}] != "" } {
+    untested "failed to compile shared library"
+    return -1
+}
+
+set binfile_lib_target [gdb_download_shlib $binfile_lib]
+
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile \
+	  [list debug shlib_load additional_flags=-DSHLIB_NAME=\"$binfile_lib_target\"]] } {
+    return -1
+}
+
+gdb_locate_shlib $binfile_lib
+
+# Enable stop-on-solib-events
+gdb_test_no_output "set stop-on-solib-events 1"
+
+# Start the inferior and run to the first stop
+gdb_run_cmd
+gdb_test "" ".*Stopped due to shared library event.*" \
+    "run to shared library event"
+
+# Check if we're using probes.
+set using_probes 0
+
+# Get PC.
+set pc ""
+gdb_test_multiple "p /x \$pc" "" {
+    -re -wrap " = ($hex)" {
+	set pc $expect_out(1,string)
+    }
+    -re -wrap "" {
+    }
+}
+if { $pc == "" } {
+    unsupported "Couldn't get $pc"
+    return -1
+}
+regsub "0x0*" $pc "" pc
+
+# Verify that pc is at info_start probe address.
+gdb_test_multiple "info probes stap rtld" "" {
+    -re -wrap "init_start +0x0*$pc .*" {
+	set using_probes 1
+    }
+    -re -wrap "" {
+    }
+}
+
+if { ! $using_probes } {
+    unsupported "probes not present on this system"
+    return -1
+}
+
+set sysroot ""
+set test "show sysroot"
+gdb_test_multiple $test $test {
+    -re "The current system root is \"(.*)\"\..*${gdb_prompt} $" {
+	set sysroot $expect_out(1,string)
+    }
+}
+
+# GDB strips "target:" from the start of filenames
+# when operating on the local filesystem
+if { ![is_remote target] } {
+    regsub "^target:" "$sysroot" "(target:)?" sysroot
+}
+
+# Run til it loads our library
+set test "run til our library loads"
+set not_loaded_library 1
+while { $not_loaded_library } {
+    set not_loaded_library 0
+    gdb_test_multiple "c" $test {
+	-re "Inferior loaded $sysroot\[^\r\n\]*$binfile_lib_target\\M.*$gdb_prompt $" {
+	    pass $test
+	}
+	-re "Stopped due to shared library event\\M.*$gdb_prompt $" {
+	    set not_loaded_library 1
+	}
+    }
+}
+
+# Call something to ensure that relocation occurred
+gdb_test "call (int) foo(23)" "\\\$.* = 31.*\\\M.*"

@@ -1,0 +1,57 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test is a regression test for when GDB debugs a program with:
+# - set follow-fork-mode child
+# - set detach-on-fork off
+#
+# If the program forks, and the child loads a shared library (via
+# dlopen for example), GDB should still load the symtab for this objfile.
+# When a breakpoint is hit in this file, GDB should display the location
+# in the source of the shlib, and "list" should display the source where
+# the program stopped.
+
+require allow_shlib_tests
+
+standard_testfile .c -shlib.c
+set shlib_path [standard_output_file ${testfile}-lib.so]
+
+if { [gdb_compile_shlib $srcdir/$subdir/$srcfile2 $shlib_path {debug}] != "" } {
+    return
+}
+
+set shlib_path_target [gdb_download_shlib $::shlib_path]
+
+set opts [list shlib_load additional_flags=-DSHLIB_PATH="${shlib_path_target}"]
+if { [build_executable "failed to prepare" ${testfile} ${srcfile} $opts] } {
+    return
+}
+
+proc do_test {} {
+    clean_restart $::binfile
+    gdb_locate_shlib $::shlib_path
+    gdb_test_no_output "set follow-fork-mode child"
+    gdb_test_no_output "set detach-on-fork off"
+
+    runto "add" allow-pending
+
+    # Since we have debug info in the shlib, we should have the file name available.
+    gdb_test "frame" "add \(.*\) at .*$::srcfile2:\[0-9\]+.*"
+
+    # We must also be able to display the source for the current function.
+    gdb_test "list" "return a \\+ b;.*"
+}
+
+do_test

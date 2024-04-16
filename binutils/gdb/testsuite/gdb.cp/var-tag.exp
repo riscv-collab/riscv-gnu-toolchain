@@ -1,0 +1,110 @@
+# Copyright 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the gdb testsuite
+
+# Test expressions in which variable names shadow tag names.
+
+require allow_cplus_tests
+
+standard_testfile var-tag.cc var-tag-2.cc var-tag-3.cc var-tag-4.cc
+
+if {[prepare_for_testing "failed to prepare" $testfile \
+    [list $srcfile $srcfile2 $srcfile3 $srcfile4] {debug c++}]} {
+    return -1
+}
+
+proc do_global_tests {lang} {
+    set invalid_print "Attempt to use a type name as an expression"
+
+    if {$lang == "c++"} {
+	set opt_underlying "(: unsigned (int|short|char) )?"
+    } else {
+	set opt_underlying ""
+    }
+    set ptypefmt "type = (class|enum|union|struct) %s $opt_underlying{.*}"
+
+    with_test_prefix $lang {
+    gdb_test_no_output "set language $lang"
+    gdb_test "ptype C" "type = class C {.*}"
+    gdb_test "print E" "= a"
+    gdb_test "ptype E" "type = enum E $opt_underlying{.*}"
+    gdb_test "print S" "= {<No data fields>}"
+    gdb_test "ptype S" "type = struct S {.*}"
+    gdb_test "print U" "= {.*}"
+    gdb_test "ptype U" "type = union U {.*}"
+    gdb_test "print cc" "= {.*}"
+    gdb_test "ptype cc" "type = class CC {.*}"
+    gdb_test "print CC" [format $invalid_print "CC"]
+    gdb_test "ptype CC" [format $ptypefmt "CC"]
+    gdb_test "print ss" "= {<No data fields>}"
+    gdb_test "ptype ss" "type = struct SS {.*}"
+    gdb_test "print SS" [format $invalid_print "SS"]
+    gdb_test "ptype SS" [format $ptypefmt "SS"]
+    gdb_test "print ee" "= .*"
+    gdb_test "ptype ee" "type = enum EE $opt_underlying{.*}"
+    gdb_test "print EE" [format $invalid_print "EE"]
+    gdb_test "ptype EE" [format $ptypefmt "EE"]
+    gdb_test "print uu" "= {.*}"
+    gdb_test "ptype uu" "type = union UU {.*}"
+    gdb_test "print UU" [format $invalid_print  "UU"]
+    gdb_test "ptype UU" [format $ptypefmt "UU"]
+
+    # These tests exercise lookup of symbols using the "quick fns" API.
+    # Each of them is in a separate CU as once its CU is expanded,
+    # we're no longer using the quick fns API.
+    gdb_test "print E2" "= a2"
+    gdb_test "ptype E2" "type = enum E2 $opt_underlying{.*}"
+    gdb_test "print S2" "= {<No data fields>}"
+    gdb_test "ptype S2" "type = struct S2 {.*}"
+    gdb_test "print U2" "= {.*}"
+    gdb_test "ptype U2" "type = union U2 {.*}"
+    }
+}
+
+# First test expressions when there is no context.
+with_test_prefix "before start" {
+    do_global_tests c++
+    do_global_tests c
+}
+
+# Run to main and test again.
+if {![runto_main]} {
+    return
+}
+
+with_test_prefix "in main" {
+    do_global_tests c++
+    do_global_tests c
+}
+
+# Run to C::f and test again.
+gdb_breakpoint "C::f"
+gdb_continue_to_breakpoint "continue to C::f"
+with_test_prefix "in C::f" {
+    do_global_tests c++
+    do_global_tests c
+}
+
+# Another hard-to-guess-the-users-intent bug...
+# It would be really nice if we could query the user!
+with_test_prefix "global collision" {
+    gdb_test_no_output "set language c++"
+    setup_kfail "c++/16463" "*-*-*"
+    gdb_test "print global" "= 3"
+
+    # ... with a simple workaround:
+    gdb_test "print ::global" "= 3"
+}

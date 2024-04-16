@@ -1,0 +1,130 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# In the past we would use glibc's buffered input for the mi tty.
+# This buffering would cause problems if two commands are sent to gdb
+# in a single write call, and, if the first command (excluding its
+# trailing newline) exactly filled glibc's internal buffer.
+#
+# The solution to this problem was to stop using glibc's buffering for
+# the mi tty.
+#
+# To test for this situation we send two command to gdb in a loop, the
+# first command gets progressively bigger.  We check that gdb
+# correctly sees both commands.
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+# Start gdb, passing ARGS to mi_gdb_start.  Then run a series of tests
+# passing two commands to gdb in a single write action.  The first
+# command is increasingly long, while the second command stays very
+# short.
+#
+# Check that gdb sees, and performs, both commands.
+proc run_test { args } {
+    global mi_gdb_prompt
+    global decimal
+
+    if [mi_clean_restart "" $args] {
+	return
+    }
+
+    set start 1
+    set limit 2049
+
+    mi_gdb_test "set \$a = \"FIRST COMMAND\"" ".*"
+    mi_gdb_test "set \$b = \"TEST COMPLETE\"" ".*"
+
+    for { set i $start } { $i < $limit } { incr i } {
+
+	set cmd ""
+
+	# Create a command that is at least `i` characters long.
+	set first_cmd "-data-evaluate-expression \$a"
+	while { [string length $first_cmd] < $i } {
+	    set first_cmd " $first_cmd"
+	}
+
+	# We reset `i`, our loop counter, here.  When i is large this
+	# should be a nop as we attempt to make the first command
+	# length be i above.  However, the first time around the loop
+	# we start with an i value of 1, however, we can't make a
+	# command that short, so, by resetting i here we effectively
+	# skip the first couple of loop iterations where i is less
+	# than the minimum command length.
+	set i [string length $first_cmd]
+	verbose -log "length of first command is $i"
+
+	set cmd "${first_cmd}\n-data-evaluate-expression \$b\n"
+
+	# We need to call send_gdb ourselves here as gdb_test_multiple
+	# will try to send each line of the command separately (breaking
+	# the command at newline characters).  This splitting will more
+	# than likely mean that gdb will see and process the first command
+	# before the second command arrives, this prevents the bug from
+	# triggering.
+	send_gdb "$cmd"
+
+	# Now check for output from the two commands.  We do this
+	# using two calls to gdb_test_multiple, this is because the
+	# echoing of the second command can sometime get mixed
+	# unexpectedly with the command output, this is especially
+	# likely when running using the read1 technique.
+	#
+	# When using a single gdb_test_multiple we need to anchor
+	# patterns using a ^, however, this requires us to consume and
+	# discard all lines that are not part of the output that we're
+	# looking for.  However, due to the unpredictable
+	# intermingling, it's much easier if we drop the ^ anchor.
+	# However, with this gone dejagnu would sometimes match the
+	# second comand output before the first commands output.
+	#
+	# This approach just looks for the first command output, then,
+	# once that has been found, we start looking for the second
+	# command output, this seems pretty reliable.
+	set seen_first_message false
+	set seen_second_message false
+
+	gdb_test_multiple "" "look for first command output, command length $i" -prompt "$mi_gdb_prompt" {
+	    -re "\\^done.*,value=\"\\\\\"FIRST COMMAND\\\\\"\"" {
+		set seen_first_message true
+		exp_continue
+	    }
+	    -re "\r\n$mi_gdb_prompt" {
+		gdb_assert $seen_first_message $gdb_test_name
+	    }
+	}
+
+	gdb_test_multiple "" "look for second command output, command length $i" -prompt "$mi_gdb_prompt" {
+	    -re "\\^done,value=\"\\\\\"TEST COMPLETE\\\\\"\"\r\n$mi_gdb_prompt" {
+		pass $gdb_test_name
+		set seen_second_message true
+	    }
+	}
+
+	# If one of the above tests failed then lets no waste our time
+	# checking different command lengths.  The actual bug this
+	# test checks for would result in a timeout, so we don't want
+	# to risk lots more timeouts.
+	if { ! [expr $seen_first_message && $seen_second_message ] } {
+	    break
+	}
+    }
+}
+
+foreach_with_prefix args { "" "separate-mi-tty" } {
+    run_test $args
+}

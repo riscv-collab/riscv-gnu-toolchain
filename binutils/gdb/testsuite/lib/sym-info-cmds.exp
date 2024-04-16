@@ -1,0 +1,538 @@
+# Copyright 2019-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Make it easier to run the 'info modules' command (using
+# GDBInfoModules), and the 'info module ...' commands (using
+# GDBInfoModuleContents) and process the output.
+#
+# The difficulty we run into is that different versions of gFortran
+# include different helper modules which show up in the results.  The
+# procedures in this library help process those parts of the output we
+# actually want to check, while ignoring those parts that we don't
+# care about.
+#
+# For each namespace GDBInfoModules and GDBInfoModuleContents, there's
+# a run_command proc, use this to run a command and capture the
+# output.  Then make calls to check_header, check_entry, and
+# check_no_entry to ensure the output was as expected.
+
+namespace eval GDBInfoSymbols {
+
+    # A string that is the header printed by GDB immediately after the
+    # 'info [modules|types|functions|variables]' command has been issued.
+    variable _header
+
+    # A list of entries extracted from the output of the command.
+    # Each entry is a filename, a line number, and the rest of the
+    # text describing the entry.  If an entry has no line number then
+    # it is replaced with the text NONE.
+    variable _entries
+
+    # The string that is the complete last command run.
+    variable _last_command
+
+    # Add a new entry to the _entries list.
+    proc _add_entry { filename lineno text } {
+	variable _entries
+
+	set entry [list $filename $lineno $text]
+	lappend _entries $entry
+    }
+
+    # Run the 'info modules' command, passing ARGS as extra arguments
+    # to the command.  Process the output storing the results within
+    # the variables in this namespace.
+    #
+    # The results of any previous call to run_command are discarded
+    # when this is called.
+    proc run_command { cmd { testname "" } } {
+	global gdb_prompt
+
+	variable _header
+	variable _entries
+	variable _last_command
+
+	if {![regexp -- "^info (modules|types|variables|functions)" $cmd]} {
+	    perror "invalid command"
+	}
+
+	set _header ""
+	set _entries [list]
+	set _last_command $cmd
+
+	if { $testname == "" } {
+	    set testname $cmd
+	}
+
+	send_gdb "$cmd\n"
+	gdb_expect {
+	    -re "^$cmd\r\n" {
+		# Match the original command echoed back to us.
+	    }
+	    timeout {
+		fail "$testname (timeout)"
+		return 0
+	    }
+	}
+
+	gdb_expect {
+	    -re "^\r\n" {
+		# Found the blank line after the header, we're done
+		# parsing the header now.
+	    }
+	    -re "^\[ \t]*(\[^\r\n\]+)\r\n" {
+		set str $expect_out(1,string)
+		if { $_header == "" } {
+		    set _header $str
+		} else {
+		    set _header "$_header $str"
+		}
+		exp_continue
+	    }
+	    timeout {
+		fail "$testname (timeout)"
+		return 0
+	    }
+	}
+
+	set current_file ""
+	gdb_expect {
+	    -re "^File (\[^\r\n\]+):\r\n" {
+		set current_file $expect_out(1,string)
+		exp_continue
+	    }
+	    -re "^(\[0-9\]+):\[ \t\]+(\[^\r\n\]+)\r\n" {
+		set lineno $expect_out(1,string)
+		set text $expect_out(2,string)
+		if { $current_file == "" } {
+		    fail "$testname (missing filename)"
+		    return 0
+		}
+		_add_entry $current_file $lineno $text
+		exp_continue
+	    }
+	    -re "^\[ \t\]+(\[^\r\n\]+)\r\n" {
+		set lineno "NONE"
+		set text $expect_out(1,string)
+		if { $current_file == "" } {
+		    fail "$testname (missing filename)"
+		    return 0
+		}
+		_add_entry $current_file $lineno $text
+		exp_continue
+	    }
+	    -re "^\r\n" {
+		exp_continue
+	    }
+	    -re "^$gdb_prompt $" {
+		# All done.
+	    }
+	    timeout {
+		fail "$testname (timeout)"
+		return 0
+	    }
+	}
+
+	pass $testname
+	return 1
+    }
+
+    # Check that the header held in _header matches PATTERN.  Use
+    # TESTNAME as the name of the test, or create a suitable default
+    # test name based on the last command.
+    proc check_header { pattern { testname "" } } {
+	variable _header
+	variable _last_command
+
+	if { $testname == "" } {
+	    set testname "$_last_command: check header"
+	}
+
+	gdb_assert {[regexp -- $pattern $_header]} $testname
+    }
+
+    # Call check_entry_1 with OPTIONAL == 0.
+    proc check_entry { filename lineno text { testname "" } } {
+	check_entry_1 $filename $lineno $text 0 $testname
+    }
+
+    # Call check_entry_1 with OPTIONAL == 1.
+    proc check_optional_entry { filename lineno text { testname "" } } {
+	check_entry_1 $filename $lineno $text 1 $testname
+    }
+
+    # Check that we have an entry in _entries matching FILENAME,
+    # LINENO, and TEXT.  If LINENO is the empty string it is replaced
+    # with the string NONE in order to match a similarly missing line
+    # number in the output of the command.
+    #
+    # TESTNAME is the name of the test, or a default will be created
+    # based on the last command run and the arguments passed here.
+    #
+    # If a matching entry is found then it is removed from the
+    # _entries list, this allows us to check for duplicates using the
+    # check_no_entry call.
+    proc check_entry_1 { filename lineno text optional testname } {
+	variable _entries
+	variable _last_command
+
+	if { $testname == "" } {
+	    set testname \
+		"$_last_command: check for entry '$filename', '$lineno', '$text'"
+	}
+
+	if { $lineno == "" } {
+	    set lineno "NONE"
+	}
+
+	set new_entries [list]
+
+	set found_match 0
+	foreach entry $_entries {
+
+	    if {!$found_match} {
+		set f [lindex $entry 0]
+		set l [lindex $entry 1]
+		set t [lindex $entry 2]
+		if { [regexp -- $filename $f] \
+			 && [regexp -- $lineno $l] \
+			 && [regexp -- $text $t] } {
+		    set found_match 1
+		} else {
+		    lappend new_entries $entry
+		}
+	    } else {
+		lappend new_entries $entry
+	    }
+	}
+
+	set _entries $new_entries
+	if { $optional && ! $found_match } {
+	    unsupported $testname
+	} else {
+	    gdb_assert { $found_match } $testname
+	}
+    }
+
+    # Check that there is no entry in the _entries list matching
+    # FILENAME, LINENO, and TEXT.  The LINENO and TEXT are optional,
+    # and will be replaced with '.*' if missing.
+    #
+    # If LINENO is the empty string then it will be replaced with the
+    # string NONE in order to match against missing line numbers in
+    # the output of the command.
+    #
+    # TESTNAME is the name of the test, or a default will be built
+    # from the last command run and the arguments passed here.
+    #
+    # This can be used after a call to check_entry to ensure that
+    # there are no further matches for a particular file in the
+    # output.
+    proc check_no_entry { filename { lineno ".*" } { text ".*" } \
+			      { testname "" } } {
+	variable _entries
+	variable _last_command
+
+	if { $testname == "" } {
+	    set testname \
+		"$_last_command: check no matches for '$filename', '$lineno', and '$text'"
+	}
+
+	if { $lineno == "" } {
+	    set lineno "NONE"
+	}
+
+	foreach entry $_entries {
+	    set f [lindex $entry 0]
+	    set l [lindex $entry 1]
+	    set t [lindex $entry 2]
+	    if { [regexp -- $filename $f] \
+		     && [regexp -- $lineno $l] \
+		     && [regexp -- $text $t] } {
+		fail $testname
+	    }
+	}
+
+	pass $testname
+    }
+}
+
+
+namespace eval GDBInfoModuleSymbols {
+
+    # A string that is the header printed by GDB immediately after the
+    # 'info modules (variables|functions)' command has been issued.
+    variable _header
+
+    # A list of entries extracted from the output of the command.
+    # Each entry is a filename, a module name, a line number, and the
+    # rest of the text describing the entry.  If an entry has no line
+    # number then it is replaced with the text NONE.
+    variable _entries
+
+    # The string that is the complete last command run.
+    variable _last_command
+
+    # Add a new entry to the _entries list.
+    proc _add_entry { filename module lineno text } {
+	variable _entries
+
+	set entry [list $filename $module $lineno $text]
+	lappend _entries $entry
+    }
+
+    # Run the 'info module ....' command, passing ARGS as extra
+    # arguments to the command.  Process the output storing the
+    # results within the variables in this namespace.
+    #
+    # The results of any previous call to run_command are discarded
+    # when this is called.
+    proc run_command { cmd { testname "" } } {
+	global gdb_prompt
+
+	variable _header
+	variable _entries
+	variable _last_command
+
+	if {![regexp -- "^info module (variables|functions)" $cmd]} {
+	    perror "invalid command: '$cmd'"
+	}
+
+	set _header ""
+	set _entries [list]
+	set _last_command $cmd
+
+	if { $testname == "" } {
+	    set testname $cmd
+	}
+
+	send_gdb "$cmd\n"
+	gdb_expect {
+	    -re "^$cmd\r\n" {
+		# Match the original command echoed back to us.
+	    }
+	    timeout {
+		fail "$testname (timeout)"
+		return 0
+	    }
+	}
+
+	gdb_expect {
+	    -re "^\r\n" {
+		# Found the blank line after the header, we're done
+		# parsing the header now.
+	    }
+	    -re "^\[ \t\]*(\[^\r\n\]+)\r\n" {
+		set str $expect_out(1,string)
+		if { $_header == "" } {
+		    set _header $str
+		} else {
+		    set _header "$_header $str"
+		}
+		exp_continue
+	    }
+	    timeout {
+		fail "$testname (timeout)"
+		return 0
+	    }
+	}
+
+	set current_module ""
+	set current_file ""
+	gdb_expect {
+	    -re "^Module \"(\[^\"\]+)\":\r\n" {
+		set current_module $expect_out(1,string)
+		exp_continue
+	    }
+	    -re "^File (\[^\r\n\]+):\r\n" {
+		if { $current_module == "" } {
+		    fail "$testname (missing module)"
+		    return 0
+		}
+		set current_file $expect_out(1,string)
+		exp_continue
+	    }
+	    -re "^(\[0-9\]+):\[ \t\]+(\[^\r\n\]+)\r\n" {
+		set lineno $expect_out(1,string)
+		set text $expect_out(2,string)
+		if { $current_module == "" } {
+		    fail "$testname (missing module)"
+		    return 0
+		}
+		if { $current_file == "" } {
+		    fail "$testname (missing filename)"
+		    return 0
+		}
+		_add_entry $current_file $current_module \
+		    $lineno $text
+		exp_continue
+	    }
+	    -re "^\[ \t\]+(\[^\r\n\]+)\r\n" {
+		set lineno "NONE"
+		set text $expect_out(1,string)
+		if { $current_module == "" } {
+		    fail "$testname (missing module)"
+		    return 0
+		}
+		if { $current_file == "" } {
+		    fail "$testname (missing filename)"
+		    return 0
+		}
+		_add_entry $current_file $current_module \
+		    $lineno $text
+		exp_continue
+	    }
+	    -re "^\r\n" {
+		exp_continue
+	    }
+	    -re "^$gdb_prompt $" {
+		# All done.
+	    }
+	    timeout {
+		fail "$testname (timeout)"
+		return 0
+	    }
+	}
+
+	pass $testname
+	return 1
+    }
+
+    # Check that the header held in _header matches PATTERN.  Use
+    # TESTNAME as the name of the test, or create a suitable default
+    # test name based on the last command.
+    proc check_header { pattern { testname "" } } {
+	variable _header
+	variable _last_command
+
+	if { $testname == "" } {
+	    set testname "$_last_command: check header"
+	}
+
+	gdb_assert {[regexp -- $pattern $_header]} $testname
+    }
+
+    # Check that we have an entry in _entries matching FILENAME,
+    # MODULE, LINENO, and TEXT.  If LINENO is the empty string it is
+    # replaced with the string NONE in order to match a similarly
+    # missing line number in the output of the command.
+    #
+    # TESTNAME is the name of the test, or a default will be created
+    # based on the last command run and the arguments passed here.
+    #
+    # If a matching entry is found then it is removed from the
+    # _entries list, this allows us to check for duplicates using the
+    # check_no_entry call.
+    #
+    # If OPTIONAL, don't generate a FAIL for a mismatch, but use UNSUPPORTED
+    # instead.
+    proc check_entry_1 { filename module lineno text optional testname } {
+	variable _entries
+	variable _last_command
+
+	if { $testname == "" } {
+	    set testname \
+		"$_last_command: check for entry '$filename', '$lineno', '$text'"
+	}
+
+	if { $lineno == "" } {
+	    set lineno "NONE"
+	}
+
+	set new_entries [list]
+
+	set found_match 0
+	foreach entry $_entries {
+
+	    if {!$found_match} {
+		set f [lindex $entry 0]
+		set m [lindex $entry 1]
+		set l [lindex $entry 2]
+		set t [lindex $entry 3]
+		if { [regexp -- $filename $f] \
+			 && [regexp -- $module $m] \
+			 && [regexp -- $lineno $l] \
+			 && [regexp -- $text $t] } {
+		    set found_match 1
+		} else {
+		    lappend new_entries $entry
+		}
+	    } else {
+		lappend new_entries $entry
+	    }
+	}
+
+	set _entries $new_entries
+	if { $optional && ! $found_match } {
+	    unsupported $testname
+	} else {
+	    gdb_assert { $found_match } $testname
+	}
+    }
+
+    # Call check_entry_1 with OPTIONAL == 0.
+    proc check_entry { filename module lineno text { testname "" } } {
+	check_entry_1 $filename $module $lineno $text 0 $testname
+    }
+
+    # Call check_entry_1 with OPTIONAL == 1.
+    proc check_optional_entry { filename module lineno text { testname "" } } {
+	check_entry_1 $filename $module $lineno $text 1 $testname
+    }
+
+    # Check that there is no entry in the _entries list matching
+    # FILENAME, MODULE, LINENO, and TEXT.  The LINENO and TEXT are
+    # optional, and will be replaced with '.*' if missing.
+    #
+    # If LINENO is the empty string then it will be replaced with the
+    # string NONE in order to match against missing line numbers in
+    # the output of the command.
+    #
+    # TESTNAME is the name of the test, or a default will be built
+    # from the last command run and the arguments passed here.
+    #
+    # This can be used after a call to check_entry to ensure that
+    # there are no further matches for a particular file in the
+    # output.
+    proc check_no_entry { filename module { lineno ".*" } \
+			      { text ".*" } { testname "" } } {
+	variable _entries
+	variable _last_command
+
+	if { $testname == "" } {
+	    set testname \
+		"$_last_command: check no matches for '$filename', '$lineno', and '$text'"
+	}
+
+	if { $lineno == "" } {
+	    set lineno "NONE"
+	}
+
+	foreach entry $_entries {
+	    set f [lindex $entry 0]
+	    set m [lindex $entry 1]
+	    set l [lindex $entry 2]
+	    set t [lindex $entry 3]
+	    if { [regexp -- $filename $f] \
+		     && [regexp -- $module $m] \
+		     && [regexp -- $lineno $l] \
+		     && [regexp -- $text $t] } {
+		fail $testname
+	    }
+	}
+
+	pass $testname
+    }
+}

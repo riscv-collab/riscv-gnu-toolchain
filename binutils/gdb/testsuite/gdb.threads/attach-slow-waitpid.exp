@@ -1,0 +1,110 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test script tries to expose a bug in some of the uses of
+# waitpid in the Linux native support within GDB.  The problem was
+# spotted on systems which were heavily loaded when attaching to
+# threaded test programs.  What happened was that during the initial
+# attach, the loop of waitpid calls that normally received the stop
+# events from each of the threads in the inferior was not receiving a
+# stop event for some threads (the kernel just hadn't sent the stop
+# event yet).
+#
+# GDB would then trigger a call to stop_all_threads which would
+# continue to wait for all of the outstanding threads to stop, when
+# the outstanding stop events finally arrived GDB would then
+# (incorrectly) discard the stop event, resume the thread, and
+# continue to wait for the thread to stop.... which it now never
+# would.
+#
+# In order to try and expose this issue reliably, this test preloads a
+# library that intercepts waitpid calls.  All waitpid calls targeting
+# pid -1 with the WNOHANG flag are rate limited so that only 1 per
+# second can complete.  Additional calls are forced to return 0
+# indicating no event waiting.  This is enough to trigger the bug
+# during the attach phase.
+
+# This test only works on Linux
+require !use_gdb_stub isnative
+require {!is_remote host}
+require {istarget *-linux*}
+
+standard_testfile
+
+set libfile slow-waitpid
+set libsrc "${srcdir}/${subdir}/${libfile}.c"
+set libobj [standard_output_file ${libfile}.so]
+
+with_test_prefix "compile preload library" {
+    # Compile the preload library.  We only get away with this as we
+    # limit this test to running when ISNATIVE is true.
+    if { [gdb_compile_shlib_pthreads \
+	      $libsrc $libobj {debug}] != "" } then {
+	return -1
+    }
+}
+
+with_test_prefix "compile test executable" {
+    # Compile the test program
+    if { [gdb_compile_pthreads \
+	      "${srcdir}/${subdir}/${srcfile}" "${binfile}" \
+	      executable {debug}] != "" } {
+	return -1
+    }
+}
+
+# Spawn GDB with LIB preloaded with LD_PRELOAD.
+
+proc gdb_spawn_with_ld_preload {lib} {
+    global env
+
+    save_vars { env(LD_PRELOAD) env(ASAN_OPTIONS) } {
+	if { ![info exists env(LD_PRELOAD) ]
+	     || $env(LD_PRELOAD) == "" } {
+	    set env(LD_PRELOAD) "$lib"
+	} else {
+	    append env(LD_PRELOAD) ":$lib"
+	}
+
+	# Prevent address sanitizer error:
+	# ASan runtime does not come first in initial library list; you should
+	# either link runtime to your application or manually preload it with
+	# LD_PRELOAD.
+	set_sanitizer_default ASAN_OPTIONS verify_asan_link_order 0
+
+	gdb_start
+    }
+}
+
+# Run test program in the background.
+set test_spawn_id [spawn_wait_for_attach $binfile]
+set testpid [spawn_id_get_pid $test_spawn_id]
+
+# Start GDB with preload library in place.
+if { [gdb_spawn_with_ld_preload $libobj] == -1 } {
+    # Make sure we get UNTESTED rather than UNRESOLVED.
+    set errcnt 0
+    untested "Couldn't start GDB with preloaded lib"
+    return -1
+}
+
+# Load binary, and attach to running program.
+gdb_load ${binfile}
+gdb_test "attach $testpid" "Attaching to program.*" "attach to target"
+
+gdb_exit
+
+# Kill of test program.
+kill_wait_spawned_process $test_spawn_id

@@ -1,0 +1,59 @@
+# Copyright 2019-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This tests GDB's ability to handle 6 and 8 byte instructions in the
+# RISC-V prologue scanner.  These instruction should be ignored, but
+# should not result in an error that interrupts the debug session.
+#
+# Each of the files riscv-unwind-long-insn-*.s include a function
+# (func) that contains a fake long instruction (6 or 8 bytes) in the
+# prologue.  We trick GDB into parsing the fake instruction by tail
+# calling from a different function, 'bar' to the middle of 'func'.
+
+require {istarget "riscv*-*-*"}
+
+standard_testfile riscv-unwind-long-insn.c \
+    riscv-unwind-long-insn.S
+
+foreach_with_prefix {insn_size} {6 8} {
+    set flags [list debug additional_flags=-DBAD_INSN_LEN=${insn_size}]
+
+    set testfile "${testfile}-${insn_size}"
+    if {[prepare_for_testing "failed to prepare" $testfile \
+	     "$srcfile $srcfile2" $flags]} {
+	return -1
+    }
+
+    if {![runto_main]} {
+	return 0
+    }
+
+    gdb_breakpoint "bar"
+    gdb_continue_to_breakpoint "bar"
+
+    # This next single instruction step takes us through a tail-call
+    # from 'bar' into 'func'.
+    gdb_test "si" "func \(\).*"
+
+    # Now check that we have a sane backtrace.
+    gdb_test "bt" \
+	[multi_line \
+	     "#0\[ \t\]*func \\\(\\\) at .*$srcfile2:\[0-9\]+" \
+	     "#1\[ \t\]*$hex in main \\\(\\\) at .*$srcfile:\[0-9\]+"] \
+	"Backtrace to the main frame"
+
+    # Finally finish, and we should end up back in main.
+    gdb_test "finish" "main \\\(\\\) at .*$srcfile:.*"
+}

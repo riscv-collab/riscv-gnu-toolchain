@@ -1,0 +1,135 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check that hardware watchpoints get correctly replicated to all
+# existing threads when hardware watchpoints are created.  This test
+# creates one hardware watchpoint per thread until a maximum is
+# reached.  It originally addresses a deficiency seen on embedded
+# powerpc targets with slotted hardware *point designs.
+
+set NR_THREADS 10
+set NR_TRIGGERS_PER_THREAD 2
+
+# This test verifies that a hardware watchpoint gets replicated to
+# every existing thread and is detected properly.  This test is
+# only meaningful on a target with hardware watchpoint support.
+require allow_hw_watchpoint_tests
+
+standard_testfile
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable [list debug "additional_flags=-DNR_THREADS=$NR_THREADS -DNR_TRIGGERS_PER_THREAD=$NR_TRIGGERS_PER_THREAD"]] != "" } {
+    return -1
+}
+
+clean_restart ${binfile}
+
+# Force hardware watchpoints to be used.
+gdb_test_no_output "set can-use-hw-watchpoints 1" ""
+
+# Run to `main' where we begin our tests.
+if {![runto_main]} {
+    return 0
+}
+
+# Set some default values.
+set hwatch_count 0
+set count 0
+
+# Count the number of hardware watchpoints available on
+# this target.
+
+# So we get an immediate warning/error if the target doesn't support a
+# hardware watchpoint or run out of hardware resource.
+gdb_test_no_output "set breakpoint always-inserted on"
+
+while { $count < $NR_THREADS } {
+    # Some targets do resource counting as we insert watchpoints.
+    # Such targets won't cause a watchpoint insertion failure, but
+    # will switch to software watchpoints silently.  We check for
+    # both cases here.
+    gdb_test_multiple "watch watched_data\[$hwatch_count\]" \
+	"watch watched_data\[$hwatch_count\]" {
+	    -re ".*Could not insert hardware watchpoint.*$gdb_prompt $" {
+		# End the loop.
+		set count $NR_THREADS
+	    }
+	    -re "Hardware watchpoint .*$gdb_prompt $" {
+		incr hwatch_count
+	    }
+	    -re "Watchpoint .*$gdb_prompt $" {
+		# End the loop.
+		set count $NR_THREADS
+	    }
+	}
+    incr count
+}
+
+gdb_test_no_output "set breakpoint always-inserted off"
+
+# Target cannot insert hardware watchpoints.  It should have reported
+# (through board settings) that it did not support them in the first place.
+# Just exit.
+if { $hwatch_count == 0} {
+  fail "no hardware watchpoints available"
+  return 0
+}
+
+# Set the testcase's internal variable indicating the number of
+# hardware watchpoints the target supports.
+gdb_test_no_output "set var hw_watch_count=${hwatch_count}" \
+		   "set var hw_watch_count=${hwatch_count}"
+
+# At this point, we know how many hardware watchpoints
+# the target supports.  Use that to do further testing.
+delete_breakpoints
+
+# Prepare to create all the threads.
+gdb_test "break thread_started" \
+	 "Breakpoint \[0-9\]+ at .*: file .*${srcfile}, line .*" \
+	 "breakpoint on thread_started"
+
+# Move all threads to where they're supposed to be for testing.
+for { set i 0 } { $i < $NR_THREADS } { incr i } {
+
+    # We want to set the maximum number of hardware watchpoints
+    # and make sure the target can handle that without an error.
+    # That will show us the watchpoints got replicated to all the
+    # threads correctly, and that no new watchpoints got created
+    # in the background for a specific thread.
+    if {$i < $hwatch_count} {
+      gdb_test "watch watched_data\[$i\]" \
+	"Hardware watchpoint .*"
+    } else {
+      verbose -log "Not setting watchpoint for watched_data\[$i\]\n"
+    }
+
+    gdb_test continue "Continuing\\..*Breakpoint \[0-9\]+, thread_started \\(\\) at .*$srcfile.*" \
+    "Thread $i hit breakpoint at thread_started"
+}
+
+# Let the threads run and change the watched data, leading
+# to watchpoint triggers.
+gdb_test_no_output "set var test_ready=1" \
+      "set var test_ready=1"
+
+# Set the number of expected watchpoint triggers.
+set TRIGGERS [expr "$NR_THREADS * $hwatch_count * $NR_TRIGGERS_PER_THREAD"]
+
+# Move the threads and hit the watchpoints TRIGGERS times.
+for { set i 1 } { $i <= $TRIGGERS } { incr i } {
+    gdb_test continue "Continuing\\..*Hardware watchpoint \[0-9\]+: watched_data\[\[0-9\]+\].*Old value = \[0-9\]+.*New value = \[0-9\]+.*thread_function \\(arg=$hex\\) at .*$srcfile.*" \
+    "Continue to watchpoint trigger $i out of ${TRIGGERS} on watched_data"
+}

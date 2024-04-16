@@ -1,0 +1,119 @@
+# Copyright (C) 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the gdb testsuite.
+
+# Test access to special purpose register TAR (the Target Address
+# Register).  The test inferior writes to this register, we check that
+# GDB reads the same value, then write to the register the address of
+# another label.  We then let the inferior continue and execute a
+# branch to TAR and check that we stop at the address that we wrote to
+# register.
+
+require {istarget "powerpc*-*-linux*"}
+
+standard_testfile .c
+
+if {[build_executable "compile" $binfile $srcfile {debug}] == -1} {
+    return -1
+}
+
+proc check_register_access { regname } {
+    global gdb_prompt
+
+    set test "$regname register access"
+    gdb_test_multiple "info reg $regname" "$test" {
+	-re "Invalid register.*\r\n$gdb_prompt $" {
+	    unsupported "$test"
+	    return 0
+	}
+	-re "\r\n$regname.*\r\n$gdb_prompt $" {
+	    pass "$test"
+	    return 1
+	}
+    }
+    return 0
+}
+
+proc tar_available {} {
+    global gdb_prompt
+    global inferior_exited_re
+
+    set test "TAR available to inferior"
+    gdb_test_multiple "continue" "" {
+	-re "Illegal instruction.*\r\n$gdb_prompt $" {
+	    unsupported "$test"
+	    return 0
+	}
+	-re "$inferior_exited_re normally.*$gdb_prompt $" {
+	    pass "$test"
+	    return 1
+	}
+    }
+    return 0
+}
+
+# Do one pass to check if TAR is usable, system
+# software can prevent it from being used.
+with_test_prefix "check TAR access" {
+    clean_restart $binfile
+
+    if ![runto_main] {
+	return
+    }
+
+    if {![check_register_access "tar"]} {
+	return
+    }
+
+    if {![tar_available]} {
+	return
+    }
+}
+
+# Now do the actual test
+clean_restart $binfile
+
+if ![runto_main] {
+    return
+}
+
+gdb_breakpoint [gdb_get_line_number "marker"]
+
+gdb_continue_to_breakpoint "continue to marker"
+
+set target1 [get_hexadecimal_valueof "target1" -1]
+set tar [get_hexadecimal_valueof "\$tar" -2]
+
+set test "TAR value from mtspr"
+
+if {${target1} == ${tar}} {
+    pass $test
+} else {
+    fail $test
+}
+
+set target2 [get_hexadecimal_valueof "target2" -1]
+
+if {$target2 == -1} {
+    fail "Could not get value of target2"
+    return
+}
+
+gdb_test_no_output "set \$tar = $target2" "set tar"
+
+gdb_breakpoint [gdb_get_line_number "marker 2"]
+
+gdb_continue_to_breakpoint "continue to new target address" ".*marker 2.*"

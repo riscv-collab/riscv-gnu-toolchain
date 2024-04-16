@@ -1,0 +1,145 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# The purpose of this test-case is to test the sanity of the used host/target
+# board files.
+
+proc test_remote { remote host_is_target } {
+    global srcdir subdir
+
+    set file board-sanity.exp
+
+    set shell_ok 0
+    set delete_ok 0
+    set exists_ok 1
+
+    if { $host_is_target } {
+	if { $remote == "host" } {
+	    set other_remote "target"
+	} else {
+	    set other_remote "host"
+	}
+    }
+
+    with_test_prefix cleanup-remote {
+	set res [remote_file $remote delete $file]
+	gdb_assert { [lindex $res 0] == $delete_ok } \
+	    "remove $remote copy "
+
+	set res [remote_file $remote exists $file]
+	gdb_assert { $res != $exists_ok } \
+	    "$remote copy does not exist"
+
+	if { $host_is_target } {
+	    set res [remote_file $other_remote exists $file]
+	    gdb_assert { $res != $exists_ok } \
+		"$other_remote copy does not exist"	
+	}
+    }
+
+    with_test_prefix copy-to-remote {
+	set remote_file [remote_download $remote $srcdir/$subdir/$file]
+	gdb_assert { [string equal [file tail $remote_file] $file] == 1} \
+	    "remote_download returns valid value"
+
+	set res [remote_file $remote exists $file]
+	gdb_assert { $res == $exists_ok } \
+	    "$remote copy exists"
+
+	if { $host_is_target } {
+	    set res [remote_file $other_remote exists $file]
+	    gdb_assert { $res == $exists_ok } \
+		"$other_remote copy exists"
+	}
+    }
+
+    with_test_prefix cleanup-build {
+	    # Note: we're not comparing with delete_ok, return value seems to be
+	    # different for build.
+	    set res [remote_file build delete $file]
+	    gdb_assert { [string equal $res ""] } \
+		"remove build copy"
+
+	    set res [remote_file build exists $file]
+	    gdb_assert { $res != $exists_ok } \
+		"build copy does not exist"
+	}
+
+    with_test_prefix copy-from-remote {
+	set build_file [remote_upload $remote $file]
+	gdb_assert { [string equal [file tail $build_file] $file] == 1 } \
+	    "remote_upload returns valid value"
+	
+	set res [remote_file $remote delete $file]
+	gdb_assert { [string equal $res $delete_ok] == 1 } \
+	    "remove $remote copy"
+
+	set res [remote_file $remote exists $file]
+	gdb_assert { $res != $exists_ok } \
+	    "$remote copy does not exist"
+
+	if { $host_is_target } {
+	    set res [remote_file $other_remote exists $file]
+	    gdb_assert { $res != $exists_ok } \
+		"$other_remote copy does not exist"	
+	}
+
+	set res [remote_file build exists $file]
+	gdb_assert { $res == $exists_ok } \
+	    "build copy exists"
+
+	set res [remote_file $remote delete $file]
+	gdb_assert { $res == $delete_ok } \
+	    "remove build copy"
+    }
+}
+
+# Host_is_target == 1 for local-remote-host-native.exp, if as intended specified
+# with both --target_board and --host_board.
+if { [info exists host_board] } {
+    set host_is_target [string equal $host_board [target_info name]]
+} else {
+    set host_is_target 0
+}
+
+foreach_with_prefix remote {host target} {
+    if { [is_remote $remote] } {
+	test_remote $remote $host_is_target
+    }
+}
+
+proc_with_prefix gdb_simple_compile_and_run {} {
+    set src {
+	int main() {
+	    return 0;
+	}
+    }
+
+    set test "compile"
+    if {![gdb_simple_compile board-sanity $src executable]} {
+	fail $test
+	return
+    }
+    pass $test
+
+    set target_obj [gdb_remote_download target $obj]
+    set result [remote_exec target $target_obj]
+    set status [lindex $result 0]
+    set output [lindex $result 1]
+    gdb_assert { $status == 0 && $output == "" }
+
+    remote_file build delete $obj
+}
+
+gdb_simple_compile_and_run

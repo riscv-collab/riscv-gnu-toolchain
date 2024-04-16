@@ -1,0 +1,289 @@
+# Copyright 2015-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the gdb testsuite.
+
+# Test the setting of "history size" via $HOME/.gdbinit
+
+# This test depends on being able to set $HOME and $GDBHISTSIZE.
+
+# Do not run if gdb debug is enabled - it interferes with the command history.
+require !gdb_debug_enabled
+
+# We cannot expect remote hosts to see environment variables set on the
+# local machine.
+require {!is_remote host}
+
+# Check that the history size is properly set to SIZE when reading the .gdbinit
+# file located in HOME with the environment variable GDBHISTSIZE optionally
+# set to GDBHISTSIZE_VAL.
+
+proc test_gdbinit_history_setting { home size { gdbhistsize_val "-" } } {
+    global env
+    global INTERNAL_GDBFLAGS
+    global srcdir
+    global subdir
+
+    save_vars { INTERNAL_GDBFLAGS env(GDBHISTFILE) env(GDBHISTSIZE) env(HOME) } {
+	set env(HOME) "$srcdir/$subdir/$home"
+
+	# These environment variables take precedence over whatever
+	# history size is set in .gdbinit.  Make sure the former is not
+	# set.
+	unset -nocomplain env(GDBHISTFILE)
+	unset -nocomplain env(GDBHISTSIZE)
+
+	if { $gdbhistsize_val != "-" } {
+	    set env(GDBHISTSIZE) $gdbhistsize_val
+	}
+
+	set INTERNAL_GDBFLAGS [string map {"-nx" ""} $INTERNAL_GDBFLAGS]
+
+	set prefix "home=$home"
+	if { $gdbhistsize_val != "-" } {
+	    append prefix " gdbhistsize=$gdbhistsize_val"
+	}
+
+	with_test_prefix $prefix {
+	    gdb_exit
+	    gdb_start
+
+	    gdb_test "show history size" "The size of the command history is $size."
+
+	    if { $size == "0" } {
+		gdb_test_no_output "show commands"
+	    } elseif { $size != "1" } {
+		gdb_test "show commands" "    .  show history size\r\n    .  show commands"
+	    }
+	}
+    }
+}
+
+# Check that the history file does not get truncated to zero when a gdbinit
+# file sets the history size to unlimited.
+
+proc test_no_truncation_of_unlimited_history_file { } {
+    global env
+    global INTERNAL_GDBFLAGS
+
+    save_vars { INTERNAL_GDBFLAGS env(GDBHISTFILE) env(GDBHISTSIZE) } {
+	# These environment variables take precedence over whatever
+	# history size is set in .gdbinit.  Make sure the former is not
+	# set.
+	unset -nocomplain env(GDBHISTFILE)
+	unset -nocomplain env(GDBHISTSIZE)
+
+	set temp_gdbinit [standard_output_file "gdbinit-history.gdbinit"]
+	set temp_histfile [standard_output_file "gdbinit-history.gdb_history"]
+	file delete $temp_gdbinit
+	file delete $temp_histfile
+
+	set fd [open $temp_gdbinit "w"]
+	puts $fd "set history size unlimited\n"
+	puts $fd "set history filename $temp_histfile\n"
+	puts $fd "set history save\n"
+	close $fd
+
+	append INTERNAL_GDBFLAGS " -x $temp_gdbinit"
+
+	# We have to start then exit GDB twice: the first time to test the creation
+	# of the initial history file, and the second time to test appending to it.
+	# In either case the initial "print 1" command should persist through the
+	# history file.
+	with_test_prefix "truncation" {
+	    gdb_exit
+	    gdb_start
+	    gdb_test "print 1"
+
+	    with_test_prefix "creating" {
+		gdb_exit
+		gdb_start
+		gdb_test "server show commands" "    .  print 1.*"
+	    }
+
+	    with_test_prefix "appending" {
+		gdb_exit
+		gdb_start
+		gdb_test "server show commands" "    .  print 1.*"
+	    }
+        }
+    }
+}
+
+# Check that the current command history matches HIST, which is a list
+# of commands, oldest fist.
+proc check_history { hist } {
+
+    # The show commands we issue here always appears last in the
+    # commands list.
+    lappend hist "show commands"
+
+    # Number all of the entries in the HIST list and convert the list
+    # into a pattern to match against GDB.
+    set hist_lines [list]
+    set idx 1
+    foreach h $hist {
+	lappend hist_lines "    $idx  $h"
+	incr idx
+    }
+    if { [llength $hist_lines] == 1 } {
+	set pattern [lindex $hist_lines 0]
+    } else {
+	set pattern [eval multi_line $hist_lines]
+    }
+
+    # Check the history.
+    gdb_test "show commands" "$pattern.*"
+}
+
+# Run 'show history filename' and check the output contains the
+# filename matching PATTERN, unless, PATTERN is the empty string, in
+# which case match a different output that GDB will give if the
+# history filename is the empty string.
+#
+# TESTNAME is the name for the test, which defaults to the command run
+# in the test.
+proc check_history_filename { pattern {testname ""} } {
+
+    set cmd "show history filename"
+    if { $testname == "" } {
+	set testname $cmd
+    }
+
+    if { $pattern == "" } {
+	gdb_test $cmd \
+	    "There is no filename currently set for recording the command history in." \
+	    $testname
+    } else {
+	gdb_test $cmd \
+	    "The filename in which to record the command history is \"$pattern\"\." \
+	    $testname
+    }
+}
+
+# Tests for how GDB handles setting the history filename to the empty
+# string.
+proc test_empty_history_filename { } {
+    global env
+    global gdb_prompt
+
+    set common_history [list "set height 0" "set width 0"]
+
+    set test_dir [standard_output_file history_test]
+    remote_exec host "mkdir -p $test_dir"
+    foreach entry { { ".gdb_history" "xxxxx" } \
+			{ "_gdb_history" "xxxxx" } \
+			{ "alt_history" "yyyyy" } } {
+	set fn [lindex $entry 0]
+	set content [lindex $entry 1]
+	set fd [open [standard_output_file "$test_dir/$fn"] w]
+	puts $fd "$content"
+	close $fd
+    }
+
+    with_cwd "$test_dir" {
+	with_test_prefix "load default history file" {
+	    # Start GDB and see that the history file was loaded
+	    # correctly.
+	    gdb_exit
+	    gdb_start
+	    check_history [concat "xxxxx" $common_history]
+	    check_history_filename ".*/.gdb_history"
+	}
+
+	with_test_prefix "load GDBHISTFILE history file" {
+	    # Now restart GDB with GDBHISTFILE set to see that the
+	    # "other" history file is loaded.
+	    save_vars { env(GDBHISTFILE) } {
+		setenv GDBHISTFILE \
+		    "$test_dir/alt_history"
+		gdb_exit
+		gdb_start
+		check_history [concat "yyyyy" $common_history]
+		check_history_filename ".*/alt_history"
+	    }
+	}
+
+	with_test_prefix "GDBHISTFILE is empty" {
+	    # Now restart GDB with GDBHISTFILE set to indicate don't
+	    # load any history file, check none was loaded.
+	    save_vars { env(GDBHISTFILE) } {
+	    setenv GDBHISTFILE ""
+		gdb_exit
+		gdb_start
+		check_history $common_history
+		check_history_filename ""
+	    }
+
+	    # Check that 'show history save' does the right thing when
+	    # the history filename is the empty string.
+	    gdb_test_no_output "set history save off" \
+		"ensure history save is off initially"
+	    gdb_test "show history save" \
+		"Saving of the history record on exit is off." \
+		"Check history save is off"
+	    gdb_test_no_output "set history save on"
+	    gdb_test "show history save" \
+		"Saving of the history is disabled due to the value of 'history filename'." \
+		"Check history save is off due to filename"
+	    gdb_test_no_output \
+		"set history filename $test_dir/alt_history" \
+		"set history filename at the command line"
+	    check_history_filename ".*/alt_history" \
+		"check filename after setting at the command line"
+	    gdb_test "show history save" \
+		"Saving of the history record on exit is on." \
+		"Check history save is on"
+	    gdb_test_no_output "set history filename"
+	    gdb_test "show history save" \
+		"Saving of the history is disabled due to the value of 'history filename'." \
+		"Check history save is off due to filename again"
+	    gdb_test_no_output "set history save off"
+	}
+
+	with_test_prefix "Use -ex to clear history file" {
+	    # Now restart GDB with the command line '-ex' to indicate
+	    # no history file should be loaded.
+	    gdb_exit
+	    if {[gdb_spawn_with_cmdline_opts \
+		     "-ex \"set history filename\""] != 0} {
+		fail "spawn"
+		return
+	    }
+	    set test "initial prompt"
+	    gdb_test_multiple "" $test {
+		-re ".*$gdb_prompt $" {
+		    pass "$test"
+		}
+	    }
+	    check_history [list]
+	    check_history_filename ""
+	}
+    }
+}
+
+test_gdbinit_history_setting "gdbinit-history/unlimited" "unlimited"
+test_gdbinit_history_setting "gdbinit-history/zero" "0"
+
+test_no_truncation_of_unlimited_history_file
+
+# A valid GDBHISTSIZE value overrides the setting inside the .gdbinit file; an
+# invalid GDBHISTSIZE value is ignored, falling back on the setting inside the
+# .gdbinit file.
+test_gdbinit_history_setting "gdbinit-history/unlimited" "1000" "1000"
+test_gdbinit_history_setting "gdbinit-history/unlimited" "unlimited" "foo"
+
+# Check handling of empty history filename.
+test_empty_history_filename

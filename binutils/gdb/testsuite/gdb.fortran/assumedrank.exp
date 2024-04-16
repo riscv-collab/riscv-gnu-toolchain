@@ -1,0 +1,99 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/> .
+
+# Testing GDB's implementation of ASSUMED RANK arrays.
+
+require allow_fortran_tests
+
+standard_testfile ".f90"
+load_lib fortran.exp
+
+# Only gcc version >=11 supports assumed rank arrays.
+if { [test_compiler_info {gfortran-*} f90] &&
+     ![test_compiler_info {gfortran-1[1-9]-*} f90] } {
+    untested "compiler does not support assumed rank"
+    return -1
+}
+
+if {[prepare_for_testing ${testfile}.exp ${testfile} ${srcfile} \
+	 {debug f90 additional_flags=-gdwarf-5}]} {
+    return -1
+}
+
+if ![fortran_runto_main] {
+    untested "could not run to main"
+    return -1
+}
+
+gdb_breakpoint [gdb_get_line_number "Test Breakpoint"]
+gdb_breakpoint [gdb_get_line_number "Final Breakpoint"]
+
+# We place a limit on the number of tests that can be run, just in
+# case something goes wrong, and GDB gets stuck in an loop here.
+set found_final_breakpoint false
+set test_count 0
+while { $test_count < 500 } {
+    with_test_prefix "test $test_count" {
+	incr test_count
+
+	gdb_test_multiple "continue" "continue" {
+	    -re -wrap "! Test Breakpoint" {
+		# We can run a test from here.
+	    }
+	    -re "! Final Breakpoint" {
+		# We're done with the tests.
+		set found_final_breakpoint true
+	    }
+	}
+
+	# Currently, flang does not support rank0.
+	if { $test_count == 1 && [test_compiler_info {flang-*} f90] } {
+	   unsupported "compiler does not support rank 0"
+	   continue
+	}
+
+	if ($found_final_breakpoint) {
+	    break
+	}
+
+	# First grab the information from the assumed rank array.
+	set answer_rank [get_valueof "" "rank(answer)" "**unknown**"]
+	set answer_content [get_valueof "" "answer" "**unknown**"]
+
+	# Now move up a frame and find the name of a non-assumed rank array
+	# which we can use to check the values we got above.
+	set test_array ""
+	gdb_test_multiple "up" "" {
+	    -re -wrap "\r\n\[0-9\]+\[ \t\]+call test_rank \\((\[^\r\n\]+)\\)" {
+		set test_array $expect_out(1,string)
+	    }
+	}
+	gdb_assert { ![string equal $test_array ""] } \
+	    "found the name of a test array to check against"
+
+	# Check we got the correct array rank.
+	gdb_test "p rank($test_array)" " = $answer_rank"
+
+	# Check we got the correct array content.
+	set content [get_valueof "" "$test_array" "**unknown**"]
+	gdb_assert { [string equal $content $answer_content] } \
+	    "answer array contains the expected contents"
+    }
+}
+
+# Ensure we reached the final breakpoint.  If more tests have been added
+# to the test script, and this starts failing, then the safety 'while'
+# loop above might need to be increased.
+gdb_assert {$found_final_breakpoint} "ran all compiled in tests"

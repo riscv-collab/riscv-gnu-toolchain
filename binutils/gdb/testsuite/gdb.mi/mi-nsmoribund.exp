@@ -1,0 +1,137 @@
+# Copyright 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require support_displaced_stepping
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+#
+# Start here
+#
+standard_testfile nsmoribund.c
+
+set options [list debug]
+if {[gdb_compile_pthreads "$srcdir/$subdir/$srcfile" $binfile executable $options] != "" } {
+    return -1
+}
+
+save_vars { GDBFLAGS } {
+    append GDBFLAGS " -ex \"set non-stop on\""
+    mi_clean_restart $binfile
+}
+
+mi_gdb_test "-gdb-set mi-async 1" ".*"
+mi_detect_async
+
+if { [mi_runto_main] < 0 } {
+    return
+}
+
+# Keep this in sync with THREADS in the $srcfile.
+set nthreads 10
+
+# Set a breakpoint and let all threads hit it (except the main
+# thread).
+
+set bkpt_line [gdb_get_line_number "set breakpoint here"]
+
+mi_create_breakpoint "$srcfile:$bkpt_line" \
+    "breakpoint at thread_function" \
+    -number 2 -function thread_function
+
+mi_send_resuming_command "exec-continue --all" "resume all"
+for {set i 0} {$i < $nthreads} {incr i} {
+    mi_expect_stop "breakpoint-hit" "thread_function" "\[^\n\]*" "$srcfile" \
+	"\[0-9\]*" {"" "disp=\"keep\""} "stop $i"
+}
+
+# All but the main thread should have hit it.
+
+mi_check_thread_states \
+    {"running" "stopped" "stopped" "stopped" "stopped" "stopped" "stopped" "stopped" "stopped" "stopped" "stopped"} \
+    "thread state: all stopped except the main thread"
+
+# Select a stopped thread to make sure we're able to delete
+# breakpoints
+mi_gdb_test "-thread-select 5" "\\^done.*" "select thread 5"
+
+# Now that we know about all the threads, we can get rid of
+# breakpoint.
+mi_delete_breakpoints
+
+# Recreate the same breakpoint, but this time, specific to thread 5.
+mi_create_breakpoint "-p 5 $srcfile:$bkpt_line" \
+    "thread specific breakpoint at thread_function" \
+    -number "3" -type "breakpoint" -disp "keep" -enabled "y" \
+    -func "thread_function" -line "$bkpt_line" -thread "5" -times "0"
+
+# Resume all threads.  Only thread 5 should report a stop.
+
+set running_re ""
+for {set i $nthreads} {$i > 1} {incr i -1} {
+    set running_re "$running_re\\*running,thread-id=\"$decimal\"\r\n"
+}
+# Don't append \r\n after last line.
+set running_re "$running_re\\*running,thread-id=\"$decimal\""
+
+mi_gdb_test "-exec-continue --all" "\[^\n\]*\r\n$running_re" \
+    "resume all, thread specific breakpoint"
+
+mi_expect_stop "breakpoint-hit" "thread_function" "\[^\n\]*" "$srcfile" \
+    "\[0-9\]*" {"" "disp=\"keep\""} "hit thread specific breakpoint"
+
+# All threads except both thread 5 (and the main thread) should now be
+# repeatedly hitting the thread specific breakpoint and stepping over
+# it transparently.  These are internal events, so the frontend should
+# see those threads as running.
+
+mi_check_thread_states \
+    {"running" "running" "running" "running" "stopped" "running" "running" "running" "running"} \
+    "thread state: all running except the breakpoint thread"
+
+# Get rid of the breakpoint while the other threads are stepping over
+# it, and tell all threads to exit.  The program should exit
+# gracefully shortly.  Send all commands in a row, since if something
+# goes wrong with moribund locations support or displaced stepping (or
+# a target bug if it can step over breakpoints itself), a spurious
+# SIGTRAP/SIGSEGV can come at any time after deleting the breakpoint.
+# Note that this causes multiple prompts to appear before the output
+# we are interested in, so we can't use mi_gdb_test or
+# gdb_test_multiple (or an MI equivalent)
+
+mi_gdb_test "102-break-delete" "102\\^done.*"
+set re [list \
+	    [string_list_to_regexp ~ {"} $] \
+	    $decimal \
+	    [string_list_to_regexp " = 1" \\ n {"} \r\n ^ done]]
+set re [join $re ""]
+mi_gdb_test "print done = 1" $re
+
+# Command exec-continue --all attempts to resume all threads, but only
+# thread 5 was stopped, so only that one is reported as running.
+set running_re "\\*running,thread-id=\"5\""
+mi_gdb_test "103-exec-continue --all" "\[^\n\]*\r\n$running_re" \
+
+gdb_expect {
+    -re "\\*stopped,reason=\"exited-normally\"" {
+       pass "resume all, program exited normally"
+    }
+    timeout {
+       fail "resume all, waiting for program exit (timeout)"
+    }
+}
+
+mi_gdb_exit

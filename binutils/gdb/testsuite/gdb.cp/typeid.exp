@@ -1,0 +1,72 @@
+# Copyright 2013-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile .cc
+
+require allow_cplus_tests
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile {debug c++}]} {
+    return -1
+}
+
+proc do_typeid_tests {started} {
+    global hex
+
+    # We might see the standard type or gdb's internal type.
+    set type_re "(std::type_info|gdb_gnu_v3_type_info)"
+
+    set var {ca b}
+    if {$started || ![test_compiler_info clang-*-* c++]} {
+	# Clang doesn't place type information for the base types in
+	# the executable, and relies on this being linked in from the
+	# standard library.  As a result, type information for these
+	# variables is only available once the inferior is started.
+	lappend var i cp ccp
+    }
+
+    foreach simple_var $var {
+	gdb_test "print &typeid($simple_var)" \
+	    " = \\($type_re \\*\\) $hex.*"
+
+	# Note that we test pointer equality rather than object
+	# equality here.  That is because std::type_info's operator==
+	# is not present in the libstdc++ .so.
+	gdb_test "print &typeid($simple_var) == &typeid(typeof($simple_var))" \
+	    " = true"
+    }
+
+    # typeid for these is Derived.  Don't try these tests until the
+    # inferior has started.
+    if {$started} {
+	foreach der_var {*b *vb1 *vb2 *bv d {const Derived} {const Derived &}} {
+	    gdb_test "print &typeid($der_var)" \
+		" = \\($type_re \\*\\) $hex.*"
+	    gdb_test "print &typeid($der_var) == &typeid(d)" \
+		" = true"
+	}
+    }
+}
+
+with_test_prefix "before starting" {
+    do_typeid_tests 0
+}
+
+if ![runto_main] {
+    return -1
+}
+
+with_test_prefix "after starting" {
+    do_typeid_tests 1
+}

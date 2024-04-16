@@ -1,0 +1,64 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# watchpoint-hw-attach.exp -- Test if hardware watchpoints are used
+# when attaching to a target.
+
+require allow_hw_watchpoint_tests
+
+require can_spawn_for_attach
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+# Run to the point where mypid in the test program has been
+# populated.
+gdb_breakpoint [gdb_get_line_number "pidacquired"]
+gdb_continue_to_breakpoint "pidacquired"
+
+# Get the PID of the test process.
+set testpid [get_integer_valueof "mypid" 0]
+
+gdb_test "detach" "Detaching from program: .*, process $testpid\r\n\\\[Inferior $decimal \\(process $testpid\\) detached\\\]"
+
+if {$testpid == ""} {
+    return -1
+}
+
+# A clean restart is needed to force the hardware watchpoint setup
+# logic to run post attach rather than post inferior launch.
+clean_restart $binfile
+
+gdb_test "attach $testpid" "Attaching to program: .*, process $testpid.*" "attach"
+
+# Ensure the test program is in the top frame so the required
+# variables are in scope.
+gdb_breakpoint $srcfile:[gdb_get_line_number "pidacquired"]
+gdb_continue_to_breakpoint "$srcfile:pidacquired"
+
+gdb_test_no_output "set should_continue = 1"
+
+gdb_test "watch watched_variable" \
+	 "Hardware watchpoint $decimal: watched_variable"
+
+gdb_test "continue" \
+	 "continue.*Continuing.*\.Hardware watchpoint $decimal: watched_variable.*Old value = 0.*New value = 4.*watched_variable\\);"

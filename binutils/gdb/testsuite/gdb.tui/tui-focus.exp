@@ -1,0 +1,143 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Testcase that just checks the tui 'focus' command works as expected.
+
+require allow_tui_tests
+
+tuiterm_env
+load_lib gdb-python.exp
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" ${testfile} ${srcfile}]} {
+    return -1
+}
+
+# Run a series of tests based on various test specifications.
+#
+# Each test specification is a tuple where the first item is the name of a
+# window, and the second item is a boolean indicating if we expect that
+# window to be present in the default (src) layout.
+foreach spec {{src true} {cmd true} {status true} {regs false} \
+		  {asm false} {unknown false}} {
+    lassign $spec window valid_p
+    with_test_prefix "window=$window" {
+
+	Term::clean_restart 24 80 $binfile
+	if {![Term::prepare_for_tui]} {
+	    unsupported "TUI not supported"
+	    return
+	}
+
+	Term::command_no_prompt_prefix "focus $window"
+
+	if {$valid_p} {
+	    # The 'status' window is special, it's present in the
+	    # default (src) layout, but is not focusable.
+	    if {$window == "status"} {
+		Term::check_region_contents "check focus error" 0 16 80 1 \
+		    "^Window \"$window\" cannot be focused\\s*"
+	    } else {
+		Term::check_region_contents "check focus message" 0 16 80 1 \
+		    "^Focus set to $window window\\.\\s*"
+	    }
+	} else {
+	    if {$window == "unknown"} {
+		Term::check_region_contents "check focus error" 0 16 80 1 \
+		    "^Unrecognized window name \"$window\"\\s*"
+	    } else {
+		Term::check_region_contents "check focus error" 0 16 80 1 \
+		    "^Window \"$window\" is not in the current layout\\s*"
+	    }
+	}
+
+	Term::check_box "check src box" 0 0 80 15
+
+	# At one point the following 'focus prev' command would trigger a
+	# crash in GDB, GDB was allowing users to set focus to the 'status'
+	# window, and 'focus prev' would then trigger an assert.
+	Term::command "focus prev"
+    }
+}
+
+# Use the Python TUI API to exercise some of the ambigous window name
+# handling parts of the 'focus' command.
+Term::clean_restart 24 80 $binfile
+if {[allow_python_tests]} {
+    # Create a very simple tui window.
+    gdb_py_test_silent_cmd \
+	[multi_line_input \
+	     "python" \
+	     "class TestWindow:" \
+	     "    def __init__(self, win):" \
+	     "        pass" \
+	     "" \
+	     "    def render(self):" \
+	     "        pass" \
+	     "end"] \
+	"setup dummy window class" \
+	true
+
+    # Register the window with a set of similar names.
+    gdb_test_no_output "python gdb.register_window_type(\"test1\", TestWindow)"
+    gdb_test_no_output "python gdb.register_window_type(\"test2\", TestWindow)"
+    gdb_test_no_output "python gdb.register_window_type(\"test3\", TestWindow)"
+
+    # Create a layout containing just one of the above windows.
+    gdb_test_no_output "tui new-layout example1 test2 1 status 1 cmd 1"
+
+    # Create a layout containing two of the above windows.
+    gdb_test_no_output "tui new-layout example2 test1 1 test2 1 status 1 cmd 1"
+
+    if {![Term::prepare_for_tui]} {
+	unsupported "TUI not supported"
+	return
+    }
+
+    # Try to focus using an ambiguous, partial window name.  This
+    # should fail as the default layout (src) doesn't include any
+    # windows matching this name.
+    Term::command_no_prompt_prefix "focus test"
+    Term::check_region_contents "check no matching window focus message" \
+	0 16 80 1 \
+	"^No windows matching \"test\" in the current layout\\s*"
+
+    # Now select a layout that includes a single window that matches
+    # the ambiguous, partial name 'test', and disable tui mode.
+    Term::command "layout example1"
+    send_gdb "tui disable\n"
+
+    # Reactivate tui mode and try to set focus using the ambiguous,
+    # partial window name.  This should succeed though, as, within the
+    # current layout, the partial name is not actually ambiguous.
+    send_gdb "focus test\n"
+    gdb_assert [Term::wait_for_region_contents 0 19 80 1 \
+		    "^Focus set to test2 window\\.\\s*"] \
+	"check test2 focus message"
+
+    # Now select a layout that includes two windows that matches the
+    # ambiguous, partial name 'test', and disable tui mode.
+    Term::command "layout example2"
+    send_gdb "tui disable\n"
+
+    # Reactivate tui mode and try to set focus using the ambiguous,
+    # partial window name.  This will fail as now the layout includes
+    # multiple windows that match 'test'.
+    send_gdb "focus test\n"
+    gdb_assert [Term::wait_for_region_contents 0 22 80 1 \
+		    "^Window name \"test\" is ambiguous\\s*"] \
+	"check ambiguous focus message"
+}

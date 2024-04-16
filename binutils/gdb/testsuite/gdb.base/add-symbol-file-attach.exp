@@ -1,0 +1,82 @@
+# Copyright (C) 2021-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This is a test case for bug 27831:
+#
+# https://sourceware.org/bugzilla/show_bug.cgi?id=27831
+#
+# Prior to fixing this bug, GDB could be caused to assert by doing
+# the following:  A simple program with a global was started outside
+# of GDB.  Once GDB was started, the symbol file was loaded in an
+# atypical manner via the 'add-symbol-file' command.  Then, the
+# program was attached to via the 'attach' command at which time the
+# symbol file was loaded again.  Once attached, printing the global
+# variable in the program would trigger the assertion error.
+#
+# This is what the assert looked like:
+#
+# gdb/symtab.c:6599: internal-error: get_msymbol_address:
+#   Assertion `(objf->flags & OBJF_MAINLINE) == 0' failed.
+
+require can_spawn_for_attach
+
+standard_testfile
+
+if {[build_executable $testfile.exp $testfile $srcfile debug] == -1} {
+    untested "failed to compile"
+    return -1
+}
+
+# Use 'spawn_wait_for_attach' to start the test program running.  It'll
+# also sleep for a short time in order to make sure that it's running
+# so that GDB may attach to it.
+
+set test_spawn_id [spawn_wait_for_attach $binfile]
+set testpid [spawn_id_get_pid $test_spawn_id]
+
+gdb_start
+
+# Load the symbol file in an atypical manner by using the add-symbol-file
+# command.
+
+set test "add-symbol-file before attach"
+gdb_test_multiple "add-symbol-file $binfile" $test {
+    -re "add symbol table from file.*y or n. $" {
+	send_gdb "y\n"
+	exp_continue
+    }
+    -re -wrap "Reading symbols from .*" {
+	pass $test
+    }
+}
+
+# Attach to the process started above.  GDB will want to load a "new"
+# symbol table, so handle that case.
+
+set test "attach"
+gdb_test_multiple "attach $testpid" $test {
+    -re "Attaching to process.*Load new symbol table.*y or n. $" {
+	send_gdb "y\n"
+	exp_continue
+    }
+    -re -wrap "Reading symbols from .*" {
+	pass $test
+    }
+}
+
+# Print out the value of the global.  Prior to fixing bug 27831, GDB
+# would assert while executing this command.
+
+gdb_test "print foo" "42"

@@ -1,0 +1,229 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2004-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+
+# This test verifies that a macro using backtrace can be applied to all threads
+# and will continue for each thread even though an error may occur in
+# backtracing one of the threads.
+
+standard_testfile
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable debug] != "" } {
+    return -1
+}
+
+clean_restart ${binfile}
+
+#
+# Run to `main' where we begin our tests.
+#
+
+if {![runto_main]} {
+    return 0
+}
+
+# Break after all threads have been started.
+set break_line [gdb_get_line_number "Break here"]
+gdb_test "b $break_line" ".*"
+gdb_test "continue"
+
+gdb_test_multiple "define backthread" "defining macro" {
+  -re "Type commands for definition of \"backthread\".\r\nEnd with a line saying just \"end\".\r\n>$" {
+    gdb_test_multiple "bt\np/x 20\nend" "macro details" {
+      -re "$gdb_prompt $" {
+        pass "macro details"
+      }
+    }
+    pass "defining macro"
+  }
+}
+
+# Cause backtraces to fail by setting a limit.  This allows us to
+# verify that the macro can get past the backtrace error and perform
+# subsequent commands.
+gdb_test_no_output "set backtrace limit 3"
+gdb_test "thread apply all backthread" "Thread ..*\\\$\[0-9]+ = 0x14.*Thread ..*\\\$\[0-9]+ = 0x14.*Thread ..*\\\$\[0-9]+ = 0x14.*Thread ..*\\\$\[0-9]+ = 0x14.*Thread ..*\\\$\[0-9]+ = 0x14.*Thread ..*\\\$\[0-9]+ = 0x14"
+
+# Go into the thread_function to check that a simple "thread apply"
+# does not change the selected frame.
+gdb_test "step" "thread_function.*" "step to the thread_function"
+gdb_test "up" ".*in main.*" "go up in the stack frame" 
+gdb_test "thread apply all print 1"  "Thread ..*\\\$\[0-9]+ = 1.*Thread ..*\\\$\[0-9]+ = 1.*Thread ..*\\\$\[0-9]+ = 1.*Thread ..*\\\$\[0-9]+ = 1.*Thread ..*\\\$\[0-9]+ = 1.*Thread ..*\\\$\[0-9]+ = 1" "run a simple print command on all threads"
+gdb_test "down" "#0.*thread_function.*" "go down and check selected frame"
+
+# Make sure that GDB doesn't crash when the previously selected thread
+# exits due to the command run via thread apply.  Regression test for
+# PR threads/13217.
+
+proc thr_apply_detach {thread_set} {
+    with_test_prefix "thread apply $thread_set" {
+	global binfile
+	global break_line
+
+	clean_restart ${binfile}
+
+	if ![runto_main] {
+	    return -1
+	}
+
+	gdb_breakpoint "$break_line"
+	gdb_continue_to_breakpoint "all threads started"
+
+	gdb_test "thread apply $thread_set detach" "Thread .*"
+	gdb_test "thread" "No thread selected" "switched to no thread selected"
+    }
+}
+
+# Test both "all" and a thread list, because those are implemented as
+# different commands in GDB.
+foreach thread_set {"all" "1.1 1.2 1.3"} {
+    thr_apply_detach $thread_set
+}
+
+# Test killing and removing inferiors from a command run via "thread
+# apply THREAD_SET".  THREAD_SET can be either "1.1", or "all".  GDB
+# used to mistakenly allow deleting the previously-selected inferior,
+# in some cases, leading to crashes.
+
+proc kill_and_remove_inferior {thread_set} {
+    global binfile
+    global gdb_prompt
+
+    # The test starts multiple inferiors, therefore non-extended
+    # remote is not supported.
+    if [use_gdb_stub] {
+	unsupported "using gdb stub"
+	return
+    }
+
+    set any "\[^\r\n\]*"
+    set ws "\[ \t\]\+"
+
+    clean_restart ${binfile}
+
+    with_test_prefix "start inferior 1" {
+	runto_main
+    }
+
+    # Add and start inferior number NUM.
+    proc add_and_start_inferior {num} {
+	global binfile
+
+	# Start another inferior.
+	gdb_test "add-inferior" "Added inferior $num.*" \
+	    "add empty inferior $num"
+	gdb_test "inferior $num" "Switching to inferior $num.*" \
+	    "switch to inferior $num"
+	gdb_test "file ${binfile}" ".*" "load file in inferior $num"
+
+	with_test_prefix "start inferior $num" {
+	    runto_main
+	}
+    }
+
+    # Start another inferior.
+    add_and_start_inferior 2
+
+    # And yet another.
+    add_and_start_inferior 3
+
+    gdb_test "thread 2.1" "Switching to thread 2.1 .*"
+
+    # Try removing an active inferior via a "thread apply" command.
+    # Should fail/warn.
+    with_test_prefix "try remove" {
+
+	gdb_define_cmd "remove" {
+	    "remove-inferiors 3"
+	}
+
+	# Inferior 3 is still alive, so can't remove it.
+	gdb_test "thread apply $thread_set remove" \
+	    "warning: Can not remove active inferior 3.*"
+	# Check that GDB restored the selected thread.
+	gdb_test "thread" "Current thread is 2.1 .*"
+
+	gdb_test "info inferiors" \
+	    [multi_line \
+		 "${ws}1${ws}process ${any}" \
+		 "\\\* 2${ws}process ${any}" \
+		 "${ws}3${ws}process ${any}" \
+		]
+    }
+
+    # Kill and try to remove inferior 2 while inferior 2 is selected.
+    # Removing the inferior should fail/warn.
+    with_test_prefix "try kill-and-remove" {
+
+	# The "inferior 1" command works around PR gdb/19318 ("kill
+	# inferior N" shouldn't switch to inferior N).
+	gdb_define_cmd "kill-and-remove" {
+	    "kill inferiors 2"
+	    "inferior 1"
+	    "remove-inferiors 2"
+	}
+
+	# Note that when threads=1.1, this makes sure we're really
+	# testing failure to remove the inferior the user had selected
+	# before the "thread apply" command, instead of testing
+	# refusal to remove the currently-iterated inferior.
+	gdb_test "thread apply $thread_set kill-and-remove" \
+	    "warning: Can not remove current inferior 2.*"
+	gdb_test "thread" "No thread selected" \
+	    "switched to no thread selected"
+
+	gdb_test "info inferiors" \
+	    [multi_line \
+		 "${ws}1${ws}process ${any}" \
+		 "\\\* 2${ws}<null>${any}" \
+		 "${ws}3${ws}process ${any}" \
+		]
+    }
+
+    # Try removing (the now dead) inferior 2 while inferior 1 is
+    # selected.  This should succeed.
+    with_test_prefix "try remove 2" {
+
+	gdb_test "thread 1.1" "Switching to thread 1.1 .*"
+
+	gdb_define_cmd "remove-again" {
+	    "remove-inferiors 2"
+	}
+
+	set test "thread apply $thread_set remove-again"
+	gdb_test_multiple $test $test {
+	    -re "warning: Can not remove.*$gdb_prompt $" {
+		fail $test
+	    }
+	    -re "$gdb_prompt $" {
+		pass $test
+	    }
+	}
+	gdb_test "thread" "Current thread is 1.1 .*"
+	# Check that only inferiors 1 and 3 are around.
+	gdb_test "info inferiors" \
+	    [multi_line \
+		 "\\\* 1${ws}process ${any}" \
+		 "${ws}3${ws}process ${any}" \
+		]
+    }
+}
+
+# Test both "all" and a thread list, because those are implemented as
+# different commands in GDB.
+foreach_with_prefix thread_set {"all" "1.1"} {
+    kill_and_remove_inferior $thread_set
+}

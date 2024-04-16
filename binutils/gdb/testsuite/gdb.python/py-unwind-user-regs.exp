@@ -1,0 +1,96 @@
+# Copyright (C) 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Setup an unwinder that uses gdb.UnwindInfo.add_saved_register with
+# the register's 'pc' and 'sp'.  On some (all?) targets, these
+# registers are implemented as user-registers, and so can't normally
+# be written to directly.
+#
+# The Python unwinder now includes code similar to how the expression
+# evaluator would handle something like 'set $pc=0x1234', we fetch the
+# value of '$pc', and then use the value's location to tell us which
+# register to write to.
+#
+# The unwinder defined here deliberately breaks the unwind by setting
+# the unwound $pc and $sp to be equal to the current frame's $pc and
+# $sp.  GDB will spot this as a loop in the backtrace and terminate
+# the unwind.
+#
+# However, by the time the unwind terminates we have already shown
+# that it is possible to call add_saved_register with a user-register,
+# so the test is considered passed.
+#
+# For completeness this test checks two cases, calling
+# add_saved_register with a gdb.RegisterDescriptor and calling
+# add_saved_register with a string containing the register name.
+
+load_lib gdb-python.exp
+
+require allow_python_tests
+
+standard_testfile
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+    return -1
+}
+
+if {![runto_main]} {
+    return 0
+}
+
+set pyfile [gdb_remote_download host ${srcdir}/${subdir}/${testfile}.py]
+
+gdb_breakpoint [gdb_get_line_number "Break here"]
+gdb_continue_to_breakpoint "stop at test breakpoint"
+
+# Load the script containing the unwinders.  There are actually two
+# unwinders defined here that will catch the same function, so we
+# immediately disable one of the unwinders.
+gdb_test_no_output "source ${pyfile}"\
+    "import python scripts"
+gdb_test "disable unwinder global \"break unwinding using strings\"" \
+    "1 unwinder disabled" "disable the unwinder that uses strings"
+
+# At this point we are using the unwinder that passes a
+# gdb.RegisterDescriptor to add_saved_register.
+gdb_test_sequence "bt"  "Backtrace corrupted by descriptor based unwinder" {
+    "\\r\\n#0 \[^\r\n\]* foo \\(\\) at "
+    "\\r\\n#1 \[^\r\n\]* bar \\(\\) at "
+    "Backtrace stopped: previous frame inner to this frame \\(corrupt stack\\?\\)"
+}
+
+# Disable the unwinder that calls add_saved_register with a
+# gdb.RegisterDescriptor, and enable the unwinder that calls
+# add_saved_register with a string (containing the register name).
+gdb_test "disable unwinder global \"break unwinding using descriptors\"" \
+    "1 unwinder disabled" "disable the unwinder that uses descriptors"
+gdb_test "enable unwinder global \"break unwinding using strings\"" \
+    "1 unwinder enabled" "enable the unwinder that uses strings"
+gdb_test_sequence "bt"  "Backtrace corrupted by string based unwinder" {
+    "\\r\\n#0 \[^\r\n\]* foo \\(\\) at "
+    "\\r\\n#1 \[^\r\n\]* bar \\(\\) at "
+    "Backtrace stopped: previous frame inner to this frame \\(corrupt stack\\?\\)"
+}
+
+# Just for completeness, disable the string unwinder again (neither of
+# our special unwinders are now enabled), and check the backtrace.  We
+# now get the complete stack back to main.
+gdb_test "disable unwinder global \"break unwinding using strings\"" \
+    "1 unwinder disabled" "disable the unwinder that uses strings again"
+gdb_test_sequence "bt"  "Backtrace not corrupted when using no unwinder" {
+    "\\r\\n#0 \[^\r\n\]* foo \\(\\) at "
+    "\\r\\n#1 \[^\r\n\]* bar \\(\\) at "
+    "\\r\\n#2 \[^\r\n\]* main \\(\\) at "
+}

@@ -1,0 +1,79 @@
+# Copyright 2005-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "ada.exp"
+
+require allow_ada_tests
+
+standard_ada_testfile pa
+
+foreach_with_prefix scenario {all minimal} {
+    set flags [list debug additional_flags=-fgnat-encodings=$scenario]
+
+    if {[gdb_compile_ada "${srcfile}" "${binfile}-${scenario}" executable $flags] != ""} {
+	return -1
+    }
+
+    clean_restart ${testfile}-${scenario}
+
+    set bp_location [gdb_get_line_number "STOP" ${testdir}/pa.adb]
+    runto "pa.adb:$bp_location"
+
+    gdb_test "print var" \
+	"= \\(4 => true, false, true, false, true\\)"
+
+    # Try printing the value and the type definition of a reference
+    # to variable "Var".
+
+    gdb_test "ptype &var" \
+	"type = access array \\(4 \\.\\. 8\\) of boolean <packed: 1-bit elements>"
+
+    gdb_test "print &var" \
+	"= \\(access pa.packed_array\\) 0x.*"
+
+    # Print the value of U_Var, an unconstrainted packed array.
+
+    set test "print u_var"
+    gdb_test_multiple "$test" "$test" {
+	-re "= \\(true, false, false, true, true, false\\)\[\r\n\]+$gdb_prompt $" {
+	    pass $test
+	}
+	-re "= \\(warning: unable to get bounds of array.*\\)\[\r\n\]+$gdb_prompt $" {
+	    # The compiler forgot to emit the packed array's ___XA type,
+	    # preventing us from determining the what the array bounds
+	    # are.  Observed with (FSF GNU Ada 4.5.3 20110124).
+	    xfail $test
+	}
+    }
+
+    set line "(4 => true, false, true, false, true)"
+    gdb_test "print o_var" \
+	[string_to_regexp " = ($line, $line, $line, $line)"]
+    gdb_test "print o2_var" \
+	[string_to_regexp " = ($line, $line, $line, $line)"]
+
+    # This is a regression test for a crash with
+    # -fgnat-encodings=minimal, and with 'all' the output is unusual,
+    # so restrict the test.
+    if {$scenario == "minimal"} {
+	set line "{true, false, true, false, true}"
+
+	gdb_test "set lang c" \
+	    "Warning: the current language does not match this frame."
+	gdb_test "print o2_var" \
+	    [string_to_regexp " = {$line, $line, $line, $line}"] \
+	    "print o2_var in c mode"
+    }
+}

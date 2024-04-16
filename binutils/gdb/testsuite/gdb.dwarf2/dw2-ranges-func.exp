@@ -1,0 +1,460 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+load_lib dwarf.exp
+
+# Test DW_AT_ranges in the context of a subprogram scope.
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+require is_c_compiler_gcc
+
+proc do_test {suffix} {
+    global gdb_test_file_name
+    global testfile binfile srcfile srcfile2 gdb_prompt hex
+
+    # Don't use standard_testfile; we want different binaries for
+    # each suffix.
+    set testfile $gdb_test_file_name-$suffix
+    set binfile [standard_output_file ${testfile}]
+    set srcfile $testfile.c
+    set srcfile2 $testfile-dw2.S
+
+    # We need to know the size of integer and address types in order to
+    # write some of the debugging info we'd like to generate.
+    #
+    # For that, we ask GDB by debugging our test program.  Any program
+    # would do, but since we already have it specifically for this
+    # testcase, might as well use that.
+
+    if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+	return -1
+    }
+
+    set asm_file [standard_output_file $srcfile2]
+    Dwarf::assemble $asm_file {
+	global srcdir subdir srcfile srcfile2
+	declare_labels integer_label volatile_label func_ranges_label cu_ranges_label L
+	set int_size [get_sizeof "int" 4]
+
+	# Find start address and length for our functions.
+	lassign [function_range main [list ${srcdir}/${subdir}/$srcfile]] \
+	    main_start main_len
+	set main_end "$main_start + $main_len"
+	lassign [function_range foo [list ${srcdir}/${subdir}/$srcfile]] \
+	    foo_start foo_len
+	set foo_end "$foo_start + $foo_len"
+	lassign [function_range foo_cold [list ${srcdir}/${subdir}/$srcfile]] \
+	    foo_cold_start foo_cold_len
+	set foo_cold_end "$foo_cold_start + $foo_cold_len"
+	lassign [function_range bar [list ${srcdir}/${subdir}/$srcfile]] \
+	    bar_start bar_len
+	set bar_end "$bar_start + $bar_len"
+	lassign [function_range baz [list ${srcdir}/${subdir}/$srcfile]] \
+	    baz_start baz_len
+	set baz_end "$baz_start + $baz_len"
+
+	set e_var [gdb_target_symbol e]
+
+	cu {} {
+	    compile_unit {
+		{language @DW_LANG_C}
+		{name dw-ranges-func2.c}
+		{stmt_list $L DW_FORM_sec_offset}
+		{low_pc 0 addr}
+		{ranges ${cu_ranges_label} DW_FORM_sec_offset}
+	    } {
+		integer_label: DW_TAG_base_type {
+		    {DW_AT_byte_size $int_size DW_FORM_sdata}
+		    {DW_AT_encoding  @DW_ATE_signed}
+		    {DW_AT_name      integer}
+		}
+		volatile_label: DW_TAG_volatile_type {
+		    {type :$integer_label}
+		}
+		DW_TAG_variable {
+		    {name e}
+		    {external 1 flag}
+		    {type :$volatile_label}
+		    {location {addr $e_var} SPECIAL_expr}
+		}
+		subprogram {
+		    {external 1 flag}
+		    {name main}
+		    {DW_AT_type :$integer_label}
+		    {low_pc $main_start addr}
+		    {high_pc $main_len DW_FORM_data4}
+		}
+		subprogram {
+		    {external 1 flag}
+		    {name foo}
+		    {ranges ${func_ranges_label} DW_FORM_sec_offset}
+		}
+		subprogram {
+		    {external 1 flag}
+		    {name bar}
+		    {low_pc $bar_start addr}
+		    {high_pc $bar_len DW_FORM_data4}
+		}
+		subprogram {
+		    {external 1 flag}
+		    {name baz}
+		    {low_pc $baz_start addr}
+		    {high_pc $baz_len DW_FORM_data4}
+		}
+	    }
+	}
+
+	lines {version 2} L {
+	    include_dir "${srcdir}/${subdir}"
+	    file_name "$srcfile" 1
+
+	    # Generate a line table program.  An attempt was made to make it
+	    # reasonably accurate as it made debugging the test case easier.
+	    program {
+		DW_LNE_set_address $main_start
+		line [gdb_get_line_number "main prologue"]
+		DW_LNS_copy
+		DW_LNE_set_address main_label
+		line [gdb_get_line_number "main foo call"]
+		DW_LNS_copy
+		DW_LNE_set_address main_label2
+		line [gdb_get_line_number "main return"]
+		DW_LNS_copy
+		DW_LNE_set_address $main_end
+		line [expr [gdb_get_line_number "main end"] + 1]
+		DW_LNS_copy
+		DW_LNE_end_sequence
+
+		DW_LNE_set_address $foo_start
+		line [gdb_get_line_number "foo prologue"]
+		DW_LNS_copy
+		DW_LNE_set_address foo_label
+		line [gdb_get_line_number "foo bar call"]
+		DW_LNS_copy
+		DW_LNE_set_address foo_label2
+		line [gdb_get_line_number "foo foo_cold call"]
+		DW_LNS_copy
+		DW_LNE_set_address foo_label3
+		line [gdb_get_line_number "foo end"]
+		DW_LNS_copy
+		DW_LNE_set_address $foo_end
+		DW_LNS_advance_line 1
+		DW_LNS_copy
+		DW_LNE_end_sequence
+
+		DW_LNE_set_address $bar_start
+		line [gdb_get_line_number "bar end"]
+		DW_LNS_copy
+		DW_LNS_advance_pc $bar_len
+		DW_LNS_advance_line 1
+		DW_LNS_copy
+		DW_LNE_end_sequence
+
+		DW_LNE_set_address $baz_start
+		line [gdb_get_line_number "baz end"]
+		DW_LNS_copy
+		DW_LNS_advance_pc $baz_len
+		DW_LNS_advance_line 1
+		DW_LNS_copy
+		DW_LNE_end_sequence
+
+		DW_LNE_set_address $foo_cold_start
+	        line [gdb_get_line_number "foo_cold prologue"]
+		DW_LNS_copy
+		DW_LNE_set_address foo_cold_label
+		line [gdb_get_line_number "foo_cold baz call"]
+		DW_LNS_copy
+		DW_LNE_set_address foo_cold_label2
+		line [gdb_get_line_number "foo_cold end"]
+		DW_LNS_copy
+		DW_LNE_set_address $foo_cold_end
+		DW_LNS_advance_line 1
+		DW_LNS_copy
+		DW_LNE_end_sequence
+	    }
+	}
+
+	# Generate ranges data.
+	ranges {is_64 [is_64_target]} {
+	    func_ranges_label: sequence {
+		range $foo_start $foo_end
+		range $foo_cold_start $foo_cold_end
+	    }
+	    cu_ranges_label: sequence {
+		range $foo_start $foo_end
+		range $foo_cold_start $foo_cold_end
+		range $main_start $main_end
+		range $bar_start $bar_end
+		range $baz_start $baz_end
+	    }
+	}
+    }
+
+    if { [prepare_for_testing "failed to prepare" ${testfile} \
+	      [list $srcfile $asm_file] {nodebug}] } {
+	return -1
+    }
+
+    if ![runto_main] {
+	return -1
+    }
+
+    set main_prologue_line_num [gdb_get_line_number "main prologue"]
+    # Do a sanity check to make sure that line number info is available.
+    gdb_test "info line main" \
+	"Line ${main_prologue_line_num} of .* starts at address .* and ends at .*"
+
+    with_test_prefix "step-test-1" {
+	set bp_foo_bar [gdb_get_line_number "foo bar call"]
+
+	gdb_test "break $bp_foo_bar" \
+	    "Breakpoint.*at.* file .*$srcfile, line $bp_foo_bar\\." \
+	    "break at call to bar"
+
+	gdb_test "continue" \
+	    "Continuing\\..*Breakpoint \[0-9\]+, foo \\(\\).*$bp_foo_bar\\s+bar\\s\\(\\);.*foo bar call.*" \
+	    "continue to call of bar"
+
+	gdb_test "step" \
+	    "bar \\(\\).*bar end.*" \
+	    "step into bar"
+
+	gdb_test "step" \
+	    "foo \\(\\).*foo foo_cold call.*" \
+	    "step out of bar, back into foo"
+    }
+
+    with_test_prefix "step-test-2" {
+	clean_restart ${testfile}
+	if ![runto_main] {
+	    return -1
+	}
+
+	# Note that the RE used for the following test will fail when the
+	# breakpoint has been set on multiple locations. E.g. "(2 locations)". 
+	# This is intentional since that behavior is one of the bugs that
+	# this test case tests for.
+	gdb_test "break foo" \
+	    "Breakpoint.*at.* file .*$srcfile, line \\d+\\."
+
+	# Continue to foo.  Allow execution to stop either on the prologue
+	# or on the call to bar since either behavior is acceptable though
+	# the latter is preferred.
+	set test "continue to foo"
+	gdb_test_multiple "continue" $test {
+	    -re "Breakpoint \\d+, foo \\(\\).*foo prologue.*${gdb_prompt}" {
+		pass $test
+		gdb_test "step" \
+			 "foo bar call .*" \
+			 "step to call of bar after landing on prologue"
+	    }
+	    -re "Breakpoint \\d+, foo \\(\\).*foo bar call.*${gdb_prompt}" {
+		pass $test
+	    }
+	}
+
+	gdb_test "step" \
+	    "bar \\(\\).*bar end.*" \
+	    "step into bar"
+
+	gdb_test "step" \
+	    "foo \\(\\).*foo foo_cold call.*" \
+	    "step out of bar, back into foo"
+    }
+
+    clean_restart ${testfile}
+    if ![runto_main] {
+	return -1
+    }
+
+    # Disassembly of foo should have multiple address ranges.
+    gdb_test_sequence "disassemble foo" "" [list \
+	"Dump of assembler code for function foo:" \
+	"Address range $hex to $hex:" \
+	"   $hex <\\+0>:" \
+	"Address range $hex to $hex:" \
+	"   $hex <(.+?)>:" \
+	"End of assembler dump\\." \
+    ]
+
+    set foo_cold_addr -1
+    set test "x/i foo_cold"
+    gdb_test_multiple $test $test {
+	-re "   ($hex) <foo.*?>.*${gdb_prompt}" {
+	    set foo_cold_addr $expect_out(1,string)
+	    pass $test
+	}
+    }
+
+    set foo_addr -1
+    set test "x/i foo"
+    gdb_test_multiple $test $test {
+	-re "   ($hex) <foo.*?>.*${gdb_prompt}" {
+	    set foo_addr $expect_out(1,string)
+	    pass $test
+	}
+    }
+
+    gdb_assert {$foo_cold_addr != $foo_addr} "foo and foo_cold are at different addresses"
+
+    # This more permissive RE for "break foo" will allow a breakpoint on
+    # multiple locations to PASS.  */
+    gdb_test "break foo" \
+	"Breakpoint.*at.*"
+
+    gdb_test "break baz" \
+	"Breakpoint.*at.* file .*$srcfile, line \\d+\\."
+
+    gdb_test "continue" \
+	"Breakpoint \\d+, foo \\(\\).*" \
+	"continue to foo"
+
+    gdb_test_no_output "set variable e=1"
+
+    # If GDB incorrectly places the foo breakpoint on multiple locations,
+    # then GDB will (incorrectly) stop in foo_cold instead of in baz.
+    gdb_test "continue" \
+	"Breakpoint \\d+, (?:$hex in )?baz \\(\\).*" \
+	"continue to baz"
+
+    with_test_prefix "no-cold-names" {
+
+	# Due to the calling sequence, this backtrace would normally
+	# show function foo_cold for frame #1.  However, we don't want
+	# this to be the case due to placing it in the same block
+	# (albeit at a different range) as foo.  Thus it is correct to
+	# see foo for frames #1 and #2.  It is incorrect to see
+	# foo_cold at frame #1.
+	gdb_test_sequence "bt" "backtrace from baz" {
+	    "\[\r\n\]#0 .*? baz \\(\\) "
+	    "\[\r\n\]#1 .*? foo \\(\\) "
+	    "\[\r\n\]#2 .*? foo \\(\\) "
+	    "\[\r\n\]#3 .*? main \\(\\) "
+	}
+
+	# Doing x/2i foo_cold should show foo_cold as the first symbolic
+	# address and an offset from foo for the second.  We also check to
+	# make sure that the offset is not too large - we don't GDB to
+	# display really large offsets that would (try to) wrap around the
+	# address space.
+	set foo_cold_offset 0
+	set test "x/2i foo_cold"
+	gdb_test_multiple $test $test {
+	    -re "   (?:$hex) <foo_cold>.*?\n   (?:$hex) <foo\[+-\](\[0-9\]+)>.*${gdb_prompt}" {
+	        set foo_cold_offset $expect_out(1,string)
+		pass $test
+	    }
+	}
+	gdb_assert {$foo_cold_offset <= 10000} "offset to foo_cold is not too large"
+
+	# Likewise, verify that second address shown by "info line" is at
+	# and offset from foo instead of foo_cold.
+	gdb_test "info line *foo_cold" "starts at address $hex <foo_cold> and ends at $hex <foo\[+-\].*?>.*"
+
+    }
+
+    with_test_prefix "step-test-3" {
+	clean_restart ${testfile}
+	if ![runto_main] {
+	    return -1
+	}
+
+	gdb_test "step" \
+		 "foo \\(\\).*bar \\(\\);.*foo bar call.*" \
+		 "step into foo from main"
+
+	gdb_test "step" \
+		 "bar \\(\\).*\}.* bar end.*" \
+		 "step into bar from foo"
+
+	gdb_test "step" \
+		 "foo(_label2)? \\(\\).*foo_cold \\(\\);.*foo foo_cold call.*" \
+		 "step out of bar to foo"
+
+	# Tests in the "enable_foo_cold_stepping" section, below, did
+	# not work prior to July, 2019.  They had been disabled via
+	# use of the "enable_foo_cold_stepping" flag.
+	# 
+	# As noted elsewhere, this test case causes foo_cold,
+	# originally a separate function invoked via a subroutine
+	# call, to be considered as part of foo via use of
+	# DW_AT_ranges.  Real code that I've looked at uses a branch
+	# instruction to cause code in the "cold" range to be
+	# executed.  These tests used to fail which is why they were
+	# disabled.
+	#
+	# After adding a "hi" cold test, I found that we were able to
+	# step into foo_cold from foo for the "hi" version, but for
+	# the "lo" version, GDB would run to either the next
+	# breakpoint or until the inferior exited when there were no
+	# breakpoints.  Not being able to step is definitely a bug
+	# even if it's unlikely that this problem would ever be hit in
+	# a real program.  Therefore, the bug was fixed in GDB and
+	# these tests are now enabled.
+	#
+	# I've left in place the flag (and test) which may be used to
+	# disable these tests.
+
+	set enable_foo_cold_stepping true
+
+	if { $enable_foo_cold_stepping } {
+	    gdb_test_no_output "set variable e=1"
+
+	    set test "step into foo_cold from foo"
+	    gdb_test_multiple "step" $test {
+		-re "foo(_low)? \\(\\).*\{.*foo_cold prologue.*${gdb_prompt}" {
+		    pass $test
+		    gdb_test "step" \
+			     "foo \\(\\).*baz \\(\\);.*foo_cold baz call.*" \
+			     "step to baz call in foo_cold"
+
+		}
+		-re "foo(_cold)? \\(\\).*baz \\(\\);.*foo_cold baz call.*${gdb_prompt}" {
+		    pass $test
+		}
+	    }
+
+	    gdb_test "step" \
+		     "baz \\(\\).*\}.*baz end.*" \
+		     "step into baz from foo_cold"
+
+	    gdb_test "step" \
+		     "foo(?:_low(?:_label2)?)? \\(\\).*\}.*foo_cold end.*" \
+		     "step out of baz to foo_cold"
+
+	    gdb_test "step" \
+		     "foo(?:_label3)? \\(\\).*\}.*foo end.*" \
+		     "step out of foo_cold to foo"
+	} else {
+	    gdb_test "next" \
+		     ".*foo end.*" \
+		     "next over foo_cold call"
+	}
+
+	gdb_test "step" \
+		 "main(?:_label2)? \\(\\).*" \
+		 "step out of foo to main"
+    }
+}
+
+# foreach_with_prefix could be used here, but the log file output is somewhat
+# less verbose when using an explicit "with_test_prefix".
+
+foreach test_suffix { "lo-cold" "hi-cold" } {
+    with_test_prefix $test_suffix {
+	do_test $test_suffix
+    }
+}

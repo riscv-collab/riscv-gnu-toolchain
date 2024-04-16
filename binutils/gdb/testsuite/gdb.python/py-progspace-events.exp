@@ -1,0 +1,125 @@
+# Copyright (C) 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It tests the program space
+# related events in the Python API.
+
+load_lib gdb-python.exp
+
+require allow_python_tests
+
+standard_testfile
+
+if {[prepare_for_testing "preparing" $testfile $srcfile] == -1} {
+    return -1
+}
+
+set pyfile [gdb_remote_download host ${srcdir}/${subdir}/py-progspace-events.py]
+gdb_test_no_output "source ${pyfile}" "load python file"
+
+if {![runto_main]} {
+    return
+}
+
+gdb_breakpoint breakpt
+
+gdb_continue_to_breakpoint "run to breakpt function"
+
+gdb_test_no_output "set detach-on-fork off"
+
+# Continue until the parent process forks and a new child is added.
+# Done this way so we can count the new progspace events; we expect to
+# see exactly one.
+set new_progspace_event_count 0
+gdb_test_multiple "continue" "continue until child process appears" {
+    -re "^NewProgspaceEvent: <gdb.Progspace object at $hex>\r\n" {
+	# This is a correctly formed event line.
+	incr new_progspace_event_count
+	exp_continue
+    }
+
+    -re "^NewProgspaceEvent:\[^\r\n\]+\r\n" {
+	# This is an incorrectly formed event line.
+	fail $gdb_test_name
+    }
+
+    -re "^$gdb_prompt $" {
+	pass $gdb_test_name
+    }
+
+    -re "^\[^\r\n\]*\r\n" {
+	exp_continue
+    }
+}
+
+gdb_assert { $new_progspace_event_count == 1 } \
+    "only a single new progspace event seen"
+
+# Switch to inferior 2 and continue until we hit breakpt.
+gdb_test "inferior 2" "\\\[Switching to inferior 2 .*"
+gdb_continue_to_breakpoint "run to breakpt in inferior 2"
+
+# Let inferior 2 exit.  The new program space is not removed at this
+# point.
+gdb_test "continue" \
+    [multi_line \
+	 "^Continuing\\." \
+	 "\\\[Inferior $decimal \[^\r\n\]+ exited normally\\\]"] \
+    "continue until inferior 2 exits"
+
+gdb_test "inferior 1" "\\\[Switching to inferior 1 .*"
+
+# Step the inferior.  During this process GDB will prune the now
+# defunct inferior, which deletes its program space, which should
+# trigger the FreeProgspaceEvent.
+#
+# However, there is a slight problem.  When the target is remote, and
+# GDB is accessing files using remote fileio, then GDB will attempt to
+# prune the inferior at a point in time when the remote target is
+# waiting for a stop reply.  Pruning an inferior causes GDB to close
+# files associated with that inferior.
+#
+# In non-async mode we can't send fileio packets while waiting for a
+# stop reply, so the attempts to close files fails, and this shows up
+# as an error.
+#
+# As this error has nothing to do with the feature being tested here,
+# we just accept the error message, the important part is the
+# 'FreeProgspaceEvent' string, so long as that appears (just once)
+# then the test is a success.
+set warning_msg \
+    [multi_line \
+	 "warning: cannot close \"\[^\r\n\]+\": Cannot execute this command while the target is running\\." \
+	 "Use the \"interrupt\" command to stop the target" \
+	 "and then try again\\."]
+
+gdb_test "step" \
+    [multi_line \
+	 "^FreeProgspaceEvent: <gdb.Progspace object at $hex>(?:\r\n$warning_msg)*" \
+	 "do_parent_stuff \\(\\) at \[^\r\n\]+" \
+	 "$decimal\\s+\[^\r\n\]+"]
+
+# Let this inferior run to completion.
+gdb_continue_to_end
+
+# Check the program space events trigger when a new inferior is
+# manually added and removed.
+gdb_test "add-inferior" \
+    [multi_line \
+	 "^NewProgspaceEvent: <gdb.Progspace object at $hex>" \
+	 "\\\[New inferior 3\\\]" \
+	 "Added inferior 3\[^\r\n\]*"]
+gdb_test "remove-inferior 3" \
+    "^FreeProgspaceEvent: <gdb.Progspace object at $hex>"

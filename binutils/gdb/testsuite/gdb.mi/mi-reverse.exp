@@ -1,0 +1,164 @@
+# Copyright 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test Machine interface (MI) operations
+# Verify that, using the MI, we can run a simple program in both forward
+# and reverse directions with the following execution commands:
+# - exec-continue
+# - exec-finish
+# - exec-next
+# - exec-step
+# - exec-next-instruction
+# - exec-step-instruction
+
+# The goal is not to test gdb functionality, which is done by other tests,
+# but to verify the correct output response to MI operations.
+#
+
+require supports_reverse
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+standard_testfile basics.c
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug}] != "" } {
+     untested "failed to compile"
+     return -1
+}
+
+mi_clean_restart $binfile
+mi_runto_main
+
+if [supports_process_record] {
+    # Activate process record/replay
+    if [mi_gdb_test "-interpreter-exec console record" \
+	    "=record-started,thread-group=\"i1\",method=\"full\"\r\n\\^done" \
+	    "Turn on process record"] {
+	warning "Fail to activate process record/replay, tests in this group will not be performed.\n"
+	return -1
+    }
+}
+
+# Locate line numbers in basics.c.
+set line_callee4_head  [gdb_get_line_number "callee4 ("]
+set line_callee4_body  [expr $line_callee4_head + 2]
+set line_callee3_head  [gdb_get_line_number "callee3 ("]
+set line_callee3_body  [expr $line_callee3_head + 2]
+set line_callee3_close [expr $line_callee3_head + 3]
+set line_callee2_head  [gdb_get_line_number "callee2 ("]
+set line_callee2_body  [expr $line_callee2_head + 2]
+set line_callee2_close [expr $line_callee2_head + 3]
+set line_callee1_head  [gdb_get_line_number "callee1 ("]
+set line_callee1_body  [expr $line_callee1_head + 2]
+set line_callee1_close [expr $line_callee1_head + 3]
+set line_callme_head   [gdb_get_line_number "callme"]
+set line_callme_body   [expr $line_callme_head + 2]
+set line_main_head     [gdb_get_line_number "main ("]
+set line_main_body     [expr $line_main_head + 2]
+set line_main_hello    [gdb_get_line_number "Hello, World!"]
+set line_main_callme_1 [gdb_get_line_number "callme (1"]
+
+# Forward execute to the callme() function, so that we can
+# execute backward from there.
+mi_continue_to callme
+mi_delete_breakpoints
+
+proc test_controlled_execution_reverse {} {
+    global mi_gdb_prompt
+    global srcfile
+    global hex
+
+    global line_callee4_head line_callee4_body
+    global line_callee3_head line_callee3_body line_callee3_close
+    global line_callee2_head line_callee2_body line_callee2_close
+    global line_callee1_head line_callee1_body line_callee1_close
+    global line_main_head    line_main_body
+    global line_main_hello   line_main_callme_1
+
+    # Test exec-reverse-finish
+
+    mi_execute_to "exec-finish --reverse" \
+	"end-stepping-range" "main" "" \
+	"basics.c" $line_main_callme_1 "" \
+	"reverse finish from callme"
+
+    # Test exec-reverse-next
+
+    mi_execute_to "exec-next --reverse" \
+ 	"end-stepping-range" "main" "" \
+ 	"basics.c" $line_main_hello "" \
+ 	"reverse next to get over the call to do_nothing"
+
+    # Test exec-reverse-step
+
+    mi_execute_to "exec-step --reverse" \
+ 	"end-stepping-range" "callee1" \
+	"\{name=\"intarg\",value=\"2\"\},\{name=\"strarg\",value=\"$hex \\\\\"A string argument\.\\\\\"\"\},\{name=\"fltarg\",value=\"3.5\[0-9\]*\"\}" \
+ 	"basics.c" $line_callee1_close "" \
+ 	"reverse step to callee1"
+
+    mi_execute_to "exec-step --reverse" \
+ 	"end-stepping-range" "callee2" \
+	"\{name=\"intarg\",value=\"2\"\},\{name=\"strarg\",value=\"$hex \\\\\"A string argument\.\\\\\"\"\}" \
+ 	"basics.c" $line_callee2_close "" \
+ 	"reverse step to callee2"
+
+    mi_execute_to "exec-step --reverse" \
+ 	"end-stepping-range" "callee3" \
+	"\{name=\"strarg\",value=\"$hex \\\\\"A string argument\.\\\\\"\"\}" \
+ 	"basics.c" $line_callee3_close "" \
+ 	"reverse step to callee3"
+
+    mi_execute_to "exec-step --reverse" \
+ 	"end-stepping-range" "callee4" "" \
+ 	"basics.c" "\[0-9\]+" "" \
+ 	"reverse step to callee4"
+
+    # Test exec-reverse-[step|next]-instruction
+
+    mi_execute_to "exec-step-instruction --reverse" \
+        "end-stepping-range" "callee4" "" \
+        "basics.c" "\[0-9\]+" "" \
+        "reverse-step-instruction at callee4"
+
+    mi_execute_to "exec-next-instruction --reverse" \
+        "end-stepping-range" "callee4" "" \
+        "basics.c" "\[0-9\]+" "" \
+        "reverse-next-instruction at callee4"
+
+    # Test exec-reverse-continue
+
+    mi_create_breakpoint "-t basics.c:$line_callee3_head" \
+	"insert temp breakpoint at basics.c:$line_callee3_head" \
+	-number 3 -disp del -func callee3 -file ".*basics.c" \
+	-line $line_callee3_body
+
+    mi_execute_to "exec-continue --reverse" \
+        "breakpoint-hit" "callee3" \
+	"\{name=\"strarg\",value=\"$hex \\\\\"A string argument\.\\\\\"\"\}" \
+        "basics.c" "\[0-9\]+" \
+	{ "" "disp=\"del\""} \
+        "reverse-continue at callee3"
+
+    mi_execute_to "exec-continue --reverse" \
+        "no-history" "main" "" \
+        "basics.c" $line_main_body "" \
+        "reverse-continue at main"
+}
+
+test_controlled_execution_reverse
+
+mi_gdb_exit

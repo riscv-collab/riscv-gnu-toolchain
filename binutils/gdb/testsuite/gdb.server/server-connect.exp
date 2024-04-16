@@ -1,0 +1,110 @@
+# This testcase is part of GDB, the GNU debugger.
+#
+# Copyright 2018-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test multiple types of connection (IPv4, IPv6, TCP, UDP) and make
+# sure both gdbserver and GDB work.
+
+load_lib gdbserver-support.exp
+
+standard_testfile normal.c
+
+require allow_gdbserver_tests
+
+# We want to have control over where we start gdbserver.
+require {!is_remote target}
+
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile debug] } {
+    return -1
+}
+
+# Make sure we're disconnected, in case we're testing with an
+# extended-remote board, therefore already connected.
+gdb_test "disconnect" ".*"
+
+set target_exec [gdbserver_download_current_prog]
+
+# An array containing the test instructions for each scenario.  The
+# description of each field is as follows:
+#
+# - The connection specification to be used when starting
+#   gdbserver/GDB.  This string will be used to set the
+#   GDB_TEST_SOCKETHOST when calling gdbserver_start.
+#
+# - A flag indicating whether gdbserver should fail when we attempt to
+#   start it.  Useful when testing erroneous connection specs such as
+#   "tcp8:".
+#
+# - The prefix that should be prepended to the test messages.
+set test_params \
+    { \
+	  { "tcp4:127.0.0.1" 0 "tcp4" } \
+	  { "tcp6:::1"       0 "tcp6" } \
+	  { "tcp6:[::1]"     0 "tcp6-with-brackets" } \
+	  { "tcp:localhost"  0 "tcp" } \
+	  { "udp4:127.0.0.1" 0 "udp4" } \
+	  { "udp6:::1"       0 "udp6" } \
+	  { "udp6:[::1]"     0 "udp6-with-brackets" } \
+	  { "tcp8:123"       1 "tcp8" } \
+	  { "udp123:::"      1 "udp123" } \
+	  { "garbage:1234"   1 "garbage:1234" } \
+    }
+
+# The best way to test different types of connections is to set the
+# GDB_TEST_SOCKETHOST variable accordingly.
+save_vars { GDB_TEST_SOCKETHOST } {
+    foreach line $test_params {
+	set sockhost [lindex $line 0]
+	set gdbserver_should_fail [lindex $line 1]
+	set prefix [lindex $line 2]
+
+	with_test_prefix $prefix {
+	    set GDB_TEST_SOCKETHOST $sockhost
+	    set test "start gdbserver"
+
+	    # Try to start gdbserver.
+	    set catchres [catch {set res [gdbserver_start "" $target_exec]} errmsg]
+
+	    if { $catchres != 0 } {
+		if { $gdbserver_should_fail } {
+		    pass "$test: gdbserver failed as expected"
+		} else {
+		    fail "$test: $errmsg"
+		}
+		continue
+	    } else {
+		if { $gdbserver_should_fail } {
+		    fail "$test: gdbserver should fail but did not"
+		} else {
+		    pass "$test"
+		}
+	    }
+
+	    set gdbserver_protocol [lindex $res 0]
+	    set gdbserver_gdbport [lindex $res 1]
+	    set test "connect to gdbserver using $sockhost"
+
+	    set res [gdb_target_cmd_ext $gdbserver_protocol $gdbserver_gdbport]
+	    if { $res == 0 } {
+		pass $test
+	    } elseif { $res == 1 }  {
+		fail $test
+	    } else {
+		unsupported $test
+	    }
+	}
+    }
+}

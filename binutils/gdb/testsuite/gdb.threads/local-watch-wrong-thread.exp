@@ -1,0 +1,114 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test verifies that a local watchpoint isn't deleted when a
+# thread other than the thread the local watchpoint was set in stops
+# for a breakpoint.
+
+require allow_hw_watchpoint_multi_tests
+
+standard_testfile
+if {[gdb_compile_pthreads \
+	 "${srcdir}/${subdir}/${srcfile}" \
+	 "${binfile}" executable {debug} ] != "" } {
+    return -1
+}
+
+clean_restart ${binfile}
+
+gdb_test_no_output "set can-use-hw-watchpoints 1" ""
+
+if {![runto_main]} {
+    return
+}
+
+set inc_line_1 [gdb_get_line_number "Loop increment 1"]
+set inc_line_2 [gdb_get_line_number "Loop increment 2"]
+set bkpt_here [gdb_get_line_number "set breakpoint here"]
+
+# Run to the loop within thread_function0, so we can set our local
+# watchpoint.
+gdb_test "break ${srcfile}:${inc_line_1}" \
+    "Breakpoint 2 at .*: file .*${srcfile}, line .*" \
+    "breakpoint on thread_function0"
+
+gdb_test "continue" \
+    ".*Breakpoint 2.*thread_function0.*" \
+    "continue to thread_function0"
+
+delete_breakpoints
+
+# Set the local watchpoint, and confirm that it traps as expected.
+gdb_test "watch *myp" \
+    "Hardware watchpoint 3\: \\*myp.*" \
+    "set local watchpoint on *myp"
+
+gdb_test "continue" \
+    "Hardware watchpoint.*Old value.*New value.*thread_function0.*" \
+    "local watchpoint triggers"
+
+delete_breakpoints
+
+# Recreate the watchpoint, but this time with a condition we know
+# won't trigger.  This is so the watchpoint is inserted, and the
+# target reports events, but GDB doesn't stop for them.  We want to
+# hit the breakpoints on the other thread, and make sure this
+# watchpoint isn't deleted then.
+gdb_test "watch *myp if trigger != 0" \
+    "Hardware watchpoint 4\: \\*myp.*" \
+    "set local watchpoint on *myp, with false conditional"
+
+# Run to a breakpoint on a different thread.  The previous local
+# watchpoint should not be deleted with the standard 'the program has
+# left the block in which its expression is valid', because the
+# thread_function0 thread should still be running in the loop.
+gdb_test "break ${srcfile}:${inc_line_2}" \
+    "Breakpoint 5 at .*: file .*${srcfile}, line .*" \
+    "breakpoint on the other thread"
+
+gdb_test "continue" \
+    "Breakpoint 5, thread_function1.*" \
+    "the other thread stopped on breakpoint"
+
+# Delete the new breakpoint, we don't need it anymore.
+gdb_test_no_output "delete 5" ""
+
+# Check if the local watchpoint hasn't been deleted (is still listed).
+# This is simpler to check than expecting 'the program has left ...',
+# and, is immune to string changes in that warning.
+gdb_test "info breakpoints" \
+    ".*4.*hw watchpoint.*keep.*y.*\\*myp.*" \
+    "local watchpoint is still in breakpoint list"
+
+# Make the watchpoint condition eval true.
+gdb_test_no_output "set trigger=1" "let local watchpoint trigger"
+
+gdb_test "continue" \
+    "Hardware watchpoint.*Old value.*New value.*thread_function0.*" \
+    "local watchpoint still triggers"
+
+# Confirm that the local watchpoint is indeed deleted when
+# thread_function0 returns.
+gdb_test_no_output "set *myp=0" "let thread_function0 return"
+
+gdb_test "break ${srcfile}:${bkpt_here}" \
+    "Breakpoint 6 at .*: file .*${srcfile}, line .*" \
+    "breakpoint on thread_function0's caller"
+
+gdb_test "continue" \
+    ".*Watchpoint.*deleted.*" \
+    "local watchpoint automatically deleted"

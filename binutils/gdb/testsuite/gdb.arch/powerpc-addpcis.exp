@@ -1,0 +1,114 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+
+# Test to confirm that gdb is properly single stepping over the
+# displaced addpcis instruction.
+# The addpcis instruction and its extended mnemonics lnia and subpcis
+# apply an immediate shifted value (X || 0x0000) to the current PC/NIA
+# value, and store that value into the instructions target register.
+# When the instruction is displaced, it needs special handling.
+
+# lnia Rx == addpcis Rx,0
+# subcis Rx,value == addpcis Rx,-value
+
+require {istarget powerpc*-*}
+
+set retval 0
+
+standard_testfile .s
+
+if { [prepare_for_testing "failed to prepare" $testfile "$srcfile" \
+      {debug quiet}] } {
+    return -1
+}
+
+if {![runto_main]} {
+      return
+}
+
+set check_pc [get_hexadecimal_valueof "\$pc" "default0"]
+set bp1 *$check_pc+4
+set bp2 *$check_pc+12
+set bp3 *$check_pc+16
+gdb_breakpoint $bp1
+gdb_breakpoint $bp2
+gdb_breakpoint $bp3
+
+set insn_supported 1
+gdb_test_multiple "stepi" "set r3" {
+    -re "Program received signal SIGILL, Illegal instruction\\..*" {
+	set insn_supported 0
+    }
+    -re -wrap "" {
+	pass $gdb_test_name
+    }
+}
+if { ! $insn_supported } {
+    unsupported "illegal instruction"
+    return
+}
+set check_r3 [get_hexadecimal_valueof "\$r3" "default0"]
+gdb_test "stepi" "" "set r4"
+set check_r4 [get_hexadecimal_valueof "\$r4" "default0"]
+gdb_test "stepi" "" "set r5"
+set check_r5 [get_hexadecimal_valueof "\$r5" "default0"]
+gdb_test "stepi" "" "set r6"
+set check_r6 [get_hexadecimal_valueof "\$r6" "default0"]
+gdb_test "stepi" "" "set r7"
+set check_r7 [get_hexadecimal_valueof "\$r7" "default0"]
+gdb_test "stepi" "" "set r8"
+set check_r8 [get_hexadecimal_valueof "\$r8" "default0"]
+gdb_test "stepi" "" "set r9"
+set check_r9 [get_hexadecimal_valueof "\$r9" "default0"]
+
+# R6 will contain the reference value.  All other
+# instructions in this test will be storing values
+# relative to what is stored in R6.
+
+#	subpcis 3,+0x100 	# /* set r3 */
+#	subpcis 4,+0x10		# /* set r4 */
+#	subpcis 5,+0x1		# /* set r5 */
+#	lnia    6		# /* set r6 */
+#	addpcis 7,+0x1		# /* set r7 */
+#	addpcis 8,+0x10		# /* set r8 */
+#	addpcis 9,+0x100	# /* set r9 */
+
+if [expr $check_r3 + 0x1000000   != $check_r6 - 0xc ] {
+    fail "unexpected value r3 + 0x1,000,000 != r6 + 0xc ; r3: $check_r3  r6: $check_r6 "
+}
+if [expr $check_r4 + 0x100000  != $check_r6 - 0x8 ] {
+    fail "unexpected value r4 + 0x100,000 != r6 - 0x8 ; r4: $check_r4  r6: $check_r6 "
+}
+if [expr $check_r5 + 0x10000  != $check_r6 - 0x4 ] {
+    fail "unexpected value r5 + 0x10,000 != r6 , r5: $check_r5  r6: $check_r6 "
+}
+if [expr $check_r6 != $check_r6] {
+    fail "unexpected value r6 != r6 , r6: $check_r6  r6: $check_r6 "
+}
+if [expr $check_r7 - 0x10000  != $check_r6 + 0x4] {
+    fail "unexpected value r7 - 0x10,000 != r6 + 0x4 , r7: $check_r7  r7: $check_r6 "
+}
+if [expr $check_r8 - 0x100000  != $check_r6 + 0x8 ] {
+    fail "unexpected value r8 - 0x100,000 != r6 , r8: $check_r8  r8: $check_r6 "
+}
+if [expr $check_r9 - 0x1000000  != $check_r6 + 0xc ] {
+    fail "unexpected value r9 - 0x1,000,000 != r6 + 0xc , r9: $check_r9  r6: $check_r6 "
+}
+
+gdb_test "info break"
+gdb_test "info register r3 r4 r5 r6 r7 r8 r9"
+gdb_test "disas main"
+

@@ -1,0 +1,168 @@
+# Copyright 2019-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test -symbol-info-modules, listing Fortran modules.
+
+require allow_fortran_tests
+
+load_lib fortran.exp
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+standard_testfile "mi-fortran-modules.f90" "mi-fortran-modules-2.f90"
+
+if {[build_executable "failed to prepare" ${testfile} \
+	 [list $srcfile2 $srcfile] {debug f90}]} {
+    return -1
+}
+
+mi_clean_restart $binfile
+
+# Avoid shared lib symbols.
+mi_gdb_test "-gdb-set auto-solib-add off" "\\^done"
+
+mi_runto_main
+
+# Avoid libc symbols.
+mi_gdb_test {-interpreter-exec console "nosharedlibrary"}
+
+# Patterns to skip optional system modules that appear with later versions of GFortran.
+set system_modules_pattern \
+    "\{filename=\"\[^\"\]+/ieee/\[^/\]+\.F90\",fullname=\"\[^\"\]+\",symbols=\\\[(\[^\]\]+)\\\]\},.*"
+set system_module_symbols_pattern \
+    "\{module=\"\[^\"\]*ieee\[^\"\]*\",files=\\\[\{filename=\"\[^\"\]+\",fullname=\"\[^\"\]+\",symbols=\\\[\[^\]\]+\\\]\}\\\]\},.*"
+
+mi_gdb_test "101-symbol-info-modules" \
+    "101\\^done,symbols=\{debug=\\\[($system_modules_pattern)*\{filename=\"\[^\"\]+$srcfile2\",fullname=\"\[^\"\]+$srcfile2\",symbols=\\\[\{line=\"16\",name=\"mod1\"\},\{line=\"27\",name=\"mod2\"\}\\\]\},\{filename=\"\[^\"\]+$srcfile\",fullname=\"\[^\"\]+$srcfile\",symbols=\\\[\{line=\"16\",name=\"mod3\"\},\{line=\"32\",name=\"modmany\"\},\{line=\"41\",name=\"moduse\"\}\\\]\}\\\]\}" \
+    "-symbol-info-modules"
+
+mi_gdb_test "102-symbol-info-modules --name mod\[123\]" \
+    "102\\^done,symbols=\{debug=\\\[\{filename=\"\[^\"\]+$srcfile2\",fullname=\"\[^\"\]+$srcfile2\",symbols=\\\[\{line=\"16\",name=\"mod1\"\},\{line=\"27\",name=\"mod2\"\}\\\]\},\{filename=\"\[^\"\]+$srcfile\",fullname=\"\[^\"\]+$srcfile\",symbols=\\\[\{line=\"16\",name=\"mod3\"\}\\\]\}\\\]\}" \
+    "-symbol-info-modules --name mod\[123\]"
+
+mi_gdb_test "103-symbol-info-modules --name moduse" \
+    "103\\^done,symbols=\{debug=\\\[\{filename=\"\[^\"\]+$srcfile\",fullname=\"\[^\"\]+$srcfile\",symbols=\\\[\{line=\"41\",name=\"moduse\"\}\\\]\}\\\]\}" \
+    "-symbol-info-modules --name moduse"
+
+set test "-symbol-info-module-functions"
+set cmd "104-symbol-info-module-functions"
+set mod1_re \
+    "\{module=\"mod1\",files=\\\[\{filename=\"\[^\"\]+$srcfile2\",fullname=\"\[^\"\]+$srcfile2\",symbols=\\\[\{line=\"21\",name=\"mod1::check_all\",type=\"void \\(void\\)\",description=\"void mod1::check_all\\(void\\);\"\}\\\]\}\\\]\}"
+set mod2_re \
+    "\{module=\"mod2\",files=\\\[\{filename=\"\[^\"\]+$srcfile2\",fullname=\"\[^\"\]+$srcfile2\",symbols=\\\[\{line=\"30\",name=\"mod2::check_var_i\",type=\"void \\(void\\)\",description=\"void mod2::check_var_i\\(void\\);\"\}\\\]\}\\\]\}"
+set mod3_re \
+    "\{module=\"mod3\",files=\\\[\{filename=\"\[^\"\]+$srcfile\",fullname=\"\[^\"\]+$srcfile\",symbols=\\\[\{line=\"21\",name=\"mod3::check_all\",type=\"void \\(void\\)\",description=\"void mod3::check_all\\(void\\);\"\},\{line=\"27\",name=\"mod3::check_mod2\",type=\"void \\(void\\)\",description=\"void mod3::check_mod2\\(void\\);\"\}\\\]\}\\\]\}"
+set modmany_re \
+    "\{module=\"modmany\",files=\\\[\{filename=\"\[^\"\]+$srcfile\",fullname=\"\[^\"\]+$srcfile\",symbols=\\\[\{line=\"35\",name=\"modmany::check_some\",type=\"void \\(void\\)\",description=\"void modmany::check_some\\(void\\);\"\}\\\]\}\\\]\}"
+set moduse_re \
+    "\{module=\"moduse\",files=\\\[\{filename=\"\[^\"\]+$srcfile\",fullname=\"\[^\"\]+$srcfile\",symbols=\\\[\{line=\"44\",name=\"moduse::check_all\",type=\"void \\(void\\)\",description=\"void moduse::check_all\\(void\\);\"\},\{line=\"49\",name=\"moduse::check_var_x\",type=\"void \\(void\\)\",description=\"void moduse::check_var_x\\(void\\);\"\}\\\]\}\\\]\}"
+set state 0
+gdb_test_multiple $cmd $test -prompt $mi_gdb_prompt$ {
+    -re "104\\^done,symbols=\\\[" {
+	if { $state == 0 } { set state 1 }
+	exp_continue
+    }
+    -re "$mod1_re" {
+	if { $state == 1 } { incr state }
+	exp_continue
+    }
+    -re "$mod2_re" {
+	if { $state == 2 } { incr state }
+	exp_continue
+    }
+    -re "$mod3_re" {
+	if { $state == 3 } { incr state }
+	exp_continue
+    }
+    -re "$modmany_re" {
+	if { $state == 4 } { incr state }
+	exp_continue
+    }
+    -re "$moduse_re" {
+	if { $state == 5 } { incr state }
+	exp_continue
+    }
+    -re ${system_module_symbols_pattern} {
+	exp_continue
+    }
+    -re "\\\]\r\n$mi_gdb_prompt$" {
+	if { $state == 6 } {
+	    pass $gdb_test_name
+	} else {
+	    fail $gdb_test_name
+	}
+    }	
+}
+
+mi_gdb_test "105-symbol-info-module-functions --name _all" \
+    "105\\^done,symbols=\\\[\{module=\"mod1\",files=\\\[\{filename=\"\[^\"\]+$srcfile2\",fullname=\"\[^\"\]+$srcfile2\",symbols=\\\[\{line=\"21\",name=\"mod1::check_all\",type=\"void \\(void\\)\",description=\"void mod1::check_all\\(void\\);\"\}\\\]\}\\\]\},\{module=\"mod3\",files=\\\[\{filename=\"\[^\"\]+$srcfile\",fullname=\"\[^\"\]+$srcfile\",symbols=\\\[\{line=\"21\",name=\"mod3::check_all\",type=\"void \\(void\\)\",description=\"void mod3::check_all\\(void\\);\"\}\\\]\}\\\]\},\{module=\"moduse\",files=\\\[\{filename=\"\[^\"\]+$srcfile\",fullname=\"\[^\"\]+$srcfile\",symbols=\\\[\{line=\"44\",name=\"moduse::check_all\",type=\"void \\(void\\)\",description=\"void moduse::check_all\\(void\\);\"\}\\\]\}\\\]\}\\\]" \
+    "-symbol-info-module-functions --name _all"
+
+mi_gdb_test "106-symbol-info-module-functions --module mod\[123\]" \
+    "106\\^done,symbols=\\\[\{module=\"mod1\",files=\\\[\{filename=\"\[^\"\]+$srcfile2\",fullname=\"\[^\"\]+$srcfile2\",symbols=\\\[\{line=\"21\",name=\"mod1::check_all\",type=\"void \\(void\\)\",description=\"void mod1::check_all\\(void\\);\"\}\\\]\}\\\]\},\{module=\"mod2\",files=\\\[\{filename=\"\[^\"\]+$srcfile2\",fullname=\"\[^\"\]+$srcfile2\",symbols=\\\[\{line=\"30\",name=\"mod2::check_var_i\",type=\"void \\(void\\)\",description=\"void mod2::check_var_i\\(void\\);\"\}\\\]\}\\\]\},\{module=\"mod3\",files=\\\[\{filename=\"\[^\"\]+$srcfile\",fullname=\"\[^\"\]+$srcfile\",symbols=\\\[\{line=\"21\",name=\"mod3::check_all\",type=\"void \\(void\\)\",description=\"void mod3::check_all\\(void\\);\"\},\{line=\"27\",name=\"mod3::check_mod2\",type=\"void \\(void\\)\",description=\"void mod3::check_mod2\\(void\\);\"\}\\\]\}\\\]\}\\\]" \
+    "-symbol-info-module-functions --module mod\[123\]"
+
+set int4 [fortran_int4]
+
+set mod1_re \
+    "\{module=\"mod1\",files=\\\[\{filename=\"\[^\"\]+$srcfile2\",fullname=\"\[^\"\]+$srcfile2\",symbols=\\\[\{line=\"18\",name=\"mod1::var_const\",type=\"$int4\",description=\"$int4 mod1::var_const;\"\},\{line=\"17\",name=\"mod1::var_i\",type=\"$int4\",description=\"$int4 mod1::var_i;\"\}\\\]\}\\\]\}"
+set mod2_re \
+    "\{module=\"mod2\",files=\\\[\{filename=\"\[^\"\]+$srcfile2\",fullname=\"\[^\"\]+$srcfile2\",symbols=\\\[\{line=\"28\",name=\"mod2::var_i\",type=\"$int4\",description=\"$int4 mod2::var_i;\"\}\\\]\}\\\]\}"
+set mod3_re \
+    "\{module=\"mod3\",files=\\\[\{filename=\"\[^\"\]+$srcfile\",fullname=\"\[^\"\]+$srcfile\",symbols=\\\[\{line=\"18\",name=\"mod3::mod1\",type=\"$int4\",description=\"$int4 mod3::mod1;\"\},\{line=\"17\",name=\"mod3::mod2\",type=\"$int4\",description=\"$int4 mod3::mod2;\"\},\{line=\"19\",name=\"mod3::var_i\",type=\"$int4\",description=\"$int4 mod3::var_i;\"\}\\\]\}\\\]\}"
+set modmany_re \
+    "\{module=\"modmany\",files=\\\[\{filename=\"\[^\"\]+$srcfile\",fullname=\"\[^\"\]+$srcfile\",symbols=\\\[\{line=\"33\",name=\"modmany::var_a\",type=\"$int4\",description=\"$int4 modmany::var_a;\"\},\{line=\"33\",name=\"modmany::var_b\",type=\"$int4\",description=\"$int4 modmany::var_b;\"\},\{line=\"33\",name=\"modmany::var_c\",type=\"$int4\",description=\"$int4 modmany::var_c;\"\},\{line=\"33\",name=\"modmany::var_i\",type=\"$int4\",description=\"$int4 modmany::var_i;\"\}\\\]\}\\\]\}"
+set moduse_re \
+    ",\{module=\"moduse\",files=\\\[\{filename=\"\[^\"\]+$srcfile\",fullname=\"\[^\"\]+$srcfile\",symbols=\\\[\{line=\"42\",name=\"moduse::var_x\",type=\"$int4\",description=\"$int4 moduse::var_x;\"\},\{line=\"42\",name=\"moduse::var_y\",type=\"$int4\",description=\"$int4 moduse::var_y;\"\}\\\]\}\\\]\}"
+
+set cmd "107-symbol-info-module-variables"
+set test "-symbol-info-module-variables"
+set state 0
+gdb_test_multiple $cmd $test -prompt $mi_gdb_prompt$ {
+    -re "107\\^done,symbols=\\\[" {
+	if { $state == 0 } { set state 1 }
+	exp_continue
+    }
+    -re "$mod1_re" {
+	if { $state == 1 } { incr state }
+	exp_continue
+    }
+    -re "$mod2_re" {
+	if { $state == 2 } { incr state }
+	exp_continue
+    }
+    -re "$mod3_re" {
+	if { $state == 3 } { incr state }
+	exp_continue
+    }
+    -re "$modmany_re" {
+	if { $state == 4 } { incr state }
+	exp_continue
+    }
+    -re "$moduse_re" {
+	if { $state == 5 } { incr state }
+	exp_continue
+    }
+    -re ${system_module_symbols_pattern} {
+	exp_continue
+    }
+    -re "\\\]\r\n$mi_gdb_prompt$" {
+	if { $state == 6 } {
+	    pass $gdb_test_name
+	} else {
+	    fail $gdb_test_name
+	}
+    }	
+}

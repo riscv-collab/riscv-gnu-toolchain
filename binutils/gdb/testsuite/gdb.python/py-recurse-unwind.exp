@@ -1,0 +1,88 @@
+# Copyright (C) 2016-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It is used to verify that
+# GDB does not recurse infinitely when calling gdb.parse_and_eval() in
+# the course of sniffing a frame in a Python unwinder.
+
+# The unwinder has been constructed so that, should recursion occur,
+# it will be detected in the unwinder so that we won't need to wait
+# for a timeout.
+
+
+load_lib gdb-python.exp
+
+require allow_python_tests
+
+standard_testfile
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+    return -1
+}
+
+set pyfile [gdb_remote_download host ${srcdir}/${subdir}/${testfile}.py]
+
+gdb_test "source ${pyfile}" "Python script imported" \
+         "import python scripts"
+
+# The following tests require execution.
+
+if {![runto_main]} {
+    return 0
+}
+
+
+proc cont_and_backtrace { tst } {
+
+    with_test_prefix $tst {
+	gdb_breakpoint "ccc"
+
+	# We're testing different code paths within the unwinder's sniffer.
+	# Set the current path to be tested here.
+	gdb_test_no_output "python TestUnwinder.set_test(\"$tst\")" \
+			   "set code path within python unwinder to $tst"
+
+	# If the unwinder is active, the usage count will increment while
+	# running to the breakpoint.  Reset it prior to doing the backtrace.
+	gdb_test_no_output "python TestUnwinder.reset_count()" \
+			   "reset count"
+
+	gdb_continue_to_breakpoint "ccc"
+
+	# The python based unwinder should be called a number of times while
+	# generating the backtrace, but its sniffer always returns None.  So
+	# it doesn't really contribute to generating any of the frames below.
+	#
+	# But that's okay.  Our goal here is to make sure that GDB doesn't
+	# get hung up in potentially infinite recursion when invoking the
+	# Python-based unwinder.
+
+	gdb_test_sequence "bt"  "backtrace" {
+	    "\\r\\n#0 .* ccc \\(arg=789\\) at "
+	    "\\r\\n#1 .* bbb \\(arg=456\\) at "
+	    "\\r\\n#2 .* aaa \\(arg=123\\) at "
+	    "\\r\\n#3 .* main \\(.*\\) at"
+	}
+
+	# Test that the python-based unwinder / sniffer was actually called
+	# during generation of the backtrace.
+	gdb_test "python print(TestUnwinder.count > 0)" "True" \
+		 "python unwinder called"
+    }
+}
+
+cont_and_backtrace "check_undefined_symbol"
+cont_and_backtrace "check_user_reg_pc"
+cont_and_backtrace "check_pae_pc"

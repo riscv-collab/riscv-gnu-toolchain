@@ -1,0 +1,521 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib gdb-python.exp
+
+# Test CLI output styling.
+
+standard_testfile
+
+# Compile the test executable.
+if {[build_executable "failed to build" $testfile $srcfile {debug macros}]} {
+    return -1
+}
+
+# The tests in this file are run multiple times with GDB's styles
+# disabled one at a time.  This variable is the style that is
+# currently disabled.
+set currently_disabled_style ""
+
+# A wrapper around the 'style' function found in gdb-utils.exp,
+# filter out requests for the disabled style.
+proc limited_style { str style } {
+    global currently_disabled_style
+
+    if { $style != $currently_disabled_style } {
+	return [style $str $style]
+    }
+
+    return $str
+}
+
+# A wrapper around 'clean_restart' from gdb.exp, this performs the
+# normal clean_restart, but then disables the currently disabled
+# style.
+proc clean_restart_and_disable { prefix args } {
+    global currently_disabled_style
+
+    with_test_prefix "$prefix" {
+	eval "clean_restart $args"
+
+	if { $currently_disabled_style != "" } {
+	    set st $currently_disabled_style
+	    gdb_test_no_output "set style $st background none"
+	    gdb_test_no_output "set style $st foreground none"
+	    gdb_test_no_output "set style $st intensity normal"
+	}
+    }
+}
+
+# The core of this test script.  Run some tests of different aspects
+# of GDB's styling.
+#
+# Within this proc always use LIMITED_STYLE instead of STYLE, and
+# CLEAN_RESTART_AND_DISABLE instead of CLEAN_RESTART, this ensures
+# that the test operates as expected as styles are disabled.
+proc run_style_tests { } {
+    global testfile srcfile hex binfile
+    global currently_disabled_style decimal hex
+
+    with_ansi_styling_terminal {
+	# Restart GDB with the correct TERM variable setting, this
+	# means that GDB will enable styling.
+	clean_restart_and_disable "restart 1" ${binfile}
+
+	set readnow [readnow]
+
+	if {![runto_main]} {
+	    return
+	}
+
+	# Check that the source highlighter has not stripped away the
+	# leading newlines.
+	set main_line [gdb_get_line_number "break here"]
+	gdb_test "list $main_line,$main_line" "return.*some_called_function.*"
+
+	gdb_test_no_output "set style enabled off"
+
+	set argv ""
+	gdb_test_multiple "frame" "frame without styling" {
+	    -re -wrap "main \\(argc=.*, (argv=$hex.*)\\).*style\\.c:\[0-9\].*" {
+		set argv $expect_out(1,string)
+		pass $gdb_test_name
+	    }
+	}
+
+	gdb_test_no_output "set style enabled on"
+
+	set main_expr [limited_style main function]
+	set base_file_expr [limited_style ".*style\\.c" file]
+	set file_expr "$base_file_expr:\[0-9\]+"
+	set arg_expr [limited_style "arg." variable]
+
+	# On some embedded targets that don't fully support argc/argv,
+	# argv may print as "0x0" or as an address with a symbol name
+	# following, so use a regexp general enough to match that and
+	# do not make assumptions about how long the address string is.
+	gdb_test "frame" \
+	    [multi_line \
+		 "#0\\s+$main_expr\\s+\\($arg_expr=$decimal,\\s+$arg_expr=$hex.*\\)\\s+at\\s+$file_expr" \
+		 "\[0-9\]+\\s+.*return.* break here .*"]
+	gdb_test "info breakpoints" "$main_expr at $file_expr.*"
+
+	gdb_test_no_output "set style sources off"
+	gdb_test "frame" \
+	    "\r\n\[^\033\]*break here.*" \
+	    "frame without sources styling"
+	gdb_test_no_output "set style sources on"
+
+	gdb_test "break -q main" "file $base_file_expr.*"
+
+	gdb_test "print &main" " = .* [limited_style $hex address] <$main_expr>"
+
+	# Regression test for a bug where line-wrapping would occur at
+	# the wrong spot with styling.  There were different bugs at
+	# different widths, so try two.
+	foreach width {20 30} {
+	    set argv_len [string length $argv]
+	    if { $argv_len == 0 } {
+		continue
+	    }
+
+	    # There was also a bug where the styling could be wrong in
+	    # the line listing; this is why the words from the source
+	    # code are spelled out in the final result line of the
+	    # test.
+	    set re0_styled \
+		[multi_line \
+		     "#0\\s+$main_expr\\s+\\($arg_expr=$decimal,\\s+$arg_expr=$hex\\)" \
+		     "\\s+at\\s+$file_expr" \
+		     "\[0-9\]+\\s+.*return.* break here .*"]
+	    set re1_styled \
+		[multi_line \
+		     "#0\\s+$main_expr\\s+\\($arg_expr=$decimal,\\s+" \
+		     "\\s+$arg_expr=$hex.*\\)" \
+		     "\\s+at\\s+$file_expr" \
+		     "\[0-9\]+\\s+.*return.* break here .*"]
+	    set re2_styled \
+		[multi_line \
+		     "#0\\s+$main_expr\\s+\\($arg_expr=.*" \
+		     "\\s+$arg_expr=$hex.*\\)\\s+at\\s+$file_expr" \
+		     "\[0-9\]+\\s+.*return.* break here .*"]
+
+	    # The length of the line containing argv containing:
+	    # - 4 leading spaces
+	    # - argv string
+	    # - closing parenthesis
+	    set line_len [expr 4 + $argv_len + 1]
+
+	    if { $argv == "argv=0x0" && $width >= 27 } {
+		# Embedded target with no argv support.
+		# #0  main (argc=0, argv=0x0)
+		set re_styled $re0_styled
+	    } elseif { $line_len > $width } {
+		# At on the next line.
+		set re_styled $re1_styled
+	    } else {
+		# At on the same line as argv.
+		set re_styled $re2_styled
+	    }
+
+	    # Override width for the duration of the command, letting
+	    # GDB reset back to 0.  Doing this in the loop rather than
+	    # after, avoids trying to do "set width 30" while width is
+	    # 20, which causes horizontal scrolling in the case that
+	    # the fallback stub-termcap.c is used:
+	    # ^M<et width 30^M
+	    # (gdb) FAIL: gdb.base/style.exp: all styles enabled: set width 30
+	    gdb_test "with width $width -- frame" $re_styled \
+		"frame when width=$width"
+	}
+
+	set macro_line [gdb_get_line_number "\#define SOME_MACRO"]
+	gdb_test "info macro SOME_MACRO" \
+	    "Defined at $base_file_expr:$macro_line\r\n#define SOME_MACRO 23"
+
+	gdb_test_no_output "set width 0"
+
+	# If disassembler styling is being done by the Python pygments
+	# module, then we can't be sure how the 'some_called_function'
+	# symbol will be styled.  However, if pygments is not being
+	# used then we can know how the symbol name will be styled.
+	set main [limited_style main function]
+	if { $::python_disassembly_styling } {
+	    set func "some_called_function"
+	} else {
+	    set func [limited_style some_called_function function]
+	}
+	# Somewhere should see the call to the function.
+	gdb_test "disassemble main" \
+	    [concat "Dump of assembler code for function $main:.*" \
+		 "[limited_style $hex address].*$func.*"]
+
+	set ifield [limited_style int_field variable]
+	set sfield [limited_style string_field variable]
+	set efield [limited_style e_field variable]
+	set evalue [limited_style VALUE_TWO variable]
+	set lhs [limited_style "\\\$$decimal" variable]
+	gdb_test "print struct_value" \
+	    "$lhs = \{$ifield = 23,.*$sfield = .*,.*$efield = $evalue.*"
+
+	set ffield [limited_style field variable]
+	set cstart [string_to_regexp "/* XXX "]
+	set cend [string_to_regexp " */"]
+	set p1field [limited_style "$cstart.*$decimal.*-bit.*padding.*$cend" \
+			 highlight]
+	set p2field [limited_style "$cstart.*$decimal.*-byte.*padding.*$cend" \
+			 highlight]
+
+	gdb_test "ptype/o just_bitfield_value" \
+	    [multi_line \
+		 ".* type = struct just_bitfield {" \
+		 ".* unsigned int $ffield : 3;" \
+		 "$p1field" \
+		 "$p2field" \
+		 "" \
+		 ".* total size.*: *$decimal *$cend" \
+		 " *}.*"]
+
+	set address_style_expr [limited_style ".*\".*address.*\".*style.*" address]
+	set color "blue"
+	if { $currently_disabled_style == "address" } {
+	    set color "none"
+	}
+	gdb_test "show style address foreground" \
+	    "The ${address_style_expr} foreground color is: ${color}" \
+	    "style name and style word styled using its own style in show style"
+
+	set aliases_expr [limited_style ".*aliases.*" title]
+	set breakpoints_expr [limited_style ".*breakpoints.*" title]
+	gdb_test "help" \
+	    [multi_line \
+		 "List of classes of commands:" \
+		 "" \
+		 "${aliases_expr} -- User-defined aliases of other commands\." \
+		 "${breakpoints_expr} -- Making program stop at certain points\." \
+		 ".*" \
+		] \
+	    "help classes of commands styled with title"
+
+	set taas_expr  [limited_style ".*taas.*" title]
+	set tfaas_expr  [limited_style ".*tfaas.*" title]
+	set cut_for_thre_expr [limited_style "cut for 'thre" highlight]
+	gdb_test "apropos -v cut for 'thre" \
+	    [multi_line \
+		 "" \
+		 "${taas_expr}" \
+		 "Apply a command to all .*" \
+		 "Usage:.*" \
+		 "short${cut_for_thre_expr}ad apply.*" \
+		 "" \
+		 "${tfaas_expr}" \
+		 "Apply a command to all .*" \
+		 "Usage:.*" \
+		 "short${cut_for_thre_expr}ad apply.*" \
+		]
+
+	clean_restart_and_disable "restart 2"
+
+	set quoted [string_to_regexp $binfile]
+	set pass_re "Reading symbols from [limited_style $quoted file]\.\.\."
+	if { $readnow } {
+	    set pass_re \
+		[multi_line \
+		     $pass_re \
+		     "Expanding full symbols from [limited_style $quoted file]\.\.\."]
+	}
+	gdb_test "file $binfile" \
+	    $pass_re \
+	    "filename is styled when loading symbol file"
+
+	gdb_test "pwd" "Working directory [limited_style .*? file].*"
+
+	gdb_test_no_output "set print repeat 3"
+	gdb_test "print {0,0,0,0,0,0,0,0}" \
+	    " = \\{0 [limited_style {<repeats.*8.*times>} metadata]\\}"
+
+	gdb_test "show logging file" \
+	    "The current logfile is \"[limited_style .*? file]\"\\..*"
+
+	# Check warnings are styled by setting a rubbish data
+	# directory.
+	gdb_test "set data-directory Makefile" \
+	    "warning: [limited_style .*? file] is not a directory\\..*"
+	gdb_test "show data-directory" \
+	    "GDB's data directory is \"[limited_style .*? file]\"\\..*"
+
+	# Check that deprecation styles command names.
+	gdb_test_no_output "maintenance deprecate p \"new_p\"" \
+	    "maintenance deprecate p \"new_p\" /1/"
+	gdb_test "p 5" \
+	    "Warning: '[limited_style p title]', an alias for the command '[limited_style print title]', is deprecated.*Use '[limited_style new_p title]'.*" \
+	    "p deprecated warning, with replacement"
+
+	# Check that the version string is styled in the output of 'show
+	# version', and that this styling can be disabled.
+	set vers [style "GNU gdb.*" version]
+	set url [limited_style "http:.*html" file]
+	gdb_test "show version" "${vers}.*<$url>.*" \
+	    "'show version' is styled"
+    }
+}
+
+# Check that disassembler styling can be disabled.  The function that
+# we are disassembling has some minimal styling applied even if the
+# Python pygments module is not available, so, when we disable
+# disassembler styling, we should always see a change in output.
+proc test_disable_disassembler_styling { } {
+    save_vars { env(TERM) env(NO_COLOR) } {
+	# We need an ANSI-capable terminal to get the output.
+	setenv TERM ansi
+	setenv NO_COLOR ""
+
+	# Restart GDB with the correct TERM variable setting, this
+	# means that GDB will enable styling.
+	clean_restart_and_disable "restart 3" $::binfile
+
+	set styled_hex [limited_style $::hex address]
+	set main [limited_style main function]
+
+	foreach_with_prefix libopcodes { on off } {
+
+	    set command_failed false
+	    gdb_test_multiple "maint set libopcodes-styling enabled ${libopcodes}" "" {
+		-re "^maint set libopcodes-styling enabled ${libopcodes}\r\n" {
+		    exp_continue
+		}
+
+		-re "Use of libopcodes styling not supported on architecture \[^\r\n\]+\r\n" {
+		    set command_failed true
+		    exp_continue
+		}
+
+		-re "^$::gdb_prompt $" {
+		    gdb_assert { !$command_failed || [string equal $libopcodes "on"] } \
+			$gdb_test_name
+		}
+	    }
+
+	    if { $libopcodes == "on" && $command_failed } {
+		# We tried to turn on libopcodes disassembler styling,
+		# but this is not supported on this architecture.
+		continue
+	    }
+
+	    foreach_with_prefix disasm_styling { on off } {
+		gdb_test_no_output "set style disassembler enabled ${disasm_styling}"
+
+		if { $libopcodes == "off" && $disasm_styling == "on" \
+			 && !$::python_disassembly_styling} {
+		    # We have libopcodes based styling off, but
+		    # disassembler styling turned on.  We're expecting
+		    # Python Pygments to be used to add styling.
+		    #
+		    # However, if we get here, then we don't have the
+		    # Pygments module, so skip this test.
+		    continue
+		}
+
+		set saw_header_line false
+		set saw_styled_output_line false
+		set saw_unstyled_output_line false
+		gdb_test_multiple "disassemble main" "" {
+		    -re "disassemble main\r\n" {
+			exp_continue
+		    }
+		    -re "^Dump of assembler code for function $main:" {
+			set saw_header_line true
+			exp_continue
+		    }
+		    -re "^\\s+${styled_hex}\\s+<\[^>\]+>:\\s+\[^\r\n\033\]+\r\n" {
+			set saw_unstyled_output_line true
+			exp_continue
+		    }
+		    -re "^\\s+${styled_hex}\\s+<\[^>\]+>:\\s+\[^\r\n\]+\033\[^\r\n\]+\r\n" {
+			set saw_styled_output_line true
+			exp_continue
+		    }
+		    -re "^End of assembler dump\\.\r\n" {
+			exp_continue
+		    }
+		    -re "^$::gdb_prompt $" {
+			gdb_assert { $saw_header_line }
+			if { $disasm_styling } {
+			    gdb_assert { $saw_styled_output_line }
+			    gdb_assert { !$saw_unstyled_output_line }
+			} else {
+			    gdb_assert { !$saw_styled_output_line }
+			    gdb_assert { $saw_unstyled_output_line }
+			}
+		    }
+		}
+	    }
+	}
+    }
+}
+
+# Disassemble a single isntruction at the start of main, then strip
+# off the address and symbol information, returning just the
+# disassembled instruction part.
+proc get_single_disassembled_insn {} {
+    set disasm_line [capture_command_output "x/1i *main" ""]
+    regexp "^\[^:\]+:\\s*(.*)$" $disasm_line whole_match insn
+    return $insn
+}
+
+# Check that, if the user is using Python Pygments for disassembler
+# styling, then the styling correctly switches off when an error is
+# detected in the Python code.
+proc test_disassembler_error_handling { } {
+
+    # This test requires the Python Pygments module to be installed
+    # and used by GDB.
+    if { !$::python_disassembly_styling } {
+	return
+    }
+
+    save_vars { env(TERM) env(NO_COLOR) } {
+	# We need an ANSI-capable terminal to get the output.
+	setenv TERM ansi
+	setenv NO_COLOR ""
+
+	# Restart GDB with the correct TERM variable setting, this
+	# means that GDB will enable styling.
+	clean_restart_and_disable "restart 4" $::binfile
+
+	# Disable use of libopcodes for styling.  As this function is
+	# only called when Python Pygments module is available, we
+	# should now be using that module to style the disassembler
+	# output.
+	gdb_test_no_output "maint set libopcodes-styling enabled off"
+
+	# Disassemble a single instruction and ensure that the output
+	# has styling markers in it.
+	set insn_before [get_single_disassembled_insn]
+	gdb_assert { [regexp "\033" $insn_before] } \
+	    "have style markers when Pygments is working fine"
+
+	# Now replace the standard function that colorizes the
+	# disassembler output, with a new function that always returns
+	# None, this should cause GDB to stop using the Pygments
+	# module for disassembler styling.
+	gdb_py_test_silent_cmd \
+	    [multi_line_input \
+		 "python" \
+		 "def replacement_colorize_disasm(content,gdbarch):" \
+		 "  return None" \
+		 "gdb.styling.colorize_disasm = replacement_colorize_disasm" \
+		 "end"] \
+	    "setup replacement colorize_disasm function" \
+	    true
+
+	set insn_after [get_single_disassembled_insn]
+	gdb_assert { ![regexp "\033" $insn_after] } \
+	    "have no style markers when Pygments is broken"
+    }
+}
+
+# A separate test from the above as the styled text this checks can't
+# currently be disabled (the text is printed too early in GDB's
+# startup process).
+proc test_startup_version_string { } {
+    gdb_exit
+
+    save_vars { ::INTERNAL_GDBFLAGS } {
+	set ::INTERNAL_GDBFLAGS [string map {"-q" ""} $::INTERNAL_GDBFLAGS]
+
+	gdb_spawn
+    }
+
+    # Deliberate use of base STYLE proc here as the style of the
+    # startup version string can't (currently) be controlled.
+    set vers [style "GNU gdb.*" version]
+    gdb_test "" "${vers}.*" "version is styled at startup"
+}
+
+# Check to see if the Python styling of disassembler output is
+# expected or not, this styling requires Python support in GDB, and
+# the Python pygments module to be available.
+clean_restart ${binfile}
+if {[allow_python_tests] && [gdb_py_module_available "pygments"]} {
+    set python_disassembly_styling true
+} else {
+    set python_disassembly_styling false
+}
+
+# Run tests with all styles in their default state.
+with_test_prefix "all styles enabled" {
+    run_style_tests
+}
+
+# Now, for each style in turn.  Disable that style only and run the
+# test again.  Things in that style should NOT now be styled.
+foreach style { title file function highlight variable \
+		    address metadata } {
+    set currently_disabled_style $style
+    with_test_prefix "disable style $style" {
+	run_style_tests
+    }
+}
+
+# Check that the disassembler styling can be disabled.
+test_disable_disassembler_styling
+
+# Check that GDB handles an error in the Python Pygments disassembly
+# styling code.
+test_disassembler_error_handling
+
+# Finally, check the styling of the version string during startup.
+test_startup_version_string

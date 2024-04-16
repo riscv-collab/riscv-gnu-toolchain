@@ -1,0 +1,137 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+
+# The in-memory cache.
+array set gdb_data_cache {}
+
+# Print pass message msg into gdb.log
+proc ignore_pass { msg } {
+    verbose -log "gdb_do_cache_wrap ignoring pass: $msg"
+}
+
+# Call proc real_name and return the result, while ignoring calls to pass.
+proc gdb_do_cache_wrap {real_name args} {
+    if { [info procs save_pass] != "" } {
+	return [uplevel 2 $real_name]
+    }
+
+    rename pass save_pass
+    rename ignore_pass pass
+
+    set code [catch {uplevel 2 [list $real_name {*}$args]} result]
+
+    rename pass ignore_pass
+    rename save_pass pass
+
+    if {$code == 1} {
+	global errorInfo errorCode
+	return -code error -errorinfo $errorInfo -errorcode $errorCode $result
+    } elseif {$code > 1} {
+	return -code $code $result
+    }
+
+    return $result
+}
+
+# A helper for gdb_caching_proc that handles the caching.
+
+proc gdb_do_cache {name args} {
+    global gdb_data_cache objdir
+    global GDB_PARALLEL
+
+    # Normally, if we have a cached value, we skip computation and return
+    # the cached value.  If set to 1, instead don't skip computation and
+    # verify against the cached value.
+    set cache_verify 0
+
+    # Alternatively, set this to do cache_verify only for one proc.
+    set cache_verify_proc ""
+    if { $name == $cache_verify_proc } {
+	set cache_verify 1
+    }
+
+    # See if some other process wrote the cache file.  Cache value per
+    # "board" to handle runs with multiple options
+    # (e.g. unix/{-m32,-64}) correctly.  We use "file join" here
+    # because we later use this in a real filename.
+    set cache_name [file join [target_info name] $name {*}$args]
+
+    set is_cached 0
+    if {[info exists gdb_data_cache($cache_name)]} {
+	set cached $gdb_data_cache($cache_name)
+	verbose "$name: returning '$cached' from cache" 2
+	if { $cache_verify == 0 } {
+	    return $cached
+	}
+	set is_cached 1
+    }
+
+    if { $is_cached == 0 && [info exists GDB_PARALLEL] } {
+	set cache_filename [make_gdb_parallel_path cache $cache_name]
+	if {[file exists $cache_filename]} {
+	    set fd [open $cache_filename]
+	    set gdb_data_cache($cache_name) [read -nonewline $fd]
+	    close $fd
+	    set cached $gdb_data_cache($cache_name)
+	    verbose "$name: returning '$cached' from file cache" 2
+	    if { $cache_verify == 0 } {
+		return $cached
+	    }
+	    set is_cached 1
+	}
+    }
+
+    set real_name gdb_real__$name
+    set gdb_data_cache($cache_name) [gdb_do_cache_wrap $real_name {*}$args]
+    if { $cache_verify == 1 && $is_cached == 1 } {
+	set computed $gdb_data_cache($cache_name)
+	if { $cached != $computed } {
+	    error [join [list "Inconsistent results for $cache_name:"
+			 "cached: $cached vs. computed: $computed"]]
+	}
+    }
+
+    if {[info exists GDB_PARALLEL]} {
+	verbose "$name: returning '$gdb_data_cache($cache_name)' and writing file" 2
+	file mkdir [file dirname $cache_filename]
+	# Make sure to write the results file atomically.
+	set fd [open $cache_filename.[pid] w]
+	puts $fd $gdb_data_cache($cache_name)
+	close $fd
+	file rename -force -- $cache_filename.[pid] $cache_filename
+    }
+    return $gdb_data_cache($cache_name)
+}
+
+# Define a new proc named NAME, with optional args ARGS.  BODY is the body of
+# the proc.  The proc will evaluate BODY and cache the results, both in memory
+# and, if GDB_PARALLEL is defined, in the filesystem for use across
+# invocations of dejagnu.
+#
+
+proc gdb_caching_proc {name arglist body} {
+    # Define the underlying proc that we'll call.
+    set real_name gdb_real__$name
+    proc $real_name $arglist $body
+
+    # Define the advertised proc.
+    set caching_proc_body [list gdb_do_cache $name]
+    foreach arg $arglist {
+	lappend caching_proc_body $$arg
+    }
+    set caching_proc_body [join $caching_proc_body]
+    proc $name $arglist $caching_proc_body
+}

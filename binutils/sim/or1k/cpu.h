@@ -1,0 +1,5214 @@
+/* CPU family header for or1k32bf.
+
+THIS FILE IS MACHINE GENERATED WITH CGEN.
+
+Copyright (C) 1996-2024 Free Software Foundation, Inc.
+
+This file is part of the GNU simulators.
+
+   This file is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; either version 3, or (at your option)
+   any later version.
+
+   It is distributed in the hope that it will be useful, but WITHOUT
+   ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+   or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public
+   License for more details.
+
+   You should have received a copy of the GNU General Public License along
+   with this program; if not, write to the Free Software Foundation, Inc.,
+   51 Franklin Street - Fifth Floor, Boston, MA 02110-1301, USA.
+
+*/
+
+#ifndef CPU_OR1K32BF_H
+#define CPU_OR1K32BF_H
+
+/* Maximum number of instructions that are fetched at a time.
+   This is for LIW type instructions sets (e.g. m32r).  */
+#define MAX_LIW_INSNS 1
+
+/* Maximum number of instructions that can be executed in parallel.  */
+#define MAX_PARALLEL_INSNS 1
+
+/* The size of an "int" needed to hold an instruction word.
+   This is usually 32 bits, but some architectures needs 64 bits.  */
+typedef CGEN_INSN_INT CGEN_INSN_WORD;
+
+#include "cgen-engine.h"
+
+/* CPU state information.  */
+typedef struct {
+  /* Hardware elements.  */
+  struct {
+  /* program counter */
+  USI h_pc;
+#define GET_H_PC() CPU (h_pc)
+#define SET_H_PC(x) \
+do { \
+{\
+SET_H_SYS_PPC (CPU (h_pc));\
+CPU (h_pc) = (x);\
+}\
+;} while (0)
+  /* general registers */
+  USI h_gpr[32];
+#define GET_H_GPR(index) GET_H_SPR (((index) + (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR0))))
+#define SET_H_GPR(index, x) \
+do { \
+SET_H_SPR ((((index)) + (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR0))), (x));\
+;} while (0)
+  /* atomic reserve flag */
+  BI h_atomic_reserve;
+#define GET_H_ATOMIC_RESERVE() CPU (h_atomic_reserve)
+#define SET_H_ATOMIC_RESERVE(x) (CPU (h_atomic_reserve) = (x))
+  /* atomic reserve address */
+  SI h_atomic_address;
+#define GET_H_ATOMIC_ADDRESS() CPU (h_atomic_address)
+#define SET_H_ATOMIC_ADDRESS(x) (CPU (h_atomic_address) = (x))
+  /* 1-bit offset flag */
+  BI h_roff1;
+#define GET_H_ROFF1() CPU (h_roff1)
+#define SET_H_ROFF1(x) (CPU (h_roff1) = (x))
+  } hardware;
+#define CPU_CGEN_HW(cpu) (& OR1K_SIM_CPU (cpu)->cpu_data.hardware)
+} OR1K32BF_CPU_DATA;
+
+/* Virtual regs.  */
+
+#define GET_H_SPR(index) or1k32bf_h_spr_get_raw (current_cpu, index)
+#define SET_H_SPR(index, x) \
+do { \
+or1k32bf_h_spr_set_raw (current_cpu, (index), (x));\
+;} while (0)
+#define GET_H_FSR(index) SUBWORDSISF (TRUNCSISI (GET_H_GPR (index)))
+#define SET_H_FSR(index, x) \
+do { \
+SET_H_GPR ((index), ZEXTSISI (SUBWORDSFSI ((x))));\
+;} while (0)
+#define GET_H_FD32R(index) JOINSIDF (GET_H_GPR (((index) & (31))), GET_H_GPR (((((index) & (31))) + (((((((INT) (index) >> (5))) == (1))) ? (2) : (1))))))
+#define SET_H_FD32R(index, x) \
+do { \
+{\
+SET_H_GPR ((((index)) & (31)), SUBWORDDFSI ((x), 0));\
+SET_H_GPR ((((((index)) & (31))) + (((((((INT) ((index)) >> (5))) == (1))) ? (2) : (1)))), SUBWORDDFSI ((x), 1));\
+}\
+;} while (0)
+#define GET_H_I64R(index) JOINSIDI (GET_H_GPR (((index) & (31))), GET_H_GPR (((((index) & (31))) + (((((((INT) (index) >> (5))) == (1))) ? (2) : (1))))))
+#define SET_H_I64R(index, x) \
+do { \
+{\
+SET_H_GPR ((((index)) & (31)), SUBWORDDISI ((x), 0));\
+SET_H_GPR ((((((index)) & (31))) + (((((((INT) ((index)) >> (5))) == (1))) ? (2) : (1)))), SUBWORDDISI ((x), 1));\
+}\
+;} while (0)
+#define GET_H_SYS_VR() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_VR))
+#define SET_H_SYS_VR(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_VR), (x));\
+;} while (0)
+#define GET_H_SYS_UPR() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_UPR))
+#define SET_H_SYS_UPR(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_UPR), (x));\
+;} while (0)
+#define GET_H_SYS_CPUCFGR() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_CPUCFGR))
+#define SET_H_SYS_CPUCFGR(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_CPUCFGR), (x));\
+;} while (0)
+#define GET_H_SYS_DMMUCFGR() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_DMMUCFGR))
+#define SET_H_SYS_DMMUCFGR(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_DMMUCFGR), (x));\
+;} while (0)
+#define GET_H_SYS_IMMUCFGR() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_IMMUCFGR))
+#define SET_H_SYS_IMMUCFGR(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_IMMUCFGR), (x));\
+;} while (0)
+#define GET_H_SYS_DCCFGR() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_DCCFGR))
+#define SET_H_SYS_DCCFGR(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_DCCFGR), (x));\
+;} while (0)
+#define GET_H_SYS_ICCFGR() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ICCFGR))
+#define SET_H_SYS_ICCFGR(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ICCFGR), (x));\
+;} while (0)
+#define GET_H_SYS_DCFGR() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_DCFGR))
+#define SET_H_SYS_DCFGR(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_DCFGR), (x));\
+;} while (0)
+#define GET_H_SYS_PCCFGR() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_PCCFGR))
+#define SET_H_SYS_PCCFGR(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_PCCFGR), (x));\
+;} while (0)
+#define GET_H_SYS_NPC() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_NPC))
+#define SET_H_SYS_NPC(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_NPC), (x));\
+;} while (0)
+#define GET_H_SYS_SR() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR))
+#define SET_H_SYS_SR(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), (x));\
+;} while (0)
+#define GET_H_SYS_PPC() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_PPC))
+#define SET_H_SYS_PPC(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_PPC), (x));\
+;} while (0)
+#define GET_H_SYS_FPCSR() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_FPCSR))
+#define SET_H_SYS_FPCSR(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_FPCSR), (x));\
+;} while (0)
+#define GET_H_SYS_EPCR0() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR0))
+#define SET_H_SYS_EPCR0(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR0), (x));\
+;} while (0)
+#define GET_H_SYS_EPCR1() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR1))
+#define SET_H_SYS_EPCR1(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR1), (x));\
+;} while (0)
+#define GET_H_SYS_EPCR2() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR2))
+#define SET_H_SYS_EPCR2(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR2), (x));\
+;} while (0)
+#define GET_H_SYS_EPCR3() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR3))
+#define SET_H_SYS_EPCR3(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR3), (x));\
+;} while (0)
+#define GET_H_SYS_EPCR4() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR4))
+#define SET_H_SYS_EPCR4(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR4), (x));\
+;} while (0)
+#define GET_H_SYS_EPCR5() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR5))
+#define SET_H_SYS_EPCR5(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR5), (x));\
+;} while (0)
+#define GET_H_SYS_EPCR6() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR6))
+#define SET_H_SYS_EPCR6(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR6), (x));\
+;} while (0)
+#define GET_H_SYS_EPCR7() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR7))
+#define SET_H_SYS_EPCR7(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR7), (x));\
+;} while (0)
+#define GET_H_SYS_EPCR8() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR8))
+#define SET_H_SYS_EPCR8(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR8), (x));\
+;} while (0)
+#define GET_H_SYS_EPCR9() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR9))
+#define SET_H_SYS_EPCR9(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR9), (x));\
+;} while (0)
+#define GET_H_SYS_EPCR10() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR10))
+#define SET_H_SYS_EPCR10(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR10), (x));\
+;} while (0)
+#define GET_H_SYS_EPCR11() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR11))
+#define SET_H_SYS_EPCR11(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR11), (x));\
+;} while (0)
+#define GET_H_SYS_EPCR12() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR12))
+#define SET_H_SYS_EPCR12(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR12), (x));\
+;} while (0)
+#define GET_H_SYS_EPCR13() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR13))
+#define SET_H_SYS_EPCR13(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR13), (x));\
+;} while (0)
+#define GET_H_SYS_EPCR14() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR14))
+#define SET_H_SYS_EPCR14(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR14), (x));\
+;} while (0)
+#define GET_H_SYS_EPCR15() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR15))
+#define SET_H_SYS_EPCR15(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EPCR15), (x));\
+;} while (0)
+#define GET_H_SYS_EEAR0() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR0))
+#define SET_H_SYS_EEAR0(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR0), (x));\
+;} while (0)
+#define GET_H_SYS_EEAR1() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR1))
+#define SET_H_SYS_EEAR1(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR1), (x));\
+;} while (0)
+#define GET_H_SYS_EEAR2() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR2))
+#define SET_H_SYS_EEAR2(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR2), (x));\
+;} while (0)
+#define GET_H_SYS_EEAR3() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR3))
+#define SET_H_SYS_EEAR3(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR3), (x));\
+;} while (0)
+#define GET_H_SYS_EEAR4() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR4))
+#define SET_H_SYS_EEAR4(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR4), (x));\
+;} while (0)
+#define GET_H_SYS_EEAR5() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR5))
+#define SET_H_SYS_EEAR5(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR5), (x));\
+;} while (0)
+#define GET_H_SYS_EEAR6() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR6))
+#define SET_H_SYS_EEAR6(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR6), (x));\
+;} while (0)
+#define GET_H_SYS_EEAR7() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR7))
+#define SET_H_SYS_EEAR7(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR7), (x));\
+;} while (0)
+#define GET_H_SYS_EEAR8() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR8))
+#define SET_H_SYS_EEAR8(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR8), (x));\
+;} while (0)
+#define GET_H_SYS_EEAR9() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR9))
+#define SET_H_SYS_EEAR9(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR9), (x));\
+;} while (0)
+#define GET_H_SYS_EEAR10() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR10))
+#define SET_H_SYS_EEAR10(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR10), (x));\
+;} while (0)
+#define GET_H_SYS_EEAR11() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR11))
+#define SET_H_SYS_EEAR11(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR11), (x));\
+;} while (0)
+#define GET_H_SYS_EEAR12() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR12))
+#define SET_H_SYS_EEAR12(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR12), (x));\
+;} while (0)
+#define GET_H_SYS_EEAR13() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR13))
+#define SET_H_SYS_EEAR13(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR13), (x));\
+;} while (0)
+#define GET_H_SYS_EEAR14() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR14))
+#define SET_H_SYS_EEAR14(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR14), (x));\
+;} while (0)
+#define GET_H_SYS_EEAR15() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR15))
+#define SET_H_SYS_EEAR15(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_EEAR15), (x));\
+;} while (0)
+#define GET_H_SYS_ESR0() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR0))
+#define SET_H_SYS_ESR0(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR0), (x));\
+;} while (0)
+#define GET_H_SYS_ESR1() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR1))
+#define SET_H_SYS_ESR1(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR1), (x));\
+;} while (0)
+#define GET_H_SYS_ESR2() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR2))
+#define SET_H_SYS_ESR2(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR2), (x));\
+;} while (0)
+#define GET_H_SYS_ESR3() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR3))
+#define SET_H_SYS_ESR3(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR3), (x));\
+;} while (0)
+#define GET_H_SYS_ESR4() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR4))
+#define SET_H_SYS_ESR4(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR4), (x));\
+;} while (0)
+#define GET_H_SYS_ESR5() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR5))
+#define SET_H_SYS_ESR5(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR5), (x));\
+;} while (0)
+#define GET_H_SYS_ESR6() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR6))
+#define SET_H_SYS_ESR6(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR6), (x));\
+;} while (0)
+#define GET_H_SYS_ESR7() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR7))
+#define SET_H_SYS_ESR7(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR7), (x));\
+;} while (0)
+#define GET_H_SYS_ESR8() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR8))
+#define SET_H_SYS_ESR8(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR8), (x));\
+;} while (0)
+#define GET_H_SYS_ESR9() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR9))
+#define SET_H_SYS_ESR9(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR9), (x));\
+;} while (0)
+#define GET_H_SYS_ESR10() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR10))
+#define SET_H_SYS_ESR10(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR10), (x));\
+;} while (0)
+#define GET_H_SYS_ESR11() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR11))
+#define SET_H_SYS_ESR11(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR11), (x));\
+;} while (0)
+#define GET_H_SYS_ESR12() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR12))
+#define SET_H_SYS_ESR12(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR12), (x));\
+;} while (0)
+#define GET_H_SYS_ESR13() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR13))
+#define SET_H_SYS_ESR13(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR13), (x));\
+;} while (0)
+#define GET_H_SYS_ESR14() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR14))
+#define SET_H_SYS_ESR14(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR14), (x));\
+;} while (0)
+#define GET_H_SYS_ESR15() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR15))
+#define SET_H_SYS_ESR15(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_ESR15), (x));\
+;} while (0)
+#define GET_H_SYS_GPR0() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR0))
+#define SET_H_SYS_GPR0(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR0), (x));\
+;} while (0)
+#define GET_H_SYS_GPR1() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR1))
+#define SET_H_SYS_GPR1(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR1), (x));\
+;} while (0)
+#define GET_H_SYS_GPR2() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR2))
+#define SET_H_SYS_GPR2(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR2), (x));\
+;} while (0)
+#define GET_H_SYS_GPR3() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR3))
+#define SET_H_SYS_GPR3(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR3), (x));\
+;} while (0)
+#define GET_H_SYS_GPR4() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR4))
+#define SET_H_SYS_GPR4(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR4), (x));\
+;} while (0)
+#define GET_H_SYS_GPR5() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR5))
+#define SET_H_SYS_GPR5(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR5), (x));\
+;} while (0)
+#define GET_H_SYS_GPR6() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR6))
+#define SET_H_SYS_GPR6(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR6), (x));\
+;} while (0)
+#define GET_H_SYS_GPR7() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR7))
+#define SET_H_SYS_GPR7(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR7), (x));\
+;} while (0)
+#define GET_H_SYS_GPR8() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR8))
+#define SET_H_SYS_GPR8(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR8), (x));\
+;} while (0)
+#define GET_H_SYS_GPR9() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR9))
+#define SET_H_SYS_GPR9(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR9), (x));\
+;} while (0)
+#define GET_H_SYS_GPR10() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR10))
+#define SET_H_SYS_GPR10(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR10), (x));\
+;} while (0)
+#define GET_H_SYS_GPR11() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR11))
+#define SET_H_SYS_GPR11(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR11), (x));\
+;} while (0)
+#define GET_H_SYS_GPR12() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR12))
+#define SET_H_SYS_GPR12(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR12), (x));\
+;} while (0)
+#define GET_H_SYS_GPR13() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR13))
+#define SET_H_SYS_GPR13(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR13), (x));\
+;} while (0)
+#define GET_H_SYS_GPR14() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR14))
+#define SET_H_SYS_GPR14(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR14), (x));\
+;} while (0)
+#define GET_H_SYS_GPR15() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR15))
+#define SET_H_SYS_GPR15(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR15), (x));\
+;} while (0)
+#define GET_H_SYS_GPR16() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR16))
+#define SET_H_SYS_GPR16(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR16), (x));\
+;} while (0)
+#define GET_H_SYS_GPR17() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR17))
+#define SET_H_SYS_GPR17(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR17), (x));\
+;} while (0)
+#define GET_H_SYS_GPR18() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR18))
+#define SET_H_SYS_GPR18(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR18), (x));\
+;} while (0)
+#define GET_H_SYS_GPR19() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR19))
+#define SET_H_SYS_GPR19(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR19), (x));\
+;} while (0)
+#define GET_H_SYS_GPR20() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR20))
+#define SET_H_SYS_GPR20(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR20), (x));\
+;} while (0)
+#define GET_H_SYS_GPR21() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR21))
+#define SET_H_SYS_GPR21(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR21), (x));\
+;} while (0)
+#define GET_H_SYS_GPR22() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR22))
+#define SET_H_SYS_GPR22(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR22), (x));\
+;} while (0)
+#define GET_H_SYS_GPR23() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR23))
+#define SET_H_SYS_GPR23(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR23), (x));\
+;} while (0)
+#define GET_H_SYS_GPR24() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR24))
+#define SET_H_SYS_GPR24(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR24), (x));\
+;} while (0)
+#define GET_H_SYS_GPR25() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR25))
+#define SET_H_SYS_GPR25(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR25), (x));\
+;} while (0)
+#define GET_H_SYS_GPR26() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR26))
+#define SET_H_SYS_GPR26(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR26), (x));\
+;} while (0)
+#define GET_H_SYS_GPR27() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR27))
+#define SET_H_SYS_GPR27(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR27), (x));\
+;} while (0)
+#define GET_H_SYS_GPR28() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR28))
+#define SET_H_SYS_GPR28(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR28), (x));\
+;} while (0)
+#define GET_H_SYS_GPR29() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR29))
+#define SET_H_SYS_GPR29(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR29), (x));\
+;} while (0)
+#define GET_H_SYS_GPR30() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR30))
+#define SET_H_SYS_GPR30(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR30), (x));\
+;} while (0)
+#define GET_H_SYS_GPR31() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR31))
+#define SET_H_SYS_GPR31(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR31), (x));\
+;} while (0)
+#define GET_H_SYS_GPR32() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR32))
+#define SET_H_SYS_GPR32(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR32), (x));\
+;} while (0)
+#define GET_H_SYS_GPR33() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR33))
+#define SET_H_SYS_GPR33(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR33), (x));\
+;} while (0)
+#define GET_H_SYS_GPR34() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR34))
+#define SET_H_SYS_GPR34(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR34), (x));\
+;} while (0)
+#define GET_H_SYS_GPR35() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR35))
+#define SET_H_SYS_GPR35(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR35), (x));\
+;} while (0)
+#define GET_H_SYS_GPR36() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR36))
+#define SET_H_SYS_GPR36(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR36), (x));\
+;} while (0)
+#define GET_H_SYS_GPR37() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR37))
+#define SET_H_SYS_GPR37(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR37), (x));\
+;} while (0)
+#define GET_H_SYS_GPR38() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR38))
+#define SET_H_SYS_GPR38(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR38), (x));\
+;} while (0)
+#define GET_H_SYS_GPR39() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR39))
+#define SET_H_SYS_GPR39(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR39), (x));\
+;} while (0)
+#define GET_H_SYS_GPR40() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR40))
+#define SET_H_SYS_GPR40(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR40), (x));\
+;} while (0)
+#define GET_H_SYS_GPR41() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR41))
+#define SET_H_SYS_GPR41(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR41), (x));\
+;} while (0)
+#define GET_H_SYS_GPR42() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR42))
+#define SET_H_SYS_GPR42(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR42), (x));\
+;} while (0)
+#define GET_H_SYS_GPR43() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR43))
+#define SET_H_SYS_GPR43(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR43), (x));\
+;} while (0)
+#define GET_H_SYS_GPR44() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR44))
+#define SET_H_SYS_GPR44(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR44), (x));\
+;} while (0)
+#define GET_H_SYS_GPR45() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR45))
+#define SET_H_SYS_GPR45(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR45), (x));\
+;} while (0)
+#define GET_H_SYS_GPR46() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR46))
+#define SET_H_SYS_GPR46(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR46), (x));\
+;} while (0)
+#define GET_H_SYS_GPR47() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR47))
+#define SET_H_SYS_GPR47(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR47), (x));\
+;} while (0)
+#define GET_H_SYS_GPR48() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR48))
+#define SET_H_SYS_GPR48(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR48), (x));\
+;} while (0)
+#define GET_H_SYS_GPR49() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR49))
+#define SET_H_SYS_GPR49(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR49), (x));\
+;} while (0)
+#define GET_H_SYS_GPR50() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR50))
+#define SET_H_SYS_GPR50(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR50), (x));\
+;} while (0)
+#define GET_H_SYS_GPR51() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR51))
+#define SET_H_SYS_GPR51(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR51), (x));\
+;} while (0)
+#define GET_H_SYS_GPR52() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR52))
+#define SET_H_SYS_GPR52(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR52), (x));\
+;} while (0)
+#define GET_H_SYS_GPR53() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR53))
+#define SET_H_SYS_GPR53(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR53), (x));\
+;} while (0)
+#define GET_H_SYS_GPR54() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR54))
+#define SET_H_SYS_GPR54(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR54), (x));\
+;} while (0)
+#define GET_H_SYS_GPR55() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR55))
+#define SET_H_SYS_GPR55(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR55), (x));\
+;} while (0)
+#define GET_H_SYS_GPR56() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR56))
+#define SET_H_SYS_GPR56(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR56), (x));\
+;} while (0)
+#define GET_H_SYS_GPR57() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR57))
+#define SET_H_SYS_GPR57(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR57), (x));\
+;} while (0)
+#define GET_H_SYS_GPR58() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR58))
+#define SET_H_SYS_GPR58(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR58), (x));\
+;} while (0)
+#define GET_H_SYS_GPR59() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR59))
+#define SET_H_SYS_GPR59(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR59), (x));\
+;} while (0)
+#define GET_H_SYS_GPR60() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR60))
+#define SET_H_SYS_GPR60(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR60), (x));\
+;} while (0)
+#define GET_H_SYS_GPR61() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR61))
+#define SET_H_SYS_GPR61(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR61), (x));\
+;} while (0)
+#define GET_H_SYS_GPR62() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR62))
+#define SET_H_SYS_GPR62(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR62), (x));\
+;} while (0)
+#define GET_H_SYS_GPR63() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR63))
+#define SET_H_SYS_GPR63(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR63), (x));\
+;} while (0)
+#define GET_H_SYS_GPR64() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR64))
+#define SET_H_SYS_GPR64(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR64), (x));\
+;} while (0)
+#define GET_H_SYS_GPR65() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR65))
+#define SET_H_SYS_GPR65(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR65), (x));\
+;} while (0)
+#define GET_H_SYS_GPR66() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR66))
+#define SET_H_SYS_GPR66(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR66), (x));\
+;} while (0)
+#define GET_H_SYS_GPR67() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR67))
+#define SET_H_SYS_GPR67(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR67), (x));\
+;} while (0)
+#define GET_H_SYS_GPR68() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR68))
+#define SET_H_SYS_GPR68(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR68), (x));\
+;} while (0)
+#define GET_H_SYS_GPR69() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR69))
+#define SET_H_SYS_GPR69(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR69), (x));\
+;} while (0)
+#define GET_H_SYS_GPR70() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR70))
+#define SET_H_SYS_GPR70(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR70), (x));\
+;} while (0)
+#define GET_H_SYS_GPR71() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR71))
+#define SET_H_SYS_GPR71(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR71), (x));\
+;} while (0)
+#define GET_H_SYS_GPR72() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR72))
+#define SET_H_SYS_GPR72(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR72), (x));\
+;} while (0)
+#define GET_H_SYS_GPR73() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR73))
+#define SET_H_SYS_GPR73(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR73), (x));\
+;} while (0)
+#define GET_H_SYS_GPR74() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR74))
+#define SET_H_SYS_GPR74(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR74), (x));\
+;} while (0)
+#define GET_H_SYS_GPR75() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR75))
+#define SET_H_SYS_GPR75(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR75), (x));\
+;} while (0)
+#define GET_H_SYS_GPR76() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR76))
+#define SET_H_SYS_GPR76(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR76), (x));\
+;} while (0)
+#define GET_H_SYS_GPR77() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR77))
+#define SET_H_SYS_GPR77(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR77), (x));\
+;} while (0)
+#define GET_H_SYS_GPR78() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR78))
+#define SET_H_SYS_GPR78(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR78), (x));\
+;} while (0)
+#define GET_H_SYS_GPR79() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR79))
+#define SET_H_SYS_GPR79(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR79), (x));\
+;} while (0)
+#define GET_H_SYS_GPR80() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR80))
+#define SET_H_SYS_GPR80(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR80), (x));\
+;} while (0)
+#define GET_H_SYS_GPR81() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR81))
+#define SET_H_SYS_GPR81(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR81), (x));\
+;} while (0)
+#define GET_H_SYS_GPR82() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR82))
+#define SET_H_SYS_GPR82(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR82), (x));\
+;} while (0)
+#define GET_H_SYS_GPR83() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR83))
+#define SET_H_SYS_GPR83(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR83), (x));\
+;} while (0)
+#define GET_H_SYS_GPR84() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR84))
+#define SET_H_SYS_GPR84(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR84), (x));\
+;} while (0)
+#define GET_H_SYS_GPR85() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR85))
+#define SET_H_SYS_GPR85(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR85), (x));\
+;} while (0)
+#define GET_H_SYS_GPR86() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR86))
+#define SET_H_SYS_GPR86(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR86), (x));\
+;} while (0)
+#define GET_H_SYS_GPR87() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR87))
+#define SET_H_SYS_GPR87(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR87), (x));\
+;} while (0)
+#define GET_H_SYS_GPR88() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR88))
+#define SET_H_SYS_GPR88(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR88), (x));\
+;} while (0)
+#define GET_H_SYS_GPR89() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR89))
+#define SET_H_SYS_GPR89(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR89), (x));\
+;} while (0)
+#define GET_H_SYS_GPR90() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR90))
+#define SET_H_SYS_GPR90(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR90), (x));\
+;} while (0)
+#define GET_H_SYS_GPR91() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR91))
+#define SET_H_SYS_GPR91(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR91), (x));\
+;} while (0)
+#define GET_H_SYS_GPR92() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR92))
+#define SET_H_SYS_GPR92(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR92), (x));\
+;} while (0)
+#define GET_H_SYS_GPR93() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR93))
+#define SET_H_SYS_GPR93(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR93), (x));\
+;} while (0)
+#define GET_H_SYS_GPR94() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR94))
+#define SET_H_SYS_GPR94(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR94), (x));\
+;} while (0)
+#define GET_H_SYS_GPR95() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR95))
+#define SET_H_SYS_GPR95(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR95), (x));\
+;} while (0)
+#define GET_H_SYS_GPR96() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR96))
+#define SET_H_SYS_GPR96(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR96), (x));\
+;} while (0)
+#define GET_H_SYS_GPR97() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR97))
+#define SET_H_SYS_GPR97(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR97), (x));\
+;} while (0)
+#define GET_H_SYS_GPR98() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR98))
+#define SET_H_SYS_GPR98(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR98), (x));\
+;} while (0)
+#define GET_H_SYS_GPR99() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR99))
+#define SET_H_SYS_GPR99(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR99), (x));\
+;} while (0)
+#define GET_H_SYS_GPR100() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR100))
+#define SET_H_SYS_GPR100(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR100), (x));\
+;} while (0)
+#define GET_H_SYS_GPR101() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR101))
+#define SET_H_SYS_GPR101(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR101), (x));\
+;} while (0)
+#define GET_H_SYS_GPR102() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR102))
+#define SET_H_SYS_GPR102(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR102), (x));\
+;} while (0)
+#define GET_H_SYS_GPR103() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR103))
+#define SET_H_SYS_GPR103(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR103), (x));\
+;} while (0)
+#define GET_H_SYS_GPR104() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR104))
+#define SET_H_SYS_GPR104(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR104), (x));\
+;} while (0)
+#define GET_H_SYS_GPR105() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR105))
+#define SET_H_SYS_GPR105(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR105), (x));\
+;} while (0)
+#define GET_H_SYS_GPR106() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR106))
+#define SET_H_SYS_GPR106(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR106), (x));\
+;} while (0)
+#define GET_H_SYS_GPR107() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR107))
+#define SET_H_SYS_GPR107(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR107), (x));\
+;} while (0)
+#define GET_H_SYS_GPR108() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR108))
+#define SET_H_SYS_GPR108(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR108), (x));\
+;} while (0)
+#define GET_H_SYS_GPR109() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR109))
+#define SET_H_SYS_GPR109(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR109), (x));\
+;} while (0)
+#define GET_H_SYS_GPR110() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR110))
+#define SET_H_SYS_GPR110(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR110), (x));\
+;} while (0)
+#define GET_H_SYS_GPR111() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR111))
+#define SET_H_SYS_GPR111(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR111), (x));\
+;} while (0)
+#define GET_H_SYS_GPR112() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR112))
+#define SET_H_SYS_GPR112(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR112), (x));\
+;} while (0)
+#define GET_H_SYS_GPR113() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR113))
+#define SET_H_SYS_GPR113(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR113), (x));\
+;} while (0)
+#define GET_H_SYS_GPR114() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR114))
+#define SET_H_SYS_GPR114(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR114), (x));\
+;} while (0)
+#define GET_H_SYS_GPR115() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR115))
+#define SET_H_SYS_GPR115(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR115), (x));\
+;} while (0)
+#define GET_H_SYS_GPR116() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR116))
+#define SET_H_SYS_GPR116(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR116), (x));\
+;} while (0)
+#define GET_H_SYS_GPR117() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR117))
+#define SET_H_SYS_GPR117(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR117), (x));\
+;} while (0)
+#define GET_H_SYS_GPR118() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR118))
+#define SET_H_SYS_GPR118(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR118), (x));\
+;} while (0)
+#define GET_H_SYS_GPR119() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR119))
+#define SET_H_SYS_GPR119(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR119), (x));\
+;} while (0)
+#define GET_H_SYS_GPR120() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR120))
+#define SET_H_SYS_GPR120(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR120), (x));\
+;} while (0)
+#define GET_H_SYS_GPR121() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR121))
+#define SET_H_SYS_GPR121(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR121), (x));\
+;} while (0)
+#define GET_H_SYS_GPR122() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR122))
+#define SET_H_SYS_GPR122(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR122), (x));\
+;} while (0)
+#define GET_H_SYS_GPR123() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR123))
+#define SET_H_SYS_GPR123(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR123), (x));\
+;} while (0)
+#define GET_H_SYS_GPR124() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR124))
+#define SET_H_SYS_GPR124(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR124), (x));\
+;} while (0)
+#define GET_H_SYS_GPR125() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR125))
+#define SET_H_SYS_GPR125(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR125), (x));\
+;} while (0)
+#define GET_H_SYS_GPR126() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR126))
+#define SET_H_SYS_GPR126(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR126), (x));\
+;} while (0)
+#define GET_H_SYS_GPR127() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR127))
+#define SET_H_SYS_GPR127(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR127), (x));\
+;} while (0)
+#define GET_H_SYS_GPR128() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR128))
+#define SET_H_SYS_GPR128(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR128), (x));\
+;} while (0)
+#define GET_H_SYS_GPR129() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR129))
+#define SET_H_SYS_GPR129(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR129), (x));\
+;} while (0)
+#define GET_H_SYS_GPR130() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR130))
+#define SET_H_SYS_GPR130(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR130), (x));\
+;} while (0)
+#define GET_H_SYS_GPR131() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR131))
+#define SET_H_SYS_GPR131(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR131), (x));\
+;} while (0)
+#define GET_H_SYS_GPR132() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR132))
+#define SET_H_SYS_GPR132(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR132), (x));\
+;} while (0)
+#define GET_H_SYS_GPR133() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR133))
+#define SET_H_SYS_GPR133(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR133), (x));\
+;} while (0)
+#define GET_H_SYS_GPR134() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR134))
+#define SET_H_SYS_GPR134(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR134), (x));\
+;} while (0)
+#define GET_H_SYS_GPR135() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR135))
+#define SET_H_SYS_GPR135(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR135), (x));\
+;} while (0)
+#define GET_H_SYS_GPR136() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR136))
+#define SET_H_SYS_GPR136(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR136), (x));\
+;} while (0)
+#define GET_H_SYS_GPR137() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR137))
+#define SET_H_SYS_GPR137(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR137), (x));\
+;} while (0)
+#define GET_H_SYS_GPR138() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR138))
+#define SET_H_SYS_GPR138(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR138), (x));\
+;} while (0)
+#define GET_H_SYS_GPR139() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR139))
+#define SET_H_SYS_GPR139(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR139), (x));\
+;} while (0)
+#define GET_H_SYS_GPR140() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR140))
+#define SET_H_SYS_GPR140(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR140), (x));\
+;} while (0)
+#define GET_H_SYS_GPR141() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR141))
+#define SET_H_SYS_GPR141(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR141), (x));\
+;} while (0)
+#define GET_H_SYS_GPR142() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR142))
+#define SET_H_SYS_GPR142(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR142), (x));\
+;} while (0)
+#define GET_H_SYS_GPR143() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR143))
+#define SET_H_SYS_GPR143(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR143), (x));\
+;} while (0)
+#define GET_H_SYS_GPR144() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR144))
+#define SET_H_SYS_GPR144(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR144), (x));\
+;} while (0)
+#define GET_H_SYS_GPR145() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR145))
+#define SET_H_SYS_GPR145(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR145), (x));\
+;} while (0)
+#define GET_H_SYS_GPR146() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR146))
+#define SET_H_SYS_GPR146(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR146), (x));\
+;} while (0)
+#define GET_H_SYS_GPR147() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR147))
+#define SET_H_SYS_GPR147(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR147), (x));\
+;} while (0)
+#define GET_H_SYS_GPR148() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR148))
+#define SET_H_SYS_GPR148(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR148), (x));\
+;} while (0)
+#define GET_H_SYS_GPR149() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR149))
+#define SET_H_SYS_GPR149(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR149), (x));\
+;} while (0)
+#define GET_H_SYS_GPR150() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR150))
+#define SET_H_SYS_GPR150(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR150), (x));\
+;} while (0)
+#define GET_H_SYS_GPR151() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR151))
+#define SET_H_SYS_GPR151(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR151), (x));\
+;} while (0)
+#define GET_H_SYS_GPR152() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR152))
+#define SET_H_SYS_GPR152(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR152), (x));\
+;} while (0)
+#define GET_H_SYS_GPR153() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR153))
+#define SET_H_SYS_GPR153(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR153), (x));\
+;} while (0)
+#define GET_H_SYS_GPR154() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR154))
+#define SET_H_SYS_GPR154(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR154), (x));\
+;} while (0)
+#define GET_H_SYS_GPR155() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR155))
+#define SET_H_SYS_GPR155(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR155), (x));\
+;} while (0)
+#define GET_H_SYS_GPR156() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR156))
+#define SET_H_SYS_GPR156(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR156), (x));\
+;} while (0)
+#define GET_H_SYS_GPR157() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR157))
+#define SET_H_SYS_GPR157(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR157), (x));\
+;} while (0)
+#define GET_H_SYS_GPR158() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR158))
+#define SET_H_SYS_GPR158(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR158), (x));\
+;} while (0)
+#define GET_H_SYS_GPR159() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR159))
+#define SET_H_SYS_GPR159(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR159), (x));\
+;} while (0)
+#define GET_H_SYS_GPR160() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR160))
+#define SET_H_SYS_GPR160(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR160), (x));\
+;} while (0)
+#define GET_H_SYS_GPR161() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR161))
+#define SET_H_SYS_GPR161(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR161), (x));\
+;} while (0)
+#define GET_H_SYS_GPR162() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR162))
+#define SET_H_SYS_GPR162(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR162), (x));\
+;} while (0)
+#define GET_H_SYS_GPR163() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR163))
+#define SET_H_SYS_GPR163(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR163), (x));\
+;} while (0)
+#define GET_H_SYS_GPR164() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR164))
+#define SET_H_SYS_GPR164(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR164), (x));\
+;} while (0)
+#define GET_H_SYS_GPR165() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR165))
+#define SET_H_SYS_GPR165(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR165), (x));\
+;} while (0)
+#define GET_H_SYS_GPR166() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR166))
+#define SET_H_SYS_GPR166(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR166), (x));\
+;} while (0)
+#define GET_H_SYS_GPR167() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR167))
+#define SET_H_SYS_GPR167(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR167), (x));\
+;} while (0)
+#define GET_H_SYS_GPR168() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR168))
+#define SET_H_SYS_GPR168(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR168), (x));\
+;} while (0)
+#define GET_H_SYS_GPR169() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR169))
+#define SET_H_SYS_GPR169(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR169), (x));\
+;} while (0)
+#define GET_H_SYS_GPR170() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR170))
+#define SET_H_SYS_GPR170(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR170), (x));\
+;} while (0)
+#define GET_H_SYS_GPR171() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR171))
+#define SET_H_SYS_GPR171(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR171), (x));\
+;} while (0)
+#define GET_H_SYS_GPR172() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR172))
+#define SET_H_SYS_GPR172(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR172), (x));\
+;} while (0)
+#define GET_H_SYS_GPR173() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR173))
+#define SET_H_SYS_GPR173(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR173), (x));\
+;} while (0)
+#define GET_H_SYS_GPR174() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR174))
+#define SET_H_SYS_GPR174(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR174), (x));\
+;} while (0)
+#define GET_H_SYS_GPR175() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR175))
+#define SET_H_SYS_GPR175(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR175), (x));\
+;} while (0)
+#define GET_H_SYS_GPR176() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR176))
+#define SET_H_SYS_GPR176(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR176), (x));\
+;} while (0)
+#define GET_H_SYS_GPR177() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR177))
+#define SET_H_SYS_GPR177(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR177), (x));\
+;} while (0)
+#define GET_H_SYS_GPR178() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR178))
+#define SET_H_SYS_GPR178(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR178), (x));\
+;} while (0)
+#define GET_H_SYS_GPR179() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR179))
+#define SET_H_SYS_GPR179(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR179), (x));\
+;} while (0)
+#define GET_H_SYS_GPR180() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR180))
+#define SET_H_SYS_GPR180(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR180), (x));\
+;} while (0)
+#define GET_H_SYS_GPR181() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR181))
+#define SET_H_SYS_GPR181(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR181), (x));\
+;} while (0)
+#define GET_H_SYS_GPR182() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR182))
+#define SET_H_SYS_GPR182(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR182), (x));\
+;} while (0)
+#define GET_H_SYS_GPR183() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR183))
+#define SET_H_SYS_GPR183(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR183), (x));\
+;} while (0)
+#define GET_H_SYS_GPR184() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR184))
+#define SET_H_SYS_GPR184(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR184), (x));\
+;} while (0)
+#define GET_H_SYS_GPR185() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR185))
+#define SET_H_SYS_GPR185(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR185), (x));\
+;} while (0)
+#define GET_H_SYS_GPR186() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR186))
+#define SET_H_SYS_GPR186(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR186), (x));\
+;} while (0)
+#define GET_H_SYS_GPR187() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR187))
+#define SET_H_SYS_GPR187(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR187), (x));\
+;} while (0)
+#define GET_H_SYS_GPR188() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR188))
+#define SET_H_SYS_GPR188(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR188), (x));\
+;} while (0)
+#define GET_H_SYS_GPR189() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR189))
+#define SET_H_SYS_GPR189(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR189), (x));\
+;} while (0)
+#define GET_H_SYS_GPR190() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR190))
+#define SET_H_SYS_GPR190(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR190), (x));\
+;} while (0)
+#define GET_H_SYS_GPR191() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR191))
+#define SET_H_SYS_GPR191(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR191), (x));\
+;} while (0)
+#define GET_H_SYS_GPR192() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR192))
+#define SET_H_SYS_GPR192(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR192), (x));\
+;} while (0)
+#define GET_H_SYS_GPR193() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR193))
+#define SET_H_SYS_GPR193(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR193), (x));\
+;} while (0)
+#define GET_H_SYS_GPR194() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR194))
+#define SET_H_SYS_GPR194(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR194), (x));\
+;} while (0)
+#define GET_H_SYS_GPR195() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR195))
+#define SET_H_SYS_GPR195(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR195), (x));\
+;} while (0)
+#define GET_H_SYS_GPR196() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR196))
+#define SET_H_SYS_GPR196(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR196), (x));\
+;} while (0)
+#define GET_H_SYS_GPR197() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR197))
+#define SET_H_SYS_GPR197(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR197), (x));\
+;} while (0)
+#define GET_H_SYS_GPR198() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR198))
+#define SET_H_SYS_GPR198(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR198), (x));\
+;} while (0)
+#define GET_H_SYS_GPR199() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR199))
+#define SET_H_SYS_GPR199(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR199), (x));\
+;} while (0)
+#define GET_H_SYS_GPR200() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR200))
+#define SET_H_SYS_GPR200(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR200), (x));\
+;} while (0)
+#define GET_H_SYS_GPR201() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR201))
+#define SET_H_SYS_GPR201(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR201), (x));\
+;} while (0)
+#define GET_H_SYS_GPR202() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR202))
+#define SET_H_SYS_GPR202(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR202), (x));\
+;} while (0)
+#define GET_H_SYS_GPR203() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR203))
+#define SET_H_SYS_GPR203(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR203), (x));\
+;} while (0)
+#define GET_H_SYS_GPR204() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR204))
+#define SET_H_SYS_GPR204(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR204), (x));\
+;} while (0)
+#define GET_H_SYS_GPR205() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR205))
+#define SET_H_SYS_GPR205(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR205), (x));\
+;} while (0)
+#define GET_H_SYS_GPR206() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR206))
+#define SET_H_SYS_GPR206(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR206), (x));\
+;} while (0)
+#define GET_H_SYS_GPR207() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR207))
+#define SET_H_SYS_GPR207(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR207), (x));\
+;} while (0)
+#define GET_H_SYS_GPR208() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR208))
+#define SET_H_SYS_GPR208(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR208), (x));\
+;} while (0)
+#define GET_H_SYS_GPR209() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR209))
+#define SET_H_SYS_GPR209(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR209), (x));\
+;} while (0)
+#define GET_H_SYS_GPR210() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR210))
+#define SET_H_SYS_GPR210(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR210), (x));\
+;} while (0)
+#define GET_H_SYS_GPR211() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR211))
+#define SET_H_SYS_GPR211(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR211), (x));\
+;} while (0)
+#define GET_H_SYS_GPR212() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR212))
+#define SET_H_SYS_GPR212(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR212), (x));\
+;} while (0)
+#define GET_H_SYS_GPR213() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR213))
+#define SET_H_SYS_GPR213(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR213), (x));\
+;} while (0)
+#define GET_H_SYS_GPR214() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR214))
+#define SET_H_SYS_GPR214(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR214), (x));\
+;} while (0)
+#define GET_H_SYS_GPR215() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR215))
+#define SET_H_SYS_GPR215(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR215), (x));\
+;} while (0)
+#define GET_H_SYS_GPR216() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR216))
+#define SET_H_SYS_GPR216(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR216), (x));\
+;} while (0)
+#define GET_H_SYS_GPR217() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR217))
+#define SET_H_SYS_GPR217(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR217), (x));\
+;} while (0)
+#define GET_H_SYS_GPR218() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR218))
+#define SET_H_SYS_GPR218(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR218), (x));\
+;} while (0)
+#define GET_H_SYS_GPR219() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR219))
+#define SET_H_SYS_GPR219(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR219), (x));\
+;} while (0)
+#define GET_H_SYS_GPR220() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR220))
+#define SET_H_SYS_GPR220(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR220), (x));\
+;} while (0)
+#define GET_H_SYS_GPR221() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR221))
+#define SET_H_SYS_GPR221(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR221), (x));\
+;} while (0)
+#define GET_H_SYS_GPR222() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR222))
+#define SET_H_SYS_GPR222(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR222), (x));\
+;} while (0)
+#define GET_H_SYS_GPR223() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR223))
+#define SET_H_SYS_GPR223(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR223), (x));\
+;} while (0)
+#define GET_H_SYS_GPR224() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR224))
+#define SET_H_SYS_GPR224(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR224), (x));\
+;} while (0)
+#define GET_H_SYS_GPR225() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR225))
+#define SET_H_SYS_GPR225(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR225), (x));\
+;} while (0)
+#define GET_H_SYS_GPR226() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR226))
+#define SET_H_SYS_GPR226(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR226), (x));\
+;} while (0)
+#define GET_H_SYS_GPR227() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR227))
+#define SET_H_SYS_GPR227(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR227), (x));\
+;} while (0)
+#define GET_H_SYS_GPR228() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR228))
+#define SET_H_SYS_GPR228(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR228), (x));\
+;} while (0)
+#define GET_H_SYS_GPR229() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR229))
+#define SET_H_SYS_GPR229(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR229), (x));\
+;} while (0)
+#define GET_H_SYS_GPR230() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR230))
+#define SET_H_SYS_GPR230(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR230), (x));\
+;} while (0)
+#define GET_H_SYS_GPR231() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR231))
+#define SET_H_SYS_GPR231(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR231), (x));\
+;} while (0)
+#define GET_H_SYS_GPR232() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR232))
+#define SET_H_SYS_GPR232(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR232), (x));\
+;} while (0)
+#define GET_H_SYS_GPR233() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR233))
+#define SET_H_SYS_GPR233(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR233), (x));\
+;} while (0)
+#define GET_H_SYS_GPR234() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR234))
+#define SET_H_SYS_GPR234(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR234), (x));\
+;} while (0)
+#define GET_H_SYS_GPR235() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR235))
+#define SET_H_SYS_GPR235(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR235), (x));\
+;} while (0)
+#define GET_H_SYS_GPR236() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR236))
+#define SET_H_SYS_GPR236(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR236), (x));\
+;} while (0)
+#define GET_H_SYS_GPR237() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR237))
+#define SET_H_SYS_GPR237(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR237), (x));\
+;} while (0)
+#define GET_H_SYS_GPR238() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR238))
+#define SET_H_SYS_GPR238(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR238), (x));\
+;} while (0)
+#define GET_H_SYS_GPR239() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR239))
+#define SET_H_SYS_GPR239(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR239), (x));\
+;} while (0)
+#define GET_H_SYS_GPR240() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR240))
+#define SET_H_SYS_GPR240(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR240), (x));\
+;} while (0)
+#define GET_H_SYS_GPR241() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR241))
+#define SET_H_SYS_GPR241(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR241), (x));\
+;} while (0)
+#define GET_H_SYS_GPR242() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR242))
+#define SET_H_SYS_GPR242(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR242), (x));\
+;} while (0)
+#define GET_H_SYS_GPR243() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR243))
+#define SET_H_SYS_GPR243(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR243), (x));\
+;} while (0)
+#define GET_H_SYS_GPR244() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR244))
+#define SET_H_SYS_GPR244(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR244), (x));\
+;} while (0)
+#define GET_H_SYS_GPR245() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR245))
+#define SET_H_SYS_GPR245(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR245), (x));\
+;} while (0)
+#define GET_H_SYS_GPR246() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR246))
+#define SET_H_SYS_GPR246(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR246), (x));\
+;} while (0)
+#define GET_H_SYS_GPR247() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR247))
+#define SET_H_SYS_GPR247(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR247), (x));\
+;} while (0)
+#define GET_H_SYS_GPR248() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR248))
+#define SET_H_SYS_GPR248(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR248), (x));\
+;} while (0)
+#define GET_H_SYS_GPR249() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR249))
+#define SET_H_SYS_GPR249(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR249), (x));\
+;} while (0)
+#define GET_H_SYS_GPR250() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR250))
+#define SET_H_SYS_GPR250(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR250), (x));\
+;} while (0)
+#define GET_H_SYS_GPR251() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR251))
+#define SET_H_SYS_GPR251(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR251), (x));\
+;} while (0)
+#define GET_H_SYS_GPR252() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR252))
+#define SET_H_SYS_GPR252(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR252), (x));\
+;} while (0)
+#define GET_H_SYS_GPR253() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR253))
+#define SET_H_SYS_GPR253(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR253), (x));\
+;} while (0)
+#define GET_H_SYS_GPR254() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR254))
+#define SET_H_SYS_GPR254(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR254), (x));\
+;} while (0)
+#define GET_H_SYS_GPR255() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR255))
+#define SET_H_SYS_GPR255(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR255), (x));\
+;} while (0)
+#define GET_H_SYS_GPR256() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR256))
+#define SET_H_SYS_GPR256(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR256), (x));\
+;} while (0)
+#define GET_H_SYS_GPR257() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR257))
+#define SET_H_SYS_GPR257(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR257), (x));\
+;} while (0)
+#define GET_H_SYS_GPR258() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR258))
+#define SET_H_SYS_GPR258(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR258), (x));\
+;} while (0)
+#define GET_H_SYS_GPR259() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR259))
+#define SET_H_SYS_GPR259(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR259), (x));\
+;} while (0)
+#define GET_H_SYS_GPR260() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR260))
+#define SET_H_SYS_GPR260(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR260), (x));\
+;} while (0)
+#define GET_H_SYS_GPR261() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR261))
+#define SET_H_SYS_GPR261(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR261), (x));\
+;} while (0)
+#define GET_H_SYS_GPR262() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR262))
+#define SET_H_SYS_GPR262(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR262), (x));\
+;} while (0)
+#define GET_H_SYS_GPR263() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR263))
+#define SET_H_SYS_GPR263(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR263), (x));\
+;} while (0)
+#define GET_H_SYS_GPR264() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR264))
+#define SET_H_SYS_GPR264(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR264), (x));\
+;} while (0)
+#define GET_H_SYS_GPR265() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR265))
+#define SET_H_SYS_GPR265(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR265), (x));\
+;} while (0)
+#define GET_H_SYS_GPR266() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR266))
+#define SET_H_SYS_GPR266(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR266), (x));\
+;} while (0)
+#define GET_H_SYS_GPR267() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR267))
+#define SET_H_SYS_GPR267(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR267), (x));\
+;} while (0)
+#define GET_H_SYS_GPR268() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR268))
+#define SET_H_SYS_GPR268(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR268), (x));\
+;} while (0)
+#define GET_H_SYS_GPR269() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR269))
+#define SET_H_SYS_GPR269(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR269), (x));\
+;} while (0)
+#define GET_H_SYS_GPR270() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR270))
+#define SET_H_SYS_GPR270(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR270), (x));\
+;} while (0)
+#define GET_H_SYS_GPR271() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR271))
+#define SET_H_SYS_GPR271(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR271), (x));\
+;} while (0)
+#define GET_H_SYS_GPR272() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR272))
+#define SET_H_SYS_GPR272(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR272), (x));\
+;} while (0)
+#define GET_H_SYS_GPR273() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR273))
+#define SET_H_SYS_GPR273(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR273), (x));\
+;} while (0)
+#define GET_H_SYS_GPR274() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR274))
+#define SET_H_SYS_GPR274(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR274), (x));\
+;} while (0)
+#define GET_H_SYS_GPR275() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR275))
+#define SET_H_SYS_GPR275(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR275), (x));\
+;} while (0)
+#define GET_H_SYS_GPR276() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR276))
+#define SET_H_SYS_GPR276(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR276), (x));\
+;} while (0)
+#define GET_H_SYS_GPR277() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR277))
+#define SET_H_SYS_GPR277(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR277), (x));\
+;} while (0)
+#define GET_H_SYS_GPR278() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR278))
+#define SET_H_SYS_GPR278(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR278), (x));\
+;} while (0)
+#define GET_H_SYS_GPR279() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR279))
+#define SET_H_SYS_GPR279(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR279), (x));\
+;} while (0)
+#define GET_H_SYS_GPR280() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR280))
+#define SET_H_SYS_GPR280(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR280), (x));\
+;} while (0)
+#define GET_H_SYS_GPR281() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR281))
+#define SET_H_SYS_GPR281(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR281), (x));\
+;} while (0)
+#define GET_H_SYS_GPR282() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR282))
+#define SET_H_SYS_GPR282(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR282), (x));\
+;} while (0)
+#define GET_H_SYS_GPR283() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR283))
+#define SET_H_SYS_GPR283(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR283), (x));\
+;} while (0)
+#define GET_H_SYS_GPR284() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR284))
+#define SET_H_SYS_GPR284(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR284), (x));\
+;} while (0)
+#define GET_H_SYS_GPR285() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR285))
+#define SET_H_SYS_GPR285(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR285), (x));\
+;} while (0)
+#define GET_H_SYS_GPR286() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR286))
+#define SET_H_SYS_GPR286(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR286), (x));\
+;} while (0)
+#define GET_H_SYS_GPR287() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR287))
+#define SET_H_SYS_GPR287(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR287), (x));\
+;} while (0)
+#define GET_H_SYS_GPR288() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR288))
+#define SET_H_SYS_GPR288(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR288), (x));\
+;} while (0)
+#define GET_H_SYS_GPR289() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR289))
+#define SET_H_SYS_GPR289(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR289), (x));\
+;} while (0)
+#define GET_H_SYS_GPR290() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR290))
+#define SET_H_SYS_GPR290(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR290), (x));\
+;} while (0)
+#define GET_H_SYS_GPR291() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR291))
+#define SET_H_SYS_GPR291(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR291), (x));\
+;} while (0)
+#define GET_H_SYS_GPR292() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR292))
+#define SET_H_SYS_GPR292(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR292), (x));\
+;} while (0)
+#define GET_H_SYS_GPR293() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR293))
+#define SET_H_SYS_GPR293(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR293), (x));\
+;} while (0)
+#define GET_H_SYS_GPR294() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR294))
+#define SET_H_SYS_GPR294(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR294), (x));\
+;} while (0)
+#define GET_H_SYS_GPR295() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR295))
+#define SET_H_SYS_GPR295(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR295), (x));\
+;} while (0)
+#define GET_H_SYS_GPR296() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR296))
+#define SET_H_SYS_GPR296(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR296), (x));\
+;} while (0)
+#define GET_H_SYS_GPR297() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR297))
+#define SET_H_SYS_GPR297(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR297), (x));\
+;} while (0)
+#define GET_H_SYS_GPR298() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR298))
+#define SET_H_SYS_GPR298(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR298), (x));\
+;} while (0)
+#define GET_H_SYS_GPR299() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR299))
+#define SET_H_SYS_GPR299(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR299), (x));\
+;} while (0)
+#define GET_H_SYS_GPR300() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR300))
+#define SET_H_SYS_GPR300(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR300), (x));\
+;} while (0)
+#define GET_H_SYS_GPR301() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR301))
+#define SET_H_SYS_GPR301(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR301), (x));\
+;} while (0)
+#define GET_H_SYS_GPR302() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR302))
+#define SET_H_SYS_GPR302(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR302), (x));\
+;} while (0)
+#define GET_H_SYS_GPR303() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR303))
+#define SET_H_SYS_GPR303(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR303), (x));\
+;} while (0)
+#define GET_H_SYS_GPR304() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR304))
+#define SET_H_SYS_GPR304(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR304), (x));\
+;} while (0)
+#define GET_H_SYS_GPR305() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR305))
+#define SET_H_SYS_GPR305(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR305), (x));\
+;} while (0)
+#define GET_H_SYS_GPR306() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR306))
+#define SET_H_SYS_GPR306(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR306), (x));\
+;} while (0)
+#define GET_H_SYS_GPR307() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR307))
+#define SET_H_SYS_GPR307(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR307), (x));\
+;} while (0)
+#define GET_H_SYS_GPR308() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR308))
+#define SET_H_SYS_GPR308(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR308), (x));\
+;} while (0)
+#define GET_H_SYS_GPR309() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR309))
+#define SET_H_SYS_GPR309(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR309), (x));\
+;} while (0)
+#define GET_H_SYS_GPR310() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR310))
+#define SET_H_SYS_GPR310(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR310), (x));\
+;} while (0)
+#define GET_H_SYS_GPR311() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR311))
+#define SET_H_SYS_GPR311(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR311), (x));\
+;} while (0)
+#define GET_H_SYS_GPR312() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR312))
+#define SET_H_SYS_GPR312(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR312), (x));\
+;} while (0)
+#define GET_H_SYS_GPR313() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR313))
+#define SET_H_SYS_GPR313(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR313), (x));\
+;} while (0)
+#define GET_H_SYS_GPR314() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR314))
+#define SET_H_SYS_GPR314(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR314), (x));\
+;} while (0)
+#define GET_H_SYS_GPR315() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR315))
+#define SET_H_SYS_GPR315(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR315), (x));\
+;} while (0)
+#define GET_H_SYS_GPR316() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR316))
+#define SET_H_SYS_GPR316(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR316), (x));\
+;} while (0)
+#define GET_H_SYS_GPR317() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR317))
+#define SET_H_SYS_GPR317(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR317), (x));\
+;} while (0)
+#define GET_H_SYS_GPR318() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR318))
+#define SET_H_SYS_GPR318(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR318), (x));\
+;} while (0)
+#define GET_H_SYS_GPR319() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR319))
+#define SET_H_SYS_GPR319(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR319), (x));\
+;} while (0)
+#define GET_H_SYS_GPR320() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR320))
+#define SET_H_SYS_GPR320(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR320), (x));\
+;} while (0)
+#define GET_H_SYS_GPR321() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR321))
+#define SET_H_SYS_GPR321(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR321), (x));\
+;} while (0)
+#define GET_H_SYS_GPR322() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR322))
+#define SET_H_SYS_GPR322(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR322), (x));\
+;} while (0)
+#define GET_H_SYS_GPR323() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR323))
+#define SET_H_SYS_GPR323(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR323), (x));\
+;} while (0)
+#define GET_H_SYS_GPR324() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR324))
+#define SET_H_SYS_GPR324(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR324), (x));\
+;} while (0)
+#define GET_H_SYS_GPR325() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR325))
+#define SET_H_SYS_GPR325(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR325), (x));\
+;} while (0)
+#define GET_H_SYS_GPR326() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR326))
+#define SET_H_SYS_GPR326(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR326), (x));\
+;} while (0)
+#define GET_H_SYS_GPR327() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR327))
+#define SET_H_SYS_GPR327(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR327), (x));\
+;} while (0)
+#define GET_H_SYS_GPR328() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR328))
+#define SET_H_SYS_GPR328(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR328), (x));\
+;} while (0)
+#define GET_H_SYS_GPR329() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR329))
+#define SET_H_SYS_GPR329(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR329), (x));\
+;} while (0)
+#define GET_H_SYS_GPR330() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR330))
+#define SET_H_SYS_GPR330(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR330), (x));\
+;} while (0)
+#define GET_H_SYS_GPR331() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR331))
+#define SET_H_SYS_GPR331(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR331), (x));\
+;} while (0)
+#define GET_H_SYS_GPR332() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR332))
+#define SET_H_SYS_GPR332(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR332), (x));\
+;} while (0)
+#define GET_H_SYS_GPR333() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR333))
+#define SET_H_SYS_GPR333(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR333), (x));\
+;} while (0)
+#define GET_H_SYS_GPR334() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR334))
+#define SET_H_SYS_GPR334(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR334), (x));\
+;} while (0)
+#define GET_H_SYS_GPR335() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR335))
+#define SET_H_SYS_GPR335(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR335), (x));\
+;} while (0)
+#define GET_H_SYS_GPR336() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR336))
+#define SET_H_SYS_GPR336(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR336), (x));\
+;} while (0)
+#define GET_H_SYS_GPR337() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR337))
+#define SET_H_SYS_GPR337(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR337), (x));\
+;} while (0)
+#define GET_H_SYS_GPR338() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR338))
+#define SET_H_SYS_GPR338(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR338), (x));\
+;} while (0)
+#define GET_H_SYS_GPR339() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR339))
+#define SET_H_SYS_GPR339(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR339), (x));\
+;} while (0)
+#define GET_H_SYS_GPR340() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR340))
+#define SET_H_SYS_GPR340(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR340), (x));\
+;} while (0)
+#define GET_H_SYS_GPR341() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR341))
+#define SET_H_SYS_GPR341(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR341), (x));\
+;} while (0)
+#define GET_H_SYS_GPR342() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR342))
+#define SET_H_SYS_GPR342(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR342), (x));\
+;} while (0)
+#define GET_H_SYS_GPR343() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR343))
+#define SET_H_SYS_GPR343(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR343), (x));\
+;} while (0)
+#define GET_H_SYS_GPR344() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR344))
+#define SET_H_SYS_GPR344(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR344), (x));\
+;} while (0)
+#define GET_H_SYS_GPR345() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR345))
+#define SET_H_SYS_GPR345(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR345), (x));\
+;} while (0)
+#define GET_H_SYS_GPR346() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR346))
+#define SET_H_SYS_GPR346(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR346), (x));\
+;} while (0)
+#define GET_H_SYS_GPR347() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR347))
+#define SET_H_SYS_GPR347(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR347), (x));\
+;} while (0)
+#define GET_H_SYS_GPR348() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR348))
+#define SET_H_SYS_GPR348(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR348), (x));\
+;} while (0)
+#define GET_H_SYS_GPR349() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR349))
+#define SET_H_SYS_GPR349(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR349), (x));\
+;} while (0)
+#define GET_H_SYS_GPR350() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR350))
+#define SET_H_SYS_GPR350(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR350), (x));\
+;} while (0)
+#define GET_H_SYS_GPR351() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR351))
+#define SET_H_SYS_GPR351(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR351), (x));\
+;} while (0)
+#define GET_H_SYS_GPR352() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR352))
+#define SET_H_SYS_GPR352(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR352), (x));\
+;} while (0)
+#define GET_H_SYS_GPR353() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR353))
+#define SET_H_SYS_GPR353(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR353), (x));\
+;} while (0)
+#define GET_H_SYS_GPR354() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR354))
+#define SET_H_SYS_GPR354(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR354), (x));\
+;} while (0)
+#define GET_H_SYS_GPR355() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR355))
+#define SET_H_SYS_GPR355(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR355), (x));\
+;} while (0)
+#define GET_H_SYS_GPR356() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR356))
+#define SET_H_SYS_GPR356(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR356), (x));\
+;} while (0)
+#define GET_H_SYS_GPR357() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR357))
+#define SET_H_SYS_GPR357(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR357), (x));\
+;} while (0)
+#define GET_H_SYS_GPR358() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR358))
+#define SET_H_SYS_GPR358(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR358), (x));\
+;} while (0)
+#define GET_H_SYS_GPR359() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR359))
+#define SET_H_SYS_GPR359(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR359), (x));\
+;} while (0)
+#define GET_H_SYS_GPR360() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR360))
+#define SET_H_SYS_GPR360(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR360), (x));\
+;} while (0)
+#define GET_H_SYS_GPR361() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR361))
+#define SET_H_SYS_GPR361(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR361), (x));\
+;} while (0)
+#define GET_H_SYS_GPR362() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR362))
+#define SET_H_SYS_GPR362(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR362), (x));\
+;} while (0)
+#define GET_H_SYS_GPR363() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR363))
+#define SET_H_SYS_GPR363(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR363), (x));\
+;} while (0)
+#define GET_H_SYS_GPR364() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR364))
+#define SET_H_SYS_GPR364(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR364), (x));\
+;} while (0)
+#define GET_H_SYS_GPR365() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR365))
+#define SET_H_SYS_GPR365(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR365), (x));\
+;} while (0)
+#define GET_H_SYS_GPR366() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR366))
+#define SET_H_SYS_GPR366(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR366), (x));\
+;} while (0)
+#define GET_H_SYS_GPR367() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR367))
+#define SET_H_SYS_GPR367(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR367), (x));\
+;} while (0)
+#define GET_H_SYS_GPR368() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR368))
+#define SET_H_SYS_GPR368(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR368), (x));\
+;} while (0)
+#define GET_H_SYS_GPR369() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR369))
+#define SET_H_SYS_GPR369(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR369), (x));\
+;} while (0)
+#define GET_H_SYS_GPR370() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR370))
+#define SET_H_SYS_GPR370(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR370), (x));\
+;} while (0)
+#define GET_H_SYS_GPR371() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR371))
+#define SET_H_SYS_GPR371(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR371), (x));\
+;} while (0)
+#define GET_H_SYS_GPR372() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR372))
+#define SET_H_SYS_GPR372(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR372), (x));\
+;} while (0)
+#define GET_H_SYS_GPR373() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR373))
+#define SET_H_SYS_GPR373(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR373), (x));\
+;} while (0)
+#define GET_H_SYS_GPR374() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR374))
+#define SET_H_SYS_GPR374(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR374), (x));\
+;} while (0)
+#define GET_H_SYS_GPR375() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR375))
+#define SET_H_SYS_GPR375(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR375), (x));\
+;} while (0)
+#define GET_H_SYS_GPR376() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR376))
+#define SET_H_SYS_GPR376(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR376), (x));\
+;} while (0)
+#define GET_H_SYS_GPR377() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR377))
+#define SET_H_SYS_GPR377(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR377), (x));\
+;} while (0)
+#define GET_H_SYS_GPR378() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR378))
+#define SET_H_SYS_GPR378(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR378), (x));\
+;} while (0)
+#define GET_H_SYS_GPR379() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR379))
+#define SET_H_SYS_GPR379(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR379), (x));\
+;} while (0)
+#define GET_H_SYS_GPR380() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR380))
+#define SET_H_SYS_GPR380(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR380), (x));\
+;} while (0)
+#define GET_H_SYS_GPR381() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR381))
+#define SET_H_SYS_GPR381(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR381), (x));\
+;} while (0)
+#define GET_H_SYS_GPR382() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR382))
+#define SET_H_SYS_GPR382(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR382), (x));\
+;} while (0)
+#define GET_H_SYS_GPR383() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR383))
+#define SET_H_SYS_GPR383(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR383), (x));\
+;} while (0)
+#define GET_H_SYS_GPR384() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR384))
+#define SET_H_SYS_GPR384(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR384), (x));\
+;} while (0)
+#define GET_H_SYS_GPR385() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR385))
+#define SET_H_SYS_GPR385(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR385), (x));\
+;} while (0)
+#define GET_H_SYS_GPR386() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR386))
+#define SET_H_SYS_GPR386(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR386), (x));\
+;} while (0)
+#define GET_H_SYS_GPR387() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR387))
+#define SET_H_SYS_GPR387(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR387), (x));\
+;} while (0)
+#define GET_H_SYS_GPR388() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR388))
+#define SET_H_SYS_GPR388(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR388), (x));\
+;} while (0)
+#define GET_H_SYS_GPR389() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR389))
+#define SET_H_SYS_GPR389(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR389), (x));\
+;} while (0)
+#define GET_H_SYS_GPR390() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR390))
+#define SET_H_SYS_GPR390(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR390), (x));\
+;} while (0)
+#define GET_H_SYS_GPR391() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR391))
+#define SET_H_SYS_GPR391(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR391), (x));\
+;} while (0)
+#define GET_H_SYS_GPR392() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR392))
+#define SET_H_SYS_GPR392(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR392), (x));\
+;} while (0)
+#define GET_H_SYS_GPR393() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR393))
+#define SET_H_SYS_GPR393(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR393), (x));\
+;} while (0)
+#define GET_H_SYS_GPR394() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR394))
+#define SET_H_SYS_GPR394(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR394), (x));\
+;} while (0)
+#define GET_H_SYS_GPR395() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR395))
+#define SET_H_SYS_GPR395(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR395), (x));\
+;} while (0)
+#define GET_H_SYS_GPR396() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR396))
+#define SET_H_SYS_GPR396(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR396), (x));\
+;} while (0)
+#define GET_H_SYS_GPR397() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR397))
+#define SET_H_SYS_GPR397(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR397), (x));\
+;} while (0)
+#define GET_H_SYS_GPR398() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR398))
+#define SET_H_SYS_GPR398(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR398), (x));\
+;} while (0)
+#define GET_H_SYS_GPR399() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR399))
+#define SET_H_SYS_GPR399(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR399), (x));\
+;} while (0)
+#define GET_H_SYS_GPR400() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR400))
+#define SET_H_SYS_GPR400(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR400), (x));\
+;} while (0)
+#define GET_H_SYS_GPR401() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR401))
+#define SET_H_SYS_GPR401(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR401), (x));\
+;} while (0)
+#define GET_H_SYS_GPR402() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR402))
+#define SET_H_SYS_GPR402(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR402), (x));\
+;} while (0)
+#define GET_H_SYS_GPR403() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR403))
+#define SET_H_SYS_GPR403(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR403), (x));\
+;} while (0)
+#define GET_H_SYS_GPR404() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR404))
+#define SET_H_SYS_GPR404(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR404), (x));\
+;} while (0)
+#define GET_H_SYS_GPR405() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR405))
+#define SET_H_SYS_GPR405(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR405), (x));\
+;} while (0)
+#define GET_H_SYS_GPR406() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR406))
+#define SET_H_SYS_GPR406(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR406), (x));\
+;} while (0)
+#define GET_H_SYS_GPR407() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR407))
+#define SET_H_SYS_GPR407(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR407), (x));\
+;} while (0)
+#define GET_H_SYS_GPR408() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR408))
+#define SET_H_SYS_GPR408(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR408), (x));\
+;} while (0)
+#define GET_H_SYS_GPR409() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR409))
+#define SET_H_SYS_GPR409(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR409), (x));\
+;} while (0)
+#define GET_H_SYS_GPR410() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR410))
+#define SET_H_SYS_GPR410(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR410), (x));\
+;} while (0)
+#define GET_H_SYS_GPR411() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR411))
+#define SET_H_SYS_GPR411(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR411), (x));\
+;} while (0)
+#define GET_H_SYS_GPR412() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR412))
+#define SET_H_SYS_GPR412(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR412), (x));\
+;} while (0)
+#define GET_H_SYS_GPR413() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR413))
+#define SET_H_SYS_GPR413(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR413), (x));\
+;} while (0)
+#define GET_H_SYS_GPR414() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR414))
+#define SET_H_SYS_GPR414(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR414), (x));\
+;} while (0)
+#define GET_H_SYS_GPR415() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR415))
+#define SET_H_SYS_GPR415(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR415), (x));\
+;} while (0)
+#define GET_H_SYS_GPR416() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR416))
+#define SET_H_SYS_GPR416(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR416), (x));\
+;} while (0)
+#define GET_H_SYS_GPR417() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR417))
+#define SET_H_SYS_GPR417(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR417), (x));\
+;} while (0)
+#define GET_H_SYS_GPR418() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR418))
+#define SET_H_SYS_GPR418(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR418), (x));\
+;} while (0)
+#define GET_H_SYS_GPR419() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR419))
+#define SET_H_SYS_GPR419(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR419), (x));\
+;} while (0)
+#define GET_H_SYS_GPR420() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR420))
+#define SET_H_SYS_GPR420(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR420), (x));\
+;} while (0)
+#define GET_H_SYS_GPR421() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR421))
+#define SET_H_SYS_GPR421(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR421), (x));\
+;} while (0)
+#define GET_H_SYS_GPR422() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR422))
+#define SET_H_SYS_GPR422(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR422), (x));\
+;} while (0)
+#define GET_H_SYS_GPR423() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR423))
+#define SET_H_SYS_GPR423(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR423), (x));\
+;} while (0)
+#define GET_H_SYS_GPR424() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR424))
+#define SET_H_SYS_GPR424(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR424), (x));\
+;} while (0)
+#define GET_H_SYS_GPR425() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR425))
+#define SET_H_SYS_GPR425(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR425), (x));\
+;} while (0)
+#define GET_H_SYS_GPR426() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR426))
+#define SET_H_SYS_GPR426(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR426), (x));\
+;} while (0)
+#define GET_H_SYS_GPR427() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR427))
+#define SET_H_SYS_GPR427(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR427), (x));\
+;} while (0)
+#define GET_H_SYS_GPR428() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR428))
+#define SET_H_SYS_GPR428(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR428), (x));\
+;} while (0)
+#define GET_H_SYS_GPR429() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR429))
+#define SET_H_SYS_GPR429(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR429), (x));\
+;} while (0)
+#define GET_H_SYS_GPR430() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR430))
+#define SET_H_SYS_GPR430(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR430), (x));\
+;} while (0)
+#define GET_H_SYS_GPR431() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR431))
+#define SET_H_SYS_GPR431(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR431), (x));\
+;} while (0)
+#define GET_H_SYS_GPR432() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR432))
+#define SET_H_SYS_GPR432(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR432), (x));\
+;} while (0)
+#define GET_H_SYS_GPR433() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR433))
+#define SET_H_SYS_GPR433(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR433), (x));\
+;} while (0)
+#define GET_H_SYS_GPR434() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR434))
+#define SET_H_SYS_GPR434(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR434), (x));\
+;} while (0)
+#define GET_H_SYS_GPR435() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR435))
+#define SET_H_SYS_GPR435(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR435), (x));\
+;} while (0)
+#define GET_H_SYS_GPR436() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR436))
+#define SET_H_SYS_GPR436(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR436), (x));\
+;} while (0)
+#define GET_H_SYS_GPR437() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR437))
+#define SET_H_SYS_GPR437(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR437), (x));\
+;} while (0)
+#define GET_H_SYS_GPR438() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR438))
+#define SET_H_SYS_GPR438(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR438), (x));\
+;} while (0)
+#define GET_H_SYS_GPR439() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR439))
+#define SET_H_SYS_GPR439(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR439), (x));\
+;} while (0)
+#define GET_H_SYS_GPR440() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR440))
+#define SET_H_SYS_GPR440(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR440), (x));\
+;} while (0)
+#define GET_H_SYS_GPR441() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR441))
+#define SET_H_SYS_GPR441(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR441), (x));\
+;} while (0)
+#define GET_H_SYS_GPR442() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR442))
+#define SET_H_SYS_GPR442(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR442), (x));\
+;} while (0)
+#define GET_H_SYS_GPR443() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR443))
+#define SET_H_SYS_GPR443(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR443), (x));\
+;} while (0)
+#define GET_H_SYS_GPR444() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR444))
+#define SET_H_SYS_GPR444(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR444), (x));\
+;} while (0)
+#define GET_H_SYS_GPR445() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR445))
+#define SET_H_SYS_GPR445(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR445), (x));\
+;} while (0)
+#define GET_H_SYS_GPR446() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR446))
+#define SET_H_SYS_GPR446(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR446), (x));\
+;} while (0)
+#define GET_H_SYS_GPR447() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR447))
+#define SET_H_SYS_GPR447(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR447), (x));\
+;} while (0)
+#define GET_H_SYS_GPR448() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR448))
+#define SET_H_SYS_GPR448(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR448), (x));\
+;} while (0)
+#define GET_H_SYS_GPR449() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR449))
+#define SET_H_SYS_GPR449(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR449), (x));\
+;} while (0)
+#define GET_H_SYS_GPR450() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR450))
+#define SET_H_SYS_GPR450(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR450), (x));\
+;} while (0)
+#define GET_H_SYS_GPR451() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR451))
+#define SET_H_SYS_GPR451(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR451), (x));\
+;} while (0)
+#define GET_H_SYS_GPR452() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR452))
+#define SET_H_SYS_GPR452(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR452), (x));\
+;} while (0)
+#define GET_H_SYS_GPR453() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR453))
+#define SET_H_SYS_GPR453(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR453), (x));\
+;} while (0)
+#define GET_H_SYS_GPR454() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR454))
+#define SET_H_SYS_GPR454(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR454), (x));\
+;} while (0)
+#define GET_H_SYS_GPR455() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR455))
+#define SET_H_SYS_GPR455(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR455), (x));\
+;} while (0)
+#define GET_H_SYS_GPR456() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR456))
+#define SET_H_SYS_GPR456(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR456), (x));\
+;} while (0)
+#define GET_H_SYS_GPR457() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR457))
+#define SET_H_SYS_GPR457(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR457), (x));\
+;} while (0)
+#define GET_H_SYS_GPR458() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR458))
+#define SET_H_SYS_GPR458(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR458), (x));\
+;} while (0)
+#define GET_H_SYS_GPR459() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR459))
+#define SET_H_SYS_GPR459(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR459), (x));\
+;} while (0)
+#define GET_H_SYS_GPR460() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR460))
+#define SET_H_SYS_GPR460(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR460), (x));\
+;} while (0)
+#define GET_H_SYS_GPR461() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR461))
+#define SET_H_SYS_GPR461(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR461), (x));\
+;} while (0)
+#define GET_H_SYS_GPR462() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR462))
+#define SET_H_SYS_GPR462(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR462), (x));\
+;} while (0)
+#define GET_H_SYS_GPR463() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR463))
+#define SET_H_SYS_GPR463(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR463), (x));\
+;} while (0)
+#define GET_H_SYS_GPR464() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR464))
+#define SET_H_SYS_GPR464(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR464), (x));\
+;} while (0)
+#define GET_H_SYS_GPR465() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR465))
+#define SET_H_SYS_GPR465(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR465), (x));\
+;} while (0)
+#define GET_H_SYS_GPR466() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR466))
+#define SET_H_SYS_GPR466(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR466), (x));\
+;} while (0)
+#define GET_H_SYS_GPR467() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR467))
+#define SET_H_SYS_GPR467(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR467), (x));\
+;} while (0)
+#define GET_H_SYS_GPR468() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR468))
+#define SET_H_SYS_GPR468(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR468), (x));\
+;} while (0)
+#define GET_H_SYS_GPR469() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR469))
+#define SET_H_SYS_GPR469(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR469), (x));\
+;} while (0)
+#define GET_H_SYS_GPR470() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR470))
+#define SET_H_SYS_GPR470(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR470), (x));\
+;} while (0)
+#define GET_H_SYS_GPR471() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR471))
+#define SET_H_SYS_GPR471(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR471), (x));\
+;} while (0)
+#define GET_H_SYS_GPR472() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR472))
+#define SET_H_SYS_GPR472(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR472), (x));\
+;} while (0)
+#define GET_H_SYS_GPR473() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR473))
+#define SET_H_SYS_GPR473(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR473), (x));\
+;} while (0)
+#define GET_H_SYS_GPR474() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR474))
+#define SET_H_SYS_GPR474(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR474), (x));\
+;} while (0)
+#define GET_H_SYS_GPR475() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR475))
+#define SET_H_SYS_GPR475(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR475), (x));\
+;} while (0)
+#define GET_H_SYS_GPR476() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR476))
+#define SET_H_SYS_GPR476(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR476), (x));\
+;} while (0)
+#define GET_H_SYS_GPR477() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR477))
+#define SET_H_SYS_GPR477(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR477), (x));\
+;} while (0)
+#define GET_H_SYS_GPR478() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR478))
+#define SET_H_SYS_GPR478(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR478), (x));\
+;} while (0)
+#define GET_H_SYS_GPR479() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR479))
+#define SET_H_SYS_GPR479(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR479), (x));\
+;} while (0)
+#define GET_H_SYS_GPR480() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR480))
+#define SET_H_SYS_GPR480(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR480), (x));\
+;} while (0)
+#define GET_H_SYS_GPR481() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR481))
+#define SET_H_SYS_GPR481(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR481), (x));\
+;} while (0)
+#define GET_H_SYS_GPR482() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR482))
+#define SET_H_SYS_GPR482(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR482), (x));\
+;} while (0)
+#define GET_H_SYS_GPR483() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR483))
+#define SET_H_SYS_GPR483(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR483), (x));\
+;} while (0)
+#define GET_H_SYS_GPR484() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR484))
+#define SET_H_SYS_GPR484(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR484), (x));\
+;} while (0)
+#define GET_H_SYS_GPR485() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR485))
+#define SET_H_SYS_GPR485(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR485), (x));\
+;} while (0)
+#define GET_H_SYS_GPR486() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR486))
+#define SET_H_SYS_GPR486(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR486), (x));\
+;} while (0)
+#define GET_H_SYS_GPR487() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR487))
+#define SET_H_SYS_GPR487(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR487), (x));\
+;} while (0)
+#define GET_H_SYS_GPR488() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR488))
+#define SET_H_SYS_GPR488(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR488), (x));\
+;} while (0)
+#define GET_H_SYS_GPR489() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR489))
+#define SET_H_SYS_GPR489(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR489), (x));\
+;} while (0)
+#define GET_H_SYS_GPR490() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR490))
+#define SET_H_SYS_GPR490(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR490), (x));\
+;} while (0)
+#define GET_H_SYS_GPR491() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR491))
+#define SET_H_SYS_GPR491(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR491), (x));\
+;} while (0)
+#define GET_H_SYS_GPR492() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR492))
+#define SET_H_SYS_GPR492(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR492), (x));\
+;} while (0)
+#define GET_H_SYS_GPR493() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR493))
+#define SET_H_SYS_GPR493(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR493), (x));\
+;} while (0)
+#define GET_H_SYS_GPR494() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR494))
+#define SET_H_SYS_GPR494(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR494), (x));\
+;} while (0)
+#define GET_H_SYS_GPR495() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR495))
+#define SET_H_SYS_GPR495(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR495), (x));\
+;} while (0)
+#define GET_H_SYS_GPR496() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR496))
+#define SET_H_SYS_GPR496(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR496), (x));\
+;} while (0)
+#define GET_H_SYS_GPR497() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR497))
+#define SET_H_SYS_GPR497(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR497), (x));\
+;} while (0)
+#define GET_H_SYS_GPR498() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR498))
+#define SET_H_SYS_GPR498(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR498), (x));\
+;} while (0)
+#define GET_H_SYS_GPR499() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR499))
+#define SET_H_SYS_GPR499(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR499), (x));\
+;} while (0)
+#define GET_H_SYS_GPR500() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR500))
+#define SET_H_SYS_GPR500(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR500), (x));\
+;} while (0)
+#define GET_H_SYS_GPR501() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR501))
+#define SET_H_SYS_GPR501(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR501), (x));\
+;} while (0)
+#define GET_H_SYS_GPR502() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR502))
+#define SET_H_SYS_GPR502(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR502), (x));\
+;} while (0)
+#define GET_H_SYS_GPR503() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR503))
+#define SET_H_SYS_GPR503(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR503), (x));\
+;} while (0)
+#define GET_H_SYS_GPR504() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR504))
+#define SET_H_SYS_GPR504(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR504), (x));\
+;} while (0)
+#define GET_H_SYS_GPR505() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR505))
+#define SET_H_SYS_GPR505(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR505), (x));\
+;} while (0)
+#define GET_H_SYS_GPR506() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR506))
+#define SET_H_SYS_GPR506(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR506), (x));\
+;} while (0)
+#define GET_H_SYS_GPR507() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR507))
+#define SET_H_SYS_GPR507(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR507), (x));\
+;} while (0)
+#define GET_H_SYS_GPR508() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR508))
+#define SET_H_SYS_GPR508(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR508), (x));\
+;} while (0)
+#define GET_H_SYS_GPR509() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR509))
+#define SET_H_SYS_GPR509(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR509), (x));\
+;} while (0)
+#define GET_H_SYS_GPR510() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR510))
+#define SET_H_SYS_GPR510(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR510), (x));\
+;} while (0)
+#define GET_H_SYS_GPR511() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR511))
+#define SET_H_SYS_GPR511(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_GPR511), (x));\
+;} while (0)
+#define GET_H_MAC_MACLO() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_MAC, 11), SPR_INDEX_MAC_MACLO))
+#define SET_H_MAC_MACLO(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_MAC, 11), SPR_INDEX_MAC_MACLO), (x));\
+;} while (0)
+#define GET_H_MAC_MACHI() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_MAC, 11), SPR_INDEX_MAC_MACHI))
+#define SET_H_MAC_MACHI(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_MAC, 11), SPR_INDEX_MAC_MACHI), (x));\
+;} while (0)
+#define GET_H_TICK_TTMR() GET_H_SPR (ORSI (SLLSI (SPR_GROUP_TICK, 11), SPR_INDEX_TICK_TTMR))
+#define SET_H_TICK_TTMR(x) \
+do { \
+SET_H_SPR (ORSI (SLLSI (SPR_GROUP_TICK, 11), SPR_INDEX_TICK_TTMR), (x));\
+;} while (0)
+#define GET_H_SYS_VR_REV() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_VR), 5, 0)
+#define SET_H_SYS_VR_REV(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_VR), 5, 0, (x));\
+;} while (0)
+#define GET_H_SYS_VR_CFG() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_VR), 23, 16)
+#define SET_H_SYS_VR_CFG(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_VR), 23, 16, (x));\
+;} while (0)
+#define GET_H_SYS_VR_VER() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_VR), 31, 24)
+#define SET_H_SYS_VR_VER(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_VR), 31, 24, (x));\
+;} while (0)
+#define GET_H_SYS_UPR_UP() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_UPR), 0, 0)
+#define SET_H_SYS_UPR_UP(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_UPR), 0, 0, (x));\
+;} while (0)
+#define GET_H_SYS_UPR_DCP() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_UPR), 1, 1)
+#define SET_H_SYS_UPR_DCP(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_UPR), 1, 1, (x));\
+;} while (0)
+#define GET_H_SYS_UPR_ICP() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_UPR), 2, 2)
+#define SET_H_SYS_UPR_ICP(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_UPR), 2, 2, (x));\
+;} while (0)
+#define GET_H_SYS_UPR_DMP() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_UPR), 3, 3)
+#define SET_H_SYS_UPR_DMP(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_UPR), 3, 3, (x));\
+;} while (0)
+#define GET_H_SYS_UPR_MP() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_UPR), 4, 4)
+#define SET_H_SYS_UPR_MP(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_UPR), 4, 4, (x));\
+;} while (0)
+#define GET_H_SYS_UPR_IMP() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_UPR), 5, 5)
+#define SET_H_SYS_UPR_IMP(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_UPR), 5, 5, (x));\
+;} while (0)
+#define GET_H_SYS_UPR_DUP() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_UPR), 6, 6)
+#define SET_H_SYS_UPR_DUP(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_UPR), 6, 6, (x));\
+;} while (0)
+#define GET_H_SYS_UPR_PCUP() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_UPR), 7, 7)
+#define SET_H_SYS_UPR_PCUP(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_UPR), 7, 7, (x));\
+;} while (0)
+#define GET_H_SYS_UPR_PICP() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_UPR), 8, 8)
+#define SET_H_SYS_UPR_PICP(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_UPR), 8, 8, (x));\
+;} while (0)
+#define GET_H_SYS_UPR_PMP() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_UPR), 9, 9)
+#define SET_H_SYS_UPR_PMP(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_UPR), 9, 9, (x));\
+;} while (0)
+#define GET_H_SYS_UPR_TTP() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_UPR), 10, 10)
+#define SET_H_SYS_UPR_TTP(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_UPR), 10, 10, (x));\
+;} while (0)
+#define GET_H_SYS_UPR_CUP() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_UPR), 31, 24)
+#define SET_H_SYS_UPR_CUP(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_UPR), 31, 24, (x));\
+;} while (0)
+#define GET_H_SYS_CPUCFGR_NSGR() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_CPUCFGR), 3, 0)
+#define SET_H_SYS_CPUCFGR_NSGR(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_CPUCFGR), 3, 0, (x));\
+;} while (0)
+#define GET_H_SYS_CPUCFGR_CGF() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_CPUCFGR), 4, 4)
+#define SET_H_SYS_CPUCFGR_CGF(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_CPUCFGR), 4, 4, (x));\
+;} while (0)
+#define GET_H_SYS_CPUCFGR_OB32S() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_CPUCFGR), 5, 5)
+#define SET_H_SYS_CPUCFGR_OB32S(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_CPUCFGR), 5, 5, (x));\
+;} while (0)
+#define GET_H_SYS_CPUCFGR_OB64S() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_CPUCFGR), 6, 6)
+#define SET_H_SYS_CPUCFGR_OB64S(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_CPUCFGR), 6, 6, (x));\
+;} while (0)
+#define GET_H_SYS_CPUCFGR_OF32S() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_CPUCFGR), 7, 7)
+#define SET_H_SYS_CPUCFGR_OF32S(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_CPUCFGR), 7, 7, (x));\
+;} while (0)
+#define GET_H_SYS_CPUCFGR_OF64S() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_CPUCFGR), 8, 8)
+#define SET_H_SYS_CPUCFGR_OF64S(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_CPUCFGR), 8, 8, (x));\
+;} while (0)
+#define GET_H_SYS_CPUCFGR_OV64S() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_CPUCFGR), 9, 9)
+#define SET_H_SYS_CPUCFGR_OV64S(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_CPUCFGR), 9, 9, (x));\
+;} while (0)
+#define GET_H_SYS_CPUCFGR_ND() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_CPUCFGR), 10, 10)
+#define SET_H_SYS_CPUCFGR_ND(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_CPUCFGR), 10, 10, (x));\
+;} while (0)
+#define GET_H_SYS_SR_SM() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 0, 0)
+#define SET_H_SYS_SR_SM(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 0, 0, (x));\
+;} while (0)
+#define GET_H_SYS_SR_TEE() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 1, 1)
+#define SET_H_SYS_SR_TEE(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 1, 1, (x));\
+;} while (0)
+#define GET_H_SYS_SR_IEE() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 2, 2)
+#define SET_H_SYS_SR_IEE(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 2, 2, (x));\
+;} while (0)
+#define GET_H_SYS_SR_DCE() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 3, 3)
+#define SET_H_SYS_SR_DCE(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 3, 3, (x));\
+;} while (0)
+#define GET_H_SYS_SR_ICE() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 4, 4)
+#define SET_H_SYS_SR_ICE(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 4, 4, (x));\
+;} while (0)
+#define GET_H_SYS_SR_DME() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 5, 5)
+#define SET_H_SYS_SR_DME(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 5, 5, (x));\
+;} while (0)
+#define GET_H_SYS_SR_IME() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 6, 6)
+#define SET_H_SYS_SR_IME(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 6, 6, (x));\
+;} while (0)
+#define GET_H_SYS_SR_LEE() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 7, 7)
+#define SET_H_SYS_SR_LEE(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 7, 7, (x));\
+;} while (0)
+#define GET_H_SYS_SR_CE() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 8, 8)
+#define SET_H_SYS_SR_CE(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 8, 8, (x));\
+;} while (0)
+#define GET_H_SYS_SR_F() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 9, 9)
+#define SET_H_SYS_SR_F(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 9, 9, (x));\
+;} while (0)
+#define GET_H_SYS_SR_CY() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 10, 10)
+#define SET_H_SYS_SR_CY(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 10, 10, (x));\
+;} while (0)
+#define GET_H_SYS_SR_OV() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 11, 11)
+#define SET_H_SYS_SR_OV(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 11, 11, (x));\
+;} while (0)
+#define GET_H_SYS_SR_OVE() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 12, 12)
+#define SET_H_SYS_SR_OVE(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 12, 12, (x));\
+;} while (0)
+#define GET_H_SYS_SR_DSX() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 13, 13)
+#define SET_H_SYS_SR_DSX(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 13, 13, (x));\
+;} while (0)
+#define GET_H_SYS_SR_EPH() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 14, 14)
+#define SET_H_SYS_SR_EPH(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 14, 14, (x));\
+;} while (0)
+#define GET_H_SYS_SR_FO() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 15, 15)
+#define SET_H_SYS_SR_FO(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 15, 15, (x));\
+;} while (0)
+#define GET_H_SYS_SR_SUMRA() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 16, 16)
+#define SET_H_SYS_SR_SUMRA(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 16, 16, (x));\
+;} while (0)
+#define GET_H_SYS_SR_CID() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 31, 28)
+#define SET_H_SYS_SR_CID(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_SR), 31, 28, (x));\
+;} while (0)
+#define GET_H_SYS_FPCSR_FPEE() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_FPCSR), 0, 0)
+#define SET_H_SYS_FPCSR_FPEE(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_FPCSR), 0, 0, (x));\
+;} while (0)
+#define GET_H_SYS_FPCSR_RM() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_FPCSR), 2, 1)
+#define SET_H_SYS_FPCSR_RM(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_FPCSR), 2, 1, (x));\
+;} while (0)
+#define GET_H_SYS_FPCSR_OVF() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_FPCSR), 3, 3)
+#define SET_H_SYS_FPCSR_OVF(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_FPCSR), 3, 3, (x));\
+;} while (0)
+#define GET_H_SYS_FPCSR_UNF() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_FPCSR), 4, 4)
+#define SET_H_SYS_FPCSR_UNF(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_FPCSR), 4, 4, (x));\
+;} while (0)
+#define GET_H_SYS_FPCSR_SNF() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_FPCSR), 5, 5)
+#define SET_H_SYS_FPCSR_SNF(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_FPCSR), 5, 5, (x));\
+;} while (0)
+#define GET_H_SYS_FPCSR_QNF() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_FPCSR), 6, 6)
+#define SET_H_SYS_FPCSR_QNF(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_FPCSR), 6, 6, (x));\
+;} while (0)
+#define GET_H_SYS_FPCSR_ZF() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_FPCSR), 7, 7)
+#define SET_H_SYS_FPCSR_ZF(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_FPCSR), 7, 7, (x));\
+;} while (0)
+#define GET_H_SYS_FPCSR_IXF() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_FPCSR), 8, 8)
+#define SET_H_SYS_FPCSR_IXF(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_FPCSR), 8, 8, (x));\
+;} while (0)
+#define GET_H_SYS_FPCSR_IVF() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_FPCSR), 9, 9)
+#define SET_H_SYS_FPCSR_IVF(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_FPCSR), 9, 9, (x));\
+;} while (0)
+#define GET_H_SYS_FPCSR_INF() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_FPCSR), 10, 10)
+#define SET_H_SYS_FPCSR_INF(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_FPCSR), 10, 10, (x));\
+;} while (0)
+#define GET_H_SYS_FPCSR_DZF() or1k32bf_h_spr_field_get_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_FPCSR), 11, 11)
+#define SET_H_SYS_FPCSR_DZF(x) \
+do { \
+or1k32bf_h_spr_field_set_raw (current_cpu, ORSI (SLLSI (SPR_GROUP_SYS, 11), SPR_INDEX_SYS_FPCSR), 11, 11, (x));\
+;} while (0)
+
+/* Cover fns for register access.  */
+USI or1k32bf_h_pc_get (SIM_CPU *);
+void or1k32bf_h_pc_set (SIM_CPU *, USI);
+USI or1k32bf_h_spr_get (SIM_CPU *, UINT);
+void or1k32bf_h_spr_set (SIM_CPU *, UINT, USI);
+USI or1k32bf_h_gpr_get (SIM_CPU *, UINT);
+void or1k32bf_h_gpr_set (SIM_CPU *, UINT, USI);
+SF or1k32bf_h_fsr_get (SIM_CPU *, UINT);
+void or1k32bf_h_fsr_set (SIM_CPU *, UINT, SF);
+DF or1k32bf_h_fd32r_get (SIM_CPU *, UINT);
+void or1k32bf_h_fd32r_set (SIM_CPU *, UINT, DF);
+DI or1k32bf_h_i64r_get (SIM_CPU *, UINT);
+void or1k32bf_h_i64r_set (SIM_CPU *, UINT, DI);
+USI or1k32bf_h_sys_vr_get (SIM_CPU *);
+void or1k32bf_h_sys_vr_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_upr_get (SIM_CPU *);
+void or1k32bf_h_sys_upr_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_cpucfgr_get (SIM_CPU *);
+void or1k32bf_h_sys_cpucfgr_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_dmmucfgr_get (SIM_CPU *);
+void or1k32bf_h_sys_dmmucfgr_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_immucfgr_get (SIM_CPU *);
+void or1k32bf_h_sys_immucfgr_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_dccfgr_get (SIM_CPU *);
+void or1k32bf_h_sys_dccfgr_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_iccfgr_get (SIM_CPU *);
+void or1k32bf_h_sys_iccfgr_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_dcfgr_get (SIM_CPU *);
+void or1k32bf_h_sys_dcfgr_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_pccfgr_get (SIM_CPU *);
+void or1k32bf_h_sys_pccfgr_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_npc_get (SIM_CPU *);
+void or1k32bf_h_sys_npc_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_sr_get (SIM_CPU *);
+void or1k32bf_h_sys_sr_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_ppc_get (SIM_CPU *);
+void or1k32bf_h_sys_ppc_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_fpcsr_get (SIM_CPU *);
+void or1k32bf_h_sys_fpcsr_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_epcr0_get (SIM_CPU *);
+void or1k32bf_h_sys_epcr0_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_epcr1_get (SIM_CPU *);
+void or1k32bf_h_sys_epcr1_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_epcr2_get (SIM_CPU *);
+void or1k32bf_h_sys_epcr2_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_epcr3_get (SIM_CPU *);
+void or1k32bf_h_sys_epcr3_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_epcr4_get (SIM_CPU *);
+void or1k32bf_h_sys_epcr4_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_epcr5_get (SIM_CPU *);
+void or1k32bf_h_sys_epcr5_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_epcr6_get (SIM_CPU *);
+void or1k32bf_h_sys_epcr6_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_epcr7_get (SIM_CPU *);
+void or1k32bf_h_sys_epcr7_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_epcr8_get (SIM_CPU *);
+void or1k32bf_h_sys_epcr8_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_epcr9_get (SIM_CPU *);
+void or1k32bf_h_sys_epcr9_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_epcr10_get (SIM_CPU *);
+void or1k32bf_h_sys_epcr10_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_epcr11_get (SIM_CPU *);
+void or1k32bf_h_sys_epcr11_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_epcr12_get (SIM_CPU *);
+void or1k32bf_h_sys_epcr12_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_epcr13_get (SIM_CPU *);
+void or1k32bf_h_sys_epcr13_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_epcr14_get (SIM_CPU *);
+void or1k32bf_h_sys_epcr14_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_epcr15_get (SIM_CPU *);
+void or1k32bf_h_sys_epcr15_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_eear0_get (SIM_CPU *);
+void or1k32bf_h_sys_eear0_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_eear1_get (SIM_CPU *);
+void or1k32bf_h_sys_eear1_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_eear2_get (SIM_CPU *);
+void or1k32bf_h_sys_eear2_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_eear3_get (SIM_CPU *);
+void or1k32bf_h_sys_eear3_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_eear4_get (SIM_CPU *);
+void or1k32bf_h_sys_eear4_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_eear5_get (SIM_CPU *);
+void or1k32bf_h_sys_eear5_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_eear6_get (SIM_CPU *);
+void or1k32bf_h_sys_eear6_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_eear7_get (SIM_CPU *);
+void or1k32bf_h_sys_eear7_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_eear8_get (SIM_CPU *);
+void or1k32bf_h_sys_eear8_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_eear9_get (SIM_CPU *);
+void or1k32bf_h_sys_eear9_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_eear10_get (SIM_CPU *);
+void or1k32bf_h_sys_eear10_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_eear11_get (SIM_CPU *);
+void or1k32bf_h_sys_eear11_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_eear12_get (SIM_CPU *);
+void or1k32bf_h_sys_eear12_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_eear13_get (SIM_CPU *);
+void or1k32bf_h_sys_eear13_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_eear14_get (SIM_CPU *);
+void or1k32bf_h_sys_eear14_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_eear15_get (SIM_CPU *);
+void or1k32bf_h_sys_eear15_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_esr0_get (SIM_CPU *);
+void or1k32bf_h_sys_esr0_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_esr1_get (SIM_CPU *);
+void or1k32bf_h_sys_esr1_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_esr2_get (SIM_CPU *);
+void or1k32bf_h_sys_esr2_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_esr3_get (SIM_CPU *);
+void or1k32bf_h_sys_esr3_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_esr4_get (SIM_CPU *);
+void or1k32bf_h_sys_esr4_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_esr5_get (SIM_CPU *);
+void or1k32bf_h_sys_esr5_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_esr6_get (SIM_CPU *);
+void or1k32bf_h_sys_esr6_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_esr7_get (SIM_CPU *);
+void or1k32bf_h_sys_esr7_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_esr8_get (SIM_CPU *);
+void or1k32bf_h_sys_esr8_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_esr9_get (SIM_CPU *);
+void or1k32bf_h_sys_esr9_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_esr10_get (SIM_CPU *);
+void or1k32bf_h_sys_esr10_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_esr11_get (SIM_CPU *);
+void or1k32bf_h_sys_esr11_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_esr12_get (SIM_CPU *);
+void or1k32bf_h_sys_esr12_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_esr13_get (SIM_CPU *);
+void or1k32bf_h_sys_esr13_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_esr14_get (SIM_CPU *);
+void or1k32bf_h_sys_esr14_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_esr15_get (SIM_CPU *);
+void or1k32bf_h_sys_esr15_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr0_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr0_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr1_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr1_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr2_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr2_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr3_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr3_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr4_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr4_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr5_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr5_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr6_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr6_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr7_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr7_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr8_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr8_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr9_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr9_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr10_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr10_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr11_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr11_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr12_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr12_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr13_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr13_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr14_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr14_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr15_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr15_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr16_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr16_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr17_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr17_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr18_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr18_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr19_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr19_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr20_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr20_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr21_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr21_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr22_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr22_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr23_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr23_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr24_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr24_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr25_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr25_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr26_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr26_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr27_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr27_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr28_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr28_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr29_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr29_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr30_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr30_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr31_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr31_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr32_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr32_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr33_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr33_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr34_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr34_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr35_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr35_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr36_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr36_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr37_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr37_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr38_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr38_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr39_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr39_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr40_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr40_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr41_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr41_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr42_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr42_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr43_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr43_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr44_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr44_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr45_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr45_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr46_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr46_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr47_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr47_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr48_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr48_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr49_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr49_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr50_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr50_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr51_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr51_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr52_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr52_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr53_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr53_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr54_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr54_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr55_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr55_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr56_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr56_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr57_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr57_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr58_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr58_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr59_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr59_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr60_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr60_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr61_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr61_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr62_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr62_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr63_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr63_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr64_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr64_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr65_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr65_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr66_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr66_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr67_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr67_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr68_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr68_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr69_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr69_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr70_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr70_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr71_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr71_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr72_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr72_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr73_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr73_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr74_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr74_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr75_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr75_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr76_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr76_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr77_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr77_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr78_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr78_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr79_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr79_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr80_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr80_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr81_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr81_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr82_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr82_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr83_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr83_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr84_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr84_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr85_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr85_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr86_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr86_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr87_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr87_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr88_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr88_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr89_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr89_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr90_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr90_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr91_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr91_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr92_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr92_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr93_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr93_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr94_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr94_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr95_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr95_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr96_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr96_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr97_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr97_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr98_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr98_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr99_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr99_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr100_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr100_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr101_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr101_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr102_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr102_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr103_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr103_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr104_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr104_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr105_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr105_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr106_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr106_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr107_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr107_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr108_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr108_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr109_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr109_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr110_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr110_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr111_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr111_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr112_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr112_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr113_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr113_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr114_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr114_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr115_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr115_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr116_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr116_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr117_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr117_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr118_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr118_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr119_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr119_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr120_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr120_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr121_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr121_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr122_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr122_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr123_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr123_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr124_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr124_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr125_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr125_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr126_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr126_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr127_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr127_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr128_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr128_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr129_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr129_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr130_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr130_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr131_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr131_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr132_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr132_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr133_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr133_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr134_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr134_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr135_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr135_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr136_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr136_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr137_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr137_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr138_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr138_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr139_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr139_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr140_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr140_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr141_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr141_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr142_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr142_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr143_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr143_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr144_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr144_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr145_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr145_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr146_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr146_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr147_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr147_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr148_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr148_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr149_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr149_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr150_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr150_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr151_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr151_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr152_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr152_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr153_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr153_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr154_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr154_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr155_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr155_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr156_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr156_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr157_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr157_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr158_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr158_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr159_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr159_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr160_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr160_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr161_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr161_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr162_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr162_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr163_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr163_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr164_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr164_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr165_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr165_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr166_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr166_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr167_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr167_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr168_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr168_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr169_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr169_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr170_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr170_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr171_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr171_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr172_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr172_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr173_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr173_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr174_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr174_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr175_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr175_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr176_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr176_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr177_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr177_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr178_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr178_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr179_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr179_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr180_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr180_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr181_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr181_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr182_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr182_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr183_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr183_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr184_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr184_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr185_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr185_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr186_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr186_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr187_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr187_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr188_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr188_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr189_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr189_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr190_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr190_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr191_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr191_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr192_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr192_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr193_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr193_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr194_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr194_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr195_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr195_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr196_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr196_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr197_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr197_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr198_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr198_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr199_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr199_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr200_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr200_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr201_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr201_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr202_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr202_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr203_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr203_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr204_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr204_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr205_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr205_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr206_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr206_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr207_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr207_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr208_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr208_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr209_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr209_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr210_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr210_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr211_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr211_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr212_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr212_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr213_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr213_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr214_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr214_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr215_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr215_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr216_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr216_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr217_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr217_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr218_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr218_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr219_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr219_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr220_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr220_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr221_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr221_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr222_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr222_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr223_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr223_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr224_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr224_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr225_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr225_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr226_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr226_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr227_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr227_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr228_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr228_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr229_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr229_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr230_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr230_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr231_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr231_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr232_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr232_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr233_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr233_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr234_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr234_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr235_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr235_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr236_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr236_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr237_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr237_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr238_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr238_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr239_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr239_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr240_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr240_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr241_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr241_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr242_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr242_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr243_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr243_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr244_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr244_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr245_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr245_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr246_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr246_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr247_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr247_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr248_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr248_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr249_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr249_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr250_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr250_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr251_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr251_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr252_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr252_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr253_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr253_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr254_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr254_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr255_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr255_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr256_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr256_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr257_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr257_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr258_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr258_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr259_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr259_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr260_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr260_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr261_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr261_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr262_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr262_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr263_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr263_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr264_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr264_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr265_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr265_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr266_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr266_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr267_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr267_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr268_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr268_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr269_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr269_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr270_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr270_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr271_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr271_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr272_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr272_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr273_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr273_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr274_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr274_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr275_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr275_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr276_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr276_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr277_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr277_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr278_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr278_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr279_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr279_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr280_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr280_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr281_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr281_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr282_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr282_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr283_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr283_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr284_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr284_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr285_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr285_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr286_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr286_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr287_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr287_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr288_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr288_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr289_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr289_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr290_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr290_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr291_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr291_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr292_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr292_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr293_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr293_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr294_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr294_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr295_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr295_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr296_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr296_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr297_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr297_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr298_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr298_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr299_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr299_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr300_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr300_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr301_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr301_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr302_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr302_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr303_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr303_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr304_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr304_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr305_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr305_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr306_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr306_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr307_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr307_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr308_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr308_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr309_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr309_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr310_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr310_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr311_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr311_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr312_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr312_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr313_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr313_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr314_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr314_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr315_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr315_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr316_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr316_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr317_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr317_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr318_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr318_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr319_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr319_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr320_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr320_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr321_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr321_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr322_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr322_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr323_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr323_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr324_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr324_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr325_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr325_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr326_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr326_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr327_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr327_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr328_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr328_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr329_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr329_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr330_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr330_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr331_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr331_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr332_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr332_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr333_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr333_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr334_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr334_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr335_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr335_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr336_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr336_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr337_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr337_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr338_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr338_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr339_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr339_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr340_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr340_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr341_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr341_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr342_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr342_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr343_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr343_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr344_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr344_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr345_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr345_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr346_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr346_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr347_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr347_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr348_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr348_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr349_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr349_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr350_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr350_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr351_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr351_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr352_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr352_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr353_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr353_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr354_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr354_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr355_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr355_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr356_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr356_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr357_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr357_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr358_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr358_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr359_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr359_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr360_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr360_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr361_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr361_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr362_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr362_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr363_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr363_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr364_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr364_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr365_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr365_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr366_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr366_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr367_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr367_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr368_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr368_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr369_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr369_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr370_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr370_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr371_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr371_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr372_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr372_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr373_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr373_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr374_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr374_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr375_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr375_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr376_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr376_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr377_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr377_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr378_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr378_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr379_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr379_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr380_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr380_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr381_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr381_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr382_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr382_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr383_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr383_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr384_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr384_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr385_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr385_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr386_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr386_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr387_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr387_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr388_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr388_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr389_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr389_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr390_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr390_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr391_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr391_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr392_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr392_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr393_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr393_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr394_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr394_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr395_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr395_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr396_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr396_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr397_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr397_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr398_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr398_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr399_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr399_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr400_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr400_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr401_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr401_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr402_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr402_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr403_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr403_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr404_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr404_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr405_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr405_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr406_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr406_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr407_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr407_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr408_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr408_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr409_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr409_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr410_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr410_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr411_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr411_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr412_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr412_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr413_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr413_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr414_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr414_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr415_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr415_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr416_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr416_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr417_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr417_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr418_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr418_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr419_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr419_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr420_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr420_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr421_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr421_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr422_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr422_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr423_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr423_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr424_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr424_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr425_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr425_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr426_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr426_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr427_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr427_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr428_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr428_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr429_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr429_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr430_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr430_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr431_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr431_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr432_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr432_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr433_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr433_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr434_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr434_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr435_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr435_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr436_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr436_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr437_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr437_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr438_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr438_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr439_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr439_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr440_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr440_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr441_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr441_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr442_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr442_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr443_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr443_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr444_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr444_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr445_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr445_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr446_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr446_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr447_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr447_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr448_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr448_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr449_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr449_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr450_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr450_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr451_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr451_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr452_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr452_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr453_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr453_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr454_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr454_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr455_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr455_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr456_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr456_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr457_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr457_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr458_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr458_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr459_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr459_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr460_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr460_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr461_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr461_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr462_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr462_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr463_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr463_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr464_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr464_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr465_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr465_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr466_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr466_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr467_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr467_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr468_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr468_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr469_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr469_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr470_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr470_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr471_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr471_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr472_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr472_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr473_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr473_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr474_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr474_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr475_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr475_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr476_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr476_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr477_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr477_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr478_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr478_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr479_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr479_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr480_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr480_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr481_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr481_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr482_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr482_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr483_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr483_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr484_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr484_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr485_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr485_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr486_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr486_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr487_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr487_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr488_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr488_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr489_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr489_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr490_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr490_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr491_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr491_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr492_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr492_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr493_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr493_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr494_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr494_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr495_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr495_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr496_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr496_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr497_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr497_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr498_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr498_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr499_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr499_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr500_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr500_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr501_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr501_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr502_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr502_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr503_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr503_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr504_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr504_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr505_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr505_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr506_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr506_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr507_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr507_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr508_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr508_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr509_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr509_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr510_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr510_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_gpr511_get (SIM_CPU *);
+void or1k32bf_h_sys_gpr511_set (SIM_CPU *, USI);
+USI or1k32bf_h_mac_maclo_get (SIM_CPU *);
+void or1k32bf_h_mac_maclo_set (SIM_CPU *, USI);
+USI or1k32bf_h_mac_machi_get (SIM_CPU *);
+void or1k32bf_h_mac_machi_set (SIM_CPU *, USI);
+USI or1k32bf_h_tick_ttmr_get (SIM_CPU *);
+void or1k32bf_h_tick_ttmr_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_vr_rev_get (SIM_CPU *);
+void or1k32bf_h_sys_vr_rev_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_vr_cfg_get (SIM_CPU *);
+void or1k32bf_h_sys_vr_cfg_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_vr_ver_get (SIM_CPU *);
+void or1k32bf_h_sys_vr_ver_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_upr_up_get (SIM_CPU *);
+void or1k32bf_h_sys_upr_up_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_upr_dcp_get (SIM_CPU *);
+void or1k32bf_h_sys_upr_dcp_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_upr_icp_get (SIM_CPU *);
+void or1k32bf_h_sys_upr_icp_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_upr_dmp_get (SIM_CPU *);
+void or1k32bf_h_sys_upr_dmp_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_upr_mp_get (SIM_CPU *);
+void or1k32bf_h_sys_upr_mp_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_upr_imp_get (SIM_CPU *);
+void or1k32bf_h_sys_upr_imp_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_upr_dup_get (SIM_CPU *);
+void or1k32bf_h_sys_upr_dup_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_upr_pcup_get (SIM_CPU *);
+void or1k32bf_h_sys_upr_pcup_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_upr_picp_get (SIM_CPU *);
+void or1k32bf_h_sys_upr_picp_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_upr_pmp_get (SIM_CPU *);
+void or1k32bf_h_sys_upr_pmp_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_upr_ttp_get (SIM_CPU *);
+void or1k32bf_h_sys_upr_ttp_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_upr_cup_get (SIM_CPU *);
+void or1k32bf_h_sys_upr_cup_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_cpucfgr_nsgr_get (SIM_CPU *);
+void or1k32bf_h_sys_cpucfgr_nsgr_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_cpucfgr_cgf_get (SIM_CPU *);
+void or1k32bf_h_sys_cpucfgr_cgf_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_cpucfgr_ob32s_get (SIM_CPU *);
+void or1k32bf_h_sys_cpucfgr_ob32s_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_cpucfgr_ob64s_get (SIM_CPU *);
+void or1k32bf_h_sys_cpucfgr_ob64s_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_cpucfgr_of32s_get (SIM_CPU *);
+void or1k32bf_h_sys_cpucfgr_of32s_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_cpucfgr_of64s_get (SIM_CPU *);
+void or1k32bf_h_sys_cpucfgr_of64s_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_cpucfgr_ov64s_get (SIM_CPU *);
+void or1k32bf_h_sys_cpucfgr_ov64s_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_cpucfgr_nd_get (SIM_CPU *);
+void or1k32bf_h_sys_cpucfgr_nd_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_sr_sm_get (SIM_CPU *);
+void or1k32bf_h_sys_sr_sm_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_sr_tee_get (SIM_CPU *);
+void or1k32bf_h_sys_sr_tee_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_sr_iee_get (SIM_CPU *);
+void or1k32bf_h_sys_sr_iee_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_sr_dce_get (SIM_CPU *);
+void or1k32bf_h_sys_sr_dce_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_sr_ice_get (SIM_CPU *);
+void or1k32bf_h_sys_sr_ice_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_sr_dme_get (SIM_CPU *);
+void or1k32bf_h_sys_sr_dme_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_sr_ime_get (SIM_CPU *);
+void or1k32bf_h_sys_sr_ime_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_sr_lee_get (SIM_CPU *);
+void or1k32bf_h_sys_sr_lee_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_sr_ce_get (SIM_CPU *);
+void or1k32bf_h_sys_sr_ce_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_sr_f_get (SIM_CPU *);
+void or1k32bf_h_sys_sr_f_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_sr_cy_get (SIM_CPU *);
+void or1k32bf_h_sys_sr_cy_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_sr_ov_get (SIM_CPU *);
+void or1k32bf_h_sys_sr_ov_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_sr_ove_get (SIM_CPU *);
+void or1k32bf_h_sys_sr_ove_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_sr_dsx_get (SIM_CPU *);
+void or1k32bf_h_sys_sr_dsx_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_sr_eph_get (SIM_CPU *);
+void or1k32bf_h_sys_sr_eph_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_sr_fo_get (SIM_CPU *);
+void or1k32bf_h_sys_sr_fo_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_sr_sumra_get (SIM_CPU *);
+void or1k32bf_h_sys_sr_sumra_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_sr_cid_get (SIM_CPU *);
+void or1k32bf_h_sys_sr_cid_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_fpcsr_fpee_get (SIM_CPU *);
+void or1k32bf_h_sys_fpcsr_fpee_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_fpcsr_rm_get (SIM_CPU *);
+void or1k32bf_h_sys_fpcsr_rm_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_fpcsr_ovf_get (SIM_CPU *);
+void or1k32bf_h_sys_fpcsr_ovf_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_fpcsr_unf_get (SIM_CPU *);
+void or1k32bf_h_sys_fpcsr_unf_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_fpcsr_snf_get (SIM_CPU *);
+void or1k32bf_h_sys_fpcsr_snf_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_fpcsr_qnf_get (SIM_CPU *);
+void or1k32bf_h_sys_fpcsr_qnf_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_fpcsr_zf_get (SIM_CPU *);
+void or1k32bf_h_sys_fpcsr_zf_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_fpcsr_ixf_get (SIM_CPU *);
+void or1k32bf_h_sys_fpcsr_ixf_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_fpcsr_ivf_get (SIM_CPU *);
+void or1k32bf_h_sys_fpcsr_ivf_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_fpcsr_inf_get (SIM_CPU *);
+void or1k32bf_h_sys_fpcsr_inf_set (SIM_CPU *, USI);
+USI or1k32bf_h_sys_fpcsr_dzf_get (SIM_CPU *);
+void or1k32bf_h_sys_fpcsr_dzf_set (SIM_CPU *, USI);
+BI or1k32bf_h_atomic_reserve_get (SIM_CPU *);
+void or1k32bf_h_atomic_reserve_set (SIM_CPU *, BI);
+SI or1k32bf_h_atomic_address_get (SIM_CPU *);
+void or1k32bf_h_atomic_address_set (SIM_CPU *, SI);
+BI or1k32bf_h_roff1_get (SIM_CPU *);
+void or1k32bf_h_roff1_set (SIM_CPU *, BI);
+
+/* These must be hand-written.  */
+extern CPUREG_FETCH_FN or1k32bf_fetch_register;
+extern CPUREG_STORE_FN or1k32bf_store_register;
+
+typedef struct {
+  int empty;
+} MODEL_OR1200_DATA;
+
+typedef struct {
+  int empty;
+} MODEL_OR1200ND_DATA;
+
+/* Instruction argument buffer.  */
+
+union sem_fields {
+  struct { /* no operands */
+    int empty;
+  } sfmt_empty;
+  struct { /*  */
+    IADDR i_disp26;
+  } sfmt_l_j;
+  struct { /*  */
+    IADDR i_disp21;
+    UINT f_r1;
+  } sfmt_l_adrp;
+  struct { /*  */
+    SI f_rad32;
+    SI f_rbd32;
+    SI f_rdd32;
+  } sfmt_lf_add_d32;
+  struct { /*  */
+    UINT f_r1;
+    UINT f_r2;
+    UINT f_uimm6;
+  } sfmt_l_slli;
+  struct { /*  */
+    UINT f_r1;
+    UINT f_r2;
+    UINT f_r3;
+  } sfmt_l_sll;
+  struct { /*  */
+    INT f_simm16_split;
+    UINT f_r2;
+    UINT f_r3;
+  } sfmt_l_sw;
+  struct { /*  */
+    INT f_simm16;
+    UINT f_r1;
+    UINT f_r2;
+  } sfmt_l_lwz;
+  struct { /*  */
+    UINT f_r2;
+    UINT f_r3;
+    UINT f_uimm16_split;
+  } sfmt_l_mtspr;
+  struct { /*  */
+    UINT f_r1;
+    UINT f_r2;
+    UINT f_uimm16;
+  } sfmt_l_mfspr;
+#if WITH_SCACHE_PBB
+  /* Writeback handler.  */
+  struct {
+    /* Pointer to argbuf entry for insn whose results need writing back.  */
+    const struct argbuf *abuf;
+  } write;
+  /* x-before handler */
+  struct {
+    /*const SCACHE *insns[MAX_PARALLEL_INSNS];*/
+    int first_p;
+  } before;
+  /* x-after handler */
+  struct {
+    int empty;
+  } after;
+  /* This entry is used to terminate each pbb.  */
+  struct {
+    /* Number of insns in pbb.  */
+    int insn_count;
+    /* Next pbb to execute.  */
+    SCACHE *next;
+    SCACHE *branch_target;
+  } chain;
+#endif
+};
+
+/* The ARGBUF struct.  */
+struct argbuf {
+  /* These are the baseclass definitions.  */
+  IADDR addr;
+  const IDESC *idesc;
+  char trace_p;
+  char profile_p;
+  /* ??? Temporary hack for skip insns.  */
+  char skip_count;
+  char unused;
+  /* cpu specific data follows */
+  union sem semantic;
+  int written;
+  union sem_fields fields;
+};
+
+/* A cached insn.
+
+   ??? SCACHE used to contain more than just argbuf.  We could delete the
+   type entirely and always just use ARGBUF, but for future concerns and as
+   a level of abstraction it is left in.  */
+
+struct scache {
+  struct argbuf argbuf;
+};
+
+/* Macros to simplify extraction, reading and semantic code.
+   These define and assign the local vars that contain the insn's fields.  */
+
+#define EXTRACT_IFMT_EMPTY_VARS \
+  unsigned int length;
+#define EXTRACT_IFMT_EMPTY_CODE \
+  length = 0; \
+
+#define EXTRACT_IFMT_L_J_VARS \
+  UINT f_opcode; \
+  USI f_disp26; \
+  unsigned int length;
+#define EXTRACT_IFMT_L_J_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_disp26 = ((((EXTRACT_LSB0_SINT (insn, 32, 25, 26)) * (4))) + (pc)); \
+
+#define EXTRACT_IFMT_L_ADRP_VARS \
+  UINT f_opcode; \
+  UINT f_r1; \
+  USI f_disp21; \
+  unsigned int length;
+#define EXTRACT_IFMT_L_ADRP_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_r1 = EXTRACT_LSB0_UINT (insn, 32, 25, 5); \
+  f_disp21 = ((((EXTRACT_LSB0_SINT (insn, 32, 20, 21)) + (((SI) (pc) >> (13))))) * (8192)); \
+
+#define EXTRACT_IFMT_L_JR_VARS \
+  UINT f_opcode; \
+  UINT f_resv_25_10; \
+  UINT f_r3; \
+  UINT f_resv_10_11; \
+  unsigned int length;
+#define EXTRACT_IFMT_L_JR_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_resv_25_10 = EXTRACT_LSB0_UINT (insn, 32, 25, 10); \
+  f_r3 = EXTRACT_LSB0_UINT (insn, 32, 15, 5); \
+  f_resv_10_11 = EXTRACT_LSB0_UINT (insn, 32, 10, 11); \
+
+#define EXTRACT_IFMT_L_TRAP_VARS \
+  UINT f_opcode; \
+  UINT f_op_25_5; \
+  UINT f_resv_20_5; \
+  UINT f_uimm16; \
+  unsigned int length;
+#define EXTRACT_IFMT_L_TRAP_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_op_25_5 = EXTRACT_LSB0_UINT (insn, 32, 25, 5); \
+  f_resv_20_5 = EXTRACT_LSB0_UINT (insn, 32, 20, 5); \
+  f_uimm16 = EXTRACT_LSB0_UINT (insn, 32, 15, 16); \
+
+#define EXTRACT_IFMT_L_MSYNC_VARS \
+  UINT f_opcode; \
+  UINT f_op_25_5; \
+  UINT f_resv_20_21; \
+  unsigned int length;
+#define EXTRACT_IFMT_L_MSYNC_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_op_25_5 = EXTRACT_LSB0_UINT (insn, 32, 25, 5); \
+  f_resv_20_21 = EXTRACT_LSB0_UINT (insn, 32, 20, 21); \
+
+#define EXTRACT_IFMT_L_RFE_VARS \
+  UINT f_opcode; \
+  UINT f_resv_25_26; \
+  unsigned int length;
+#define EXTRACT_IFMT_L_RFE_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_resv_25_26 = EXTRACT_LSB0_UINT (insn, 32, 25, 26); \
+
+#define EXTRACT_IFMT_L_NOP_IMM_VARS \
+  UINT f_opcode; \
+  UINT f_op_25_2; \
+  UINT f_resv_23_8; \
+  UINT f_uimm16; \
+  unsigned int length;
+#define EXTRACT_IFMT_L_NOP_IMM_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_op_25_2 = EXTRACT_LSB0_UINT (insn, 32, 25, 2); \
+  f_resv_23_8 = EXTRACT_LSB0_UINT (insn, 32, 23, 8); \
+  f_uimm16 = EXTRACT_LSB0_UINT (insn, 32, 15, 16); \
+
+#define EXTRACT_IFMT_L_MOVHI_VARS \
+  UINT f_opcode; \
+  UINT f_r1; \
+  UINT f_resv_20_4; \
+  UINT f_op_16_1; \
+  UINT f_uimm16; \
+  unsigned int length;
+#define EXTRACT_IFMT_L_MOVHI_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_r1 = EXTRACT_LSB0_UINT (insn, 32, 25, 5); \
+  f_resv_20_4 = EXTRACT_LSB0_UINT (insn, 32, 20, 4); \
+  f_op_16_1 = EXTRACT_LSB0_UINT (insn, 32, 16, 1); \
+  f_uimm16 = EXTRACT_LSB0_UINT (insn, 32, 15, 16); \
+
+#define EXTRACT_IFMT_L_MACRC_VARS \
+  UINT f_opcode; \
+  UINT f_r1; \
+  UINT f_resv_20_4; \
+  UINT f_op_16_1; \
+  UINT f_uimm16; \
+  unsigned int length;
+#define EXTRACT_IFMT_L_MACRC_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_r1 = EXTRACT_LSB0_UINT (insn, 32, 25, 5); \
+  f_resv_20_4 = EXTRACT_LSB0_UINT (insn, 32, 20, 4); \
+  f_op_16_1 = EXTRACT_LSB0_UINT (insn, 32, 16, 1); \
+  f_uimm16 = EXTRACT_LSB0_UINT (insn, 32, 15, 16); \
+
+#define EXTRACT_IFMT_L_MFSPR_VARS \
+  UINT f_opcode; \
+  UINT f_r1; \
+  UINT f_r2; \
+  UINT f_uimm16; \
+  unsigned int length;
+#define EXTRACT_IFMT_L_MFSPR_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_r1 = EXTRACT_LSB0_UINT (insn, 32, 25, 5); \
+  f_r2 = EXTRACT_LSB0_UINT (insn, 32, 20, 5); \
+  f_uimm16 = EXTRACT_LSB0_UINT (insn, 32, 15, 16); \
+
+#define EXTRACT_IFMT_L_MTSPR_VARS \
+  UINT f_opcode; \
+  UINT f_r2; \
+  UINT f_r3; \
+  UINT f_imm16_25_5; \
+  UINT f_imm16_10_11; \
+  UINT f_uimm16_split; \
+  unsigned int length;
+#define EXTRACT_IFMT_L_MTSPR_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_r2 = EXTRACT_LSB0_UINT (insn, 32, 20, 5); \
+  f_r3 = EXTRACT_LSB0_UINT (insn, 32, 15, 5); \
+  f_imm16_25_5 = EXTRACT_LSB0_UINT (insn, 32, 25, 5); \
+  f_imm16_10_11 = EXTRACT_LSB0_UINT (insn, 32, 10, 11); \
+  f_uimm16_split = ((UHI) (UINT) (((((f_imm16_25_5) << (11))) | (f_imm16_10_11))));\
+
+#define EXTRACT_IFMT_L_LWZ_VARS \
+  UINT f_opcode; \
+  UINT f_r1; \
+  UINT f_r2; \
+  INT f_simm16; \
+  unsigned int length;
+#define EXTRACT_IFMT_L_LWZ_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_r1 = EXTRACT_LSB0_UINT (insn, 32, 25, 5); \
+  f_r2 = EXTRACT_LSB0_UINT (insn, 32, 20, 5); \
+  f_simm16 = EXTRACT_LSB0_SINT (insn, 32, 15, 16); \
+
+#define EXTRACT_IFMT_L_SW_VARS \
+  UINT f_opcode; \
+  UINT f_r2; \
+  UINT f_r3; \
+  UINT f_imm16_25_5; \
+  UINT f_imm16_10_11; \
+  INT f_simm16_split; \
+  unsigned int length;
+#define EXTRACT_IFMT_L_SW_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_r2 = EXTRACT_LSB0_UINT (insn, 32, 20, 5); \
+  f_r3 = EXTRACT_LSB0_UINT (insn, 32, 15, 5); \
+  f_imm16_25_5 = EXTRACT_LSB0_UINT (insn, 32, 25, 5); \
+  f_imm16_10_11 = EXTRACT_LSB0_UINT (insn, 32, 10, 11); \
+  f_simm16_split = ((HI) (UINT) (((((f_imm16_25_5) << (11))) | (f_imm16_10_11))));\
+
+#define EXTRACT_IFMT_L_SWA_VARS \
+  UINT f_opcode; \
+  UINT f_r2; \
+  UINT f_r3; \
+  INT f_simm16; \
+  unsigned int length;
+#define EXTRACT_IFMT_L_SWA_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_r2 = EXTRACT_LSB0_UINT (insn, 32, 20, 5); \
+  f_r3 = EXTRACT_LSB0_UINT (insn, 32, 15, 5); \
+  f_simm16 = EXTRACT_LSB0_SINT (insn, 32, 15, 16); \
+
+#define EXTRACT_IFMT_L_SLL_VARS \
+  UINT f_opcode; \
+  UINT f_r1; \
+  UINT f_r2; \
+  UINT f_r3; \
+  UINT f_resv_10_3; \
+  UINT f_op_7_2; \
+  UINT f_resv_5_2; \
+  UINT f_op_3_4; \
+  unsigned int length;
+#define EXTRACT_IFMT_L_SLL_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_r1 = EXTRACT_LSB0_UINT (insn, 32, 25, 5); \
+  f_r2 = EXTRACT_LSB0_UINT (insn, 32, 20, 5); \
+  f_r3 = EXTRACT_LSB0_UINT (insn, 32, 15, 5); \
+  f_resv_10_3 = EXTRACT_LSB0_UINT (insn, 32, 10, 3); \
+  f_op_7_2 = EXTRACT_LSB0_UINT (insn, 32, 7, 2); \
+  f_resv_5_2 = EXTRACT_LSB0_UINT (insn, 32, 5, 2); \
+  f_op_3_4 = EXTRACT_LSB0_UINT (insn, 32, 3, 4); \
+
+#define EXTRACT_IFMT_L_SLLI_VARS \
+  UINT f_opcode; \
+  UINT f_r1; \
+  UINT f_r2; \
+  UINT f_resv_15_8; \
+  UINT f_op_7_2; \
+  UINT f_uimm6; \
+  unsigned int length;
+#define EXTRACT_IFMT_L_SLLI_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_r1 = EXTRACT_LSB0_UINT (insn, 32, 25, 5); \
+  f_r2 = EXTRACT_LSB0_UINT (insn, 32, 20, 5); \
+  f_resv_15_8 = EXTRACT_LSB0_UINT (insn, 32, 15, 8); \
+  f_op_7_2 = EXTRACT_LSB0_UINT (insn, 32, 7, 2); \
+  f_uimm6 = EXTRACT_LSB0_UINT (insn, 32, 5, 6); \
+
+#define EXTRACT_IFMT_L_AND_VARS \
+  UINT f_opcode; \
+  UINT f_r1; \
+  UINT f_r2; \
+  UINT f_r3; \
+  UINT f_resv_10_7; \
+  UINT f_op_3_4; \
+  unsigned int length;
+#define EXTRACT_IFMT_L_AND_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_r1 = EXTRACT_LSB0_UINT (insn, 32, 25, 5); \
+  f_r2 = EXTRACT_LSB0_UINT (insn, 32, 20, 5); \
+  f_r3 = EXTRACT_LSB0_UINT (insn, 32, 15, 5); \
+  f_resv_10_7 = EXTRACT_LSB0_UINT (insn, 32, 10, 7); \
+  f_op_3_4 = EXTRACT_LSB0_UINT (insn, 32, 3, 4); \
+
+#define EXTRACT_IFMT_L_MULD_VARS \
+  UINT f_opcode; \
+  UINT f_resv_25_5; \
+  UINT f_r2; \
+  UINT f_r3; \
+  UINT f_resv_10_7; \
+  UINT f_op_3_4; \
+  unsigned int length;
+#define EXTRACT_IFMT_L_MULD_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_resv_25_5 = EXTRACT_LSB0_UINT (insn, 32, 25, 5); \
+  f_r2 = EXTRACT_LSB0_UINT (insn, 32, 20, 5); \
+  f_r3 = EXTRACT_LSB0_UINT (insn, 32, 15, 5); \
+  f_resv_10_7 = EXTRACT_LSB0_UINT (insn, 32, 10, 7); \
+  f_op_3_4 = EXTRACT_LSB0_UINT (insn, 32, 3, 4); \
+
+#define EXTRACT_IFMT_L_EXTHS_VARS \
+  UINT f_opcode; \
+  UINT f_r1; \
+  UINT f_r2; \
+  UINT f_resv_15_6; \
+  UINT f_op_9_4; \
+  UINT f_resv_5_2; \
+  UINT f_op_3_4; \
+  unsigned int length;
+#define EXTRACT_IFMT_L_EXTHS_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_r1 = EXTRACT_LSB0_UINT (insn, 32, 25, 5); \
+  f_r2 = EXTRACT_LSB0_UINT (insn, 32, 20, 5); \
+  f_resv_15_6 = EXTRACT_LSB0_UINT (insn, 32, 15, 6); \
+  f_op_9_4 = EXTRACT_LSB0_UINT (insn, 32, 9, 4); \
+  f_resv_5_2 = EXTRACT_LSB0_UINT (insn, 32, 5, 2); \
+  f_op_3_4 = EXTRACT_LSB0_UINT (insn, 32, 3, 4); \
+
+#define EXTRACT_IFMT_L_CMOV_VARS \
+  UINT f_opcode; \
+  UINT f_r1; \
+  UINT f_r2; \
+  UINT f_r3; \
+  UINT f_resv_10_1; \
+  UINT f_op_9_2; \
+  UINT f_resv_7_4; \
+  UINT f_op_3_4; \
+  unsigned int length;
+#define EXTRACT_IFMT_L_CMOV_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_r1 = EXTRACT_LSB0_UINT (insn, 32, 25, 5); \
+  f_r2 = EXTRACT_LSB0_UINT (insn, 32, 20, 5); \
+  f_r3 = EXTRACT_LSB0_UINT (insn, 32, 15, 5); \
+  f_resv_10_1 = EXTRACT_LSB0_UINT (insn, 32, 10, 1); \
+  f_op_9_2 = EXTRACT_LSB0_UINT (insn, 32, 9, 2); \
+  f_resv_7_4 = EXTRACT_LSB0_UINT (insn, 32, 7, 4); \
+  f_op_3_4 = EXTRACT_LSB0_UINT (insn, 32, 3, 4); \
+
+#define EXTRACT_IFMT_L_SFGTS_VARS \
+  UINT f_opcode; \
+  UINT f_op_25_5; \
+  UINT f_r2; \
+  UINT f_r3; \
+  UINT f_resv_10_11; \
+  unsigned int length;
+#define EXTRACT_IFMT_L_SFGTS_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_op_25_5 = EXTRACT_LSB0_UINT (insn, 32, 25, 5); \
+  f_r2 = EXTRACT_LSB0_UINT (insn, 32, 20, 5); \
+  f_r3 = EXTRACT_LSB0_UINT (insn, 32, 15, 5); \
+  f_resv_10_11 = EXTRACT_LSB0_UINT (insn, 32, 10, 11); \
+
+#define EXTRACT_IFMT_L_SFGTSI_VARS \
+  UINT f_opcode; \
+  UINT f_op_25_5; \
+  UINT f_r2; \
+  INT f_simm16; \
+  unsigned int length;
+#define EXTRACT_IFMT_L_SFGTSI_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_op_25_5 = EXTRACT_LSB0_UINT (insn, 32, 25, 5); \
+  f_r2 = EXTRACT_LSB0_UINT (insn, 32, 20, 5); \
+  f_simm16 = EXTRACT_LSB0_SINT (insn, 32, 15, 16); \
+
+#define EXTRACT_IFMT_L_MAC_VARS \
+  UINT f_opcode; \
+  UINT f_op_25_5; \
+  UINT f_r2; \
+  UINT f_r3; \
+  UINT f_resv_10_7; \
+  UINT f_op_3_4; \
+  unsigned int length;
+#define EXTRACT_IFMT_L_MAC_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_op_25_5 = EXTRACT_LSB0_UINT (insn, 32, 25, 5); \
+  f_r2 = EXTRACT_LSB0_UINT (insn, 32, 20, 5); \
+  f_r3 = EXTRACT_LSB0_UINT (insn, 32, 15, 5); \
+  f_resv_10_7 = EXTRACT_LSB0_UINT (insn, 32, 10, 7); \
+  f_op_3_4 = EXTRACT_LSB0_UINT (insn, 32, 3, 4); \
+
+#define EXTRACT_IFMT_L_MACI_VARS \
+  UINT f_opcode; \
+  UINT f_resv_25_5; \
+  UINT f_r2; \
+  INT f_simm16; \
+  unsigned int length;
+#define EXTRACT_IFMT_L_MACI_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_resv_25_5 = EXTRACT_LSB0_UINT (insn, 32, 25, 5); \
+  f_r2 = EXTRACT_LSB0_UINT (insn, 32, 20, 5); \
+  f_simm16 = EXTRACT_LSB0_SINT (insn, 32, 15, 16); \
+
+#define EXTRACT_IFMT_LF_ADD_S_VARS \
+  UINT f_opcode; \
+  UINT f_r1; \
+  UINT f_r2; \
+  UINT f_r3; \
+  UINT f_resv_10_3; \
+  UINT f_op_7_8; \
+  unsigned int length;
+#define EXTRACT_IFMT_LF_ADD_S_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_r1 = EXTRACT_LSB0_UINT (insn, 32, 25, 5); \
+  f_r2 = EXTRACT_LSB0_UINT (insn, 32, 20, 5); \
+  f_r3 = EXTRACT_LSB0_UINT (insn, 32, 15, 5); \
+  f_resv_10_3 = EXTRACT_LSB0_UINT (insn, 32, 10, 3); \
+  f_op_7_8 = EXTRACT_LSB0_UINT (insn, 32, 7, 8); \
+
+#define EXTRACT_IFMT_LF_ADD_D32_VARS \
+  UINT f_opcode; \
+  UINT f_r1; \
+  UINT f_rdoff_10_1; \
+  SI f_rdd32; \
+  UINT f_r2; \
+  UINT f_raoff_9_1; \
+  SI f_rad32; \
+  UINT f_r3; \
+  UINT f_rboff_8_1; \
+  SI f_rbd32; \
+  UINT f_op_7_8; \
+  unsigned int length;
+#define EXTRACT_IFMT_LF_ADD_D32_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_r1 = EXTRACT_LSB0_UINT (insn, 32, 25, 5); \
+  f_rdoff_10_1 = EXTRACT_LSB0_UINT (insn, 32, 10, 1); \
+  f_rdd32 = ((f_r1) | (((f_rdoff_10_1) << (5))));\
+  f_r2 = EXTRACT_LSB0_UINT (insn, 32, 20, 5); \
+  f_raoff_9_1 = EXTRACT_LSB0_UINT (insn, 32, 9, 1); \
+  f_rad32 = ((f_r2) | (((f_raoff_9_1) << (5))));\
+  f_r3 = EXTRACT_LSB0_UINT (insn, 32, 15, 5); \
+  f_rboff_8_1 = EXTRACT_LSB0_UINT (insn, 32, 8, 1); \
+  f_rbd32 = ((f_r3) | (((f_rboff_8_1) << (5))));\
+  f_op_7_8 = EXTRACT_LSB0_UINT (insn, 32, 7, 8); \
+
+#define EXTRACT_IFMT_LF_ITOF_S_VARS \
+  UINT f_opcode; \
+  UINT f_r1; \
+  UINT f_r2; \
+  UINT f_r3; \
+  UINT f_resv_10_3; \
+  UINT f_op_7_8; \
+  unsigned int length;
+#define EXTRACT_IFMT_LF_ITOF_S_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_r1 = EXTRACT_LSB0_UINT (insn, 32, 25, 5); \
+  f_r2 = EXTRACT_LSB0_UINT (insn, 32, 20, 5); \
+  f_r3 = EXTRACT_LSB0_UINT (insn, 32, 15, 5); \
+  f_resv_10_3 = EXTRACT_LSB0_UINT (insn, 32, 10, 3); \
+  f_op_7_8 = EXTRACT_LSB0_UINT (insn, 32, 7, 8); \
+
+#define EXTRACT_IFMT_LF_ITOF_D32_VARS \
+  UINT f_opcode; \
+  UINT f_r3; \
+  UINT f_r1; \
+  UINT f_rdoff_10_1; \
+  SI f_rdd32; \
+  UINT f_r2; \
+  UINT f_raoff_9_1; \
+  SI f_rad32; \
+  UINT f_resv_8_1; \
+  UINT f_op_7_8; \
+  unsigned int length;
+#define EXTRACT_IFMT_LF_ITOF_D32_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_r3 = EXTRACT_LSB0_UINT (insn, 32, 15, 5); \
+  f_r1 = EXTRACT_LSB0_UINT (insn, 32, 25, 5); \
+  f_rdoff_10_1 = EXTRACT_LSB0_UINT (insn, 32, 10, 1); \
+  f_rdd32 = ((f_r1) | (((f_rdoff_10_1) << (5))));\
+  f_r2 = EXTRACT_LSB0_UINT (insn, 32, 20, 5); \
+  f_raoff_9_1 = EXTRACT_LSB0_UINT (insn, 32, 9, 1); \
+  f_rad32 = ((f_r2) | (((f_raoff_9_1) << (5))));\
+  f_resv_8_1 = EXTRACT_LSB0_UINT (insn, 32, 8, 1); \
+  f_op_7_8 = EXTRACT_LSB0_UINT (insn, 32, 7, 8); \
+
+#define EXTRACT_IFMT_LF_FTOI_S_VARS \
+  UINT f_opcode; \
+  UINT f_r1; \
+  UINT f_r2; \
+  UINT f_r3; \
+  UINT f_resv_10_3; \
+  UINT f_op_7_8; \
+  unsigned int length;
+#define EXTRACT_IFMT_LF_FTOI_S_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_r1 = EXTRACT_LSB0_UINT (insn, 32, 25, 5); \
+  f_r2 = EXTRACT_LSB0_UINT (insn, 32, 20, 5); \
+  f_r3 = EXTRACT_LSB0_UINT (insn, 32, 15, 5); \
+  f_resv_10_3 = EXTRACT_LSB0_UINT (insn, 32, 10, 3); \
+  f_op_7_8 = EXTRACT_LSB0_UINT (insn, 32, 7, 8); \
+
+#define EXTRACT_IFMT_LF_FTOI_D32_VARS \
+  UINT f_opcode; \
+  UINT f_r3; \
+  UINT f_r1; \
+  UINT f_rdoff_10_1; \
+  SI f_rdd32; \
+  UINT f_r2; \
+  UINT f_raoff_9_1; \
+  SI f_rad32; \
+  UINT f_resv_8_1; \
+  UINT f_op_7_8; \
+  unsigned int length;
+#define EXTRACT_IFMT_LF_FTOI_D32_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_r3 = EXTRACT_LSB0_UINT (insn, 32, 15, 5); \
+  f_r1 = EXTRACT_LSB0_UINT (insn, 32, 25, 5); \
+  f_rdoff_10_1 = EXTRACT_LSB0_UINT (insn, 32, 10, 1); \
+  f_rdd32 = ((f_r1) | (((f_rdoff_10_1) << (5))));\
+  f_r2 = EXTRACT_LSB0_UINT (insn, 32, 20, 5); \
+  f_raoff_9_1 = EXTRACT_LSB0_UINT (insn, 32, 9, 1); \
+  f_rad32 = ((f_r2) | (((f_raoff_9_1) << (5))));\
+  f_resv_8_1 = EXTRACT_LSB0_UINT (insn, 32, 8, 1); \
+  f_op_7_8 = EXTRACT_LSB0_UINT (insn, 32, 7, 8); \
+
+#define EXTRACT_IFMT_LF_SFEQ_S_VARS \
+  UINT f_opcode; \
+  UINT f_r1; \
+  UINT f_r2; \
+  UINT f_r3; \
+  UINT f_resv_10_3; \
+  UINT f_op_7_8; \
+  unsigned int length;
+#define EXTRACT_IFMT_LF_SFEQ_S_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_r1 = EXTRACT_LSB0_UINT (insn, 32, 25, 5); \
+  f_r2 = EXTRACT_LSB0_UINT (insn, 32, 20, 5); \
+  f_r3 = EXTRACT_LSB0_UINT (insn, 32, 15, 5); \
+  f_resv_10_3 = EXTRACT_LSB0_UINT (insn, 32, 10, 3); \
+  f_op_7_8 = EXTRACT_LSB0_UINT (insn, 32, 7, 8); \
+
+#define EXTRACT_IFMT_LF_SFEQ_D32_VARS \
+  UINT f_opcode; \
+  UINT f_r1; \
+  UINT f_resv_10_1; \
+  UINT f_r2; \
+  UINT f_raoff_9_1; \
+  SI f_rad32; \
+  UINT f_r3; \
+  UINT f_rboff_8_1; \
+  SI f_rbd32; \
+  UINT f_op_7_8; \
+  unsigned int length;
+#define EXTRACT_IFMT_LF_SFEQ_D32_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_r1 = EXTRACT_LSB0_UINT (insn, 32, 25, 5); \
+  f_resv_10_1 = EXTRACT_LSB0_UINT (insn, 32, 10, 1); \
+  f_r2 = EXTRACT_LSB0_UINT (insn, 32, 20, 5); \
+  f_raoff_9_1 = EXTRACT_LSB0_UINT (insn, 32, 9, 1); \
+  f_rad32 = ((f_r2) | (((f_raoff_9_1) << (5))));\
+  f_r3 = EXTRACT_LSB0_UINT (insn, 32, 15, 5); \
+  f_rboff_8_1 = EXTRACT_LSB0_UINT (insn, 32, 8, 1); \
+  f_rbd32 = ((f_r3) | (((f_rboff_8_1) << (5))));\
+  f_op_7_8 = EXTRACT_LSB0_UINT (insn, 32, 7, 8); \
+
+#define EXTRACT_IFMT_LF_CUST1_S_VARS \
+  UINT f_opcode; \
+  UINT f_resv_25_5; \
+  UINT f_r2; \
+  UINT f_r3; \
+  UINT f_resv_10_3; \
+  UINT f_op_7_8; \
+  unsigned int length;
+#define EXTRACT_IFMT_LF_CUST1_S_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_resv_25_5 = EXTRACT_LSB0_UINT (insn, 32, 25, 5); \
+  f_r2 = EXTRACT_LSB0_UINT (insn, 32, 20, 5); \
+  f_r3 = EXTRACT_LSB0_UINT (insn, 32, 15, 5); \
+  f_resv_10_3 = EXTRACT_LSB0_UINT (insn, 32, 10, 3); \
+  f_op_7_8 = EXTRACT_LSB0_UINT (insn, 32, 7, 8); \
+
+#define EXTRACT_IFMT_LF_CUST1_D32_VARS \
+  UINT f_opcode; \
+  UINT f_resv_25_5; \
+  UINT f_resv_10_1; \
+  UINT f_r2; \
+  UINT f_raoff_9_1; \
+  SI f_rad32; \
+  UINT f_r3; \
+  UINT f_rboff_8_1; \
+  SI f_rbd32; \
+  UINT f_op_7_8; \
+  unsigned int length;
+#define EXTRACT_IFMT_LF_CUST1_D32_CODE \
+  length = 4; \
+  f_opcode = EXTRACT_LSB0_UINT (insn, 32, 31, 6); \
+  f_resv_25_5 = EXTRACT_LSB0_UINT (insn, 32, 25, 5); \
+  f_resv_10_1 = EXTRACT_LSB0_UINT (insn, 32, 10, 1); \
+  f_r2 = EXTRACT_LSB0_UINT (insn, 32, 20, 5); \
+  f_raoff_9_1 = EXTRACT_LSB0_UINT (insn, 32, 9, 1); \
+  f_rad32 = ((f_r2) | (((f_raoff_9_1) << (5))));\
+  f_r3 = EXTRACT_LSB0_UINT (insn, 32, 15, 5); \
+  f_rboff_8_1 = EXTRACT_LSB0_UINT (insn, 32, 8, 1); \
+  f_rbd32 = ((f_r3) | (((f_rboff_8_1) << (5))));\
+  f_op_7_8 = EXTRACT_LSB0_UINT (insn, 32, 7, 8); \
+
+/* Collection of various things for the trace handler to use.  */
+
+typedef struct trace_record {
+  IADDR pc;
+  /* FIXME:wip */
+} TRACE_RECORD;
+
+#endif /* CPU_OR1K32BF_H */

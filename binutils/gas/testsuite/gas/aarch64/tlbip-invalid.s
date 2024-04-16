@@ -1,0 +1,52 @@
+.arch armv8-a+d128+xs
+
+	tlbi paallosnxs
+	tlbi paallnxs
+	tlbi rpaosnxs
+	tlbi rpalosnxs
+
+	tlbip vmalle1os
+	tlbip aside1os
+	tlbip vmalle1is
+	tlbip aside1is
+	tlbip vmalle1
+	tlbip aside1
+	tlbip alle2os
+	tlbip alle1os
+	tlbip vmalls12e1os
+	tlbip alle2is
+	tlbip alle1is
+	tlbip vmalls12e1is
+	tlbip alle2
+	tlbip alle1
+	tlbip vmalls12e1
+	tlbip alle3os
+	tlbip paallos
+	tlbip alle3is
+	tlbip rpaos
+	tlbip rpalos
+	tlbip alle3
+	tlbip paall
+
+	tlbip vmalle1osnxs
+	tlbip aside1osnxs
+	tlbip vmalle1isnxs
+	tlbip aside1isnxs
+	tlbip vmalle1nxs
+	tlbip aside1nxs
+	tlbip alle2osnxs
+	tlbip alle1osnxs
+	tlbip vmalls12e1osnxs
+	tlbip alle2isnxs
+	tlbip alle1isnxs
+	tlbip vmalls12e1isnxs
+	tlbip alle2nxs
+	tlbip alle1nxs
+	tlbip vmalls12e1nxs
+	tlbip alle3osnxs
+	tlbip paallosnxs
+	tlbip alle3isnxs
+	tlbip rpaosnxs
+	tlbip rpalosnxs
+	tlbip alle3nxs
+	tlbip paallnxs

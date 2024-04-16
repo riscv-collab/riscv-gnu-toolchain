@@ -1,0 +1,87 @@
+# Copyright 2013-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+# This test can only be run on x86_64 targets.
+require is_x86_64_m64_target
+
+standard_testfile .S
+
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile {nodebug nopie}] } {
+    return -1
+}
+
+if ![runto stop_frame] {
+    perror "Failed to stop in stop_frame"
+    return -1
+}
+
+gdb_test "bt" "#0  (0x\[0-9a-f\]+ in )?stop_frame \[^\r\n\]*\r\n#1  \[^\r\n\]*first_frame \[^\r\n\]*\r\n#2  \[^\r\n\]*main\[^\r\n\]*" \
+    "backtrace from stop_frame"
+
+for {set f 0} {$f < 3} {incr f} {
+    if {${f} == 0} {
+	set pattern_rax_rbx_rcx_print "$hex"
+	set pattern_rax_rbx_rcx_info "$hex\\s+$decimal"
+	set pattern_r8_r9_print "$hex"
+	set pattern_r8_r9_info "$hex\\s+$decimal"
+    } else {
+	set pattern_rax_rbx_rcx_print "<not saved>"
+	set pattern_rax_rbx_rcx_info "<not saved>"
+	set pattern_r8_r9_print "$hex"
+	set pattern_r8_r9_info "$hex\\s+$decimal"
+    }
+
+    # Select frame.
+    gdb_test "frame ${f}" "#${f}.*" "switch to frame ${f}"
+
+    gdb_test "p/x \$rax" ".*$pattern_rax_rbx_rcx_print.*" \
+	"print \$rax in frame ${f}"
+    gdb_test "p/x \$rbx" "$pattern_rax_rbx_rcx_print" \
+	"print \$rbx in frame ${f}"
+    gdb_test "p/x \$rcx" "$pattern_rax_rbx_rcx_print" \
+	"print \$rcx in frame ${f}"
+
+    gdb_test "p/x \$r8" "$pattern_r8_r9_print" "print \$r8 in frame ${f}"
+    gdb_test "p/x \$r9" "$pattern_r8_r9_print" "print \$r9 in frame ${f}"
+
+
+    # Display register values.
+    gdb_test "info registers rax rbx rcx r8 r9" \
+	[multi_line "rax\\s+${pattern_rax_rbx_rcx_info}\\s*" \
+		    "rbx\\s+${pattern_rax_rbx_rcx_info}\\s*" \
+		    "rcx\\s+${pattern_rax_rbx_rcx_info}\\s*" \
+		    "r8\\s+${pattern_r8_r9_info}\\s*" \
+		    "r9\\s+${pattern_r8_r9_info}\\s*"] \
+	"Check values of rax, rbx, rcx, r8, r9 in frame ${f}"
+}
+
+# Test that the debug log statement in frame_unwind_register_value produces
+# "not saved" and not "optimized out".
+gdb_test "set debug frame 1"
+gdb_test {print $rax} [multi_line \
+			{    \[frame\] frame_unwind_register_value: frame=0, regnum=0\(rax\)} \
+			{    \[frame\] frame_unwind_register_value:   -> <not saved>} \
+			{.*}]
+gdb_test "set debug frame 0"
+
+# Test that history values show "not saved" and not "optimized out".
+gdb_test "print" " = <not saved>"
+
+# Test that convenience variables _don't_ show "not saved".
+gdb_test {print $foo = $rax} " = <optimized out>"

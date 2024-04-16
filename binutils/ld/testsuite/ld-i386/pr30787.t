@@ -1,0 +1,4 @@
+SECTIONS
+{
+  .rel.dyn : { *(.rel.*) }
+}

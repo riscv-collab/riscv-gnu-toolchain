@@ -1,0 +1,96 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Minimal testcase that just checks that the various "layout $foo"
+# commands do not cause gdb to crash.
+
+require allow_tui_tests
+
+tuiterm_env
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" ${testfile} ${srcfile}]} {
+    return -1
+}
+
+# Run one test of the 'layout' command, selecting LAYOUT_NAME.
+#
+# TERMINAL should be either 'dumb' or 'ansi'.  When TERMINAL is 'dumb'
+# then GDB is started in a terminal that does not support tui mode, in
+# this case the layout command is expected to fail.
+#
+# When TERMINAL is 'ansi' then GDB is started using our emulated ANSI
+# terminal, and the layout command is expected to succeed.
+#
+# When EXECUTION is true then a call to runto_main is used, otherwise
+# this call is skipped and the inferior is left in whatever state it
+# happens to be in after a call to clean_restart.
+
+proc test_layout_or_focus {layout_name terminal execution} {
+    global binfile gdb_prompt
+
+    set dumb_terminal [string equal $terminal "dumb"]
+
+    global env
+    save_vars { env(TERM) } {
+	setenv TERM $terminal
+	if {$dumb_terminal} {
+	    clean_restart $binfile
+	} else {
+	    Term::clean_restart 24 80 $binfile
+	    if {![Term::prepare_for_tui]} {
+		unsupported "TUI not supported"
+		return
+	    }
+	}
+    }
+
+    if {$execution} {
+	if {![runto_main]} {
+	    return 0
+	}
+    }
+
+    if {$dumb_terminal} {
+	if { [is_remote host] } {
+	    # setenv TERM dummy has no effect on remote host.
+	    return
+	}
+	gdb_test "layout $layout_name" \
+	    "Cannot enable the TUI: terminal doesn't support cursor addressing \\\[TERM=dumb\\\]"
+    } else {
+	Term::command_no_prompt_prefix "layout $layout_name"
+	if {$layout_name == "asm"} {
+	    Term::check_box "asm box" 0 0 80 15
+	} elseif {$layout_name == "reg"} {
+	    Term::check_box "reg box" 0 0 80 8
+	    Term::check_box "src box" 0 7 80 8
+	} elseif {$layout_name == "src"} {
+	    Term::check_box "src box" 0 0 80 15
+	} elseif {$layout_name == "split"} {
+	    Term::check_box "src box" 0 0 80 8
+	    Term::check_box "asm box" 0 7 80 8
+	}
+    }
+}
+
+foreach_with_prefix terminal {ansi dumb} {
+    foreach_with_prefix execution {false true} {
+	foreach_with_prefix layout {"asm" "reg" "src" "split"} {
+	    test_layout_or_focus $layout $terminal $execution
+	}
+    }
+}

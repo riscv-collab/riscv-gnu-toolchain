@@ -1,0 +1,320 @@
+# Copyright (C) 2010-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Return nul-terminated string read from section SECTION of EXEC.  Return ""
+# if no such section or nul-terminated string was found.  Function is useful
+# for sections ".interp" or ".gnu_debuglink".
+
+proc section_get {exec section} {
+    global subdir
+    set tmp [standard_output_file section_get.tmp]
+    set objcopy_program [gdb_find_objcopy]
+
+    set command "exec $objcopy_program -O binary --set-section-flags $section=A --change-section-address $section=0 -j $section $exec $tmp"
+    verbose -log "command is $command"
+    set result [catch $command output]
+    verbose -log "result is $result"
+    verbose -log "output is $output"
+    if {$result == 1} {
+	return ""
+    }
+    set fi [open $tmp]
+    fconfigure $fi -translation binary
+    set data [read $fi]
+    close $fi
+    file delete $tmp
+    # .interp has size $len + 1 but .gnu_debuglink contains garbage after \000.
+    set len [string first \000 $data]
+    if {$len < 0} {
+	verbose -log "section $section not found"
+	return ""
+    }
+    set retval [string range $data 0 [expr $len - 1]]
+    verbose -log "section $section is <$retval>"
+    return $retval
+}
+
+# Resolve symlinks.
+
+proc symlink_resolve {file} {
+    set loop 0
+    while {[file type $file] == "link"} {
+	set target [file readlink $file]
+	if {[file pathtype $target] == "relative"} {
+	    set src2 [file dirname $file]/$target
+	} else {
+	    set src2 $target
+	}
+	verbose -log "Resolved symlink $file targetting $target as $src2"
+	set file $src2
+
+	set loop [expr $loop + 1]
+	if {$loop > 30} {
+	    fail "looping symlink resolution for $file"
+	    return ""
+	}
+    }
+    return $file
+}
+
+# Copy SRC to DEST, resolving any symlinks in SRC.  Return nonzero iff
+# the copy was successful.
+#
+# This function is guaranteed to never raise any exception, even when the copy
+# fails.
+
+proc file_copy {src dest} {
+    set src [symlink_resolve $src]
+    # Test name would contain unstable directory name for symlink-unresolved
+    # $src.
+    set test "copy [file tail $src] to [file tail $dest]"
+    set command "file copy -force -- $src $dest"
+    verbose -log "command is $command"
+    if [catch $command] {
+	fail $test
+	return 0
+    } else {
+    	pass $test
+	return 1
+    }
+}
+
+# Wrap function build_executable so that the resulting executable is fully
+# self-sufficient (without dependencies on system libraries).  Parameter
+# INTERP may be used to specify a loader (ld.so) to be used that is
+# different from the default system one.  INTERP can be set to "no" if no ld.so
+# copy should be made.  Libraries on which the executable depends are copied
+# into directory DIR.  Default DIR value to
+# `${objdir}/${subdir}/${EXECUTABLE}.d'.
+#
+# In case of success, return a string containing the arguments to be used
+# in order to perform a prelink of the executable obtained.  Return the
+# empty string in case of failure.
+#
+# This can be useful when trying to prelink an executable which might
+# depend on system libraries.  To properly prelink an executable, all
+# of its dynamically linked libraries must be prelinked as well.  If
+# the executable depends on some system libraries, we may not have
+# sufficient write privileges on these files to perform the prelink.
+# This is why we make a copy of these shared libraries, and link the
+# executable against these copies instead.
+#
+# Function recognizes only libraries listed by `ldd' after
+# its ` => ' separator.  That means $INTERP and any libraries not being linked
+# with -Wl,-soname,NAME.so are not copied.
+
+proc build_executable_own_libs {testname executable sources options {interp ""} {dir ""}} {
+    global subdir
+
+    if { ![isnative] } {
+	error "This proc can be only used for native target."
+    }
+
+    with_test_prefix "initial build" {
+	if {[build_executable $testname $executable $sources $options] == -1} {
+	    return ""
+	}
+    }
+    set binfile [standard_output_file ${executable}]
+
+    set ldd [gdb_find_ldd]
+    set command "$ldd $binfile"
+    set test "ldd $executable"
+    set result [catch "exec $command" output]
+    verbose -log "result of $command is $result"
+    verbose -log "output of $command is $output"
+    if {$result != 0 || $output == ""} {
+	fail $test
+    } else {
+	pass $test
+    }
+
+    # gdb testsuite will put there also needless -lm.
+    set test "$test output contains libs"
+    set libs [regexp -all -inline -line {^.* => (/[^ ]+).*$} $output]
+    if {[llength $libs] == 0} {
+	fail $test
+    } else {
+	pass $test
+    }
+
+    if {$dir == ""} {
+	set dir ${binfile}.d
+    }
+    file delete -force -- $dir
+    file mkdir $dir
+
+    if {$interp == ""} {
+	set interp_system [section_get $binfile .interp]
+	if {$interp_system == ""} {
+	    fail "$test could not find .interp"
+	} else {
+	    set interp ${dir}/[file tail $interp_system]
+	    file_copy $interp_system $interp
+	}
+    }
+    if {$interp == "no"} {
+	set interp ""
+    }
+
+    set dests {}
+    foreach {trash abspath} $libs {
+	set dest "$dir/[file tail $abspath]"
+	file_copy $abspath $dest
+	lappend dests $dest
+    }
+
+    # Do not lappend it so that "-rpath $dir" overrides any possible "-rpath"s
+    # specified by the caller to be able to link it for ldd" above.
+    set options [linsert $options 0 "ldflags=-Wl,-rpath,$dir"]
+    if {$interp != ""} {
+	set options [linsert $options 0 "ldflags=-Wl,--dynamic-linker,$interp"]
+    }
+
+    with_test_prefix "rebuild" {
+	if {[build_executable $testname $executable $sources $options] == -1} {
+	    return ""
+	}
+    }
+
+    set prelink_args "--ld-library-path=$dir $binfile [concat $dests]"
+    if {$interp != ""} {
+	set prelink_args "--dynamic-linker=$interp $prelink_args $interp"
+    }
+    return $prelink_args
+}
+
+# Unprelink ARG.  Reported test name can be specified by NAME.  Return non-zero
+# on success, zero on failure.
+
+proc prelink_no {arg {name {}}} {
+    if {$name == ""} {
+	set name [file tail $arg]
+    }
+    set test "unprelink $name"
+    set command "exec /usr/sbin/prelink -uN $arg"
+    verbose -log "command is $command"
+    set result [catch $command output]
+    verbose -log "result is $result"
+    verbose -log "output is $output"
+    if {$result == 1 && [regexp {^(couldn't execute "/usr/sbin/prelink[^\r\n]*": no such file or directory\n?)*$} $output]} {
+	# Without prelink, at least verify that all the binaries do not
+	# contain the  ".gnu.prelink_undo" section (which would mean that they
+	# have already been prelinked).
+	set test "$test (missing /usr/sbin/prelink)"
+	foreach bin [split $arg] {
+	    if [string match "-*" $bin] {
+		# Skip prelink options.
+		continue
+	    }
+	    set readelf_program [gdb_find_readelf]
+	    set command "exec $readelf_program -WS $bin"
+	    verbose -log "command is $command"
+	    set result [catch $command output]
+	    verbose -log "result is $result"
+	    verbose -log "output is $output"
+	    if {$result != 0 || [string match {* .gnu.prelink_undo *} $output]} {
+		fail "$test ($bin is already prelinked)"
+		return 0
+	    }
+	}
+	pass $test
+	return 1
+    }
+    if {$result == 0 && $output == ""} {
+	verbose -log "$name has been now unprelinked"
+	set command "exec /usr/sbin/prelink -uN $arg"
+	verbose -log "command is $command"
+	set result [catch $command output]
+	verbose -log "result is $result"
+	verbose -log "output is $output"
+    }
+    # Last line does miss the trailing \n.  There can be multiple such messages
+    # as ARG may list multiple files.
+    if {$result == 1 && [regexp {^([^\r\n]*prelink[^\r\n]*: [^ ]* does not have .gnu.prelink_undo section\n?)*$} $output]} {
+	pass $test
+	return 1
+    } else {
+	fail $test
+	return 0
+    }
+}
+
+# Prelink ARG.  Reported test name can be specified by NAME.  Return non-zero
+# on success, zero on failure.
+
+proc prelink_yes {arg {name ""}} {
+    if {$name == ""} {
+	set name [file tail $arg]
+    }
+
+    # Try to unprelink it first so that, if it has been already prelinked
+    # before, we get a different address now, making the new result unaffected
+    # by any previous prelinking.
+    if ![prelink_no $arg "$name pre-unprelink"] {
+	return 0
+    }
+
+    set test "prelink $name"
+
+    # `--no-exec-shield' is for i386, where prelink in the exec-shield mode is
+    # forced to push all the libraries tight together, in order to fit into
+    # the first two memory areas (either the ASCII Shield area or at least
+    # below the executable).  If the prelink was performed in exec-shield
+    # mode, prelink could have no choice on how to randomize the single new
+    # unprelinked library address without wasting space in the first one/two
+    # memory areas.  In such case prelink could place $ARG repeatedly at the
+    # same place and we could have false prelink results on
+    # gdb.base/prelink.exp and others.  To prevent this from happening, we use
+    # the --no-exec-shield switch.  This may have some consequences in terms
+    # of security, but we do not care in our case.
+
+    set command "exec /usr/sbin/prelink -qNR --no-exec-shield $arg"
+
+    verbose -log "command is $command"
+    set result [catch $command output]
+    verbose -log "result is $result"
+    verbose -log "output is $output"
+    if {$result == 1 && [regexp {^(couldn't execute "/usr/sbin/prelink[^\r\n]*": no such file or directory\n?)*$} $output]} {
+	set test "$test (missing /usr/sbin/prelink)"
+
+	# We could not find prelink.  We could check whether $args is already
+	# prelinked but we don't, because:
+	#   - It is unlikely that someone uninstalls prelink after having
+	#     prelinked the system ld.so;
+	#   - We still cannot change its prelinked address.
+	# Therefore, we just skip the test.
+
+	xfail $test
+	return 0
+    }
+    if {$result == 1 && [regexp {DWARF [^\r\n]* unhandled} $output]} {
+	# Prelink didn't understand the version of dwarf present.
+	unsupported "$test (dwarf version unhandled)"
+	return 0
+    }
+    if {$result == 0 && $output == ""} {
+	pass $test
+	return 1
+    } elseif {$result == 1 \
+	      && [string match -nocase "*: Not enough room to add .dynamic entry" $output]} {
+	# Linker should have reserved some entries for prelink.
+	xfail $test
+	return 0
+    } else {
+	fail $test
+	return 0
+    }
+}

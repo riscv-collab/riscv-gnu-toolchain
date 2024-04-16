@@ -1,0 +1,95 @@
+# Copyright 2006-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test creates a shared library and a main program which uses
+# that library, extracts the debug info of the library to a separate
+# file, and then tests that a symbol from the shared library is
+# accessible using both absolute and relative settings of
+# LD_LIBRARY_PATH.
+
+# This test needs to change the environment in which the test program
+# is run, specifically the setting of LD_LIBRARY_PATH.  GDB can adjust
+# this setting for both native and extended-remote targets, but not
+# for targets to which GDB connects after the program has already
+# started.  Therefore, this test won't work for targets which use
+# "target remote".
+require !use_gdb_stub
+require {have_compile_flag -std=c11}
+
+set testfile tls-sepdebug
+set srcmainfile   ${testfile}-main.c
+set srcsharedfile ${testfile}-shared.c
+
+set binmainfile        [standard_output_file ${testfile}-main]
+set binsharedbase      ${testfile}-shared.so
+set binsharedfile      [standard_output_file ${binsharedbase}]
+
+# Build the shared library, but use explicit -soname; otherwise the
+# full path to the library would get encoded into ${binmainfile}
+# making LD_LIBRARY_PATH tests useless.
+#
+# The compile flag -std=c11 is required because the test case uses
+# 'thread_local' to indicate thread local storage.  This is available
+# as a macro starting in C11 and became a C-language keyword in C23.
+if  { [gdb_compile_shlib \
+	"${srcdir}/${subdir}/${srcsharedfile}" "${binsharedfile}" \
+	[list debug \
+	      ldflags=-Wl,-soname=${binsharedbase} \
+	      additional_flags=-std=c11]] \
+       != "" } {
+    untested "Couldn't compile test library"
+    return -1
+}
+
+# Strip debug information from $binsharedfile, placing it in
+# ${binsharedfile}.debug.  Also add a .gnu_debuglink in the former,
+# pointing to the latter.
+gdb_gnu_strip_debug ${binsharedfile}
+
+# Build main program, but do not use `shlib=' since that would
+# automatically add -rpath for gcc.
+if  { [gdb_compile_pthreads \
+	"${srcdir}/${subdir}/${srcmainfile} ${binsharedfile}" \
+	"${binmainfile}" executable [list debug additional_flags=-std=c11]] \
+       != "" } {
+    untested "Couldn't compile test program"
+    return -1
+}
+
+set absdir [file dirname [standard_output_file ${binsharedbase}]]
+
+foreach ld_library_path [list $absdir [relative_filename [pwd] $absdir]] \
+	name { absolute relative } {
+    with_test_prefix $name {
+
+	# Restart, but defer loading until after setting LD_LIBRARY_PATH.
+	clean_restart
+
+	gdb_test_no_output "set env LD_LIBRARY_PATH=$ld_library_path" \
+			   "set env LD_LIBRARY_PATH"
+
+	gdb_load ${binmainfile}
+
+	if ![runto_main] {
+	    return
+	}
+
+	# Print a thread local variable from the shared library to be certain
+	# that its symbols were loaded from the separate debuginfo file.
+	gdb_test "print var" \
+		 "\\\$1 = 42" \
+		 "print TLS variable from a shared library with separate debug info file"
+    }
+}

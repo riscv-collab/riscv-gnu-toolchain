@@ -1,0 +1,105 @@
+#   Copyright 1988-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that GDB saves and restores terminal settings correctly.  Also check
+# the output of the "info terminal" command.
+
+if { [prepare_for_testing "failed to prepare" term term.c] } {
+    return -1
+}
+
+# Once before running the program.
+gdb_test "info terminal" \
+    "No saved terminal information.*" \
+    "test info terminal pre-execution"
+
+if {![runto break_here]} {
+    return 0
+}
+
+# Read the inferior's terminal settings, saved in the T global variable.
+
+proc read_term_settings_from_inferior {} {
+    set termios(c_iflag) [get_hexadecimal_valueof "t.c_iflag" oops]
+    set termios(c_oflag) [get_hexadecimal_valueof "t.c_oflag" oops]
+    set termios(c_cflag) [get_hexadecimal_valueof "t.c_cflag" oops]
+    set termios(c_lflag) [get_hexadecimal_valueof "t.c_lflag" oops]
+
+    return [array get termios]
+}
+
+# Validate that gdb's notion of the inferior's terminal settings are consistent
+# with the values read from the inferior.
+
+proc compare_gdb_and_inferior_settings { t } {
+    global decimal
+    array set termios $t
+
+    gdb_test "info terminal" \
+    [multi_line "Inferior's terminal status .currently saved by GDB.:" \
+                "File descriptor flags = .*" \
+                "Process group = $decimal" \
+                "c_iflag = ${termios(c_iflag)}, c_oflag = ${termios(c_oflag)}," \
+                "c_cflag = ${termios(c_cflag)}, c_lflag = ${termios(c_lflag)}.*" ]
+}
+
+if {[target_info gdb_protocol] == ""} {
+    # Record the initial terminal settings.  Verify that GDB's version of the
+    # inferior's terminal settings is right.
+    with_test_prefix "initial" {
+        array set termios1 [read_term_settings_from_inferior]
+        compare_gdb_and_inferior_settings [array get termios1]
+    }
+
+    # Continue until after the inferior removes ECHO from its terminal settings.
+    gdb_continue_to_breakpoint "continue until after tcsetattr"
+
+    # After the inferior has changed its terminal settings, check that GDB's
+    # saved version reflects the new settings correctly.
+    with_test_prefix "post tcsetattr" {
+        array set termios2 [read_term_settings_from_inferior]
+        compare_gdb_and_inferior_settings [array get termios2]
+
+        # Make sure that the current settings are different than the initial
+        # settings... otherwise this test is meaningless.
+        gdb_assert {${termios1(c_lflag)} != ${termios2(c_lflag)}}
+    }
+
+    # Continue again...
+    gdb_continue_to_breakpoint "continue again"
+
+    # ... and verify again, to validate that when resuming, GDB restored the
+    # inferior's terminal settings correctly.
+    with_test_prefix "after last resume" {
+        array set termios3 [read_term_settings_from_inferior]
+        compare_gdb_and_inferior_settings [array get termios3]
+        gdb_assert {${termios2(c_iflag)} == ${termios3(c_iflag)}}
+        gdb_assert {${termios2(c_oflag)} == ${termios3(c_oflag)}}
+        gdb_assert {${termios2(c_cflag)} == ${termios3(c_cflag)}}
+        gdb_assert {${termios2(c_lflag)} == ${termios3(c_lflag)}}
+    }
+} else {
+    # While only native targets save terminal status, we still test
+    # that the command doesn't misbehave.
+    gdb_test "info terminal" "No saved terminal information\\." "info terminal at breakpoint"
+}
+
+delete_breakpoints
+gdb_continue_to_end
+
+# One last time after the program having exited.
+gdb_test "info terminal" \
+    "No saved terminal information.*" \
+    "test info terminal post-execution"

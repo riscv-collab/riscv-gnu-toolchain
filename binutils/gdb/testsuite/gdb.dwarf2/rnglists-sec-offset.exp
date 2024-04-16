@@ -1,0 +1,141 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test DW_AT_ranges attributes referencing the .debug_rnglists section using the
+# DW_FORM_sec_offset form.
+
+load_lib dwarf.exp
+
+require dwarf2_support
+
+foreach_with_prefix is_64 {false true} {
+    if { $is_64 } {
+	standard_testfile main.c -dw64.S
+	set testfile ${testfile}-dw64
+    } else {
+	standard_testfile main.c -dw32.S
+	set testfile ${testfile}-dw32
+    }
+
+    set asm_file [standard_output_file $srcfile2]
+    Dwarf::assemble $asm_file {
+	global is_64
+
+	declare_labels cu1_range_list cu2_range_list cu3_range_list
+	declare_labels foo_range_list bar_range_list baz_range_list
+
+	# This CU uses the DW_FORM_sec_offset form to refer to the .debug_rnglists
+	# section.
+	cu {
+	    version 5
+	    is_64 $is_64
+	} {
+	    DW_TAG_compile_unit {
+		{DW_AT_ranges $cu1_range_list DW_FORM_sec_offset}
+	    } {
+		DW_TAG_subprogram {
+		    {DW_AT_name "foo"}
+		    {DW_AT_ranges $foo_range_list DW_FORM_sec_offset}
+		}
+	    }
+	}
+
+	# This CU uses the DW_FORM_sec_offset form to refer to the
+	# .debug_rnglists section, but also has the DW_AT_rnglists_base
+	# attribute present.  The DW_AT_rnglists_base attribute is not used to
+	# interpret the DW_AT_ranges value, but it should also do no harm.
+	cu {
+	    version 5
+	    is_64 $is_64
+	} {
+	    DW_TAG_compile_unit {
+		{DW_AT_ranges $cu2_range_list DW_FORM_sec_offset}
+		{DW_AT_rnglists_base cu2_table DW_FORM_sec_offset}
+	    } {
+		DW_TAG_subprogram {
+		    {DW_AT_name "bar"}
+		    {DW_AT_ranges $bar_range_list DW_FORM_sec_offset}
+		}
+	    }
+	}
+
+	# This CU uses the DW_FORM_sec_offset form to refer to the .debug_rnglists
+	# section.  The corresponding contribution in the .debug_rnglists has no
+	# offset array.
+	cu {
+	    version 5
+	    is_64 $is_64
+	} {
+	    DW_TAG_compile_unit {
+		{DW_AT_ranges $cu3_range_list DW_FORM_sec_offset}
+	    } {
+		DW_TAG_subprogram {
+		    {DW_AT_name "baz"}
+		    {DW_AT_ranges $baz_range_list DW_FORM_sec_offset}
+		}
+	    }
+	}
+
+	rnglists {is-64 $is_64} {
+	    # The lists in this table are accessed by direct offset
+	    # (DW_FORM_sec_offset).
+	    table {} {
+		# For the first CU.
+		cu1_range_list: list_ {
+		    start_end 0x4000 0x5000
+		}
+
+		# For function foo.
+		foo_range_list: list_ {
+		    start_end 0x4000 0x4010
+		}
+	    }
+
+	    table {post-header-label cu2_table} {
+		# For the second CU.
+		cu2_range_list: list_ {
+		    start_end 0x5000 0x6000
+		}
+
+		# For the bar function.
+		bar_range_list: list_ {
+		    start_end 0x5000 0x5010
+		}
+	    }
+
+	    table {with-offset-array false} {
+		# For the third CU.
+		cu3_range_list: list_ {
+		    start_end 0x6000 0x7000
+		}
+
+		# For the baz function.
+		baz_range_list: list_ {
+		    start_end 0x6000 0x6010
+		}
+	    }
+	}
+    }
+
+    if { [prepare_for_testing "failed to prepare" ${testfile} \
+	      [list $srcfile $asm_file] {nodebug}] } {
+	return -1
+    }
+
+    # Sanity checks to make sure GDB slurped the symbols correctly.
+    gdb_test "p/x &foo" " = 0x4000"
+    gdb_test "p/x &bar" " = 0x5000"
+    gdb_test "p/x &baz" " = 0x6000"
+}

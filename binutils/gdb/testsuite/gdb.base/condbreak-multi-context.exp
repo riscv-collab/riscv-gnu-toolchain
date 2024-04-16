@@ -1,0 +1,311 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test defining a conditional breakpoint that applies to multiple
+# locations with different contexts (e.g. different set of local vars).
+
+standard_testfile .cc
+
+if {[prepare_for_testing "failed to prepare" ${binfile} ${srcfile}]} {
+    return
+}
+
+set warning "warning: failed to validate condition"
+set fill "\[^\r\n\]*"
+
+# Location indices are determined by their address, which depends on
+# how the compiler emits the code.  We keep a map from the location
+# index to the location context (i.e. A, Base, or C), so that we can
+# write tests without hard-coding location indices.
+set loc_name(1) ""
+set loc_name(2) ""
+set loc_name(3) ""
+# And, for convenience, a reverse map from the name to the index.
+set loc_index(A)    0
+set loc_index(Base) 0
+set loc_index(C)    0
+
+# Find breakpoint location contexts.
+
+proc find_location_contexts {} {
+    global loc_name loc_index bpnum1 fill
+    global decimal hex gdb_prompt
+
+    gdb_test_multiple "info breakpoint $bpnum1" "find_location_indices" {
+	-re "stop only if ${fill}\r\n" {
+	    exp_continue
+	}
+	-re "^${bpnum1}\.($decimal) ${fill} ${hex} in (A|Base|C)::func${fill}\r\n" {
+	    set index $expect_out(1,string)
+	    set name $expect_out(2,string)
+	    set loc_name($index) $name
+	    set loc_index($name) $index
+	    exp_continue
+	}
+	-re "$gdb_prompt $" {
+	    verbose -log "Loc names: $loc_name(1), $loc_name(2), $loc_name(3)"
+	    gdb_assert { ![string equal $loc_name(1) $loc_name(2)] }
+	    gdb_assert { ![string equal $loc_name(1) $loc_name(3)] }
+	    gdb_assert { ![string equal $loc_name(2) $loc_name(3)] }
+	    gdb_assert { [string length $loc_name(1)] > 0 }
+	    gdb_assert { [string length $loc_name(2)] > 0 }
+	    gdb_assert { [string length $loc_name(3)] > 0 }
+	}
+    }
+}
+
+# Test the breakpoint location enabled states.  STATES is a list of
+# location states.  We assume STATES to contain the state for A, Base,
+# and C, and in this order.  E.g. {N* y n} for 'N*' at A::func, 'y' at
+# B::func, and 'n' at C::func, respectively.
+
+proc check_bp_locations {bpnum states cond {msg ""}} {
+    global loc_name fill
+
+    # Map location names to location states.
+    set loc_states(A)    [lindex $states 0]
+    set loc_states(Base) [lindex $states 1]
+    set loc_states(C)    [lindex $states 2]
+
+    if {$cond == ""} {
+	set cond_info ""
+    } else {
+	set bp_hit_info "${fill}(\r\n${fill}breakpoint already hit 1 time)?"
+	set cond_info "\r\n${fill}stop only if ${cond}${bp_hit_info}"
+    }
+
+    set expected [multi_line \
+	"Num${fill}" \
+	"${bpnum}${fill}breakpoint${fill}keep y${fill}MULTIPLE${fill}${cond_info}" \
+	"${bpnum}.1${fill} $loc_states($loc_name(1)) ${fill}" \
+	"${bpnum}.2${fill} $loc_states($loc_name(2)) ${fill}" \
+	"${bpnum}.3${fill} $loc_states($loc_name(3)) ${fill}"]
+
+    if {[lsearch $states N*] >= 0} {
+	append expected "\r\n\\(\\*\\): Breakpoint condition is invalid at this location."
+    }
+
+    gdb_test "info break $bpnum" $expected "check bp $bpnum $msg"
+}
+
+# Scenario 1: Define breakpoints conditionally, using the "break N if
+# cond" syntax.  Run the program, check that we hit those locations
+# only.
+
+with_test_prefix "scenario 1" {
+    # Define the conditional breakpoints.  Two locations (Base::func
+    # and C::func) should be disabled.  We do not test location
+    # indices strictly at this moment, because we don't know them,
+    # yet.  We have strict location index tests below.
+    gdb_test "break func if a == 10" \
+	[multi_line \
+	     "${warning} at location $decimal, disabling:" \
+	     "  No symbol \"a\" in current context." \
+	     "${warning} at location $decimal, disabling:" \
+	     "  No symbol \"a\" in current context." \
+	     "Breakpoint $decimal at $fill .3 locations."] \
+	"define bp with condition a == 10"
+    set bpnum1 [get_integer_valueof "\$bpnum" 0 "get bpnum1"]
+
+    gdb_test "break func if c == 30" \
+	[multi_line \
+	     ".*${warning} at location $decimal, disabling:" \
+	     "  No symbol \"c\" in current context." \
+	     ".*${warning} at location $decimal, disabling:" \
+	     "  No symbol \"c\" in current context." \
+	     ".*Breakpoint $decimal at $fill .3 locations."] \
+	"define bp with condition c == 30"
+    set bpnum2 [get_integer_valueof "\$bpnum" 0 "get bpnum2"]
+
+    find_location_contexts
+
+    with_test_prefix "before run" {
+	check_bp_locations $bpnum1 {y N* N*} "a == 10"
+	check_bp_locations $bpnum2 {N* N* y} "c == 30"
+    }
+
+    # Do not use runto_main, it deletes all breakpoints.
+    gdb_run_cmd
+
+    # Check our conditional breakpoints.
+    gdb_test "" ".*Breakpoint $bkptno_num_re, A::func .*" \
+	"run until A::func"
+    gdb_test "print a" " = 10"
+
+    gdb_test "continue" "Continuing.*Breakpoint $bkptno_num_re, C::func .*" \
+	"run until C::func"
+    gdb_test "print c" " = 30"
+
+    # No more hits!
+    gdb_continue_to_end
+
+    with_test_prefix "after run" {
+	check_bp_locations $bpnum1 {y N* N*} "a == 10"
+	check_bp_locations $bpnum2 {N* N* y} "c == 30"
+    }
+}
+
+# Start GDB with two breakpoints and define the conditions separately.
+
+proc setup_bps {} {
+    global srcfile binfile srcfile2 decimal
+    global bpnum1 bpnum2 bp_location warning loc_index
+
+    clean_restart ${binfile}
+
+    # Define the breakpoints.
+    gdb_breakpoint "func"
+    set bpnum1 [get_integer_valueof "\$bpnum" 0 "get bpnum1"]
+
+    gdb_breakpoint "func"
+    set bpnum2 [get_integer_valueof "\$bpnum" 0 "get bpnum2"]
+
+    # Defining a condition on 'a' disables 2 locations.
+    set locs [lsort -integer "$loc_index(Base) $loc_index(C)"]
+    gdb_test "cond $bpnum1 a == 10" \
+	[multi_line \
+	     "$warning at location ${bpnum1}.[lindex $locs 0], disabling:" \
+	     "  No symbol \"a\" in current context." \
+	     "$warning at location ${bpnum1}.[lindex $locs 1], disabling:" \
+	     "  No symbol \"a\" in current context."]
+
+    # Defining a condition on 'c' disables 2 locations.
+    set locs [lsort -integer "$loc_index(Base) $loc_index(A)"]
+    gdb_test "cond $bpnum2 c == 30" \
+	[multi_line \
+	     "$warning at location ${bpnum2}.[lindex $locs 0], disabling:" \
+	     "  No symbol \"c\" in current context." \
+	     "$warning at location ${bpnum2}.[lindex $locs 1], disabling:" \
+	     "  No symbol \"c\" in current context."]
+}
+
+# Scenario 2: Define breakpoints unconditionally, and then define
+# conditions using the "cond N <cond>" syntax.  Expect that the
+# locations where <cond> is not evaluatable are disabled.  Run the
+# program, check that we hit the enabled locations only.
+
+with_test_prefix "scenario 2" {
+    setup_bps
+
+    with_test_prefix "before run" {
+	check_bp_locations $bpnum1 {y N* N*} "a == 10"
+	check_bp_locations $bpnum2 {N* N* y} "c == 30"
+    }
+
+    # Do not use runto_main, it deletes all breakpoints.
+    gdb_run_cmd
+
+    # Check that we hit enabled locations only.
+    gdb_test "" ".*Breakpoint $bkptno_num_re, A::func .*" \
+	"run until A::func"
+    gdb_test "print a" " = 10"
+
+    gdb_test "continue" "Continuing.*Breakpoint $bkptno_num_re, C::func .*" \
+	"run until C::func"
+    gdb_test "print c" " = 30"
+
+    # No more hits!
+    gdb_continue_to_end
+
+    with_test_prefix "after run" {
+	check_bp_locations $bpnum1 {y N* N*} "a == 10"
+	check_bp_locations $bpnum2 {N* N* y} "c == 30"
+    }
+}
+
+# Scenario 3: Apply misc. checks on the already-defined breakpoints.
+
+with_test_prefix "scenario 3" {
+    setup_bps
+
+    set locs [lsort -integer "$loc_index(Base) $loc_index(A)"]
+    gdb_test "cond $bpnum1 c == 30" \
+	[multi_line \
+	     "${warning} at location ${bpnum1}.[lindex $locs 0], disabling:" \
+	     "  No symbol \"c\" in current context." \
+	     "${warning} at location ${bpnum1}.[lindex $locs 1], disabling:" \
+	     "  No symbol \"c\" in current context." \
+	     "Breakpoint ${bpnum1}'s condition is now valid at location $loc_index(C), enabling."] \
+	"change the condition of bp 1"
+    check_bp_locations $bpnum1 {N* N* y} "c == 30" "after changing the condition"
+
+    gdb_test "cond $bpnum1" \
+	[multi_line \
+	     "Breakpoint ${bpnum1}'s condition is now valid at location [lindex $locs 0], enabling." \
+	     "Breakpoint ${bpnum1}'s condition is now valid at location [lindex $locs 1], enabling." \
+	     "Breakpoint ${bpnum1} now unconditional."] \
+	"reset the condition of bp 1"
+    check_bp_locations $bpnum1 {y y y} "" "after resetting the condition"
+
+    gdb_test_no_output "disable ${bpnum2}.$loc_index(A)"
+    check_bp_locations $bpnum2 {N* N* y} "c == 30" "after disabling loc for A"
+
+    gdb_test "cond $bpnum2" ".*" "reset the condition of bp 2"
+    check_bp_locations $bpnum2 {n y y} "" "loc for A should remain disabled"
+
+    gdb_test_no_output "disable ${bpnum2}.$loc_index(C)"
+    check_bp_locations $bpnum2 {n y n} "" "after disabling loc for C"
+
+    gdb_test "cond $bpnum2 c == 30" \
+	[multi_line \
+	     "${warning} at location ${bpnum2}.$loc_index(Base), disabling:" \
+	     "  No symbol \"c\" in current context."] \
+	"re-define a condition"
+    check_bp_locations $bpnum2 {N* N* n} "c == 30" "loc for C should remain disabled"
+
+    gdb_test "enable ${bpnum2}.$loc_index(Base)" \
+	"Breakpoint ${bpnum2}'s condition is invalid at location $loc_index(Base), cannot enable." \
+	"reject enabling a location that is disabled-by-cond"
+    check_bp_locations $bpnum2 {N* N* n} "c == 30" "after enable attempt"
+
+    gdb_test "cond $bpnum2 garbage" \
+	"No symbol \"garbage\" in current context." \
+	"reject condition if bad for all locations"
+
+    gdb_test_no_output "delete $bpnum1"
+
+    # Do not use runto_main, it deletes all breakpoints.
+    gdb_breakpoint "main"
+    gdb_run_cmd
+    gdb_test "" ".*reakpoint .*, main .*${srcfile}.*" "start"
+
+    # The second BP's locations are all disabled.  No more hits!
+    gdb_continue_to_end
+}
+
+# Scenario 4: Test the '-force'/'-force-condition' flag.
+
+with_test_prefix "force" {
+    clean_restart ${binfile}
+
+    gdb_breakpoint "func"
+    # Pick a condition that is invalid at every location.
+    set bpnum1 [get_integer_valueof "\$bpnum" 0 "get bpnum1"]
+    gdb_test "cond -force $bpnum1 foo" \
+	[multi_line \
+	     "${warning} at location ${bpnum1}.1, disabling:" \
+	     "  No symbol \"foo\" in current context." \
+	     "${warning} at location ${bpnum1}.2, disabling:" \
+	     "  No symbol \"foo\" in current context." \
+	     "${warning} at location ${bpnum1}.3, disabling:" \
+	     "  No symbol \"foo\" in current context."] \
+	"force the condition of bp 1"
+    check_bp_locations $bpnum1 {N* N* N*} "foo" "after forcing the condition"
+
+    # Now with the 'break' command.
+    gdb_breakpoint "func -force-condition if baz"
+    set bpnum2 [get_integer_valueof "\$bpnum" 0 "get bpnum2"]
+    check_bp_locations $bpnum2 {N* N* N*} "baz" "set using the break command"
+}

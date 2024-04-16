@@ -1,0 +1,1250 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 1992-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Please email any bugs, comments, and/or additions to this file to:
+# bug-gdb@gnu.org
+
+# This file was written by Fred Fish. (fnf@cygnus.com)
+
+standard_testfile .c
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug}] != "" } {
+     untested "failed to compile"
+     return -1
+}
+
+proc test_integer_literals_accepted {} {
+    global gdb_prompt
+
+    # Test various decimal values.
+
+    gdb_test "p 123" " = 123"
+    gdb_test "p -123" " = -123"
+    gdb_test "p/d 123" " = 123"
+
+    # Test various octal values.
+
+    gdb_test "p 0123" " = 83"
+    gdb_test "p 00123" " = 83"
+    gdb_test "p -0123" " = -83"
+    gdb_test "p/o 0123" " = 0123"
+
+    # Test various hexadecimal values.
+
+    gdb_test "p 0x123" " = 291"
+    gdb_test "p -0x123" " = -291"
+    gdb_test "p 0x0123" " = 291"
+    gdb_test "p -0x0123" " = -291"
+    gdb_test "p 0xABCDEF" " = 11259375"
+    gdb_test "p 0xabcdef" " = 11259375"
+    gdb_test "p 0xAbCdEf" " = 11259375"
+    gdb_test "p/x 0x123" " = 0x123"
+
+    # Test various binary values.
+
+    gdb_test "p 0b0" " = 0"
+    gdb_test "p 0b1111" " = 15"
+    gdb_test "p 0B1111" " = 15"
+    gdb_test "p -0b1111" " = -15"
+}
+
+proc test_character_literals_accepted {} {
+    global gdb_prompt
+
+    gdb_test "p 'a'" " = 97 'a'"
+    gdb_test "p/c 'a'" " = 97 'a'"
+    gdb_test "p/x 'a'" " = 0x61"
+    gdb_test "p/d 'a'" " = 97"
+    gdb_test "p/t 'a'" " = 1100001"
+    gdb_test "p '\\141'" " = 97 'a'"
+    gdb_test "p/x '\\377'" " = 0xff"
+    # Note "p '\''" => "= 39 '\''"
+    gdb_test "p '\\''" " = 39 '\\\\''"
+    # Note "p '\\'" => "= 92 '\\'"
+    gdb_test "p '\\\\'" " = 92 '\\\\\\\\'"
+}
+
+proc test_integer_literals_rejected {} {
+    global gdb_prompt
+
+    test_print_reject "p 0x"
+    test_print_reject "p 0b"
+    gdb_test "p ''" "(Empty character constant\\.|A character constant must contain at least one character\\.)"
+    gdb_test "p '''" "(Empty character constant\\.|A character constant must contain at least one character\\.)"
+    test_print_reject "p '\\'"
+
+    # Note that this turns into "p '\\\'" at gdb's input.
+    test_print_reject "p '\\\\\\'"
+
+    # Test various decimal values.
+
+    test_print_reject "p DEADBEEF"
+
+    # Test various octal values.
+
+    test_print_reject "p 09" 
+    test_print_reject "p 079" 
+
+    # Test various hexadecimal values.
+
+    test_print_reject "p 0xG" 
+    test_print_reject "p 0xAG" 
+
+    # Test various binary values.
+
+    test_print_reject "p 0b2" 
+    test_print_reject "p 0b12" 
+}
+
+proc test_float_accepted {} {
+    global gdb_prompt
+
+    # This test is useful to catch successful parsing of the first fp value.
+    gdb_test "p 123.4+56.7" " = 180.(099\[0-9]*|100\[0-9\]*)" "check for floating addition"
+
+    # Test all the suffixes (including no suffix).
+    gdb_test "p 1." " = 1"
+    gdb_test "p 1.5" " = 1.5"
+    gdb_test "p 1.f" " = 1"
+    gdb_test "p 1.5f" " = 1.5"
+    gdb_test "p 1.l" " = 1"
+    gdb_test "p 1.5l" " = 1.5"
+
+    # Test hexadecimal floating point.
+    foreach {num result} {
+	0x1.1 1.0625
+	0x1.8480000000000p+6 97.125
+	0x1.8480000000000p6 97.125
+	0x00.1p0 0.0625
+	0x00.1p1 0.125
+	0x00.1p-1 0.03125
+    } {
+	gdb_test "p $num" " = [string_to_regexp $result]"
+    }
+}
+
+proc test_float_rejected {} {
+    # Gdb use to fail this test for all configurations.  The C
+    # lexer thought that 123DEADBEEF was a floating point number, but
+    # then failed to notice that atof() only eats the 123 part.
+    # Fixed, 4/25/97, by Bob Manson.
+    test_print_reject "p 123DEADBEEF"
+
+    test_print_reject "p 123foobar.bazfoo3"
+    test_print_reject "p 123EEEEEEEEEEEEEEEEE33333k333"
+
+    # Test bad suffixes.
+    test_print_reject "p 1.1x"
+    test_print_reject "p 1.1ff"
+    test_print_reject "p 1.1ll"
+}
+
+# Regression test for PR gdb/21675
+proc test_radices {} {
+    gdb_test "print/o 16777211" " = 077777773"
+
+    # This is written in a somewhat funny way to avoid assuming a
+    # particular float format.
+    set s_int [get_sizeof int -1]
+    set s_float [get_sizeof float -1]
+    if {$s_int == $s_float && $s_int != -1} {
+	foreach fmt {d u x t o} {
+	    set ival [get_valueof "/$fmt" "*(int *) &f_var" "FAIL" \
+			  "get_valueof int/$fmt"]
+	    set fval [get_valueof "/$fmt" f_var "FAIL" \
+			  "get_valueof float/$fmt"]
+	    # See PR gdb/16242 for this.
+	    if {[string compare $ival $fval] == 0 && $ival != "FAIL"} {
+		pass "print/$fmt f_var"
+	    } else {
+		fail "print/$fmt f_var"
+	    }
+	}
+    }
+
+    gdb_test "print/c f_var" " = 65 'A'"
+
+    gdb_test "print/u (char) -1" " = 255"
+    gdb_test "print/d (unsigned char) -1" " = -1"
+}
+
+proc test_print_all_chars {} {
+    global gdb_prompt
+
+    # Set the target-charset to ASCII, because the output varies from
+    # different charset.
+    with_target_charset "ASCII" {
+
+	gdb_test "p ctable1\[0\]"   " = 0 '\\\\000'"
+	gdb_test "p ctable1\[1\]"   " = 1 '\\\\001'"
+	gdb_test "p ctable1\[2\]"   " = 2 '\\\\002'"
+	gdb_test "p ctable1\[3\]"   " = 3 '\\\\003'"
+	gdb_test "p ctable1\[4\]"   " = 4 '\\\\004'"
+	gdb_test "p ctable1\[5\]"   " = 5 '\\\\005'"
+	gdb_test "p ctable1\[6\]"   " = 6 '\\\\006'"
+	gdb_test "p ctable1\[7\]"   " = 7 '\\\\a'"
+	gdb_test "p ctable1\[8\]"   " = 8 '\\\\b'"
+	gdb_test "p ctable1\[9\]"   " = 9 '\\\\t'"
+	gdb_test "p ctable1\[10\]"  " = 10 '\\\\n'"
+	gdb_test "p ctable1\[11\]"  " = 11 '\\\\v'"
+	gdb_test "p ctable1\[12\]"  " = 12 '\\\\f'"
+	gdb_test "p ctable1\[13\]"  " = 13 '\\\\r'"
+	gdb_test "p ctable1\[14\]"  " = 14 '\\\\016'"
+	gdb_test "p ctable1\[15\]"  " = 15 '\\\\017'"
+	gdb_test "p ctable1\[16\]"  " = 16 '\\\\020'"
+	gdb_test "p ctable1\[17\]"  " = 17 '\\\\021'"
+	gdb_test "p ctable1\[18\]"  " = 18 '\\\\022'"
+	gdb_test "p ctable1\[19\]"  " = 19 '\\\\023'"
+	gdb_test "p ctable1\[20\]"  " = 20 '\\\\024'"
+	gdb_test "p ctable1\[21\]"  " = 21 '\\\\025'"
+	gdb_test "p ctable1\[22\]"  " = 22 '\\\\026'"
+	gdb_test "p ctable1\[23\]"  " = 23 '\\\\027'"
+	gdb_test "p ctable1\[24\]"  " = 24 '\\\\030'"
+	gdb_test "p ctable1\[25\]"  " = 25 '\\\\031'"
+	gdb_test "p ctable1\[26\]"  " = 26 '\\\\032'"
+	gdb_test "p ctable1\[27\]"  " = 27 '\\\\033'"
+	gdb_test "p ctable1\[28\]"  " = 28 '\\\\034'"
+	gdb_test "p ctable1\[29\]"  " = 29 '\\\\035'"
+	gdb_test "p ctable1\[30\]"  " = 30 '\\\\036'"
+	gdb_test "p ctable1\[31\]"  " = 31 '\\\\037'"
+	gdb_test "p ctable1\[32\]"  " = 32 ' '"
+	gdb_test "p ctable1\[33\]"  " = 33 '!'"
+	gdb_test "p ctable1\[34\]"  " = 34 '\"'"
+	gdb_test "p ctable1\[35\]"  " = 35 '#'"
+	gdb_test "p ctable1\[36\]"  " = 36 '\\\$'"
+	gdb_test "p ctable1\[37\]"  " = 37 '%'"
+	gdb_test "p ctable1\[38\]"  " = 38 '&'"
+	gdb_test "p ctable1\[39\]"  " = 39 '\\\\''"
+	gdb_test "p ctable1\[40\]"  " = 40 '\\('"
+	gdb_test "p ctable1\[41\]"  " = 41 '\\)'"
+	gdb_test "p ctable1\[42\]"  " = 42 '\\*'"
+	gdb_test "p ctable1\[43\]"  " = 43 '\\+'"
+	gdb_test "p ctable1\[44\]"  " = 44 ','"
+	gdb_test "p ctable1\[45\]"  " = 45 '-'"
+	gdb_test "p ctable1\[46\]"  " = 46 '.'"
+	gdb_test "p ctable1\[47\]"  " = 47 '/'"
+	gdb_test "p ctable1\[48\]"  " = 48 '0'"
+	gdb_test "p ctable1\[49\]"  " = 49 '1'"
+	gdb_test "p ctable1\[50\]"  " = 50 '2'"
+	gdb_test "p ctable1\[51\]"  " = 51 '3'"
+	gdb_test "p ctable1\[52\]"  " = 52 '4'"
+	gdb_test "p ctable1\[53\]"  " = 53 '5'"
+	gdb_test "p ctable1\[54\]"  " = 54 '6'"
+	gdb_test "p ctable1\[55\]"  " = 55 '7'"
+	gdb_test "p ctable1\[56\]"  " = 56 '8'"
+	gdb_test "p ctable1\[57\]"  " = 57 '9'"
+	gdb_test "p ctable1\[58\]"  " = 58 ':'"
+	gdb_test "p ctable1\[59\]"  " = 59 ';'"
+	gdb_test "p ctable1\[60\]"  " = 60 '<'"
+	gdb_test "p ctable1\[61\]"  " = 61 '='"
+	gdb_test "p ctable1\[62\]"  " = 62 '>'"
+	gdb_test "p ctable1\[63\]"  " = 63 '\\?'"
+	gdb_test "p ctable1\[64\]"  " = 64 '@'"
+	gdb_test "p ctable1\[65\]"  " = 65 'A'"
+	gdb_test "p ctable1\[66\]"  " = 66 'B'"
+	gdb_test "p ctable1\[67\]"  " = 67 'C'"
+	gdb_test "p ctable1\[68\]"  " = 68 'D'"
+	gdb_test "p ctable1\[69\]"  " = 69 'E'"
+	gdb_test "p ctable1\[70\]"  " = 70 'F'"
+	gdb_test "p ctable1\[71\]"  " = 71 'G'"
+	gdb_test "p ctable1\[72\]"  " = 72 'H'"
+	gdb_test "p ctable1\[73\]"  " = 73 'I'"
+	gdb_test "p ctable1\[74\]"  " = 74 'J'"
+	gdb_test "p ctable1\[75\]"  " = 75 'K'"
+	gdb_test "p ctable1\[76\]"  " = 76 'L'"
+	gdb_test "p ctable1\[77\]"  " = 77 'M'"
+	gdb_test "p ctable1\[78\]"  " = 78 'N'"
+	gdb_test "p ctable1\[79\]"  " = 79 'O'"
+	gdb_test "p ctable1\[80\]"  " = 80 'P'"
+	gdb_test "p ctable1\[81\]"  " = 81 'Q'"
+	gdb_test "p ctable1\[82\]"  " = 82 'R'"
+	gdb_test "p ctable1\[83\]"  " = 83 'S'"
+	gdb_test "p ctable1\[84\]"  " = 84 'T'"
+	gdb_test "p ctable1\[85\]"  " = 85 'U'"
+	gdb_test "p ctable1\[86\]"  " = 86 'V'"
+	gdb_test "p ctable1\[87\]"  " = 87 'W'"
+	gdb_test "p ctable1\[88\]"  " = 88 'X'"
+	gdb_test "p ctable1\[89\]"  " = 89 'Y'"
+	gdb_test "p ctable1\[90\]"  " = 90 'Z'"
+	gdb_test "p ctable1\[91\]"  " = 91 '\\\['"
+	gdb_test "p ctable1\[92\]"  " = 92 '\\\\\\\\'"
+	gdb_test "p ctable1\[93\]"  " = 93 '\\\]'"
+	gdb_test "p ctable1\[94\]"  " = 94 '\\^'"
+	gdb_test "p ctable1\[95\]"  " = 95 '_'"
+	gdb_test "p ctable1\[96\]"  " = 96 '`'"
+	gdb_test "p ctable1\[97\]"  " = 97 'a'"
+	gdb_test "p ctable1\[98\]"  " = 98 'b'"
+	gdb_test "p ctable1\[99\]"  " = 99 'c'"
+	gdb_test "p ctable1\[100\]" " = 100 'd'"
+	gdb_test "p ctable1\[101\]" " = 101 'e'"
+	gdb_test "p ctable1\[102\]" " = 102 'f'"
+	gdb_test "p ctable1\[103\]" " = 103 'g'"
+	gdb_test "p ctable1\[104\]" " = 104 'h'"
+	gdb_test "p ctable1\[105\]" " = 105 'i'"
+	gdb_test "p ctable1\[106\]" " = 106 'j'"
+	gdb_test "p ctable1\[107\]" " = 107 'k'"
+	gdb_test "p ctable1\[108\]" " = 108 'l'"
+	gdb_test "p ctable1\[109\]" " = 109 'm'"
+	gdb_test "p ctable1\[110\]" " = 110 'n'"
+	gdb_test "p ctable1\[111\]" " = 111 'o'"
+	gdb_test "p ctable1\[112\]" " = 112 'p'"
+	gdb_test "p ctable1\[113\]" " = 113 'q'"
+	gdb_test "p ctable1\[114\]" " = 114 'r'"
+	gdb_test "p ctable1\[115\]" " = 115 's'"
+	gdb_test "p ctable1\[116\]" " = 116 't'"
+	gdb_test "p ctable1\[117\]" " = 117 'u'"
+	gdb_test "p ctable1\[118\]" " = 118 'v'"
+	gdb_test "p ctable1\[119\]" " = 119 'w'"
+	gdb_test "p ctable1\[120\]" " = 120 'x'"
+	gdb_test "p ctable1\[121\]" " = 121 'y'"
+	gdb_test "p ctable1\[122\]" " = 122 'z'"
+	gdb_test "p ctable1\[123\]" " = 123 '\[{\]+'"
+	gdb_test "p ctable1\[124\]" " = 124 '\[|\]+'"
+	gdb_test "p ctable1\[125\]" " = 125 '\[}\]+'"
+	gdb_test "p ctable1\[126\]" " = 126 '\[~\]'"
+	gdb_test "p ctable1\[127\]" " = 127 '\\\\177'"
+	gdb_test "p ctable1\[128\]" " = 128 '\\\\200'"
+	gdb_test "p ctable1\[129\]" " = 129 '\\\\201'"
+	gdb_test "p ctable1\[130\]" " = 130 '\\\\202'"
+	gdb_test "p ctable1\[131\]" " = 131 '\\\\203'"
+	gdb_test "p ctable1\[132\]" " = 132 '\\\\204'"
+	gdb_test "p ctable1\[133\]" " = 133 '\\\\205'"
+	gdb_test "p ctable1\[134\]" " = 134 '\\\\206'"
+	gdb_test "p ctable1\[135\]" " = 135 '\\\\207'"
+	gdb_test "p ctable1\[136\]" " = 136 '\\\\210'"
+	gdb_test "p ctable1\[137\]" " = 137 '\\\\211'"
+	gdb_test "p ctable1\[138\]" " = 138 '\\\\212'"
+	gdb_test "p ctable1\[139\]" " = 139 '\\\\213'"
+	gdb_test "p ctable1\[140\]" " = 140 '\\\\214'"
+	gdb_test "p ctable1\[141\]" " = 141 '\\\\215'"
+	gdb_test "p ctable1\[142\]" " = 142 '\\\\216'"
+	gdb_test "p ctable1\[143\]" " = 143 '\\\\217'"
+	gdb_test "p ctable1\[144\]" " = 144 '\\\\220'"
+	gdb_test "p ctable1\[145\]" " = 145 '\\\\221'"
+	gdb_test "p ctable1\[146\]" " = 146 '\\\\222'"
+	gdb_test "p ctable1\[147\]" " = 147 '\\\\223'"
+	gdb_test "p ctable1\[148\]" " = 148 '\\\\224'"
+	gdb_test "p ctable1\[149\]" " = 149 '\\\\225'"
+	gdb_test "p ctable1\[150\]" " = 150 '\\\\226'"
+	gdb_test "p ctable1\[151\]" " = 151 '\\\\227'"
+	gdb_test "p ctable1\[152\]" " = 152 '\\\\230'"
+	gdb_test "p ctable1\[153\]" " = 153 '\\\\231'"
+	gdb_test "p ctable1\[154\]" " = 154 '\\\\232'"
+	gdb_test "p ctable1\[155\]" " = 155 '\\\\233'"
+	gdb_test "p ctable1\[156\]" " = 156 '\\\\234'"
+	gdb_test "p ctable1\[157\]" " = 157 '\\\\235'"
+	gdb_test "p ctable1\[158\]" " = 158 '\\\\236'"
+	gdb_test "p ctable1\[159\]" " = 159 '\\\\237'"
+	gdb_test "p ctable1\[160\]" " = 160 '\\\\240'"
+	gdb_test "p ctable1\[161\]" " = 161 '\\\\241'"
+	gdb_test "p ctable1\[162\]" " = 162 '\\\\242'"
+	gdb_test "p ctable1\[163\]" " = 163 '\\\\243'"
+	gdb_test "p ctable1\[164\]" " = 164 '\\\\244'"
+	gdb_test "p ctable1\[165\]" " = 165 '\\\\245'"
+	gdb_test "p ctable1\[166\]" " = 166 '\\\\246'"
+	gdb_test "p ctable1\[167\]" " = 167 '\\\\247'"
+	gdb_test "p ctable1\[168\]" " = 168 '\\\\250'"
+	gdb_test "p ctable1\[169\]" " = 169 '\\\\251'"
+	gdb_test "p ctable1\[170\]" " = 170 '\\\\252'"
+	gdb_test "p ctable1\[171\]" " = 171 '\\\\253'"
+	gdb_test "p ctable1\[172\]" " = 172 '\\\\254'"
+	gdb_test "p ctable1\[173\]" " = 173 '\\\\255'"
+	gdb_test "p ctable1\[174\]" " = 174 '\\\\256'"
+	gdb_test "p ctable1\[175\]" " = 175 '\\\\257'"
+	gdb_test "p ctable1\[176\]" " = 176 '\\\\260'"
+	gdb_test "p ctable1\[177\]" " = 177 '\\\\261'"
+	gdb_test "p ctable1\[178\]" " = 178 '\\\\262'"
+	gdb_test "p ctable1\[179\]" " = 179 '\\\\263'"
+	gdb_test "p ctable1\[180\]" " = 180 '\\\\264'"
+	gdb_test "p ctable1\[181\]" " = 181 '\\\\265'"
+	gdb_test "p ctable1\[182\]" " = 182 '\\\\266'"
+	gdb_test "p ctable1\[183\]" " = 183 '\\\\267'"
+	gdb_test "p ctable1\[184\]" " = 184 '\\\\270'"
+	gdb_test "p ctable1\[185\]" " = 185 '\\\\271'"
+	gdb_test "p ctable1\[186\]" " = 186 '\\\\272'"
+	gdb_test "p ctable1\[187\]" " = 187 '\\\\273'"
+	gdb_test "p ctable1\[188\]" " = 188 '\\\\274'"
+	gdb_test "p ctable1\[189\]" " = 189 '\\\\275'"
+	gdb_test "p ctable1\[190\]" " = 190 '\\\\276'"
+	gdb_test "p ctable1\[191\]" " = 191 '\\\\277'"
+	gdb_test "p ctable1\[192\]" " = 192 '\\\\300'"
+	gdb_test "p ctable1\[193\]" " = 193 '\\\\301'"
+	gdb_test "p ctable1\[194\]" " = 194 '\\\\302'"
+	gdb_test "p ctable1\[195\]" " = 195 '\\\\303'"
+	gdb_test "p ctable1\[196\]" " = 196 '\\\\304'"
+	gdb_test "p ctable1\[197\]" " = 197 '\\\\305'"
+	gdb_test "p ctable1\[198\]" " = 198 '\\\\306'"
+	gdb_test "p ctable1\[199\]" " = 199 '\\\\307'"
+	gdb_test "p ctable1\[200\]" " = 200 '\\\\310'"
+	gdb_test "p ctable1\[201\]" " = 201 '\\\\311'"
+	gdb_test "p ctable1\[202\]" " = 202 '\\\\312'"
+	gdb_test "p ctable1\[203\]" " = 203 '\\\\313'"
+	gdb_test "p ctable1\[204\]" " = 204 '\\\\314'"
+	gdb_test "p ctable1\[205\]" " = 205 '\\\\315'"
+	gdb_test "p ctable1\[206\]" " = 206 '\\\\316'"
+	gdb_test "p ctable1\[207\]" " = 207 '\\\\317'"
+	gdb_test "p ctable1\[208\]" " = 208 '\\\\320'"
+	gdb_test "p ctable1\[209\]" " = 209 '\\\\321'"
+	gdb_test "p ctable1\[210\]" " = 210 '\\\\322'"
+	gdb_test "p ctable1\[211\]" " = 211 '\\\\323'"
+	gdb_test "p ctable1\[212\]" " = 212 '\\\\324'"
+	gdb_test "p ctable1\[213\]" " = 213 '\\\\325'"
+	gdb_test "p ctable1\[214\]" " = 214 '\\\\326'"
+	gdb_test "p ctable1\[215\]" " = 215 '\\\\327'"
+	gdb_test "p ctable1\[216\]" " = 216 '\\\\330'"
+	gdb_test "p ctable1\[217\]" " = 217 '\\\\331'"
+	gdb_test "p ctable1\[218\]" " = 218 '\\\\332'"
+	gdb_test "p ctable1\[219\]" " = 219 '\\\\333'"
+	gdb_test "p ctable1\[220\]" " = 220 '\\\\334'"
+	gdb_test "p ctable1\[221\]" " = 221 '\\\\335'"
+	gdb_test "p ctable1\[222\]" " = 222 '\\\\336'"
+	gdb_test "p ctable1\[223\]" " = 223 '\\\\337'"
+	gdb_test "p ctable1\[224\]" " = 224 '\\\\340'"
+	gdb_test "p ctable1\[225\]" " = 225 '\\\\341'"
+	gdb_test "p ctable1\[226\]" " = 226 '\\\\342'"
+	gdb_test "p ctable1\[227\]" " = 227 '\\\\343'"
+	gdb_test "p ctable1\[228\]" " = 228 '\\\\344'"
+	gdb_test "p ctable1\[229\]" " = 229 '\\\\345'"
+	gdb_test "p ctable1\[230\]" " = 230 '\\\\346'"
+	gdb_test "p ctable1\[231\]" " = 231 '\\\\347'"
+	gdb_test "p ctable1\[232\]" " = 232 '\\\\350'"
+	gdb_test "p ctable1\[233\]" " = 233 '\\\\351'"
+	gdb_test "p ctable1\[234\]" " = 234 '\\\\352'"
+	gdb_test "p ctable1\[235\]" " = 235 '\\\\353'"
+	gdb_test "p ctable1\[236\]" " = 236 '\\\\354'"
+	gdb_test "p ctable1\[237\]" " = 237 '\\\\355'"
+	gdb_test "p ctable1\[238\]" " = 238 '\\\\356'"
+	gdb_test "p ctable1\[239\]" " = 239 '\\\\357'"
+	gdb_test "p ctable1\[240\]" " = 240 '\\\\360'"
+	gdb_test "p ctable1\[241\]" " = 241 '\\\\361'"
+	gdb_test "p ctable1\[242\]" " = 242 '\\\\362'"
+	gdb_test "p ctable1\[243\]" " = 243 '\\\\363'"
+	gdb_test "p ctable1\[244\]" " = 244 '\\\\364'"
+	gdb_test "p ctable1\[245\]" " = 245 '\\\\365'"
+	gdb_test "p ctable1\[246\]" " = 246 '\\\\366'"
+	gdb_test "p ctable1\[247\]" " = 247 '\\\\367'"
+	gdb_test "p ctable1\[248\]" " = 248 '\\\\370'"
+	gdb_test "p ctable1\[249\]" " = 249 '\\\\371'"
+	gdb_test "p ctable1\[250\]" " = 250 '\\\\372'"
+	gdb_test "p ctable1\[251\]" " = 251 '\\\\373'"
+	gdb_test "p ctable1\[252\]" " = 252 '\\\\374'"
+	gdb_test "p ctable1\[253\]" " = 253 '\\\\375'"
+	gdb_test "p ctable1\[254\]" " = 254 '\\\\376'"
+	gdb_test "p ctable1\[255\]" " = 255 '\\\\377'"
+    }
+}
+
+# Test interaction of the number of print elements to print and the
+# repeat count, set to the default of 10.  SETTING is the print
+# setting to verify, either "elements" or "characters".
+
+proc test_print_repeats_10_one { setting } {
+    global gdb_prompt decimal
+
+    for { set x 1 } { $x <= 16 } { incr x } {
+	gdb_test_no_output "set print $setting $x" "$setting $x repeats"
+	for { set e 1 } { $e <= 16 } {incr e } {
+	    set v [expr $e - 1]
+	    set command "p &ctable2\[${v}*16\]"
+	    if { $x < $e } {
+		set aval $x
+	    } else {
+		set aval $e
+	    }
+	    set xval [expr $x - $e]
+	    if { $xval < 0 } {
+		set xval 0
+	    }
+	    if { $aval > 10 } {
+		set a "'a' <repeats $aval times>"
+		if { $xval > 0 } {
+		    set a "${a}, \\\""
+		}
+	    } else {
+		set a "\\\"[string range "aaaaaaaaaaaaaaaa" 1 $aval]"
+		if { $xval > 10 } {
+		    set a "$a\\\", "
+		}
+	    }
+	    set xstr ""
+	    if { $xval > 10 } {
+		set xstr "'X' <repeats $xval times>"
+	    } else {
+		if { $xval > 0 } {
+		    set xstr "[string range "XXXXXXXXXXXXXXXX" 1 $xval]\\\""
+		} else {
+		    if { $aval <= 10 } {
+			set xstr "\\\""
+		    }
+		}
+	    }
+	    if { $aval < 16 } {
+		set xstr "${xstr}\[.\]\[.\]\[.\]"
+	    }
+	    set string " = \[(\]unsigned char \[*\]\[)\] <ctable2(\\+$decimal)?> ${a}${xstr}"
+	    gdb_test "$command" "$string" "$command with print $setting set to $x"
+	}
+    }
+}
+
+proc test_print_repeats_10 {} {
+    foreach_with_prefix setting { "elements" "characters" } {
+	test_print_repeats_10_one $setting
+    }
+    gdb_test_no_output "set print characters elements"
+}
+
+# This tests whether GDB uses the correct element content offsets
+# (relative to the complete `some_struct' value) when counting value
+# repetitions.
+
+proc test_print_repeats_embedded_array {} {
+    global gdb_prompt
+
+    gdb_test_escape_braces "p/x some_struct" \
+	"= {a = 0x12345678, b = 0x87654321, array = {0xaa <repeats 20 times>}}" \
+	"correct element repeats in array embedded at offset > 0"
+}
+
+proc test_print_strings_one { setting } {
+    global gdb_prompt decimal
+
+    # We accept "(unsigned char *) " before the string.  char vs. unsigned char
+    # is already tested elsewhere.
+
+    # Test that setting print elements unlimited doesn't completely suppress
+    # printing; this was a bug in older gdb's.
+    gdb_test_no_output "set print $setting 0"
+    gdb_test "p teststring" \
+	" = (.unsigned char .. )?\"teststring contents\"" "p teststring with $setting set to 0"
+    gdb_test_no_output "set print $setting 1"
+    gdb_test "p teststring" \
+	" = (.unsigned char .. )?\"t\"\\.\\.\\." "p teststring with $setting set to 1"
+    gdb_test_no_output "set print $setting 5"
+    gdb_test "p teststring" \
+	" = (.unsigned char .. )?\"tests\"\\.\\.\\." "p teststring with $setting set to 5"
+    gdb_test_no_output "set print $setting 19"
+    gdb_test "p teststring" \
+	" = (.unsigned char .. )?\"teststring contents\"" "p teststring with $setting set to 19"
+    gdb_test_no_output "set print $setting 20"
+    gdb_test "p teststring" \
+	" = (.unsigned char .. )?\"teststring contents\"" "p teststring with $setting set to 20"
+
+    gdb_test "p -$setting 1 -- teststring" \
+	" = (.unsigned char .. )?\"t\"\\.\\.\\."
+    gdb_test "p -$setting 5 -- teststring" \
+	" = (.unsigned char .. )?\"tests\"\\.\\.\\."
+    gdb_test "p -$setting 19 -- teststring" \
+	" = (.unsigned char .. )?\"teststring contents\""
+    gdb_test "p -$setting 20 -- teststring" \
+	" = (.unsigned char .. )?\"teststring contents\""
+
+    gdb_test "print teststring2" \
+	" = \\(charptr\\) \"more contents\""
+
+    gdb_test_no_output "set print $setting 8"
+
+    # Set the target-charset to ASCII, because the output varies from
+    # different charset.
+    with_target_charset "ASCII" {
+	gdb_test "p &ctable1\[0\]" \
+	    " = \\(unsigned char \\*\\) <ctable1> \"\""
+	gdb_test "p &ctable1\[1\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"\\\\001\\\\002\\\\003\\\\004\\\\005\\\\006\\\\a\\\\b\"..."
+	gdb_test "p &ctable1\[1*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"\\\\b\\\\t\\\\n\\\\v\\\\f\\\\r\\\\016\\\\017\"..."
+	gdb_test "p &ctable1\[2*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"\\\\020\\\\021\\\\022\\\\023\\\\024\\\\025\\\\026\\\\027\"..."
+	gdb_test "p &ctable1\[3*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"\\\\030\\\\031\\\\032\\\\033\\\\034\\\\035\\\\036\\\\037\"..."
+	gdb_test "p &ctable1\[4*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \" !\\\\\"#\\\$%&'\"..."
+	gdb_test "p &ctable1\[5*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"\\(\\)\\*\\+,-./\"..."
+	gdb_test "p &ctable1\[6*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"01234567\"..."
+	gdb_test "p &ctable1\[7*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"89:;<=>\\?\"..."
+	gdb_test "p &ctable1\[8*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"@ABCDEFG\"..."
+	gdb_test "p &ctable1\[9*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"HIJKLMNO\"..."
+	gdb_test "p &ctable1\[10*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"PQRSTUVW\"..."
+	gdb_test "p &ctable1\[11*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"XYZ\\\[\\\\\\\\\\\]\\^_\"..."
+	gdb_test "p &ctable1\[12*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"`abcdefg\"..."
+	gdb_test "p &ctable1\[13*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"hijklmno\"..."
+	gdb_test "p &ctable1\[14*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"pqrstuvw\"..."
+	gdb_test "p &ctable1\[15*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"xyz\[{|}\]+\\~\\\\177\"..."
+	gdb_test "p &ctable1\[16*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"\\\\200\\\\201\\\\202\\\\203\\\\204\\\\205\\\\206\\\\207\"..."
+	gdb_test "p &ctable1\[17*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"\\\\210\\\\211\\\\212\\\\213\\\\214\\\\215\\\\216\\\\217\"..."
+	gdb_test "p &ctable1\[18*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"\\\\220\\\\221\\\\222\\\\223\\\\224\\\\225\\\\226\\\\227\"..."
+	gdb_test "p &ctable1\[19*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"\\\\230\\\\231\\\\232\\\\233\\\\234\\\\235\\\\236\\\\237\"..."
+	gdb_test "p &ctable1\[20*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"\\\\240\\\\241\\\\242\\\\243\\\\244\\\\245\\\\246\\\\247\"..."
+	gdb_test "p &ctable1\[21*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"\\\\250\\\\251\\\\252\\\\253\\\\254\\\\255\\\\256\\\\257\"..."
+	gdb_test "p &ctable1\[22*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"\\\\260\\\\261\\\\262\\\\263\\\\264\\\\265\\\\266\\\\267\"..."
+	gdb_test "p &ctable1\[23*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"\\\\270\\\\271\\\\272\\\\273\\\\274\\\\275\\\\276\\\\277\"..."
+	gdb_test "p &ctable1\[24*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"\\\\300\\\\301\\\\302\\\\303\\\\304\\\\305\\\\306\\\\307\"..."
+	gdb_test "p &ctable1\[25*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"\\\\310\\\\311\\\\312\\\\313\\\\314\\\\315\\\\316\\\\317\"..."
+	gdb_test "p &ctable1\[26*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"\\\\320\\\\321\\\\322\\\\323\\\\324\\\\325\\\\326\\\\327\"..."
+	gdb_test "p &ctable1\[27*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"\\\\330\\\\331\\\\332\\\\333\\\\334\\\\335\\\\336\\\\337\"..."
+	gdb_test "p &ctable1\[28*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"\\\\340\\\\341\\\\342\\\\343\\\\344\\\\345\\\\346\\\\347\"..."
+	gdb_test "p &ctable1\[29*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"\\\\350\\\\351\\\\352\\\\353\\\\354\\\\355\\\\356\\\\357\"..."
+	gdb_test "p &ctable1\[30*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"\\\\360\\\\361\\\\362\\\\363\\\\364\\\\365\\\\366\\\\367\"..."
+	gdb_test "p &ctable1\[31*8\]" \
+	    " = \\(unsigned char \\*\\) <ctable1\\+$decimal> \"\\\\370\\\\371\\\\372\\\\373\\\\374\\\\375\\\\376\\\\377\"..."
+    }
+
+    gdb_test_no_output "set print $setting unlimited"
+}
+
+proc test_print_strings {} {
+
+    foreach_with_prefix setting { "elements" "characters" } {
+	test_print_strings_one $setting
+    }
+
+    gdb_test "p -elements 8 -- teststring" \
+	" = (.unsigned char .. )?\"teststring contents\""
+    gdb_test "p -characters 8 -- teststring" \
+	" = (.unsigned char .. )?\"teststri\"\\.\\.\\."
+    gdb_test "p -elements 8 -characters elements -- teststring" \
+	" = (.unsigned char .. )?\"teststri\"\\.\\.\\."
+
+    with_test_prefix strings {
+	gdb_test_no_output "set print characters elements"
+    }
+}
+
+proc test_print_int_arrays {} {
+    global gdb_prompt
+
+    gdb_test_no_output "set print elements 24" "elements 24 int arrays"
+
+    gdb_test_escape_braces "p int1dim" \
+	" = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}"
+    gdb_test_escape_braces "p int2dim" \
+	" = {{0, 1, 2, 3}, {4, 5, 6, 7}, {8, 9, 10, 11}}"
+    gdb_test_escape_braces "p int3dim" \
+	" = {{{0, 1}, {2, 3}, {4, 5}}, {{6, 7}, {8, 9}, {10, 11}}}"
+    gdb_test_escape_braces "p int4dim" \
+	" = {{{{0, 1}, {2, 3}, {4, 5}}, {{6, 7}, {8, 9}, {10, 11}}}}"
+
+    # Some checks for various output formats.
+    gdb_test_escape_braces "p/x int4dim" \
+	" = {{{{0x0, 0x1}, {0x2, 0x3}, {0x4, 0x5}}, {{0x6, 0x7}, {0x8, 0x9}, {0xa, 0xb}}}}"
+    gdb_test_escape_braces "p/z int4dim" \
+       " = {{{{0x0+0, 0x0+1}, {0x0+2, 0x0+3}, {0x0+4, 0x0+5}}, {{0x0+6, 0x0+7}, {0x0+8, 0x0+9}, {0x0+a, 0x0+b}}}}"
+    gdb_test_escape_braces "p/o int4dim" \
+       " = {{{{0, 01}, {02, 03}, {04, 05}}, {{06, 07}, {010, 011}, {012, 013}}}}"
+    gdb_test_escape_braces "p/t int4dim" \
+       " = {{{{0, 1}, {10, 11}, {100, 101}}, {{110, 111}, {1000, 1001}, {1010, 1011}}}}"
+}
+
+proc test_print_typedef_arrays {} {
+    global gdb_prompt
+
+    gdb_test_no_output "set print elements 24" "elements 24 typedef_arrays"
+
+    gdb_test_escape_braces "p a1" \
+	" = {2, 4, 6, 8, 10, 12, 14, 16, 18, 20}"
+    gdb_test "p a1\[0\]" " = 2"
+    gdb_test "p a1\[9\]" " = 20"
+
+    gdb_test "p a2" \
+	" = \"abcd\""
+    gdb_test "p a2\[0\]" " = 97 'a'"
+    gdb_test "p a2\[3\]" " = 100 'd'"
+
+    # Regression test of null-stop; PR 11049.
+    gdb_test_no_output "set print null-stop on"
+    gdb_test "p a2" " = \"abcd\"" "print a2 with null-stop on"
+    gdb_test_no_output "set print null-stop off"
+}
+
+proc test_artificial_arrays {} {
+    # Send \026@ instead of just @ in case the kill character is @.
+    # \026 (ctrl-v) is to escape the next character (@), but it is
+    # not only unnecessary to do so on MingW hosts, but also harmful
+    # for the test because that character isn't recognized as an
+    # escape character.
+    set ctrlv "\026"
+    if [ishost *-*-mingw*] {
+	set ctrlv ""
+    }
+    gdb_test_escape_braces "p int1dim\[0\]${ctrlv}@2" " = {0, 1}" {p int1dim[0]@2}
+    gdb_test_escape_braces "p int1dim\[0\]${ctrlv}@2${ctrlv}@3" \
+	"({{0, 1}, {2, 3}, {4, 5}}|\[Cc\]annot.*)" \
+	{p int1dim[0]@2@3}
+    gdb_test_escape_braces "p int1dim\[0\]${ctrlv}@FE_TWO" " = {0, 1}" \
+        {p int1dim[0]@TWO}
+    gdb_test_escape_braces "p int1dim\[0\]${ctrlv}@FE_TWO${ctrlv}@three" \
+	"({{0, 1}, {2, 3}, {4, 5}}|\[Cc\]annot.*)" \
+	{p int1dim[0]@TWO@three}
+    gdb_test_escape_braces {p/x (short [])0x12345678} \
+	" = ({0x1234, 0x5678}|{0x5678, 0x1234})"
+}
+
+proc test_print_char_arrays {} {
+    global gdb_prompt
+    global hex decimal
+
+    gdb_test_no_output "set print elements 24" "elements 24 char_arrays"
+    gdb_test_no_output "set print address on"
+
+    gdb_test "p arrays" \
+	" = {array1 = \"abc\", array2 = \"d\", array3 = \"e\", array4 = \"fg\", array5 = \"hij\"}"
+
+    gdb_test "p parrays"		" = \\(struct some_arrays \\*\\) $hex <arrays>"
+    gdb_test "p parrays->array1"	" = \"abc\""
+    gdb_test "p &parrays->array1"	" = \\(unsigned char \\(\\*\\)\\\[4\\\]\\) $hex <arrays>"
+    gdb_test "p parrays->array2"	" = \"d\""
+    gdb_test "p &parrays->array2"	" = \\(unsigned char \\(\\*\\)\\\[1\\\]\\) $hex <arrays\\+$decimal>"
+    gdb_test "p parrays->array3"	" = \"e\""
+    gdb_test "p &parrays->array3"	" = \\(unsigned char \\(\\*\\)\\\[1\\\]\\) $hex <arrays\\+$decimal>"
+    gdb_test "p parrays->array4"	" = \"fg\""
+    gdb_test "p &parrays->array4"	" = \\(unsigned char \\(\\*\\)\\\[2\\\]\\) $hex <arrays\\+$decimal>"
+    gdb_test "p parrays->array5"	" = \"hij\""
+    gdb_test "p &parrays->array5"	" = \\(unsigned char \\(\\*\\)\\\[4\\\]\\) $hex <arrays\\+$decimal>"
+
+    gdb_test_no_output "set print address off" "address off char arrays"
+}
+
+proc test_print_nibbles {} {
+    gdb_test_no_output "set print nibbles on"
+    foreach lang_line {
+	{"ada" "0" "0" "0011 0000" "1111 1111" "1111" "0001" "1111 0000 1111"}
+	{"asm" "0" "0" "0011 0000" "1111 1111" "1111" "0001" "1111 0000 1111"}
+	{"c" "0" "0" "0011 0000" "1111 1111" "1111" "0001" "1111 0000 1111"}
+	{"c++" "0" "0" "0011'0000" "1111'1111" "1111" "0001" "1111'0000'1111"}
+	{"d" "0" "0" "0011 0000" "1111 1111" "1111" "0001" "1111 0000 1111"}
+	{"fortran" "0" "0" "0011 0000" "1111 1111" "1111" "0001" "1111 0000 1111"}
+	{"go" "0" "0" "0011 0000" "1111 1111" "1111" "0001" "1111 0000 1111"}
+	{"minimal" "0" "0" "0011 0000" "1111 1111" "1111" "0001" "1111 0000 1111"}
+	{"objective-c" "0" "0" "0011 0000" "1111 1111" "1111" "0001" "1111 0000 1111"}
+	{"opencl" "0" "0" "0011 0000" "1111 1111" "1111" "0001" "1111 0000 1111"}
+	{"pascal" "0" "0" "0011 0000" "1111 1111" "1111" "0001" "1111 0000 1111"}
+	{"rust" "0" "0" "0011_0000" "1111_1111" "1111" "0001" "1111_0000_1111"}
+    } {
+	set lang [lindex $lang_line 0]
+	set val1 [lindex $lang_line 1]
+	set val2 [lindex $lang_line 2]
+	set val3 [lindex $lang_line 3]
+	set val4 [lindex $lang_line 4]
+	set val5 [lindex $lang_line 5]
+	set val6 [lindex $lang_line 6]
+	set val7 [lindex $lang_line 7]
+	set val8 [lindex $lang_line 8]
+
+	with_test_prefix "$lang" {
+	    gdb_test_no_output "set language $lang"
+	    gdb_test "p/t 0" $val1
+	    gdb_test "p/t 0x0" $val2
+	    gdb_test "p/t 0x30" $val3
+	    gdb_test "p/t 0xff" $val4
+	    gdb_test "p/t 0x0f" $val5
+	    gdb_test "p/t 0x01" $val6
+	    gdb_test "p/t 0xf0f" $val7
+	    gdb_test "p/t 0x70f" $val8
+	    gdb_test_no_output "set language auto"
+	}
+    }
+    gdb_test_no_output "set print nibbles off"
+}
+
+proc test_print_string_constants {} {
+    global gdb_prompt
+
+    gdb_test_no_output "set print elements 50"
+
+    if [target_info exists gdb,cannot_call_functions] {
+	unsupported "this target can not call functions"
+	return
+    }
+
+    # We need to up this because this can be really slow on some boards.
+    # (Test may involve inferior malloc() calls).
+    set timeout 60
+
+    gdb_test "p \"a string\""		" = \"a string\""
+    gdb_test "p \"embedded \\000 null\"" " = \"embedded \\\\000 null\""
+    gdb_test "p \"abcd\"\[2\]"	" = 99 'c'"
+    gdb_test "p sizeof (\"abcdef\")"	" = 7"
+    gdb_test "ptype \"foo\""		" = char \\\[4\\\]"
+    gdb_test "p *\"foo\""		" = 102 'f'"
+    gdb_test "ptype *\"foo\""		" = char"
+    gdb_test "p &*\"foo\""		" = \"foo\""
+    gdb_test "ptype &*\"foo\""	"type = char \\*"
+    gdb_test "p (char *)\"foo\""	" = \"foo\""
+}
+
+proc test_print_array_constants {} {
+    global hex
+
+    if [target_info exists gdb,cannot_call_functions] {
+	unsupported "this target can not call functions"
+	return
+    }
+
+    # We need to up this because this can be really slow on some boards.
+    # (Test may involve inferior malloc() calls).
+    set timeout 60
+
+    gdb_test "print {'a','b','c'}"	" = \"abc\""
+    gdb_test_escape_braces "print {0,1,2}"    " = {0, 1, 2}"
+    gdb_test_escape_braces "print {(long)0,(long)1,(long)2}"  " = {0, 1, 2}"
+    gdb_test_escape_braces "print {{0,1,2},{3,4,5}}"  " = {{0, 1, 2}, {3, 4, 5}}"
+    gdb_test "print {4,5,6}\[2\]"	" = 6"
+    gdb_test "print *&{4,5,6}\[1\]"	"Attempt to take address of value not located in memory."
+
+    # This used to cause a crash.
+    set val [string_to_regexp {"\377\377\377\377"}]
+    gdb_test "print {unsigned char\[\]}{0xffffffff}" " = $val"
+}
+
+proc test_print_enums {} {
+    # Regression test for PR11827.
+    gdb_test "print some_volatile_enum" "enumvolval1"
+
+    # Print a flag enum.
+    gdb_test "print three" [string_to_regexp " = (FE_ONE | FE_TWO)"]
+
+    # Print a flag enum with value 0, where an enumerator has value 0.
+    gdb_test "print (enum flag_enum) 0x0" [string_to_regexp " = FE_NONE"]
+
+    # Print a flag enum with value 0, where no enumerator has value 0.
+    gdb_test "print flag_enum_without_zero" [string_to_regexp " = 0"]
+
+    # Print a flag enum with unknown bits set.
+    gdb_test "print (enum flag_enum) 0xf1" [string_to_regexp " = (FE_ONE | unknown: 0xf0)"]
+
+    # Test printing an enum not considered a "flag enum" (because one of its
+    # enumerators has multiple bits set).
+    gdb_test "print three_not_flag" [string_to_regexp " = 3"]
+}
+
+proc test_printf {} {
+    gdb_test "printf \"x=%d,y=%d,z=%d\\n\", 5, 6, 7" "x=5,y=6,z=7"
+    gdb_test "printf \"string=%.4sxx\\n\", teststring" "string=testxx"
+    gdb_test "printf \"string=%sxx\\n\", teststring" \
+	"string=teststring contentsxx"
+
+    gdb_test "printf \"%f is fun\\n\", 1.0" "1\.0+ is fun"
+
+    # Test mixing args of different sizes.
+    gdb_test "printf \"x=%d,y=%f,z=%d\\n\", 5, 6.0, 7" "x=5,y=6\.0+,z=7"
+    gdb_test "printf \"%x %f, %c %x, %x, %f\\n\", 0xbad, -99.541, 'z',\
+0xfeedface, 0xdeadbeef, 5.0" "bad -99.54\[0-9\]+, z feedface, deadbeef, 5.0+"
+
+    # Regression test for C lexer bug.
+    gdb_test "printf \"%c\\n\", \"x\"\[1,0\]" "x"
+
+    # Regression test for "%% at end of format string.
+    # See http://sourceware.org/bugzilla/show_bug.cgi?id=11345
+    gdb_test "printf \"%%%d%%\\n\", 5" "%5%"
+
+    # Some tests for missing format specifier after '%'.
+    gdb_test "printf \"%\", 0" "Incomplete format specifier at end of format string"
+    gdb_test "printf \"%.234\", 0" "Incomplete format specifier at end of format string"
+    gdb_test "printf \"%-\", 0" "Incomplete format specifier at end of format string"
+    gdb_test "printf \"%-23\", 0" "Incomplete format specifier at end of format string"
+
+    # Test for invalid printf flags on pointer types.
+    gdb_test "printf \"%#p\", 0" "Inappropriate modifiers to format specifier 'p' in printf"
+    gdb_test "printf \"% p\", 0" "Inappropriate modifiers to format specifier 'p' in printf"
+    gdb_test "printf \"%0p\", 0" "Inappropriate modifiers to format specifier 'p' in printf"
+    gdb_test "printf \"%+p\", 0" "Inappropriate modifiers to format specifier 'p' in printf"
+
+
+    gdb_test "define hibob\nprintf \"hi bob \"\nshell echo zzz\nprintf \"y\\n\"\nend" \
+	"" \
+	"create hibob command"
+    gdb_test "hibob" "hi bob zzz.*y" "run hibob command"
+
+    # PR cli/19918.
+    gdb_test "printf \"%-16dq\\n\", 0" "0               q"
+    gdb_test "printf \"%-16pq\\n\", 0" "\\(nil\\)           q"
+
+    # PR cli/14977.
+    gdb_test "printf \"%s\\n\", 0" "\\(null\\)"
+
+    with_max_value_size 20 {
+	gdb_test {printf "%s", teststring3} \
+	    "^printed string requires 45 bytes, which is more than max-value-size"
+    }
+}
+
+#Test printing DFP values with printf
+proc test_printf_with_dfp {} {
+
+    # Test various dfp values, covering 32-bit, 64-bit and 128-bit ones
+
+    # _Decimal32 constants, which can support up to 7 digits
+    gdb_test "printf \"%Hf\\n\",1.2df" "1.2"
+    gdb_test "printf \"%Hf\\n\",-1.2df" "-1.2"
+    gdb_test "printf \"%Hf\\n\",1.234567df" "1.234567"
+    gdb_test "printf \"%Hf\\n\",-1.234567df" "-1.234567"
+    gdb_test "printf \"%Hf\\n\",1234567.df" "1234567"
+    gdb_test "printf \"%Hf\\n\",-1234567.df" "-1234567"
+
+    gdb_test "printf \"%Hf\\n\",1.2E1df" "12"
+    gdb_test "printf \"%Hf\\n\",1.2E10df" "1.2E\\+10"
+    gdb_test "printf \"%Hf\\n\",1.2E-10df" "1.2E-10"
+
+    # The largest exponent for 32-bit dfp value is 96.
+    gdb_test "printf \"%Hf\\n\",1.2E96df" "1.200000E\\+96"
+
+    # _Decimal64 constants, which can support up to 16 digits
+    gdb_test "printf \"%Df\\n\",1.2dd" "1.2"
+    gdb_test "printf \"%Df\\n\",-1.2dd" "-1.2"
+    gdb_test "printf \"%Df\\n\",1.234567890123456dd" "1.234567890123456"
+    gdb_test "printf \"%Df\\n\",-1.234567890123456dd" "-1.234567890123456"
+    gdb_test "printf \"%Df\\n\",1234567890123456.dd" "1234567890123456"
+    gdb_test "printf \"%Df\\n\",-1234567890123456.dd" "-1234567890123456"
+
+    gdb_test "printf \"%Df\\n\",1.2E1dd" "12"
+    gdb_test "printf \"%Df\\n\",1.2E10dd" "1.2E\\+10"
+    gdb_test "printf \"%Df\\n\",1.2E-10dd" "1.2E-10"
+
+    # The largest exponent for 64-bit dfp value is 384.
+    gdb_test "printf \"%Df\\n\",1.2E384dd" "1.200000000000000E\\+384"
+
+    # _Decimal128 constants, which can support up to 34 digits
+    gdb_test "printf \"%DDf\\n\",1.2dl" "1.2"
+    gdb_test "printf \"%DDf\\n\",-1.2dl" "-1.2"
+    gdb_test "printf \"%DDf\\n\",1.234567890123456789012345678901234dl" "1.234567890123456789012345678901234"
+    gdb_test "printf \"%DDf\\n\",-1.234567890123456789012345678901234dl" "-1.234567890123456789012345678901234"
+    gdb_test "printf \"%DDf\\n\",1234567890123456789012345678901234.dl" "1234567890123456789012345678901234"
+    gdb_test "printf \"%DDf\\n\",-1234567890123456789012345678901234.dl" "-1234567890123456789012345678901234"
+
+    gdb_test "printf \"%DDf\\n\",1.2E1dl" "12"
+    gdb_test "printf \"%DDf\\n\",1.2E10dl" "1.2E\\+10"
+    gdb_test "printf \"%DDf\\n\",1.2E-10dl" "1.2E-10"
+
+    # The largest exponent for 128-bit dfp value is 6144.
+    gdb_test "printf \"%DDf\\n\",1.2E6144dl" "1.200000000000000000000000000000000E\\+6144"
+
+    # GDB used to get this wrong.
+    gdb_test "printf \"%Hf %Hf\\n\",1.2df,1.3df" "1.2 1.3"
+}
+
+# Test printf with strings.
+proc test_printf_with_strings {} {
+    global gdb_prompt
+
+    gdb_test {printf "I ate a %s yesterday; it was very %s!\n", "clock", "time-consuming"} \
+	"I ate a clock yesterday; it was very time-consuming!"
+    gdb_test_no_output "set var \$hello = \"Hello\""
+
+    gdb_test {printf "%s, %s%c\n", $hello, "world", '!'} "Hello, world!"
+
+    set listsize_value -1
+    gdb_test_multiple "show listsize" "get listsize value" {
+	-re "Number of source lines gdb will list by default is (\[0-9\]+)\.\r\n$gdb_prompt $" {
+	    set listsize_value $expect_out(1,string)
+	}
+    }
+
+    if {$listsize_value > -1} {
+	gdb_test {printf "%s\n", $_gdb_setting_str("listsize")} $listsize_value
+    } else {
+	send_log "warning: could not get listsize\n"
+    }
+}
+
+# Test the printf '%V' format.
+proc test_printf_V_format {} {
+    # Enums.
+    gdb_test {printf "%V\n", one} "FE_ONE"
+    gdb_test {printf "%V\n", three} "\\(FE_ONE \\| FE_TWO\\)"
+    gdb_test {printf "%V\n", flag_enum_without_zero} "0"
+    gdb_test {printf "%V\n", three_not_flag} "3"
+
+    # Arrays.
+    gdb_test {printf "%V\n", a1} "\\{2, 4, 6, 8, 10, 12, 14, 16, 18, 20\\}"
+    gdb_test {printf "%V[]\n", a1} "\\{2, 4, 6, 8, 10, 12, 14, 16, 18, 20\\}"
+    gdb_test {printf "%V[][]\n", a1} \
+	"\\{2, 4, 6, 8, 10, 12, 14, 16, 18, 20\\}\\\[\\\]"
+    gdb_test {printf "%V[-elements 3]\n", a1} "\\{2, 4, 6\\.\\.\\.\\}"
+    gdb_test {printf "%V[-elements 3][]\n", a1} \
+	"\\{2, 4, 6\\.\\.\\.\\}\\\[\\\]"
+    gdb_test {printf "%V[-elements 3 -array-indexes on]\n", a1} \
+	"\\{\\\[0\\\] = 2, \\\[1\\\] = 4, \\\[2\\\] = 6\\.\\.\\.\\}"
+
+    # Structures.
+    gdb_test {printf "%V\n", a_small_struct} \
+	"\\{a = 1, b = 2, c = 3\\}"
+    gdb_test {printf "%V[-pretty on]\n", a_small_struct} \
+	"\\{\r\n  a = 1,\r\n  b = 2,\r\n  c = 3\r\n\\}"
+}
+
+proc test_print_symbol {} {
+    gdb_test_no_output "set print symbol on"
+
+    gdb_test "print &three" " = .* <three>"
+    gdb_test "print parrays" " = .* <arrays>"
+
+    # In case somebody adds tests after this.
+    gdb_test_no_output "set print symbol off"
+}
+
+# Escape a left curly brace to prevent it from being interpreted as 
+# the beginning of a bound
+proc gdb_test_escape_braces { args } {
+
+    set pattern [lindex $args 1]
+    regsub -all {\{[0-9]} $pattern {\\&} esc_pattern
+    gdb_test [lindex $args 0] $esc_pattern [lindex $args 2]
+}
+
+proc test_repeat_bytes {} {
+    set start(E) {}
+    set start(S) {a}
+    set start(L) {abaabbaaabbb}
+    set start(R) {'a' <repeats 20 times>}
+    set end(E) {}
+    set end(S) {c}
+    set end(L) {cdccddcccddd}
+    set end(R) {'c' <repeats 20 times>}
+    set invalid(S) {\\240}
+    set invalid(L) {\\240\\240\\240\\240}
+    set invalid(R) {'\\240' <repeats 20 times>}
+
+    set fmt(SSS) "\"%s%s%s\""
+    set fmt(SSR) "\"%s%s\", %s"
+    set fmt(SRS) "\"%s\", %s, \"%s\""
+    set fmt(RSS) "%s, \"%s%s\""
+    set fmt(RSR) "%s, \"%s\", %s"
+    set fmt(SRR) "\"%s\", %s, %s"
+    set fmt(RRS) "%s, %s, \"%s\""
+    set fmt(RRR) "%s, %s, %s"
+
+    set fmt(RS) "%s, \"%s\""
+    set fmt(RR) "%s, %s"
+    set fmt(SR) "\"%s\", %s"
+    set fmt(SS) "\"%s%s\""
+
+    # We have up to 60 elements to print.
+    gdb_test_no_output "set print elements 100"
+
+    # Set the target-charset to ASCII, because the output varies from
+    # different charset.
+    with_target_charset "ASCII" {
+	# Test the various permutations of invalid characters
+	foreach i [array names invalid] {
+	    set I $i
+
+	    if {$i == "L"} {
+		set i "S"
+	    }
+
+	    foreach s [array names start] {
+		set S $s
+
+		if {$s == "L"} {
+		    set s "S"
+		}
+
+
+		foreach e [array names end] {
+		    set E $e
+
+		    if {$e == "L"} {
+			set e "S"
+		    }
+
+		    # Skip E*E.
+		    if {$s == "E" && $e == "E"} { continue }
+
+		    # Special cases...
+		    if {$s == "E"} {
+			set result [format $fmt($i$e) $invalid($I) $end($E)]
+		    } elseif {$e == "E"} {
+			set result [format $fmt($s$i) $start($S) $invalid($I)]
+		    } else {
+			set result [format $fmt($s$i$e) \
+					$start($S) $invalid($I) $end($E)]
+		    }
+
+		    send_log "expecting: = $result\n"
+		    gdb_test "print invalid_$S$I$E" "= $result"
+		}
+	    }
+	}
+    }
+}
+
+# Test that 'set elements' correctly limits the number of characters
+# printed from a string when a string ends with repeated characters.
+# This is gdb/24331
+
+proc test_repeat_bytes_limit {} {
+   gdb_test "print -elem 3 -- \"AAAAA\"" "= \"AAA\"..."
+   gdb_test "print -char 3 -elem 10 -- \"AAAAA\"" "= \"AAA\"..."
+   gdb_test "print -elem 3 -- \"ABBBB\"" "= \"ABB\"..."
+   gdb_test "print -char 3 -elem 10 -- \"ABBBB\"" "= \"ABB\"..."
+
+   gdb_test "print -elem 3 -repeats 2 -- \"AAABBB\"" "= 'A' <repeats 3 times>..."
+   gdb_test "print -elem 4 -repeats 2 -- \"AAABBB\"" "= 'A' <repeats 3 times>, 'B' <repeats 3 times>"
+}
+
+# Test printf of convenience variables.
+# These tests can be done with or without a running inferior.
+# PREFIX ensures uniqueness of test names.
+
+proc test_printf_convenience_var {prefix} {
+
+    with_test_prefix "conv var: $prefix" {
+	gdb_test_no_output "set var \$cstr = \"abcde\"" "set \$cstr"
+	gdb_test "printf \"cstr val = %s\\n\", \$cstr" "cstr val = abcde" \
+	    "printf \$cstr"
+	gdb_test_no_output "set var \$abcde = \"ABCDE\"" "set \$abcde"
+	gdb_test "eval \"print \$%s\\n\", \$cstr" "= \"ABCDE\"" \
+	    "indirect print abcde"
+	# Without a target, the below produces no output
+	# but with a target, it gives a warning.
+	# So, use gdb_test expecting ".*" instead of gdb_test_no_output.
+	gdb_test "set language ada" ".*"
+	gdb_test_no_output "set var \$astr := \"fghij\"" "set \$astr"
+	gdb_test "printf \"astr val = %s\\n\", \$astr" "astr val = fghij" \
+	    "printf \$astr"
+	gdb_test_no_output "set language auto" "set language auto"
+	gdb_test "printf \"astr val = %s\\n\", \$astr" "astr val = fghij" \
+	    "printf \$astr, auto language"
+	# Wide strings can only be created when wchar_t type is known.
+	# Switch to c++ for the wide strings tests, as wchar_t is predefined
+	# when current language is c++.
+	# See above "set language ada" about why we use gdb_test.
+	gdb_test "set language c++" ".*"
+	gdb_test_no_output "set var \$wstr = L\"facile\"" \
+	    "set \$wstr"
+	gdb_test "printf \"wstr val = %ls\\n\", \$wstr" \
+	    "wstr val = facile" "printf \$wstr"
+	gdb_test_no_output "set language auto" "set language auto, wstring"
+    }
+}
+
+clean_restart
+
+gdb_test "print \$pc" "No registers\\."
+
+# Some simple operations on strings should work even without a target
+# (and therefore without calling malloc).
+gdb_test "print \"abc\"" " = \"abc\""
+gdb_test "print sizeof (\"abc\")" " = 4"
+gdb_test "ptype \"abc\"" " = char \\\[4\\\]"
+gdb_test "print \$cvar = \"abc\"" " = \"abc\""
+gdb_test "print sizeof (\$cvar)" " = 4"
+
+# Similarly, printf of a string convenience var should work without a target.
+test_printf_convenience_var "no target"
+
+# Test void results.
+gdb_test "p (void)10" " = void"
+gdb_test "p/x (void)10" " = void"
+gdb_test "p \$abcd" " = void"
+
+# GDB used to complete the explicit location options even when
+# printing expressions.
+gdb_test_no_output "complete p -function"
+gdb_test_no_output "complete p -line"
+gdb_test_no_output "complete p -source"
+
+gdb_file_cmd ${binfile}
+
+gdb_test "print \$pc" "No registers\\." "print \$pc (with file)"
+
+gdb_test_no_output "set print sevenbit-strings"
+gdb_test_no_output "set print address off"
+gdb_test_no_output "set width 0"
+
+if { [test_compiler_info "armcc-*"] } {
+    # ARM RealView compresses large arrays in the data segment.
+    # Before the program starts, we can not read them.  There is
+    # nothing in the file to indicate that data is compressed.
+    setup_xfail "arm*-*-eabi"
+}
+gdb_test "p ctable1\[120\]" "120 'x'" "p ctable1\[120\] #1"
+
+gdb_load ${binfile}
+
+if {![runto_main]} {
+    return 0
+}
+
+# With a running target, printf convenience vars should of course work.
+test_printf_convenience_var "with target"
+
+# It should also work when inferior function calls are forbidden.
+gdb_test_no_output "set may-call-functions off"
+test_printf_convenience_var "with target, may-call-functions off"
+gdb_test_no_output "set may-call-functions on"
+
+# Test printf of a variable that holds the address to a substring in
+# the inferior.  This test will not work without a target.
+gdb_test_no_output "set var \$test_substr = \(char \*\) \(&teststring\[0\] + 4\)" \
+    "set \$test_substr var"
+gdb_test "printf \"test_substr val = %s\\n\", \$test_substr" \
+    "test_substr val = string contents" \
+    "print \$test_substr"
+
+test_integer_literals_accepted
+test_integer_literals_rejected
+test_float_accepted
+test_float_rejected
+test_character_literals_accepted
+test_print_all_chars
+test_print_repeats_10
+test_print_repeats_embedded_array
+test_print_strings
+test_print_int_arrays
+test_print_typedef_arrays
+test_artificial_arrays
+test_print_char_arrays
+test_print_nibbles
+# We used to do the runto main here.
+test_print_string_constants
+test_print_array_constants
+test_print_enums
+test_printf
+test_printf_with_dfp
+test_printf_with_strings
+test_printf_V_format
+test_print_symbol
+test_repeat_bytes
+test_radices
+test_repeat_bytes_limit

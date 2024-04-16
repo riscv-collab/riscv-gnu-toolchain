@@ -1,0 +1,137 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+# Test 'advance/until LINESPEC' where LINESPEC expands to multiple
+# locations.
+
+standard_testfile .cc
+
+require allow_cplus_tests
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile} \
+	  {debug c++}] } {
+    return -1
+}
+
+set lineno [gdb_get_line_number "multiple locations here"]
+
+# advance/until to an inlined line number, which has been inlined
+# multiple times, when the program is stopped at the same inlined
+# function.
+proc_with_prefix until_advance_lineno_from_inlined {cmd} {
+    global lineno
+
+    if ![runto test] {
+	return
+    }
+
+    gdb_breakpoint $lineno
+    gdb_continue_to_breakpoint "break here"
+
+    set lineno2 [expr $lineno + 1]
+
+    gdb_test "$cmd $lineno2" \
+	"inline_func .* at .*:$lineno2.*return i.*" \
+	"$cmd line number"
+}
+
+# advance/until to a line number, which has been inlined multiple
+# times, when the program is stopped at a non-inlined function.
+
+proc_with_prefix until_advance_lineno_from_non_inlined {cmd} {
+    global lineno
+
+    if ![runto test] {
+	return
+    }
+
+    gdb_test "$cmd $lineno" \
+	"inline_func .* at .*:$lineno.*multiple locations here.*" \
+	"$cmd line number"
+}
+
+# Test advancing to an inlined function, which has been inlined
+# multiple times.
+
+proc_with_prefix until_advance_inline_func {cmd} {
+    global lineno
+
+    if ![runto test] {
+	return
+    }
+
+    gdb_test "$cmd inline_func" \
+	"inline_func .* at .*:$lineno.*multiple locations here.*"
+}
+
+# Test advancing to an overloaded function, which is another form of a
+# linespec expanding to multiple locations.  GDB will stop at the
+# first overload called.
+
+proc_with_prefix advance_overload {} {
+    global lineno
+
+    if ![runto test] {
+	return
+    }
+
+    # Test that advance stops at the first overload called by the
+    # program.
+
+    gdb_test "advance ovld_func" \
+	"ovld_func .* at .*global = 1.*" \
+	"first advance stops at ovld_func()"
+
+    # Now test that advance also stops at the other overload called by
+    # the program.
+
+    # Need to issue the advance twice, because advance also stops upon
+    # exit from the current stack frame.
+    gdb_test "advance ovld_func" \
+	"test \\(\\) at .*" \
+	"second advance stops at caller"
+
+    gdb_test "advance ovld_func" \
+	"ovld_func .* at .*global = 2.*" \
+	"third advance stops at ovld_func(int)"
+}
+
+# Test "until" to an overloaded function, which is another form of a
+# linespec expanding to multiple locations.  Unlike "advance", "until"
+# only stops if still in the same frame.  Since the overloaded
+# function is a different frame, the program should stop at the caller
+# frame instead.
+
+proc_with_prefix until_overload {} {
+    global lineno
+
+    if ![runto test] {
+	return
+    }
+
+    # ovld_func is a different frame, so it shouldn't cause a stop.
+    # Instead, the program should stop at the caller frame.
+    gdb_test "until ovld_func" \
+	"main \\(\\) at .*"
+}
+
+foreach_with_prefix cmd {"until" "advance"} {
+    until_advance_lineno_from_inlined $cmd
+    until_advance_lineno_from_non_inlined $cmd
+    until_advance_inline_func $cmd
+}
+
+advance_overload
+until_overload

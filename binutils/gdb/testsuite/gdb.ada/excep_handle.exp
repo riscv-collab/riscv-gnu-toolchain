@@ -1,0 +1,158 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "ada.exp"
+
+require allow_ada_tests gnat_runtime_has_debug_info
+
+standard_ada_testfile foo
+
+if {[gdb_compile_ada "${srcfile}" "${binfile}" executable [list debug additional_flags=-gnata ]] != "" } {
+  return -1
+}
+
+clean_restart ${testfile}
+
+# Some global variables used to simplify the maintenance of some of
+# the regular expressions below.
+set eol "\r\n"
+set sp "\[ \t\]*"
+
+set when "when"
+set catchpoint_constraint_error_msg \
+  "Catchpoint $decimal, exception at $hex in foo \\\(\\\).*at .*foo.adb:$decimal$eol$decimal$sp$when Constraint_Error =>"
+
+set catchpoint_program_error_msg \
+  "Catchpoint $decimal, exception at $hex in foo \\\(\\\).*at .*foo.adb:$decimal$eol$decimal$sp$when Program_Error =>"
+
+set catchpoint_storage_error_msg \
+  "Catchpoint $decimal, exception at $hex in foo \\\(\\\).*at .*foo.adb:$decimal$eol$decimal$sp$when Storage_Error =>"
+
+if {![runto_main]} {
+   return 0
+}
+
+############################################
+# 1. Try catching all exceptions handlers. #
+############################################
+
+gdb_test "catch handlers" \
+    "Catchpoint $decimal: all Ada exceptions handlers" \
+    "insert catchpoint on all Ada exceptions handlers"
+
+# Continue.  The program should stop at first exception handling.
+
+gdb_test "continue" \
+    "Continuing\.$eol$eol$catchpoint_constraint_error_msg" \
+    "continuing to first Constraint_Error exception handlers"
+
+# Resume the program's exception.
+#
+# The program will first go through a block of code which has an
+# exception handler, but since no exception is raised, we should
+# not stop there.  Instead, we expect to stop in the handler of
+# the next exception being raised.
+
+gdb_test "continue" \
+    "Continuing\.$eol$eol$catchpoint_storage_error_msg" \
+    "continuing and stopping in Storage_Error exception handlers"
+
+gdb_test_no_output "delete 2" \
+                   "delete catchpoint on all Ada exceptions handlers"
+
+##################################################
+# 2. Try catching some named exception handlers. #
+##################################################
+
+# Insert a catchpoint on Program_Error Ada exception handlers.
+
+gdb_test "catch handlers Program_Error" \
+         "Catchpoint $decimal: `Program_Error' Ada exception handlers" \
+         "insert catchpoint on Program_Error Ada exception handlers"
+
+# Continue, we should not stop at ABORT_SIGNAL but at Program_Error one.
+
+gdb_test "continue" \
+    "Continuing\.$eol$eol$catchpoint_program_error_msg" \
+    "continuing without stopping to Program_Error exception handlers"
+
+gdb_test_no_output \
+    "delete 3" \
+    "delete catchpoint on all Program_Error Ada exception handlers"
+
+# Insert a catchpoint on Storage_Error Ada exception handlers.
+
+gdb_test "catch handlers Storage_Error" \
+         "Catchpoint $decimal: `Storage_Error' Ada exception handlers" \
+         "insert catchpoint on Storage_Error Ada exception handlers"
+
+# Continue, we should stop at Storage_Error handlers.
+
+gdb_test "continue" \
+    "Continuing\.$eol$eol$catchpoint_storage_error_msg" \
+    "continuing without stopping to Storage_Error exception handlers"
+
+gdb_test_no_output \
+    "delete 4" \
+    "delete catchpoint on all Storage_Error Ada exception handlers"
+
+########################################################################
+# 3. Try catching with condition and without named exception handlers. #
+########################################################################
+
+# Insert a catchpoint on all Ada exceptions handlers with condition.
+
+gdb_test "catch handlers if Global_Var = 2" \
+         "Catchpoint $decimal: all Ada exceptions handlers" \
+         "insert catchpoint on all Ada exception handlers with condition"
+
+# Check that condition is stored and properly displayed.
+
+gdb_test "info breakpoint" "stop only if Global_Var = 2" \
+         "Check catch handlers with condition"
+
+# Continue, we should not stop at ABORT_SIGNAL but at Program_Error one.
+
+gdb_test "continue" \
+    "Continuing\.$eol$eol$catchpoint_constraint_error_msg" \
+    "continuing to second Constraint_Error exception handlers"
+
+gdb_test_no_output \
+    "delete 5" \
+    "delete catchpoint on all all Ada exceptions handlers with condition"
+
+################################################################
+# 4. Try catching with condition and named exception handlers. #
+################################################################
+
+# Insert a catchpoint on Program_Error Ada exception handlers with
+# condition.
+
+gdb_test "catch handlers Program_Error if Global_Var = 4" \
+    "Catchpoint $decimal: `Program_Error' Ada exception handlers" \
+    "insert catchpoint on Program_Error Ada exception handlers with condition"
+
+# Continue, we should not stop at first Program_Error handlers but at
+# the second one.
+
+gdb_test "continue" \
+    "Continuing\.$eol$eol$catchpoint_program_error_msg" \
+    "continuing to Program_Error exception handlers"
+
+# Continue, the program should exit properly.
+
+gdb_test "continue" \
+         "Continuing\..*$inferior_exited_re.*" \
+         "continuing to program completion"

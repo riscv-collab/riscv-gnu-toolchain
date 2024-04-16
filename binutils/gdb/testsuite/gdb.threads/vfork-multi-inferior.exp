@@ -1,0 +1,112 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test handling a vfork while another inferior is running.  The bug that
+# prompted writing this test case was in the Linux native target.  The target
+# assumed that the vfork-done event it received was for the current inferior
+# (an invalid assumption, the current inferior is the one randomly selected by
+# do_target_wait (at the time of writing).  This caused the target to drop the
+# vfork-done event, because it was seen as unneeded and to restart the thread
+# as if nothing happened.  This however resulted in the thread running with
+# breakpoints not inserted.
+#
+# To catch the bug, this test verifies that we can hit a breakpoint after a
+# vfork call, while a second inferior runs in the background.
+
+require !use_gdb_stub
+
+standard_testfile .c -sleep.c
+
+set srcfile_sleep $srcfile2
+set binfile_sleep ${binfile}-sleep
+
+# The reproducibility of the bug depends on which inferior randomly selects in
+# do_target_wait when consuming the vfork-done event.  Since GDB doesn't call
+# srand(), we are likely to always see the same sequence of inferior selected by
+# do_target_wait, which can hide the bug if you are not "lucky".  To work
+# around that, call vfork and hit the breakpoint in a loop, it makes it
+# somewhat likely that the wrong inferior will be selected eventually.
+set nr_loops 20
+
+# Compile the main program that calls vfork and hits a breakpoint.
+set opts [list debug additional_flags=-DNR_LOOPS=$nr_loops]
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable \
+	$opts] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+# Compile the secondary program, which just sleeps.
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile_sleep}" "${binfile_sleep}" executable \
+	{debug}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+# We exercise two methods of getting a second inferior to execute while the
+# first one vforks.  METHOD can be:
+#
+#   - non-stop: start GDB with non-stop on and run the second inferior in
+#               background.
+#   - schedule-multiple: set "schedule-multiple on", this will make "continue"
+#                        resume both inferiors.
+proc do_test {method} {
+    save_vars { ::GDBFLAGS } {
+	if { $method == "non-stop" } {
+	    append ::GDBFLAGS " -ex \"set non-stop on\""
+	}
+	clean_restart
+    }
+
+    # Start the second inferior in background.
+    gdb_test "add-inferior" "Added inferior 2.*"
+    gdb_test "inferior 2" "Switching to inferior 2 .*"
+    gdb_file_cmd ${::binfile_sleep}
+    if { $method == "non-stop" } {
+	gdb_test "run &" "Starting program: .*" "run inferior 2"
+    } else {
+	gdb_test "start" "Temporary breakpoint $::decimal, main .*" \
+		"start inferior 2"
+    }
+
+    # Start the first inferior.
+    gdb_test "inferior 1" "Switching to inferior 1 .*"
+    gdb_file_cmd ${::binfile}
+    gdb_test "break should_break_here" "Breakpoint $::decimal at .*"
+    gdb_test "start" "Thread 1.1 .* hit Temporary breakpoint.*" \
+	"start inferior 1"
+
+    # Only enable schedule-multiple this late, because of:
+    # https://sourceware.org/bugzilla/show_bug.cgi?id=28777
+    if { $method == "schedule-multiple" } {
+	gdb_test_no_output "set schedule-multiple on"
+    }
+
+
+    # Continue over vfork and until the breakpoint.  The number of loops here
+    # matches the number of loops in the program.  So if a breakpoint is missed
+    # at some point, a "continue" will wrongfully continue until the end of the
+    # program, which will fail the test.
+    for {set i 0} {$i < $::nr_loops} {incr i} {
+	with_test_prefix "i=$i" {
+	    gdb_test "continue" \
+		"Thread 1.1 .* hit Breakpoint $::decimal, should_break_here.*"
+	}
+    }
+}
+
+foreach_with_prefix method {schedule-multiple non-stop} {
+    do_test $method
+}

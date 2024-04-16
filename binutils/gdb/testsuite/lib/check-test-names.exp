@@ -1,0 +1,183 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This library provides some protection against the introduction of
+# tests that include either the source of build paths in the test
+# name.  When a test includes the path in its test name it is harder
+# to compare results between two runs of GDB from different trees.
+
+namespace eval ::CheckTestNames {
+    # An associative array of all test names to the number of times each
+    # name is seen.  Used to detect duplicate test names.
+    variable all_test_names
+    array set all_test_names {}
+
+    # An associative array of counts of tests that either include a path in
+    # their test name, or have a duplicate test name.  There are two counts
+    # for each issue, 'count', which counts occurrences within a single
+    # variant run, and 'total', which counts across all variants.
+    variable counts
+    array set counts {}
+    foreach nm {paths duplicates} {
+	set counts($nm,count) 0
+	set counts($nm,total) 0
+    }
+
+    # Increment the count, and total count for TYPE.
+    proc inc_count { type } {
+	variable counts
+
+	incr counts($type,count)
+	incr counts($type,total)
+    }
+
+    # Check if MESSAGE contains a build or source path, if it does increment
+    # the relevant counter and return true, otherwise, return false.
+    proc _check_paths { message } {
+	global srcdir objdir
+
+	foreach path [list $srcdir $objdir] {
+	    if { [ string first $path $message ] >= 0 } {
+		# Count each test just once.
+		inc_count paths
+		return true
+	    }
+	}
+
+	return false
+    }
+
+    # Check if MESSAGE is a duplicate, if it is then increment the
+    # duplicates counter and return true, otherwise, return false.
+    proc _check_duplicates { message } {
+	variable all_test_names
+
+	# Initialise a count, or increment the count for this test name.
+	if {![info exists all_test_names($message)]} {
+	    set all_test_names($message) 0
+	} else {
+	    if {$all_test_names($message) == 0} {
+		inc_count duplicates
+	    }
+	    incr all_test_names($message)
+	    return true
+	}
+
+	return false
+    }
+
+    # Remove the leading Dejagnu status marker from MESSAGE, and
+    # return the remainder of MESSAGE.  A status marker is something
+    # like 'PASS: '.  It is assumed that MESSAGE does contain such a
+    # marker.  If it doesn't then MESSAGE is returned unmodified.
+    proc _strip_status { message } {
+	# Find the position of the first ': ' string.
+	set pos [string first ": " $message]
+	if { $pos > -1 } {
+	    # The '+ 2' is so we skip the ': ' we found above.
+	    return  [string range $message [expr $pos + 2] end]
+	}
+
+	return $message
+    }
+
+    # Check if MESSAGE is a well-formed test name.
+    proc _check_well_formed_name { message } {
+	if { [regexp \n $message]} {
+	    warning "Newline in test name"
+	}
+    }
+
+    # Check if MESSAGE contains either the source path or the build path.
+    # This will result in test names that can't easily be compared between
+    # different runs of GDB.
+    #
+    # Any offending test names cause the corresponding count to be
+    # incremented, and an extra message to be printed into the log
+    # file.
+    proc check { message } {
+	set message [ _strip_status $message ]
+
+	if [ _check_paths $message ] {
+	    clone_output "PATH: $message"
+	}
+
+	if [ _check_duplicates $message ] {
+	    clone_output "DUPLICATE: $message"
+	}
+
+	_check_well_formed_name $message
+    }
+
+    # If COUNT is greater than zero, disply PREFIX followed by COUNT.
+    proc maybe_show_count { prefix count } {
+	if { $count > 0 } {
+	    clone_output "$prefix$count"
+	}
+    }
+
+    # Rename Dejagnu's log_summary procedure, and create do_log_summary to
+    # replace it.  We arrange to have do_log_summary called later.
+    rename ::log_summary log_summary
+    proc do_log_summary { args } {
+	variable counts
+
+	# If ARGS is the empty list then we don't want to pass a single
+	# empty string as a parameter here.
+	eval "CheckTestNames::log_summary $args"
+
+	if { [llength $args] == 0 } {
+	    set which "count"
+	} else {
+	    set which [lindex $args 0]
+	}
+
+	maybe_show_count "# of paths in test names\t" \
+	    $counts(paths,$which)
+	maybe_show_count "# of duplicate test names\t" \
+	    $counts(duplicates,$which)
+    }
+
+    # Rename Dejagnu's reset_vars procedure, and create do_reset_vars to
+    # replace it.  We arrange to have do_reset_vars called later.
+    rename ::reset_vars reset_vars
+    proc do_reset_vars {} {
+	variable all_test_names
+	variable counts
+
+	CheckTestNames::reset_vars
+
+	array unset all_test_names
+	foreach nm {paths duplicates} {
+	    set counts($nm,count) 0
+	}
+    }
+}
+
+# Arrange for Dejagnu to call CheckTestNames::check for each test result.
+foreach nm {pass fail xfail kfail xpass kpass unresolved untested \
+		unsupported} {
+    set local_record_procs($nm) "CheckTestNames::check"
+}
+
+# Create new global log_summary to replace Dejagnu's.
+proc log_summary { args } {
+    eval "CheckTestNames::do_log_summary $args"
+}
+
+# Create new global reset_vars to replace Dejagnu's.
+proc reset_vars {} {
+    eval "CheckTestNames::do_reset_vars"
+}

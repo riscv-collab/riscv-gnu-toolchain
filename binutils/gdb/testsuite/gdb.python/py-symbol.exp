@@ -1,0 +1,303 @@
+# Copyright (C) 2010-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It tests the mechanism
+# exposing values to Python.
+
+load_lib gdb-python.exp
+
+require allow_python_tests
+
+standard_testfile py-symbol.c py-symbol-2.c
+
+set opts { debug additional_flags=-DUSE_TWO_FILES }
+if {[prepare_for_testing "failed to prepare" $testfile \
+	 [list $srcfile $srcfile2] $opts]} {
+    return -1
+}
+
+set readnow_p [readnow]
+
+# Check that we find all static symbols before the inferior has
+# started, at which point some of the symtabs might not have been
+# expanded.
+gdb_test "python print (len (gdb.lookup_static_symbols ('rr')))" \
+    "2" "print (len (gdb.lookup_static_symbols ('rr')))"
+
+# Restart so we don't have expanded symtabs after the previous test.
+clean_restart ${binfile}
+
+# Test looking up a global symbol before we runto_main as this is the
+# point where we don't have a current frame, and we don't want to
+# require one.
+gdb_py_test_silent_cmd "python main_func = gdb.lookup_global_symbol(\"main\")" "Lookup main" 1
+gdb_test "python print (repr (main_func))" "<gdb.Symbol print_name=main>" \
+    "test main_func.__repr__"
+gdb_test "python print (main_func.is_function)" "True" "test main_func.is_function"
+gdb_test "python print (gdb.lookup_global_symbol(\"junk\"))" "None" "test lookup_global_symbol(\"junk\")"
+
+gdb_test "python print (gdb.lookup_global_symbol('main').value())" "$hex .main." \
+    "print value of main"
+
+set qq_line [gdb_get_line_number "line of qq"]
+gdb_test "python print (gdb.lookup_global_symbol('qq').line)" "$qq_line" \
+    "print line number of qq"
+
+gdb_test "python print (gdb.lookup_global_symbol('qq').value())" "72" \
+    "print value of qq"
+
+gdb_test "python print (gdb.lookup_global_symbol('qq').needs_frame)" \
+    "False" \
+    "print whether qq needs a frame"
+
+# Similarly, test looking up a static symbol before we runto_main.
+set rr_line [gdb_get_line_number "line of rr"]
+set rr_line_alt [gdb_get_line_number "line of other rr" py-symbol-2.c]
+gdb_test "python print (gdb.lookup_global_symbol ('rr') is None)" "True" \
+    "lookup_global_symbol for static var"
+
+set cmd "python print (gdb.lookup_static_symbol ('rr').line)"
+gdb_test_multiple $cmd "print line number of rr" {
+    -re -wrap "$rr_line" {
+	pass $gdb_test_name
+    }
+    -re -wrap "$rr_line_alt" {
+	if { $readnow_p } {
+	    setup_kfail "symtab/25857" *-*-*
+	}
+	fail $gdb_test_name
+    }
+}
+
+set cmd "python print (gdb.lookup_static_symbol ('rr').value ())"
+gdb_test_multiple $cmd "print value of rr" {
+    -re -wrap "42" {
+	pass $gdb_test_name
+    }
+    -re -wrap "99" {
+	if { $readnow_p } {
+	    setup_kfail "symtab/25857" *-*-*
+	}
+	fail $gdb_test_name
+    }
+}
+    
+
+gdb_test "python print (gdb.lookup_static_symbol ('rr').needs_frame)" \
+    "False" \
+    "print whether rr needs a frame"
+
+gdb_test "python print (gdb.lookup_static_symbol ('nonexistent') is None)" \
+    "True" "lookup_static_symbol for nonexistent var"
+
+gdb_test "python print (gdb.lookup_static_symbol ('qq') is None)" \
+    "True" "lookup_static_symbol for global var"
+
+if {![runto_main]} {
+    return 0
+}
+
+global hex decimal
+
+gdb_breakpoint [gdb_get_line_number "Block break here."]
+gdb_continue_to_breakpoint "Block break here."
+gdb_py_test_silent_cmd "python frame = gdb.selected_frame()" "Get Frame" 0
+gdb_py_test_silent_cmd "python block = frame.block()" "Get block" 0
+
+# Test is_argument attribute.
+gdb_py_test_silent_cmd "python arg = gdb.lookup_symbol(\"arg\")" "Get variable arg" 0
+gdb_test "python print (arg\[0\].is_variable)" "False" "test arg.is_variable"
+gdb_test "python print (arg\[0\].is_constant)" "False" "test arg.is_constant"
+gdb_test "python print (arg\[0\].is_argument)" "True" "test arg.is_argument"
+gdb_test "python print (arg\[0\].is_function)" "False" "test arg.is_function"
+
+# Test is_function attribute.
+gdb_py_test_silent_cmd "python func = block.function" "Get block function" 0
+gdb_test "python print (func.is_variable)" "False" "test func.is_variable"
+gdb_test "python print (func.is_constant)" "False" "test func.is_constant"
+gdb_test "python print (func.is_argument)" "False" "test func.is_argument"
+gdb_test "python print (func.is_function)" "True" "test func.is_function"
+
+# Test attributes of func.
+gdb_test "python print (func.name)" "func" "test func.name"
+gdb_test "python print (func.print_name)" "func" "test func.print_name"
+gdb_test "python print (func.linkage_name)" "func" "test func.linkage_name"
+gdb_test "python print (func.addr_class == gdb.SYMBOL_LOC_BLOCK)" "True" "test func.addr_class"
+
+# Stop in a second file and ensure we find its local static symbol.
+gdb_breakpoint "function_in_other_file"
+gdb_continue_to_breakpoint "function_in_other_file"
+gdb_test "python print (gdb.lookup_static_symbol ('rr').value ())" "99" \
+    "print value of rr from other file"
+gdb_test "python print (gdb.lookup_static_symbols ('rr')\[0\].value ())" "99" \
+    "print value of gdb.lookup_static_symbols ('rr')\[0\], from the other file"
+gdb_test "python print (gdb.lookup_static_symbols ('rr')\[1\].value ())" "42" \
+    "print value of gdb.lookup_static_symbols ('rr')\[1\], from the other file"
+
+# Now continue back to the first source file.
+set linenum [gdb_get_line_number "Break at end."]
+gdb_breakpoint "$srcfile:$linenum"
+gdb_continue_to_breakpoint "Break at end for variable a" ".*Break at end.*"
+gdb_py_test_silent_cmd "python frame = gdb.selected_frame()" "Get Frame" 0
+
+# Check that we find the static sybol local to this file over the
+# static symbol from the second source file.
+gdb_test "python print (gdb.lookup_static_symbol ('rr').value ())" "42" \
+    "print value of rr from main file"
+gdb_test "python print (gdb.lookup_static_symbols ('rr')\[0\].value ())" "99" \
+    "print value of gdb.lookup_static_symbols ('rr')\[0\], from the main file"
+gdb_test "python print (gdb.lookup_static_symbols ('rr')\[1\].value ())" "42" \
+    "print value of gdb.lookup_static_symbols ('rr')\[1\], from the main file"
+
+# Test is_variable attribute.
+gdb_py_test_silent_cmd "python a = gdb.lookup_symbol(\'a\')" "Get variable a" 0
+gdb_test "python print (a\[0\].is_variable)" "True" "test a.is_variable"
+gdb_test "python print (a\[0\].is_constant)" "False" "test a.is_constant"
+gdb_test "python print (a\[0\].is_argument)" "False" "test a.is_argument"
+gdb_test "python print (a\[0\].is_function)" "False" "test a.is_function"
+
+# Test attributes of a.
+gdb_test "python print (a\[0\].addr_class == gdb.SYMBOL_LOC_COMPUTED)" "True" "test a.addr_class"
+
+gdb_test "python print (a\[0\].value())" \
+    "symbol requires a frame to compute its value.*"\
+    "try to print value of a without a frame"
+gdb_test "python print (a\[0\].value(frame))" "0" \
+    "print value of a"
+gdb_test "python print (a\[0\].needs_frame)" "True" \
+    "print whether a needs a frame"
+
+# Test is_constant attribute
+gdb_py_test_silent_cmd "python t = gdb.lookup_symbol(\"one\")" "Get constant t" 0
+gdb_test "python print (t\[0\].is_variable)" "False" "test t.is_variable"
+gdb_test "python print (t\[0\].is_constant)" "True" "test t.is_constant"
+gdb_test "python print (t\[0\].is_argument)" "False" "test t.is_argument"
+gdb_test "python print (t\[0\].is_function)" "False" "test t.is_function"
+
+# Test attributes of t.
+gdb_test "python print (t\[0\].addr_class == gdb.SYMBOL_LOC_CONST)" "True" "test t.addr_class"
+
+# Test type attribute.
+gdb_test "python print (t\[0\].type)" "enum tag" "get type"
+
+# Test symtab attribute.
+if { [is_remote host] } {
+    set py_symbol_c [string_to_regexp $srcfile]
+} else {
+    set py_symbol_c [string_to_regexp ${srcdir}/${subdir}/${srcfile}]
+}
+gdb_test "python print (t\[0\].symtab)" "${py_symbol_c}" "get symtab"
+
+# C++ tests
+# Recompile binary.
+lappend opts c++
+if {[prepare_for_testing "failed to prepare" "${binfile}-cxx" \
+	 [list $srcfile $srcfile2] $opts]} {
+    return -1
+}
+
+gdb_test "python print (gdb.lookup_global_symbol ('(anonymous namespace)::anon') is None)" \
+    "True" "anon is None"
+gdb_test "python print (gdb.lookup_static_symbol ('(anonymous namespace)::anon').value ())" \
+    "10" "print value of anon"
+
+if {![runto_main]} {
+    return 0
+}
+
+gdb_breakpoint [gdb_get_line_number "Break in class."]
+gdb_continue_to_breakpoint "Break in class."
+
+gdb_py_test_silent_cmd "python cplusframe = gdb.selected_frame()" "Get Frame at class" 0
+gdb_py_test_silent_cmd "python cplusfunc = cplusframe.block().function" "Get function at class" 0
+
+gdb_test "python print (cplusfunc.is_variable)" \
+    "False" "Test cplusfunc.is_variable"
+gdb_test "python print (cplusfunc.is_constant)" \
+    "False" "Test cplusfunc.is_constant"
+gdb_test "python print (cplusfunc.is_argument)" \
+    "False" "Test cplusfunc.is_argument"
+gdb_test "python print (cplusfunc.is_function)" \
+    "True" "Test cplusfunc.is_function"
+
+gdb_test "python print (cplusfunc.name)" "SimpleClass::valueofi().*" "test method.name"
+gdb_test "python print (cplusfunc.print_name)" "SimpleClass::valueofi().*" "test method.print_name"
+gdb_test "python print (cplusfunc.linkage_name)" "_ZN11SimpleClass8valueofiEv.*" "test method.linkage_name"
+gdb_test "python print (cplusfunc.addr_class == gdb.SYMBOL_LOC_BLOCK)" "True" "test method.addr_class"
+
+# Test is_valid when the objfile is unloaded.  This must be the last
+# test as it unloads the object file in GDB.
+# Start with a fresh gdb.
+clean_restart ${binfile}
+if {![runto_main]} {
+    return 0
+}
+
+gdb_breakpoint [gdb_get_line_number "Break at end."]
+gdb_continue_to_breakpoint "Break at end for symbol validity" ".*Break at end.*"
+gdb_py_test_silent_cmd "python a = gdb.lookup_symbol(\'a\')" "Get variable a" 0
+gdb_test "python print (a\[0\].is_valid())" "True" "test symbol validity"
+delete_breakpoints
+gdb_unload
+gdb_test "python print (a\[0\].is_valid())" "False" "test symbol non-validity"
+gdb_test_no_output "python a = None" "test symbol destructor"
+
+# Test gdb.Symbol domain categories
+gdb_test "python print (gdb.SYMBOL_UNDEF_DOMAIN)" \
+    "0" "test gdb.SYMBOL_UNDEF_DOMAIN"
+gdb_test "python print (gdb.SYMBOL_VAR_DOMAIN)" \
+    "1" "test gdb.SYMBOL_VAR_DOMAIN"
+gdb_test "python print (gdb.SYMBOL_STRUCT_DOMAIN)" \
+    "2" "test gdb.SYMBOL_STRUCT_DOMAIN"
+gdb_test "python print (gdb.SYMBOL_MODULE_DOMAIN)" \
+    "3" "test gdb.SYMBOL_MODULE_DOMAIN"
+gdb_test "python print (gdb.SYMBOL_LABEL_DOMAIN)" \
+    "4" "test gdb.SYMBOL_LABEL_DOMAIN"
+gdb_test "python print (gdb.SYMBOL_COMMON_BLOCK_DOMAIN)" \
+    "5" "test gdb.SYMBOL_COMMON_BLOCK_DOMAIN"
+
+# Test gdb.Symbol address class categories
+gdb_test "python print (gdb.SYMBOL_LOC_UNDEF)" \
+    "0" "test gdb.SYMBOL_LOC_UNDEF"
+gdb_test "python print (gdb.SYMBOL_LOC_CONST)" \
+    "1" "test gdb.SYMBOL_LOC_CONST"
+gdb_test "python print (gdb.SYMBOL_LOC_STATIC)" \
+    "2" "test gdb.SYMBOL_LOC_STATIC"
+gdb_test "python print (gdb.SYMBOL_LOC_REGISTER)" \
+    "3" "test gdb.SYMBOL_LOC_REGISTER"
+gdb_test "python print (gdb.SYMBOL_LOC_ARG)" \
+    "4" "test gdb.SYMBOL_LOC_ARG"
+gdb_test "python print (gdb.SYMBOL_LOC_REF_ARG)" \
+    "5" "test gdb.SYMBOL_LOC_REF_ARG"
+gdb_test "python print (gdb.SYMBOL_LOC_REGPARM_ADDR)" \
+    "6" "test gdb.SYMBOL_LOC_REGPARM_ADDR"
+gdb_test "python print (gdb.SYMBOL_LOC_LOCAL)" \
+    "7" "test gdb.SYMBOL_LOC_LOCAL"
+gdb_test "python print (gdb.SYMBOL_LOC_TYPEDEF)" \
+    "8" "test gdb.SYMBOL_LOC_TYPEDEF"
+gdb_test "python print (gdb.SYMBOL_LOC_LABEL)" \
+    "9" "test gdb.SYMBOL_LOC_LABEL"
+gdb_test "python print (gdb.SYMBOL_LOC_BLOCK)" \
+    "10" "test gdb.SYMBOL_LOC_BLOCK"
+gdb_test "python print (gdb.SYMBOL_LOC_CONST_BYTES)" \
+    "11" "test gdb.SYMBOL_LOC_CONST_BYTES"
+gdb_test "python print (gdb.SYMBOL_LOC_UNRESOLVED)" \
+    "12" "test gdb.SYMBOL_LOC_UNRESOLVED"
+gdb_test "python print (gdb.SYMBOL_LOC_OPTIMIZED_OUT)" \
+    "13" "test gdb.SYMBOL_LOC_OPTIMIZED_OUT"
+gdb_test "python print (gdb.SYMBOL_LOC_COMPUTED)" \
+    "14" "test gdb.SYMBOL_LOC_COMPUTED"
+gdb_test "python print (gdb.SYMBOL_LOC_COMMON_BLOCK)" \
+    "15" "test gdb.SYMBOL_LOC_COMMON_BLOCK"

@@ -1,0 +1,91 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test attaching to a process, as a second inferior, through a
+# gdbserver that does not support multi-process extensions.
+
+load_lib gdbserver-support.exp
+
+standard_testfile
+
+require allow_gdbserver_tests
+
+require can_spawn_for_attach
+
+if {[build_executable "build" $testfile $srcfile {debug}] == -1} {
+    return -1
+}
+
+proc test {target_non_stop} {
+    global binfile
+    global gdb_prompt
+
+    save_vars { ::GDBFLAGS } {
+	# If GDB and GDBserver are both running locally, set the sysroot to avoid
+	# reading files via the remote protocol.
+	if { ![is_remote host] && ![is_remote target] } {
+	    set ::GDBFLAGS "${::GDBFLAGS} -ex \"set sysroot\""
+	}
+	set ::GDBFLAGS \
+	    "${::GDBFLAGS} -ex \"set remote multiprocess-feature-packet off\""
+	set ::GDBFLAGS \
+	    "${::GDBFLAGS} -ex \"maint set target-non-stop ${target_non_stop}\""
+	clean_restart ${binfile}
+    }
+
+    # Start the first inferior.
+    if {![runto_main]} {
+	return
+    }
+
+    # The second inferior is an extended remote.
+    gdb_test "add-inferior -no-connection" "Added inferior 2.*" \
+	"add the second inferior"
+    gdb_test "inferior 2" ".*Switching to inferior 2.*" \
+	"switch to inferior 2"
+    set res [gdbserver_start "--multi" ""]
+    set gdbserver_gdbport [lindex $res 1]
+    gdb_target_cmd "extended-remote" $gdbserver_gdbport
+
+    # Start a program, then attach to it.
+    set spawn_id_list [spawn_wait_for_attach [list $binfile]]
+    set test_spawn_id [lindex $spawn_id_list 0]
+    set testpid [spawn_id_get_pid $test_spawn_id]
+    gdb_test_multiple "attach $testpid" "attach to the program via remote" {
+	-re "Attaching to Remote target.*\[\r\n\]+$gdb_prompt " {
+	    pass $gdb_test_name
+	}
+    }
+
+    # Check that we have two threads.  Bad GDB duplicated the
+    # thread coming from the remote when target-non-stop is off;
+    # or hanged during attach when target-non-stop is on.
+    gdb_test "info threads" \
+	[multi_line \
+	     "  Id\[^\r\n\]+" \
+	     "  1\.1\[^\r\n\]+" \
+	     ". 2\.1\[^\r\n\]+"
+	]
+
+    # Clean the spawned process and gdbserver.
+    gdbserver_exit 0
+    kill_wait_spawned_process $test_spawn_id
+}
+
+foreach_with_prefix target_non_stop {off on} {
+    test $target_non_stop
+}

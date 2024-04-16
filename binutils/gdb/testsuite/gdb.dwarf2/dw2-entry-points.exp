@@ -1,0 +1,213 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that the DW_TAG_entry_point is handled properly by GDB and that we can
+# set breakpoints on function entry points.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets that support DWARF-2 and use
+# gas.
+require dwarf2_support
+
+standard_testfile .c -dw.S
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+	return -1
+}
+
+# Make some DWARF for the test.
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    global srcfile
+    declare_labels int_label int2_label
+
+    get_func_info main
+    get_func_info bar_helper
+
+    set int_size [get_sizeof "int" 4]
+
+    set prog_line 1
+    set bar_line 2
+    set foo_line 3
+    set foobar_line 4
+
+    set global_I [gdb_target_symbol I]
+    set global_J [gdb_target_symbol J]
+    set global_K [gdb_target_symbol K]
+
+    cu {} {
+	compile_unit {
+	    {language @DW_LANG_Fortran90}
+	    {name dw2-entry-points.f90}
+	    {comp_dir /tmp}
+	} {
+	    int_label: base_type {
+		{name "int"}
+		{byte_size $int_size sdata}
+		{encoding @DW_ATE_signed}
+	    }
+	    subprogram {
+		{name prog}
+		{decl_file 1 data1}
+		{decl_line $prog_line data1}
+		{low_pc $main_start addr}
+		{high_pc "$main_start + $main_len" addr}
+		{external 1 flag}
+		{main_subprogram 1 flag}
+	    }
+	    subprogram {
+		{name bar}
+		{decl_file 1 data1}
+		{decl_line $bar_line data1}
+		{external 1 flag}
+		{low_pc $bar_helper_start addr}
+		{high_pc "$bar_helper_start + $bar_helper_len" addr}
+	    } {
+		formal_parameter {
+		    {name I}
+		    {type :$int_label}
+		    {location {addr $global_I} SPECIAL_expr}
+		}
+		formal_parameter {
+		    {name J}
+		    {type :$int_label}
+		    {location {addr $global_J} SPECIAL_expr}
+		}
+		entry_point {
+		    {name foo}
+		    {decl_file 1 data1}
+		    {decl_line $foo_line data1}
+		    {low_pc foo_entry_label addr}
+		} {
+		    formal_parameter {
+			{name J}
+			{type :$int_label}
+			{location {addr $global_J} SPECIAL_expr}
+		    }
+		    formal_parameter {
+			{name K}
+			{type :$int_label}
+			{location {addr $global_K} SPECIAL_expr}
+		    }
+		}
+		entry_point {
+			{name foobar}
+			{decl_file 1 data1}
+			{decl_line $foobar_line data1}
+			{low_pc foobar_entry_label addr}
+		    } {
+		    formal_parameter {
+			{name J}
+			{type :$int_label}
+			{location {addr $global_J} SPECIAL_expr}
+		    }
+		}
+	    }
+	}
+    }
+
+    cu {} {
+	compile_unit {
+	    {language @DW_LANG_Fortran90}
+	    {name dw2-entry-points-2.f90}
+	    {comp_dir /tmp}
+	} {
+	    int2_label: base_type {
+		{name "int"}
+		{byte_size $int_size sdata}
+		{encoding @DW_ATE_signed}
+	    }
+	    subprogram {
+		{name barso}
+		{decl_file 1 data1}
+		{decl_line $bar_line data1}
+		{external 1 flag}
+		{low_pc $bar_helper_start addr}
+		{high_pc "$bar_helper_start + $bar_helper_len" addr}
+	    } {
+		formal_parameter {
+		    {name I}
+		    {type :$int2_label}
+		    {location {addr $global_I} SPECIAL_expr}
+		}
+		formal_parameter {
+		    {name J}
+		    {type :$int2_label}
+		    {location {addr $global_J} SPECIAL_expr}
+		}
+		entry_point {
+		    {name fooso}
+		    {decl_file 1 data1}
+		    {decl_line $foo_line data1}
+		    {low_pc foo_entry_label addr}
+		} {
+		    formal_parameter {
+			{name J}
+			{type :$int2_label}
+			{location {addr $global_J} SPECIAL_expr}
+		    }
+		    formal_parameter {
+			{name K}
+			{type :$int2_label}
+			{location {addr $global_K} SPECIAL_expr}
+		    }
+		}
+	    }
+	}
+    }
+}
+
+if {[prepare_for_testing "failed to prepare" ${testfile} \
+	 [list $srcfile $asm_file] {nodebug}]} {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+# Try whether we can set and hit breakpoints at the entry_points.
+gdb_breakpoint "*foo"
+gdb_breakpoint "*foobar"
+
+# Now hit the entry_point break point and check their call-stack.
+gdb_continue_to_breakpoint "foo"
+gdb_test "bt" [multi_line \
+		   "#0.*${hex} in foo \\(J=1, K=0\\).*" \
+		   "#1.*${hex} in prog \\(\\).*" \
+    ] "bt foo"
+
+gdb_continue_to_breakpoint "foobar"
+gdb_test "bt" [multi_line \
+		   "#0.*${hex} in foobar \\(J=2\\).*" \
+		   "#1.*${hex} in prog \\(\\).*" \
+    ] "bt foobar"
+
+# Now try whether we can also set breakpoints on entry_points from other CUs.
+
+clean_restart ${testfile}
+
+if ![runto_main] {
+    return -1
+}
+
+gdb_breakpoint "*fooso"
+gdb_continue_to_breakpoint "foo_so"
+
+gdb_test "bt" [multi_line \
+		    "#0.*${hex} in foo \\(J=1, K=0\\).*" \
+		    "#1.*${hex} in prog \\(\\).*" \
+] "bt fooso"

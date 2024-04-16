@@ -1,0 +1,87 @@
+# Copyright 2010-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "ada.exp"
+
+require allow_ada_tests
+
+standard_ada_testfile foo
+
+if {[gdb_compile_ada "${srcfile}" "${binfile}" executable [list debug ]] != "" } {
+  return -1
+}
+
+clean_restart ${testfile}
+
+set bp_location [gdb_get_line_number "STOP" ${testdir}/foo.adb]
+if {![runto "foo.adb:$bp_location"]} {
+  return
+}
+
+# The xfail mentioned below triggers for the "after" print, but may not
+# trigger for the "before" print, though it will for -readnow.  This is
+# related to PR25764 - "LOC_UNRESOLVED symbol missing from partial symtab".
+# Stabilize test results by ensuring that the xfail triggers for the "before"
+# print.
+gdb_test_no_output "maint expand-symtabs"
+
+# The xfail is for PR gcc/94469, which occurs with target board
+# unix/-flto/-O0/-flto-partition=none/-ffat-lto-objects and gcc-8 and later.
+# Note: We don't check for the filename in xfail_re because it might be
+# wrong, filed as gdb PR25771.
+set xfail_re \
+    [multi_line \
+	 "Multiple matches for last_node_id" \
+	 "\\\[0\\\] cancel" \
+	 "\\\[1\\\] pck\.last_node_id at .*.adb:17" \
+	 "\\\[2\\\] pck\.last_node_id at .*.adb:17" \
+	 "> $"]
+
+# Make sure that last_node_id is set to zero...
+gdb_test_multiple "print last_node_id" "print last_node_id before calling pn" {
+    -re $xfail_re {
+	xfail $gdb_test_name
+	# One of the choices will print the correct value, the other one
+	# <optimized out>.  Since we don't known which one to choose to get
+	# the correct value, cancel.
+	gdb_test_multiple "0" "cancel after xfail 1" {
+	    -re -wrap "cancelled" {
+	    }
+	}
+    }
+    -re -wrap "= 0" {
+	pass $gdb_test_name
+    }
+}
+
+# Now, call procedure Pn, which should set Last_Node_Id to the value
+# of the parameter used in the function call.  Verify that we can print
+# the returned value correctly, while we're at it.
+gdb_test "print pn(4321)" "= 4321"
+
+# Make sure that last_node_id now has the correct value...
+gdb_test_multiple "print last_node_id" "print last_node_id after calling pn" {
+    -re $xfail_re {
+	xfail $gdb_test_name
+	# Cancel
+	gdb_test_multiple "0" "cancel after xfail 2" {
+	    -re -wrap "cancelled" {
+	    }
+	}
+    }
+    -re -wrap "= 4321" {
+	pass $gdb_test_name
+    }
+}

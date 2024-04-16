@@ -1,0 +1,81 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile
+
+require {istarget "x86*"}
+
+set cflags "-mindirect-branch=thunk -mfunction-return=thunk"
+
+if { [gcc_major_version] >= 8 } {
+    append cflags " -fcf-protection=none"
+}
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile \
+        [list debug "additional_flags=$cflags"]] } {
+    return -1
+}
+
+if { ![runto_main] } {
+    return -1
+}
+
+# Do repeated instruction steps in order to reach TARGET from CURRENT
+#
+#  CURRENT is a string matching the current location
+#  TARGET  is a string matching the target location
+#  TEST    is the test name
+#
+# The function issues repeated "stepi" commands as long as the location
+# matches CURRENT up to a maximum of 100 steps.
+#
+# TEST passes if the resulting location matches TARGET and fails
+# otherwise.
+#
+proc stepi_until { current target test } {
+    global gdb_prompt
+
+    set count 0
+    gdb_test_multiple "stepi" "$test" {
+        -re "$current.*$gdb_prompt $" {
+            incr count
+            if { $count < 100 } {
+                send_gdb "stepi\n"
+                exp_continue
+            } else {
+                fail "$test"
+            }
+        }
+        -re "$target.*$gdb_prompt $" {
+            pass "$test"
+        }
+    }
+}
+
+# Normal stepping steps through all thunks.
+gdb_test "step" "thrice\.2.*" "step into thrice"
+gdb_test "next" "thrice\.3.*" "step through thunks and over inc"
+gdb_test "step" "inc\.2.*" "step through call thunk into inc"
+gdb_test "step" "inc\.3.*" "step inside inc"
+gdb_test "step" "thrice\.4.*" "step through return thunk back into thrice"
+
+set alphanum_re "\[a-zA-Z0-9\]"
+set pic_thunk_re  "__$alphanum_re*\\.get_pc_thunk\\.$alphanum_re* \\(\\)"
+
+# We can use instruction stepping to step into thunks.
+stepi_until "thrice" "indirect_thunk" "stepi into call thunk"
+stepi_until "indirect_thunk" "inc." "stepi out of call thunk into inc"
+stepi_until "(inc|$pic_thunk_re)" "return_thunk" "stepi into return thunk"
+stepi_until "return_thunk" "thrice" \
+    "stepi out of return thunk back into thrice"

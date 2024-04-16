@@ -1,0 +1,87 @@
+# Copyright (C) 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that a resume cancels a previously unfinished or unreported
+# single-step correctly.
+#
+# The test consists of several threads all running the same loop.
+# There is a breakpoint set in the loop, hence all threads may hit it.
+# The test then issues several "next" commands in a loop.
+#
+# scheduler-locking must be set to the default of "off".
+#
+# Here's what would happen in gdbserver:
+#
+# 1) We issue a "continue", and wait until a thread hits the
+#    breakpoint.  Could be any thread, but assume thread 1 hits it.
+#
+# 2) We issue a "next" --- this single-steps thread 1, and resumes all
+#    other threads.
+#
+# 3) thread 2, due to scheduler-locking off, hits the breakpoint.
+#    gdbserver stops all other threads by sending them SIGSTOPs.
+#
+# 4) While being stopped in step 3, thread 1 reports a SIGTRAP, that
+#    corresponds to the finished single-step of step 2.  gdbserver
+#    leaves the SIGTRAP pending to report later.
+#
+# 5) We issue another "next" --- this requests thread 2 to
+#    single-step, and all other threads to continue, including thread
+#    1.  Before resuming any thread, gdbserver notices that it
+#    remembers from step 4 a pending SIGTRAP to report for thread 1,
+#    so reports it now.
+#
+# 6) From GDB's perpective, this SIGTRAP can't represent a finished
+#    single-step, since thread 1 was not single-stepping (it was
+#    continued in step 5).  Neither does this SIGTRAP correspond to a
+#    breakpoint hit.  GDB reports to the user a spurious SIGTRAP.
+
+standard_testfile
+
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable debug] != "" } {
+    return -1
+}
+
+clean_restart ${binfile}
+
+if {![runto_main]} {
+    return 0
+}
+
+gdb_breakpoint [gdb_get_line_number "insert breakpoint here"]
+gdb_continue_to_breakpoint "continue to first breakpoint hit"
+
+set test "next in multiple threads with breakpoints"
+set iterations 20
+set ok 0
+for {set i 0} {$i < $iterations} {incr i} {
+    set ok 0
+    gdb_test_multiple "next" "$test" {
+	-re " received signal SIGTRAP.*$gdb_prompt $" {
+	    fail "$test (spurious SIGTRAP)"
+	}
+	-re "$gdb_prompt $" {
+	    set ok 1
+	}
+    }
+
+    if { $ok == 0 } {
+	break
+    }
+}
+
+if { $ok  } {
+    pass "$test"
+}

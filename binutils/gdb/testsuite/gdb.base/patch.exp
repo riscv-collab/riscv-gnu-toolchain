@@ -1,0 +1,107 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test patching executables and core files, with "set write on".
+
+standard_testfile
+
+if {[build_executable "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+# Check that we can patch an executable.
+
+with_test_prefix "exec" {
+    clean_restart
+
+    gdb_test_no_output "set write on"
+
+    gdb_load $binfile
+
+    gdb_test "p extern_global" " = 1" "read original value"
+    gdb_test "p extern_global = 2" " = 2" "modify value"
+    gdb_test "p extern_global" " = 2" "value modified"
+
+    clean_restart $binfile
+
+    gdb_test "p extern_global" " = 2" "value modified persisted"
+}
+
+# Check that we can patch a core file.
+
+# Generate a core file.
+with_test_prefix "gcore" {
+    clean_restart $binfile
+
+    if {![runto_main]} {
+	return
+    }
+
+    # Extract the value at PC, and add 1, letting it wrap if
+    # necessary.  This is the value we will poke into memory.
+    set poke_value ""
+    gdb_test_multiple "p/x (*(unsigned char *) \$pc) + 1" "compute poke value" {
+	-re -wrap " = ($hex)" {
+	    set poke_value $expect_out(1,string)
+	    pass $gdb_test_name
+	}
+    }
+    if {$poke_value == ""} {
+	return
+    }
+
+    set corefile [standard_output_file gcore.test]
+    set core_supported [gdb_gcore_cmd "$corefile" "save a corefile"]
+    if {!$core_supported} {
+	return
+    }
+}
+
+# Load it into GDB with "set write on", and change the instruction at
+# PC.
+with_test_prefix "load core, write on" {
+    # Don't load a binary, we want to make sure we're patching the
+    # core, not the executable.
+    clean_restart
+
+    gdb_test_no_output "set write on"
+
+    set core_loaded [gdb_core_cmd "$corefile" "re-load generated corefile"]
+    if { $core_loaded == -1 } {
+	return
+    }
+
+    gdb_test "p/x *(unsigned char *) \$pc = $poke_value" \
+	" = $poke_value" \
+	"poke value"
+    gdb_test "p/x *(unsigned char *) \$pc" \
+	" = $poke_value" \
+	"value modified"
+}
+
+# Re-load it into a new GDB session, now with "set write off", and
+# confirm the value change persisted.
+with_test_prefix "re-load modified core" {
+    # Don't load a binary, we want to make sure we've patched the
+    # core, not the executable.
+    clean_restart
+
+    set core_loaded [gdb_core_cmd "$corefile" "re-load generated corefile"]
+    gdb_assert { $core_loaded != -1 } "core re-loaded"
+
+    gdb_test "p/x *(unsigned char *) \$pc" \
+	" = $poke_value" \
+	"value modified persisted"
+}

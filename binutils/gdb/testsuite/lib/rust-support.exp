@@ -1,0 +1,121 @@
+# Copyright 2016-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Auxiliary function to set the language to Rust.
+# The result is 1 (true) for success, 0 (false) for failure.
+proc set_lang_rust {} {
+    if [gdb_test_no_output "set language rust"] {
+	return 0
+    }
+    if [gdb_test "show language" ".* source language is \"rust\"." \
+	   "set language to \"rust\""] {
+	return 0
+    }
+    return 1
+}
+
+proc gdb_compile_rust {sources dest options} {
+    set res -1
+
+    if {[llength $sources] > 1} {
+	error "gdb rust setup can only compile one source file at a time"
+    }
+
+    global board
+    set board [target_info name]
+    set multilib_flags_orig [board_info $board multilib_flags]
+    set multilib_flags {}
+    foreach op $multilib_flags_orig {
+	# Pretend rustc supports -pie/-no-pie/-fPIE/-fno-PIE.
+	switch $op {
+	    "-pie" - "-no-pie" {
+		# Pass it to linker.
+		lappend multilib_flags -C link-arg=$op
+	    }
+	    "-fno-PIE" {
+		# Translate to rustc codegen equivalent.
+
+		# The rustc documentation insists that we should use static
+		# here, but that causes segfaults leading to:
+		# UNTESTED: gdb.rust/rawids.exp: could not run to breakpoint
+		# UNTESTED: gdb.rust/pp.exp: could not run to breakpoint
+		# Instead, we use dynamic-no-pic which does seem to work.
+		lappend multilib_flags -C relocation-model=dynamic-no-pic
+	    }
+	    "-fPIE" {
+		# Translate to rustc codegen equivalent.
+		lappend multilib_flags -C relocation-model=pic
+	    }
+	    default {
+		# Pass unmodified.
+		lappend multilib_flags $op
+	    }
+	}
+    }
+
+    save_target_board_info { multilib_flags } {
+	unset_board_info multilib_flags
+	set_board_info multilib_flags "$multilib_flags"
+	if {[gdb_compile [lindex $sources 0] $dest executable \
+		 $options] == ""} {
+	    set res ""
+	}
+    }
+
+    return $res
+}
+
+# Return the version of LLVM used by the Rust compiler.  Note that
+# older versions of rustc don't print this -- in this case the
+# returned version is "0.0".
+gdb_caching_proc rust_llvm_version {} {
+    set rustc [find_rustc]
+    if {$rustc == ""} {
+	verbose "could not find rustc"
+    } else {
+	set output [lindex [remote_exec host "$rustc --version --verbose"] 1]
+	foreach line [split $output \n] {
+	    if {[regexp "LLVM version: (.+)\$" $output ignore version]} {
+		return $version
+	    }
+	}
+	verbose "could not match rustc version output: $output"
+    }
+    return 0.0
+}
+
+# Return the version of the Rust compiler.
+gdb_caching_proc rust_compiler_version {} {
+    set rustc [find_rustc]
+    if {$rustc == ""} {
+	verbose "could not find rustc"
+    } else {
+	set output [lindex [remote_exec host "$rustc --version --verbose"] 1]
+	foreach line [split $output \n] {
+	    if {[regexp "rustc (\[0-9.\]+).*\$" $output ignore version]} {
+		return $version
+	    }
+	}
+	verbose "could not match rustc version output: $output"
+    }
+    return 0.0
+}
+
+# A helper that checks that the rust compiler is at least the given
+# version.  This is handy for use with 'require'.
+proc rust_at_least {atleast} {
+    return [version_compare  [split $atleast .] \
+		<= [split [rust_compiler_version] .]]
+}

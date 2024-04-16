@@ -1,0 +1,393 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test performing a 'stepi' over a clone syscall instruction.
+
+# This test relies on us being able to spot syscall instructions in
+# disassembly output.  For now this is only implemented for x86-64.
+require {istarget x86_64-*-*}
+
+standard_testfile
+
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile \
+	  {debug pthreads additional_flags=-static}] } {
+    return
+}
+
+if {![runto_main]} {
+    return
+}
+
+# Arrange to catch the 'clone' syscall, run until we catch the
+# syscall, and try to figure out the address of the actual syscall
+# instruction so we can place a breakpoint at this address.
+
+gdb_test_multiple "catch syscall group:process" "catch process syscalls" {
+    -re "The feature \'catch syscall\' is not supported.*\r\n$gdb_prompt $" {
+	unsupported $gdb_test_name
+	return
+    }
+    -re ".*$gdb_prompt $" {
+	pass $gdb_test_name
+    }
+}
+
+set re_loc1 "$hex in clone\[23\]? \\(\\)"
+set re_loc2 "$decimal\[ \t\]+in \[^\r\n\]+"
+set re_loc3 "clone\[23\]? \\(\\) at \[^:\]+:$decimal"
+
+gdb_test "continue" \
+    "Catchpoint $decimal \\(call to syscall clone\[23\]?\\), ($re_loc1|$re_loc3).*"
+
+# Return true if INSN is a syscall instruction.
+
+proc is_syscall_insn { insn } {
+    if [istarget x86_64-*-* ] {
+	return { $insn == "syscall" }
+    } else {
+	error "port me"
+    }
+}
+
+# A list of addresses with syscall instructions.
+set syscall_addrs {}
+
+# Get list of addresses with syscall instructions.
+gdb_test_multiple "disassemble" "" {
+    -re "Dump of assembler code for function \[^\r\n\]+:\r\n" {
+	exp_continue
+    }
+    -re "^(?:=>)?\\s+(${hex})\\s+<\\+${decimal}>:\\s+(\[^\r\n\]+)\r\n" {
+	set addr $expect_out(1,string)
+	set insn [string trim $expect_out(2,string)]
+	if [is_syscall_insn $insn] {
+	    verbose -log "Found a syscall at: $addr"
+	    lappend syscall_addrs $addr
+	}
+	exp_continue
+    }
+    -re "^End of assembler dump\\.\r\n$gdb_prompt $" {
+	if { [llength $syscall_addrs] == 0 } {
+	    unsupported "no syscalls found"
+	    return -1
+	}
+    }
+}
+
+# The test proc.  NON_STOP and DISPLACED are either 'on' or 'off', and are
+# used to configure how GDB starts up.  THIRD_THREAD is either true or false,
+# and is used to configure the inferior.
+proc test {non_stop displaced third_thread} {
+    global binfile srcfile
+    global syscall_addrs
+    global GDBFLAGS
+    global gdb_prompt hex decimal
+
+    for { set i 0 } { $i < 3 } { incr i } {
+	with_test_prefix "i=$i" {
+
+	    # Arrange to start GDB in the correct mode.
+	    save_vars { GDBFLAGS } {
+		append GDBFLAGS " -ex \"set non-stop $non_stop\""
+		append GDBFLAGS " -ex \"set displaced $displaced\""
+		clean_restart $binfile
+	    }
+
+	    runto_main
+
+	    # Setup breakpoints at all the syscall instructions we
+	    # might hit.  Only issue one pass/fail to make tests more
+	    # comparable between systems.
+	    set test "break at syscall insns"
+	    foreach addr $syscall_addrs {
+		if {[gdb_test -nopass "break *$addr" \
+			 ".*" \
+			 $test] != 0} {
+		    return
+		}
+	    }
+	    # If we got here, all breakpoints were set successfully.
+	    # We used -nopass above, so issue a pass now.
+	    pass $test
+
+	    # Continue until we hit the syscall.
+	    gdb_test "continue"
+
+	    if { $third_thread } {
+		gdb_test_no_output "set start_third_thread=1"
+	    }
+
+	    set stepi_error_count 0
+	    set stepi_new_thread_count 0
+	    set thread_1_stopped false
+	    set thread_2_stopped false
+	    set seen_prompt false
+	    set hello_first_thread false
+
+	    # The program is now stopped at main, but if testing
+	    # against GDBserver, inferior_spawn_id is GDBserver's
+	    # spawn_id, and the GDBserver output emitted before the
+	    # program stopped isn't flushed unless we explicitly do
+	    # so, because it is on a different spawn_id.  We could try
+	    # flushing it now, to avoid confusing the following tests,
+	    # but that would have to be done under a timeout, and
+	    # would thus slow down the testcase.  Instead, if inferior
+	    # output goes to a different spawn id, then we don't need
+	    # to wait for the first message from the inferior with an
+	    # anchor, as we know consuming inferior output won't
+	    # consume GDB output.  OTOH, if inferior output is coming
+	    # out on GDB's terminal, then we must use an anchor,
+	    # otherwise matching inferior output without one could
+	    # consume GDB output that we are waiting for in regular
+	    # expressions that are written after the inferior output
+	    # regular expression match.
+	    if {$::inferior_spawn_id != $::gdb_spawn_id} {
+		set anchor ""
+	    } else {
+		set anchor "^"
+	    }
+
+	    gdb_test_multiple "stepi" "" {
+		-re "^stepi\r\n" {
+		    verbose -log "XXX: Consume the initial command"
+		    exp_continue
+		}
+		-re "^\\\[New Thread\[^\r\n\]+\\\]\r\n" {
+		    verbose -log "XXX: Consume new thread line"
+		    incr stepi_new_thread_count
+		    exp_continue
+		}
+		-re "^\\\[Switching to Thread\[^\r\n\]+\\\]\r\n" {
+		    verbose -log "XXX: Consume switching to thread line"
+		    exp_continue
+		}
+		-re "^\\s*\r\n" {
+		    verbose -log "XXX: Consume blank line"
+		    exp_continue
+		}
+
+		-i $::inferior_spawn_id
+
+		-re "${anchor}Hello from the first thread\\.\r\n" {
+		    set hello_first_thread true
+
+		    verbose -log "XXX: Consume first worker thread message"
+		    if { $third_thread } {
+			# If we are going to start a third thread then GDB
+			# should hit the breakpoint in clone before printing
+			# this message.
+			incr stepi_error_count
+		    }
+		    if { !$seen_prompt } {
+			exp_continue
+		    }
+		}
+		-re "^Hello from the third thread\\.\r\n" {
+		    # We should never see this message.
+		    verbose -log "XXX: Consume third worker thread message"
+		    incr stepi_error_count
+		    if { !$seen_prompt } {
+			exp_continue
+		    }
+		}
+
+		-i $::gdb_spawn_id
+
+		-re "^($::re_loc1|$::re_loc2)\r\n" {
+		    verbose -log "XXX: Consume stop location line"
+		    set thread_1_stopped true
+		    if { !$seen_prompt } {
+			verbose -log "XXX: Continuing to look for the prompt"
+			exp_continue
+		    }
+		}
+		-re "^$gdb_prompt " {
+		    verbose -log "XXX: Consume the final prompt"
+		    gdb_assert { $stepi_error_count == 0 }
+		    gdb_assert { $stepi_new_thread_count == 1 }
+		    set seen_prompt true
+		    if { $third_thread } {
+			if { $non_stop } {
+			    # In non-stop mode if we are trying to start a
+			    # third thread (from the second thread), then the
+			    # second thread should hit the breakpoint in clone
+			    # before actually starting the third thread.  And
+			    # so, at this point both thread 1, and thread 2
+			    # should now be stopped.
+			    if { !$thread_1_stopped || !$thread_2_stopped } {
+				verbose -log "XXX: Continue looking for an additional stop event"
+				exp_continue
+			    }
+			} else {
+			    # All stop mode.  Something should have stoppped
+			    # by now otherwise we shouldn't have a prompt, but
+			    # we can't know which thread will have stopped as
+			    # that is a race condition.
+			    gdb_assert { $thread_1_stopped || $thread_2_stopped }
+			}
+		    }
+
+		    if {$non_stop && !$hello_first_thread} {
+			exp_continue
+		    }
+
+		}
+		-re "^Thread 2\[^\r\n\]+ hit Breakpoint $decimal, ($::re_loc1|$::re_loc3)\r\n" {
+		    verbose -log "XXX: Consume thread 2 hit breakpoint"
+		    set thread_2_stopped true
+		    if { !$seen_prompt } {
+			verbose -log "XXX: Continuing to look for the prompt"
+			exp_continue
+		    }
+		}
+		-re "^PC register is not available\r\n" {
+		    # This is the error we'd see for remote targets.
+		    verbose -log "XXX: Consume error line"
+		    incr stepi_error_count
+		    exp_continue
+		}
+		-re "^Couldn't get registers: No such process\\.\r\n" {
+		    # This is the error we see'd for native linux
+		    # targets.
+		    verbose -log "XXX: Consume error line"
+		    incr stepi_error_count
+		    exp_continue
+		}
+	    }
+
+	    # Ensure we are back at a GDB prompt, resynchronise.
+	    verbose -log "XXX: Have completed scanning the 'stepi' output"
+	    gdb_test "p 1 + 2 + 3" " = 6"
+
+	    # Check the number of threads we have, it should be exactly two.
+	    set thread_count 0
+	    set bad_threads 0
+
+	    # Build up our expectations for what the current thread state
+	    # should be.  Thread 1 is the easiest, this is the thread we are
+	    # stepping, so this thread should always be stopped, and should
+	    # always still be in clone.
+	    set match_code {}
+	    lappend match_code {
+		-re "\\*?\\s+1\\s+Thread\[^\r\n\]+($::re_loc1|$::re_loc3)\r\n" {
+		    incr thread_count
+		    exp_continue
+		}
+	    }
+
+	    # What state should thread 2 be in?
+	    if { $non_stop == "on" } {
+		if { $third_thread } {
+		    # With non-stop mode on, and creation of a third thread
+		    # having been requested, we expect Thread 2 to exist, and
+		    # be stopped at the breakpoint in clone (just before the
+		    # third thread is actually created).
+		    lappend match_code {
+			-re "\\*?\\s+2\\s+Thread\[^\r\n\]+($::re_loc1|$::re_loc3)\r\n" {
+			    incr thread_count
+			    exp_continue
+			}
+			-re "\\*?\\s+2\\s+Thread\[^\r\n\]+\\(running\\)\r\n" {
+			    incr thread_count
+			    incr bad_threads
+			    exp_continue
+			}
+			-re "\\*?\\s+2\\s+Thread\[^\r\n\]+\r\n" {
+			    verbose -log "XXX: thread 2 is bad, unknown state"
+			    incr thread_count
+			    incr bad_threads
+			    exp_continue
+			}
+		    }
+
+		} else {
+		    # With non-stop mode on, and no third thread having been
+		    # requested, then we expect Thread 2 to exist, and still
+		    # be running.
+		    lappend match_code {
+			-re "\\*?\\s+2\\s+Thread\[^\r\n\]+\\(running\\)\r\n" {
+			    incr thread_count
+			    exp_continue
+			}
+			-re "\\*?\\s+2\\s+Thread\[^\r\n\]+\r\n" {
+			    verbose -log "XXX: thread 2 is bad, unknown state"
+			    incr thread_count
+			    incr bad_threads
+			    exp_continue
+			}
+		    }
+		}
+	    } else {
+		# With non-stop mode off then we expect Thread 2 to exist, and
+		# be stopped.  We don't have any guarantee about where the
+		# thread will have stopped though, so we need to be vague.
+		lappend match_code {
+		    -re "\\*?\\s+2\\s+Thread\[^\r\n\]+\\(running\\)\r\n" {
+			verbose -log "XXX: thread 2 is bad, unexpectedly running"
+			incr thread_count
+			incr bad_threads
+			exp_continue
+		    }
+		    -re "\\*?\\s+2\\s+Thread\[^\r\n\]+_start\[^\r\n\]+\r\n" {
+			# We know that the thread shouldn't be stopped
+			# at _start, though.  This is the location of
+			# the scratch pad on Linux at the time of
+			# writting.
+			verbose -log "XXX: thread 2 is bad, stuck in scratchpad"
+			incr thread_count
+			incr bad_threads
+			exp_continue
+		    }
+		    -re "\\*?\\s+2\\s+Thread\[^\r\n\]+\r\n" {
+			incr thread_count
+			exp_continue
+		    }
+		}
+	    }
+
+	    # We don't expect to ever see a thread 3.  Even when we are
+	    # requesting that this third thread be created, thread 2, the
+	    # thread that creates thread 3, should stop before executing the
+	    # clone syscall.  So, if we do ever see this then something has
+	    # gone wrong.
+	    lappend match_code {
+		-re "\\s+3\\s+Thread\[^\r\n\]+\r\n" {
+		    incr thread_count
+		    incr bad_threads
+		    exp_continue
+		}
+	    }
+
+	    lappend match_code {
+		-re "$gdb_prompt $" {
+		    gdb_assert { $thread_count == 2 }
+		    gdb_assert { $bad_threads == 0 }
+		}
+	    }
+
+	    set match_code [join $match_code]
+	    gdb_test_multiple "info threads" "" $match_code
+	}
+    }
+}
+
+# Run the test in all suitable configurations.
+foreach_with_prefix third_thread { false true } {
+    foreach_with_prefix non-stop { "on" "off" } {
+	foreach_with_prefix displaced { "off" "on" } {
+	    test ${non-stop} ${displaced} ${third_thread}
+	}
+    }
+}

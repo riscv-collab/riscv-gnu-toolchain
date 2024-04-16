@@ -1,0 +1,75 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test attaching to a multi-threaded process using gdbserver's --attach flag.
+
+load_lib gdbserver-support.exp
+
+standard_testfile
+
+require allow_gdbserver_tests
+
+require can_spawn_for_attach
+
+# Start the test program, attach to it using gdbserver's --attach flag, connect
+# to it with GDB, check that what we see makes sense.
+
+proc run_one_test { non-stop target-non-stop } {
+    save_vars { ::GDBFLAGS } {
+	# If GDB and GDBserver are both running locally, set the sysroot to avoid
+	# reading files via the remote protocol.
+	if { ![is_remote host] && ![is_remote target] } {
+	    set ::GDBFLAGS "$::GDBFLAGS -ex \"set sysroot\""
+	}
+
+	if { [prepare_for_testing "failed to prepare" $::testfile $::srcfile \
+		{debug pthreads additional_flags=-std=gnu99}] } {
+	    return -1
+	}
+    }
+
+    # Make sure we're disconnected, in case we're testing with an
+    # extended-remote board, therefore already connected.
+    gdb_test "disconnect" ".*"
+
+    set target_exec [gdbserver_download_current_prog]
+    set test_spawn_id [spawn_wait_for_attach $::binfile]
+    set testpid [spawn_id_get_pid $test_spawn_id]
+
+    lassign [gdbserver_start "" "--attach $testpid"] unused gdbserver_address
+
+    gdb_test_no_output "set non-stop ${non-stop}"
+    gdb_test_no_output "maint set target-non-stop ${target-non-stop}"
+    gdb_target_cmd "remote" $gdbserver_address
+
+    # There should be 11 threads.
+    gdb_test "thread 11" "Switching to thread 11.*"
+
+    kill_wait_spawned_process $test_spawn_id
+    gdbserver_exit 0
+}
+
+foreach_with_prefix non-stop {0 1} {
+    foreach_with_prefix target-non-stop {0 1} {
+	# This combination does not make sense.
+	if { ${non-stop} == 1 && ${target-non-stop} == 0} {
+	    continue
+	}
+
+	run_one_test ${non-stop} ${target-non-stop}
+    }
+}

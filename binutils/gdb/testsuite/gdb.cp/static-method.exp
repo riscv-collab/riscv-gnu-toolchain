@@ -1,0 +1,112 @@
+# Copyright 2011-2024 Free Software Foundation, Inc.
+#
+# Contributed by Red Hat, originally written by Keith Seitz.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the gdb testsuite.
+
+# A helper proc which sets a breakpoint at FUNC and attempts to
+# run to the breakpoint.
+proc test_breakpoint {func result} {
+    set DEC {[0-9]}
+
+    # Return to the top of the test function every time.
+    delete_breakpoints
+    if {![gdb_breakpoint test_function]} {
+        fail "set test_function breakpoint for $func"
+    } elseif {[gdb_test "continue" \
+		   "Continuing.\r\n\r\nBreakpoint $DEC+,.*test_function.*" \
+		   "continue to test_function for $func"] != 0} {
+    } else {
+        gdb_breakpoint "$func"
+        gdb_test "continue" \
+            "Continuing.\r\n\r\nBreakpoint $DEC+,.*$result.*" \
+            "continue to $func"
+    }
+}
+
+require allow_cplus_tests
+
+# Tests for c++/12750
+standard_testfile .cc
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile {c++ debug}]} {
+    return -1
+}
+
+# The GDB workaround for GCC PR debug/45682 does not apply as it requires
+# DW_AT_linkage_name of methods.  The whole class A is in anonymous namespace,
+# therefore not accessible outside of the CU (compilation unit) and therefore
+# GCC does not produce DW_AT_linkage_name for such methods.
+
+set have_gcc_45682_fixed 1
+set test "info addr A::func()"
+gdb_test_multiple $test $test {
+    -re "No symbol \"A::func\\(\\)\" in current context\\.\r\n$gdb_prompt $" {
+	pass $test
+    }
+    -re "Symbol \"A::func\\(\\)\" is a function at address .*\r\n$gdb_prompt $" {
+	setup_xfail gcc/45682 "*-*-*"
+	fail $test
+	set have_gcc_45682_fixed 0
+    }
+}
+
+if {![runto_main]} {
+    return
+}
+
+set ans {(anonymous namespace)}
+set methods {}
+lappend methods "xxx::${ans}::func"
+lappend methods "xxx::${ans}::A::func"
+
+gdb_test_no_output "set listsize 1" ""
+
+foreach test $methods {
+    # The result we expect is the source code name of the symbol,
+    # i.e., without "(anonymous namespace)".
+    regsub -all [string_to_regexp "${ans}::"] $test "" expected
+    set result ".*// [string_to_regexp $expected]"
+
+    # Test whether the function/method can be "list"ed
+    # with the filename pre-pended.
+    if {[string compare $test "xxx::${ans}::A::func"] == 0
+	&& !$have_gcc_45682_fixed} {
+	setup_xfail gcc/45682 "*-*-*"
+    }
+    gdb_test "list ${srcfile}:$test" $result
+    if {[string compare $test "xxx::${ans}::A::func"] == 0
+	&& !$have_gcc_45682_fixed} {
+	setup_xfail gcc/45682 "*-*-*"
+    }
+    gdb_test "list '${srcfile}:$test'" $result
+    if {[string compare $test "xxx::${ans}::A::func"] == 0
+	&& !$have_gcc_45682_fixed} {
+	setup_xfail gcc/45682 "*-*-*"
+    }
+    gdb_test "list '${srcfile}':'$test'" $result
+    if {[string compare $test "xxx::${ans}::A::func"] == 0
+	&& !$have_gcc_45682_fixed} {
+	setup_xfail gcc/45682 "*-*-*"
+    }
+    gdb_test "list ${srcfile}:'$test'" $result
+
+    # Test setting and hitting a breakoint at the function/method.
+    test_breakpoint $test $expected
+    test_breakpoint "'$test'" $expected
+}
+
+gdb_exit

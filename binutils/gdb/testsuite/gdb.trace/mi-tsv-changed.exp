@@ -1,0 +1,237 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib trace-support.exp
+load_lib mi-support.exp
+
+standard_testfile actions.c
+
+require gdb_trace_common_supports_arch
+
+if { [gdb_compile "$srcdir/$subdir/$srcfile" $binfile \
+	  executable {debug nowarnings}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+# Test notifications on creating, deleting and modifying TSV.
+
+proc test_create_delete_modify_tsv { } {
+    with_test_prefix "create delete modify" {
+	global binfile
+	global decimal
+	global testfile
+	global srcdir subdir
+	global mi_gdb_prompt
+
+	if [mi_gdb_start] {
+	    return
+	}
+	mi_gdb_load ${binfile}
+
+	mi_gdb_test "tvariable \$tvar1" \
+	    ".*=tsv-created,name=\"tvar1\",initial=\"0\".*\\^done" \
+	    "tvariable \$tvar1"
+	mi_gdb_test "tvariable \$tvar1 = 1" \
+	    ".*=tsv-modified,name=\"tvar1\",initial=\"1\".*\\^done" \
+	    "tvariable \$tvar1 modified"
+	# No "=tsv-modified" notification is emitted, because the initial
+	# value is not changed.
+	mi_gdb_test "tvariable \$tvar1 = 1" \
+	    ".*\\\$tvar1 = 1\\\\n\"\r\n~\"Trace state .*.*\\^done" \
+	    "tvariable \$tvar1 modified without notification"
+	mi_gdb_test "tvariable \$tvar2 = 45" \
+	    ".*=tsv-created,name=\"tvar2\",initial=\"45\".*\\^done" \
+	    "tvariable \$tvar2"
+
+	mi_gdb_test "delete tvariable \$tvar2" \
+	    ".*=tsv-deleted,name=\"tvar2\".*\\^done" \
+	    "delete tvariable \$tvar2"
+
+	mi_gdb_test "delete tvariable" \
+	    ".*=tsv-deleted.*\\^done" \
+	    "delete all tvariables"
+
+	# Test target supports tracepoints or not.
+	clean_restart $testfile
+
+	if ![runto_main] {
+	    return -1
+	}
+
+	if ![gdb_target_supports_trace] {
+	    unsupported "current target does not support trace"
+	    return -1
+	}
+	gdb_exit
+
+	if {[mi_clean_restart $binfile]} {
+	    return
+	}
+
+	mi_gdb_test "tvariable \$tvar3 = 3" \
+	    ".*=tsv-created,name=\"tvar3\",initial=\"3\".*\\^done" \
+	    "tvariable \$tvar3 modified"
+	mi_gdb_test "-break-insert -a gdb_c_test" \
+	    {.*\^done,bkpt=.*} \
+	    "insert tracepoint on gdb_c_test"
+	# Define an action that increases $tvar3
+	send_gdb "actions\n"
+	gdb_expect {
+	    -re "End with" {
+	    }
+	}
+	send_gdb "collect \$tvar3 += 3\nend\n"
+	set test "define actions"
+	gdb_expect {
+	    -re ".*${mi_gdb_prompt}$" {
+		pass $test
+	    }
+	    timeout {
+		fail "$test (timeout)"
+	    }
+	}
+
+	mi_gdb_test "-break-insert begin" \
+	    {.*\^done,bkpt=.*} \
+	    "insert tracepoint on begin"
+	mi_gdb_test "-break-insert end" \
+	    {.*\^done,bkpt=.*} \
+	    "insert tracepoint on end"
+	mi_run_cmd
+
+	mi_expect_stop "breakpoint-hit" "begin" ""\
+	    ".*" ".*" {"" "disp=\"keep\""} \
+	    "continue to begin breakpoint"
+	mi_gdb_test "-trace-start" {.*\^done} "trace start"
+	mi_send_resuming_command "exec-continue" "continuing to end"
+	mi_gdb_test "-trace-stop" {.*} "trace stop"
+	# Force GDB to get the current value of trace state variable.
+	mi_gdb_test "-trace-list-variables" ".*" "list trace variables"
+	mi_gdb_test "tvariable \$tvar3 = 2" \
+	    ".*=tsv-modified,name=\"tvar3\",initial=\"2\",current=\"6\".*\\^done" \
+	    "tvariable \$tvar3 modified"
+
+    }
+}
+
+
+# Test when GDB connects to a disconnected stub, existing TSVs in
+# remote stub can be uploaded to GDB, and GDB emits MI notification
+# for new uploaded TSVs.
+
+proc test_upload_tsv { } {
+    with_test_prefix "upload" {
+
+	global gdbserver_reconnect_p
+	global gdb_prompt
+	global testfile
+	global decimal
+
+	set gdbserver_reconnect_p 1
+	if { [info proc gdb_reconnect] == "" } {
+	    return 0
+	}
+
+	clean_restart $testfile
+	if {![runto_main]} {
+	    return 0
+	}
+
+	gdb_test "tvariable \$tvar1" \
+	    "Trace state variable \\\$tvar1 created, with initial value 0." \
+	    "create a trace state variable"
+
+	gdb_test "tvariable \$tvar2 = 45" \
+	    "Trace state variable \\\$tvar2 created, with initial value 45." \
+	    "Create a trace state variable with initial value"
+	# Define a tracepoint otherwise tracing cannot be started.
+	gdb_test "trace main" "Tracepoint $decimal at .*"
+	gdb_test_no_output "tstart" "start trace experiment"
+
+	set test "disconnect"
+	gdb_test_multiple "disconnect" $test {
+	    -re "Trace is running but will stop on detach; detach anyway\\? \\(y or n\\) $" {
+		pass $test
+
+		set test "disconnected"
+		gdb_test_multiple "y" $test {
+		    -re "$gdb_prompt $" {
+			pass "$test"
+		    }
+		}
+	    }
+	}
+
+	global binfile
+	if {[mi_clean_restart $binfile]} {
+	    return
+	}
+
+	global gdbserver_protocol
+	global gdbserver_gdbport
+
+	send_gdb "47-target-select $gdbserver_protocol $gdbserver_gdbport\n"
+
+	global mi_gdb_prompt
+	set tsv1_created 0
+	set tsv2_created 0
+	gdb_expect {
+	    -re "=tsv-created,name=\"tvar1\",initial=\"0\"" {
+		set tsv1_created 1
+		exp_continue
+	    }
+	    -re "=tsv-created,name=\"tvar2\",initial=\"45\"" {
+		set tsv2_created 1
+		exp_continue
+	    }
+	    -re ".*${mi_gdb_prompt}" {
+
+	    }
+	}
+
+	if $tsv1_created {
+	    pass "tsv1 created"
+	} else {
+	    fail "tsv1 created"
+	}
+	if $tsv2_created {
+	    pass "tsv2 created"
+	} else {
+	    fail "tsv2 created"
+	}
+
+	set gdbserver_reconnect_p 0
+    }
+}
+
+ test_create_delete_modify_tsv
+
+# Test target supports tracepoints or not.
+
+clean_restart $testfile
+
+if ![runto_main] {
+    return -1
+}
+
+if ![gdb_target_supports_trace] {
+    unsupported "current target does not support trace"
+    return -1
+}
+
+gdb_exit
+
+test_upload_tsv

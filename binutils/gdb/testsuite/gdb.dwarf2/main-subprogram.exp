@@ -1,0 +1,82 @@
+# Copyright 2016-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-4 and use gas.
+require dwarf2_support
+
+require !use_gdb_stub
+
+standard_testfile .c -dw.S
+
+# Make some DWARF for the test.
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    global srcfile
+
+    cu {} {
+	# Note we don't want C here as that requires canonicalization,
+	# so choose a language that isn't C and that gdb is unlikely
+	# to implement.
+	DW_TAG_compile_unit {
+		{DW_AT_language @DW_LANG_PLI}
+                {DW_AT_name     $srcfile}
+                {DW_AT_comp_dir /tmp}
+        } {
+	    declare_labels type
+
+            type: DW_TAG_base_type {
+                {DW_AT_byte_size 4 DW_FORM_sdata}
+                {DW_AT_encoding  @DW_ATE_signed}
+                {DW_AT_name      int}
+            }
+
+	    DW_TAG_subprogram {
+		{MACRO_AT_func {mymain}}
+		{type :$type}
+		{DW_AT_main_subprogram 1 flag}
+	    } {
+	    }
+	}
+    }
+}
+
+if {[prepare_for_testing "failed to prepare" ${testfile} \
+	 [list $srcfile $asm_file] {nodebug}]} {
+    return -1
+}
+
+set have_index [exec_has_index_section $binfile]
+
+# Test that the "start" command stops in the "mymain" function.
+# This should happen because we used DW_AT_main_subprogram to tell gdb
+# that this was the real "main".
+
+if {[gdb_start_cmd] < 0} {
+    fail "could not start ${testfile}"
+    return -1
+}
+
+gdb_test_multiple "" "stopped at mymain" {
+    -re -wrap "Temporary breakpoint .* mymain.*" {
+	pass $gdb_test_name
+    }
+    -re -wrap "Temporary breakpoint .* main.*" {
+	if { $have_index } {
+	    setup_kfail "gdb/24549" *-*-*
+	}
+	fail $gdb_test_name
+    }
+}

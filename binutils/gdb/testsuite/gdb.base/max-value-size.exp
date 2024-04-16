@@ -1,0 +1,98 @@
+# Copyright (C) 2016-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+if {![runto_main]} {
+    return 0
+}
+
+# Run "show max-value-size" and return the interesting bit of the
+# result.  This is either the maximum size in bytes, or the string
+# "unlimited".
+proc get_max_value_size {} {
+    global gdb_prompt
+    global decimal
+
+    gdb_test_multiple "show max-value-size" "" {
+	-re "Maximum value size is ($decimal) bytes.*$gdb_prompt $" {
+	    return $expect_out(1,string)
+	}
+	-re "Maximum value size is unlimited.*$gdb_prompt $" {
+	    return "unlimited"
+	}
+    }
+}
+
+# Assuming that MAX_VALUE_SIZE is the current value for
+# max-value-size, print the test values.  Use TEST_PREFIX to make the
+# test names unique.
+proc do_value_printing { max_value_size test_prefix } {
+    with_test_prefix ${test_prefix} {
+	gdb_test "p/d one" " = 0"
+	if {$max_value_size != "unlimited" && $max_value_size < 100} {
+	    gdb_test "p/d one_hundred" \
+		"value requires 100 bytes, which is more than max-value-size"
+	} else {
+	    gdb_test "p/d one_hundred" " = \\{0 <repeats 100 times>\\}"
+	}
+	gdb_test "p/d one_hundred \[99\]" " = 0"
+	# Verify that accessing value history is undisturbed.
+	gdb_test "p/d \$2" " = \\{0 <repeats 100 times>\\}"
+	gdb_test "p/d \$2 \[99\]" " = 0"
+    }
+}
+
+# Install SET_VALUE as the value for max-value-size, then print the
+# test values.
+proc set_and_check_max_value_size { set_value } {
+    if {$set_value == "unlimited"} {
+	set check_pattern "unlimited"
+    } else {
+	set check_pattern "${set_value} bytes"
+    }
+
+    gdb_test_no_output "set max-value-size ${set_value}"
+    gdb_test "show max-value-size" \
+	"Maximum value size is ${check_pattern}." \
+	"check that the value shows as ${check_pattern}"
+
+    do_value_printing ${set_value} "max-value-size is '${set_value}'"
+}
+
+# Check the default value is sufficient.
+do_value_printing [get_max_value_size] "using initial max-value-size"
+
+# Check some values for max-value-size that should prevent some
+# allocations.
+set_and_check_max_value_size 25
+set_and_check_max_value_size 99
+
+# Check values for max-value-size that should allow all allocations.
+set_and_check_max_value_size 100
+set_and_check_max_value_size 200
+set_and_check_max_value_size "unlimited"
+
+# Check that we can't set the maximum size stupidly low.
+gdb_test "set max-value-size 1" \
+    "max-value-size set too low, increasing to \[0-9\]+ bytes"
+gdb_test "set max-value-size 0" \
+    "max-value-size set too low, increasing to \[0-9\]+ bytes"
+gdb_test "set max-value-size -5" \
+    "integer -5 out of range"

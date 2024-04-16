@@ -1,0 +1,158 @@
+# Copyright (C) 2004-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test making hand function calls in multiple threads.
+
+set NR_THREADS 4
+
+standard_testfile
+
+# Some targets can't do function calls, so don't even bother with this
+# test.
+require {!target_info exists gdb,cannot_call_functions}
+
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable [list debug "additional_flags=-DNR_THREADS=$NR_THREADS"]] != "" } {
+    return -1
+}
+
+proc get_dummy_frame_number { } {
+    global gdb_prompt
+
+    gdb_test_multiple "bt" "" {
+	-re "#(\[0-9\]*) *<function called from gdb>.*$gdb_prompt $" {
+	    return $expect_out(1,string)
+	}
+	-re "$gdb_prompt $" {
+	    return ""
+	}
+	timeout {
+	    return ""
+	}
+    }
+    return ""
+}
+
+clean_restart ${binfile}
+
+if { ![runto_main] } {
+    return 0
+}
+
+gdb_test "break all_threads_running" \
+         "Breakpoint 2 at .*: file .*${srcfile}, line .*" \
+         "breakpoint on all_threads_running"
+
+gdb_test "break hand_call" \
+         "Breakpoint 3 at .*: file .*${srcfile}, line .*" \
+         "breakpoint on hand_call"
+
+# Run the program and make sure GDB reports that we stopped after
+# hitting breakpoint 2 in all_threads_running().
+
+gdb_test "continue" \
+         ".*Breakpoint 2, all_threads_running ().*" \
+         "run to all_threads_running"
+
+# Before we start making hand function calls, turn on scheduler locking.
+
+gdb_test_no_output "set scheduler-locking on" "enable scheduler locking"
+gdb_test "show scheduler-locking" ".* locking scheduler .* is \"on\"." "show scheduler locking on"
+
+# Now hand-call a function in each thread, having the function
+# stop without returning.
+
+# Add one for the main thread.
+set total_nr_threads [expr $NR_THREADS + 1]
+
+# Thread numbering in gdb is origin-1, so begin numbering at 1.
+for { set i 1 } { $i <= $total_nr_threads } { incr i } {
+    set thread_nr $i
+    gdb_test "thread $thread_nr" \
+	".*Switching to thread $thread_nr.*" \
+	"prepare to make hand call, thread $thread_nr"
+    gdb_test_multiple "call hand_call()" "" {
+	-re "Breakpoint 3, .*$gdb_prompt $" {
+	    pass "hand call, thread $thread_nr"
+	}
+	-re "$gdb_prompt $" {
+	    fail "hand call, thread $thread_nr (got gdb prompt)"
+	}
+	timeout {
+	    # If the target fails to stop at the breakpoint, it just ends
+	    # up in an infinite loop in hand_call().  If this happens
+	    # and we have lost the GDB prompt, no further tests in
+	    # this file will work and there is no point in continuing.
+	    fail "hand call, thread $thread_nr (runaway target)"
+	    return 0
+	}
+    }
+}
+
+# Now have each hand-called function return.
+
+# Turn confirmation off for the "return" command.
+gdb_test_no_output "set confirm off"
+
+clear_xfail "*-*-*"
+
+for { set i 1 } { $i <= $total_nr_threads } { incr i } {
+    set thread_nr $i
+    gdb_test "thread $thread_nr" ".*" \
+	"prepare to discard hand call, thread $thread_nr"
+    set frame_number [get_dummy_frame_number]
+    if { "$frame_number" == "" } {
+	fail "dummy stack frame number, thread $thread_nr"
+	# Need something.
+	set frame_number 0
+    } else {
+	pass "dummy stack frame number, thread $thread_nr"
+    }
+    # Pop the dummy frame.
+    gdb_test "frame $frame_number" ".*" "setting frame, thread $thread_nr"
+    gdb_test "return" ".*" "discard hand call, thread $thread_nr"
+    # In case getting the dummy frame number failed, re-enable for next iter.
+    clear_xfail "*-*-*"
+}
+
+# Make sure all dummy frames got popped.
+
+gdb_test_multiple "maint print dummy-frames" "all dummies popped" {
+    -re ".*stack=.*$gdb_prompt $" {
+	fail "all dummies popped"
+    }
+    -re ".*$gdb_prompt $" {
+	pass "all dummies popped"
+    }
+}
+
+# Before we resume the full program, turn off scheduler locking.
+gdb_test_no_output "set scheduler-locking off" "disable scheduler locking"
+gdb_test "show scheduler-locking" ".* locking scheduler .* is \"off\"." "show scheduler locking off"
+
+# Continue one last time, the program should exit normally.
+#
+# ??? This currently doesn't work because gdb doesn't know how to singlestep
+# over reported breakpoints that weren't in the last thread to run.
+# Commented out until then.
+#
+# For reference sake ...
+# An alternative is to manually work around the issue by manually setting
+# the thread back to the first thread: the program is still at the
+# all_threads_running breakpoint, which wasn't the last thread to run,
+# and gdb doesn't know how to singlestep over reported breakpoints that
+# weren't in the last thread to run.
+#gdb_test "thread 1" ".*" "set thread to 1, prepare to resume"
+#
+#gdb_continue_to_end "hand-call-in-threads"

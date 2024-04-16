@@ -1,0 +1,156 @@
+# Copyright (C) 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.
+# It tests Guile-based pretty-printing for the CLI.
+
+load_lib gdb-guile.exp
+
+require allow_guile_tests
+
+standard_testfile
+
+proc run_lang_tests {exefile lang} {
+    with_test_prefix "lang=$lang" {
+	global srcdir subdir srcfile testfile hex
+	if { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${exefile}" executable "debug $lang"] != "" } {
+	    untested "failed to compile in $lang mode"
+	    return
+	}
+
+	set nl "\[\r\n\]+"
+
+	# Start with a fresh gdb.
+	clean_restart $exefile
+
+	if ![gdb_guile_runto_main] {
+	    return
+	}
+
+	gdb_test_no_output "set print pretty on"
+
+	gdb_test "b [gdb_get_line_number {break to inspect} ${testfile}.c ]" \
+	    ".*Breakpoint.*"
+	gdb_test "continue" ".*Breakpoint.*"
+
+	set remote_scheme_file [gdb_remote_download host \
+				    ${srcdir}/${subdir}/${testfile}.scm]
+
+	gdb_scm_load_file ${remote_scheme_file}
+
+	gdb_test "print ss" " = a=<a=<1> b=<$hex>> b=<a=<2> b=<$hex>>"
+	gdb_test "print ssa\[1\]" " = a=<a=<5> b=<$hex>> b=<a=<6> b=<$hex>>"
+	gdb_test "print ssa" " = {a=<a=<3> b=<$hex>> b=<a=<4> b=<$hex>>, a=<a=<5> b=<$hex>> b=<a=<6> b=<$hex>>}"
+
+	gdb_test "print arraystruct" " = {$nl *y = 7, *$nl *x = {a=<23> b=<$hex>, a=<24> b=<$hex>} *$nl *}"
+
+	if {$lang == "c++"} {
+	    gdb_test "print cps" "= a=<8> b=<$hex>"
+	    gdb_test "print cpss" " = {$nl *zss = 9, *$nl *s = a=<10> b=<$hex>$nl}"
+	    gdb_test "print cpssa\[0\]" " = {$nl *zss = 11, *$nl *s = a=<12> b=<$hex>$nl}"
+	    gdb_test "print cpssa\[1\]" " = {$nl *zss = 13, *$nl *s = a=<14> b=<$hex>$nl}"
+	    gdb_test "print cpssa" " = {{$nl *zss = 11, *$nl *s = a=<12> b=<$hex>$nl *}, {$nl *zss = 13, *$nl *s = a=<14> b=<$hex>$nl *}}"
+	    gdb_test "print sss" "= a=<15> b=<a=<8> b=<$hex>>"
+	    gdb_test "print ref" "= a=<15> b=<a=<8> b=<$hex>>"
+	    gdb_test "print derived" \
+		" = \{.*<Vbase1> = pp class name: Vbase1.*<Vbase2> = \{.*<VirtualTest> = pp value variable is: 1,.*members of Vbase2:.*_vptr.Vbase2 = $hex.*<Vbase3> = \{.*members of Vbase3.*members of Derived:.*value = 2.*"
+	    gdb_test "print ns " "\"embedded\\\\000null\\\\000string\"" \
+		"print ns with 200 elements"
+	    gdb_test_no_output "set print elements 3" ""
+	    gdb_test "print ns" "emb\.\.\.." \
+		"print ns with 3 elements"
+	    gdb_test_no_output "set print elements 10" ""
+	    gdb_test "print ns" "embedded\\\\000n\.\.\.." \
+		"print ns with 10 elements"
+	    gdb_test_no_output "set print elements 200" ""
+	}
+
+	if { ![is_address_zero_readable] } {
+	    gdb_test "print ns2" "<error reading variable: ERROR: Cannot access memory at address 0x0>"
+	}
+
+	gdb_test "print x" " = \"this is x\""
+	gdb_test "print cstring" " = \"const string\"" \
+	    "print cstring with max-depth unlimited"
+	gdb_test_no_output "set print max-depth 0"
+	gdb_test "print cstring" " = \"const string\"" \
+	    "print cstring with max-depth 0"
+	gdb_test_no_output "set print max-depth unlimited"
+
+	gdb_test "print estring" " = \"embedded x\\\\201\\\\202\\\\203\\\\204\""
+
+	gdb_test_no_output "guile (set! *pp-ls-encoding* \"UTF-8\")"
+	gdb_test "print estring2" "\"embedded \", <incomplete sequence \\\\302>"
+
+	gdb_test_no_output "set guile print-stack full"
+	gdb_test "print hint_error" "ERROR: Invalid display hint: 42\r\nhint_error_val"
+
+	gdb_test "print c" " = container \"container\" with 2 elements = {$nl *.0. = 23,$nl *.1. = 72$nl}"
+
+	gdb_test "print nstype" " = {$nl *.0. = 7,$nl *.1. = 42$nl}"
+
+	gdb_test_no_output "set print pretty off"
+	gdb_test "print nstype" " = {.0. = 7, .1. = 42}" \
+	    "print nstype on one line"
+
+	gdb_continue_to_end
+    }
+}
+
+run_lang_tests "${binfile}" "c"
+run_lang_tests "${binfile}-cxx" "c++"
+
+# Run various other tests.
+
+clean_restart $binfile
+
+if ![gdb_guile_runto_main] {
+    return
+}
+
+set remote_scheme_file [gdb_remote_download host \
+			    ${srcdir}/${subdir}/${testfile}.scm]
+
+gdb_scm_load_file ${remote_scheme_file}
+
+gdb_breakpoint [gdb_get_line_number "eval-break"]
+gdb_continue_to_breakpoint "eval-break" ".* eval-break .*"
+
+gdb_test "info locals" "eval9 = eval=<123456789>"
+
+gdb_test "b [gdb_get_line_number {break to inspect} ${testfile}.c ]" \
+    ".*Breakpoint.*"
+gdb_test "continue" ".*Breakpoint.*"
+
+gdb_test "print ss" " = a=<a=<1> b=<$hex>> b=<a=<2> b=<$hex>>" \
+    "print ss enabled #1"
+
+gdb_test_no_output "guile (disable-matcher!)"
+gdb_test "print ss" " = {a = {a = 1, b = $hex}, b = {a = 2, b = $hex}}" \
+    "print ss disabled"
+
+gdb_test_no_output "guile (enable-matcher!)"
+gdb_test "print ss" " = a=<a=<1> b=<$hex>> b=<a=<2> b=<$hex>>" \
+    "print ss enabled #2"
+
+gdb_test_no_output "guile (install-progspace-pretty-printers! (current-progspace))"
+gdb_test "print ss" \
+    " = a=<progspace a=<1> b=<$hex>> b=<progspace a=<2> b=<$hex>>" \
+    "print ss via progspace"
+
+gdb_test_no_output "guile (install-objfile-pretty-printers! (current-progspace) \"scm-pretty-print\")"
+gdb_test "print ss" \
+    " = a=<objfile a=<1> b=<$hex>> b=<objfile a=<2> b=<$hex>>" \
+    "print ss via objfile"

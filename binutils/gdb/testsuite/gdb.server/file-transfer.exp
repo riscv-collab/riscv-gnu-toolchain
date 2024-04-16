@@ -1,0 +1,85 @@
+# This testcase is part of GDB, the GNU debugger.
+# Copyright 2007-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test gdbserver monitor commands.
+
+load_lib gdbserver-support.exp
+
+standard_testfile server.c
+
+require allow_gdbserver_tests
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+# Make sure we're disconnected, in case we're testing with an
+# extended-remote board, therefore already connected.
+gdb_test "disconnect" ".*"
+
+gdbserver_run ""
+
+proc test_file_transfer { filename description } {
+    set host_filename [gdb_remote_download host $filename]
+
+    set up_server up-server
+    set down_server down-server
+
+    if {![is_remote target]} {
+	set down_server [standard_output_file $down_server]
+    }
+
+    set up_server [host_standard_output_file $up_server]
+
+    gdb_test "remote put \"$host_filename\" $down_server" \
+	"Successfully sent .*" "put $description"
+    gdb_test "remote get $down_server $up_server" \
+	"Successfully fetched .*" "get $description"
+
+    if { ![is_remote target] } {
+	# If we can check the target copy of the file, do that too.
+	# This should catch symmetric errors in upload and download.
+	set result [remote_exec build "cmp -s $filename $down_server"]
+	if { [lindex $result 0] == 0 } {
+	    pass "compare intermediate $description"
+	} else {
+	    fail "compare intermediate $description"
+	}
+    }
+
+    set result [remote_exec host "cmp -s $host_filename $up_server"]
+    if { [lindex $result 0] == 0 } {
+	pass "compare $description"
+    } else {
+	fail "compare $description"
+    }
+
+    gdb_test "remote delete $down_server" \
+	"Successfully deleted .*" "deleted $description"
+
+    if { ![is_remote target] } {
+	if { ! [remote_file target exists $down_server] } {
+	    pass "verified deleted $description"
+	} else {
+	    fail "verified deleted $description"
+	}
+    }
+
+    catch { file delete $up_server }
+}
+
+test_file_transfer "$binfile" "binary file"
+test_file_transfer "$srcdir/$subdir/transfer.txt" "text file"

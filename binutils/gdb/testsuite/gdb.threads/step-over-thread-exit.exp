@@ -1,0 +1,240 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test stepping over a breakpoint installed on an instruction that
+# exits the thread.
+
+standard_testfile .c
+
+set syscalls_src $srcdir/lib/my-syscalls.S
+
+if { [build_executable "failed to prepare" $testfile \
+	  [list $srcfile $syscalls_src] {debug pthreads}] == -1 } {
+    return
+}
+
+# Test stepping/continuing at an exit syscall instruction.
+#
+# Each argument is a different testing axis.
+#
+# STEP_OVER_MODE can be one of:
+#
+#   - none: don't put a breakpoint on the exit syscall instruction.
+#
+#   - inline: put a breakpoint on the exit syscall instruction, and
+#     use in-line stepping to step over it (disable
+#     displaced-stepping).
+#
+#   - displaced: same, but use displaced stepping.
+#
+# SCHEDLOCK can be "on" or "off".
+#
+# CMD is the GDB command to run when at the exit syscall instruction.
+#
+# NS_STOP_ALL is only used if testing "set non-stop on", and indicates
+# whether to have GDB explicitly stop all threads before continuing to
+# thread exit.
+#
+proc test {step_over_mode non-stop target-non-stop schedlock cmd ns_stop_all} {
+    if {${non-stop} == "off" && $ns_stop_all} {
+	error "invalid arguments"
+    }
+
+    save_vars ::GDBFLAGS {
+	append ::GDBFLAGS " -ex \"maintenance set target-non-stop ${target-non-stop}\""
+	append ::GDBFLAGS " -ex \"set non-stop ${non-stop}\""
+	clean_restart $::binfile
+    }
+
+    if { $step_over_mode == "none" } {
+	# Nothing to do.
+    } elseif { $step_over_mode == "inline" } {
+	gdb_test_no_output "set displaced-stepping off"
+    } elseif { $step_over_mode == "displaced" } {
+	gdb_test_no_output "set displaced-stepping on"
+    } else {
+	error "Invalid step_over_mode value: $step_over_mode"
+    }
+
+    if {$schedlock
+	|| (${non-stop} == "on" && $ns_stop_all)} {
+
+	gdb_test_no_output "set args 1"
+
+	if { ![runto my_exit_syscall] } {
+	    return
+	}
+
+	if {${non-stop} == "on"} {
+	    # The test only spawns one thread at a time, so this just
+	    # stops the main thread.  IOW, we only need to wait for
+	    # one stop.
+	    gdb_test_multiple "interrupt -a" "" {
+		-re "$::gdb_prompt " {
+		    gdb_test_multiple "" $gdb_test_name {
+			-re "Thread 1 \[^\r\n\]*stopped." {
+			    pass $gdb_test_name
+			}
+		    }
+		}
+	    }
+
+	    gdb_test "thread 2" "Switching to thread 2 .*"
+	}
+
+	gdb_test_no_output "set scheduler-locking ${schedlock}"
+
+	# If testing a step-over is requested, leave the breakpoint at
+	# the current instruction to force a step-over; otherwise,
+	# remove it.
+	if { $step_over_mode == "none" } {
+	    delete_breakpoints
+	}
+
+	if {$cmd == "continue"} {
+	    gdb_test "continue" \
+		"No unwaited-for children left." \
+		"continue stops when thread exits"
+	} else {
+	    gdb_test_multiple $cmd "command aborts when thread exits" {
+		-re "Command aborted, thread exited\\.\r\n$::gdb_prompt " {
+		    pass $gdb_test_name
+		}
+	    }
+	}
+    } else {
+	# Schedlock is off here.
+	#
+	# With "continue" and no scheduler-locking, GDB doesn't stop
+	# with "Command aborted, thread exited." when the thread
+	# exits, it just lets the inferior continue running freely.
+	# So we test that we can move past the thread exit, and that
+	# other threads can be freely scheduled.  We do that by
+	# spawning another thread as soon as the first exit.  We test
+	# that a number of times.  This should also exercise GDB's
+	# handling of inline or displaced step-overs, that GDB handles
+	# the related resource accounting correctly when the stepping
+	# thread exits, etc.
+	#
+	# With "continue" and $step_over_mode == "none" however, after
+	# the first my_exit_syscall breakpoint hit, we will remove the
+	# breakpoint, so no other thread would ever hit it again.  So
+	# might as well just test one thread.
+	#
+	# With step/next, GDB aborts the execution command with
+	# "Command aborted, thread exited." when the stepping thread
+	# exits.  If we let the main spawn another thread as soon as
+	# the first exits, it would be possible for that new thread to
+	# hit the exit syscall insn breakpoint quickly enough that it
+	# would be reported to be user before the first thread exit
+	# would be, which would confuse testing.  To avoid that, we
+	# only spawn one thread, too.
+	#
+	if {$cmd != "continue" || $step_over_mode == "none"} {
+	    set n_threads 1
+	} else {
+	    set n_threads 100
+	}
+
+	gdb_test_no_output "set args $n_threads"
+
+	if { ![runto_main] } {
+	    return
+	}
+
+	gdb_breakpoint "my_exit_syscall"
+
+	gdb_test_no_output "set scheduler-locking ${schedlock}"
+
+	if {$cmd != "continue" || $step_over_mode == "none"} {
+	    set thread "<unknown>"
+	    gdb_test_multiple "continue" "" {
+		-re -wrap "Thread ($::decimal) .*hit Breakpoint $::decimal.* my_exit_syscall .*" {
+		    set thread $expect_out(1,string)
+		}
+	    }
+	    if {${non-stop}} {
+		gdb_test -nopass "thread $thread" "Switching to thread .*" \
+		    "switch to event thread"
+	    }
+
+	    # If testing a step-over is requested, leave the breakpoint at
+	    # the current instruction to force a step-over; otherwise,
+	    # remove it.
+	    if { $step_over_mode == "none" } {
+		delete_breakpoints
+	    }
+
+	    if {$cmd == "continue"} {
+		gdb_continue_to_end "continue to end" "continue" 1
+	    } else {
+		gdb_test_multiple $cmd "command aborts when thread exits" {
+		    -re "Command aborted, thread exited\\.\r\n$::gdb_prompt " {
+			pass $gdb_test_name
+		    }
+		}
+		gdb_test "p \$_thread == $thread" "= 1" \
+		    "selected thread didn't change"
+	    }
+	} else {
+	    for { set i 0 } { $i < 100 } { incr i } {
+		with_test_prefix "iter $i" {
+		    set ok 0
+		    set thread "<unknown>"
+		    gdb_test_multiple "continue" "" {
+			-re -wrap "Thread ($::decimal) .*hit Breakpoint $::decimal.* my_exit_syscall .*" {
+			    set thread $expect_out(1,string)
+			    set ok 1
+			}
+		    }
+		    if {!${ok}} {
+			# Exit if there's a failure to avoid lengthy
+			# timeouts.
+			break
+		    }
+
+		    if {${non-stop}} {
+			gdb_test -nopass "thread $thread" "Switching to thread .*" \
+			    "switch to event thread"
+		    }
+		}
+	    }
+	}
+    }
+}
+
+foreach_with_prefix step_over_mode {none inline displaced} {
+    foreach_with_prefix non-stop {off on} {
+	foreach_with_prefix target-non-stop {off on} {
+	    if {${non-stop} == "on" && ${target-non-stop} == "off"} {
+		# Invalid combination.
+		continue
+	    }
+
+	    foreach_with_prefix schedlock {off on} {
+		foreach_with_prefix cmd {"next" "continue"} {
+		    if {${non-stop} == "on"} {
+			foreach_with_prefix ns_stop_all {0 1} {
+			    test ${step_over_mode} ${non-stop} ${target-non-stop} \
+				${schedlock} ${cmd} ${ns_stop_all}
+			}
+		    } else {
+			test ${step_over_mode} ${non-stop} ${target-non-stop} ${schedlock} ${cmd} 0
+		    }
+		}
+	    }
+	}
+    }
+}

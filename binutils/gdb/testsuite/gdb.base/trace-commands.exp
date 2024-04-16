@@ -1,0 +1,136 @@
+# Copyright 2006-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that the source command's verbose mode works, the 'set trace-commands'
+# command works, and that the nest depth is correct in various circumstances.
+
+gdb_exit
+gdb_start
+
+# Create a file to source
+set tracecommandsscript [standard_output_file tracecommandsscript]
+set fd [open "$tracecommandsscript" w]
+puts $fd "\
+echo in tracecommandsscript\\n
+define func
+ echo in func \$arg0\\n
+end
+if 1
+ if 2
+  if 3
+   if 4
+    echo deep\\n
+    func 999
+   end
+  end
+ end
+end
+"
+close $fd
+
+# Make sure that the show trace-commands exists and the default is 'off'.
+gdb_test "show trace-commands" "State of GDB CLI command tracing is off\\." \
+	 "show trace-commands says off"
+
+# Source the script with verbose mode.
+gdb_test_sequence "source -v $tracecommandsscript" "source -v" {
+  {[\r\n]\+echo in tracecommandsscript\\n}
+  {[\r\n]\+define func}
+  {[\r\n]\+if 1}
+  {[\r\n]\+\+if 2}
+  {[\r\n]\+\+\+if 3}
+  {[\r\n]\+\+\+\+if 4}
+  {[\r\n]\+\+\+\+\+echo deep\\n}
+  {[\r\n]\+\+\+\+\+func 999}
+  {[\r\n]\+\+\+\+\+\+echo in func 999\\n}
+}
+
+# Turn on command tracing.
+gdb_test_no_output "set trace-commands" "set trace-commands"
+
+# Make sure show trace-commands now gives 'on'.
+gdb_test "show trace-commands" \
+    {\+show trace-commands[\r\n]+State of GDB CLI command tracing is on\.} \
+	 "show trace-commands says on"
+
+# Simple test
+gdb_test "echo hi\\n" {\+echo hi\\n[\r\n]+hi} "simple trace-commands test"
+
+# Nested test
+set strings {
+    {+if 1}
+    {++set $i = 0}
+    {++while $i < 5}
+    {+++func $i}
+    {++++echo in func $i\n}
+    {+++set $i += 1}
+    {+++func $i}
+    {++++echo in func $i\n}
+    {+++set $i += 1}
+    {+++func $i}
+    {++++echo in func $i\n}
+    {+++set $i += 1}
+    {+++func $i}
+    {++++echo in func $i\n}
+    {+++set $i += 1}
+    {+++func $i}
+    {++++echo in func $i\n}
+    {+++set $i += 1}
+}
+set re {}
+foreach string $strings {
+    lappend re [string_to_regexp $string]
+}
+set re [join $re "\r\n(.*\r\n)?"]
+set cmd "if 1\nset \$i = 0\nwhile \$i < 5\nfunc \$i\nset \$i += 1\nend\nend"
+gdb_test $cmd $re "nested trace-commands test"
+
+# Function with source works
+gdb_test_sequence "define topfunc\nsource $tracecommandsscript\nend" \
+    "define user command" {
+  {[\r\n]\+define topfunc}
+}
+gdb_test_sequence "topfunc" "nested trace-commands test with source" {
+  {[\r\n]\+topfunc}
+  {[\r\n]\+\+source .*/tracecommandsscript}
+  {[\r\n]\+\+echo in tracecommandsscript\\n}
+  {[\r\n]\+\+define func}
+  {[\r\n]\+\+if 1}
+  {[\r\n]\+\+\+if 2}
+  {[\r\n]\+\+\+\+if 3}
+  {[\r\n]\+\+\+\+\+if 4}
+  {[\r\n]\+\+\+\+\+\+echo deep\\n}
+  {[\r\n]\+\+\+\+\+\+func 999}
+  {[\r\n]\+\+\+\+\+\+\+echo in func 999\\n}
+}
+
+# Test nest depth resets properly on error
+set cmd "if 1\nif 2\nload\necho should not get here\\n\nend\nend"
+set strings {
+  {+if 1}
+  {++if 2}
+  {+++load}
+  {No executable file specified.}
+  {Use the "file" or "exec-file" command.}
+}
+set re {}
+foreach string $strings {
+    lappend re [string_to_regexp $string]
+}
+set re [join $re "\r\n(.*\r\n)?"]
+gdb_test $cmd $re "depth resets on error part 1"
+
+gdb_test "echo hi\\n" {[\r\n]\+echo hi\\n[\r\n]+hi} \
+	 "depth resets on error part 2"

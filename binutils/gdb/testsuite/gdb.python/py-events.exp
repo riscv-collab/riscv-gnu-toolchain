@@ -1,0 +1,350 @@
+# Copyright (C) 2010-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require !use_gdb_stub allow_python_tests
+
+load_lib gdb-python.exp
+
+set libfile "py-events-shlib"
+set libsrc  $srcdir/$subdir/$libfile.c
+set lib_sl  [standard_output_file $libfile.so]
+set lib_opts  debug
+
+standard_testfile
+set exec_opts [list debug shlib=$lib_sl]
+
+if { [gdb_compile_shlib $libsrc $lib_sl $lib_opts] != ""
+     || [gdb_compile $srcdir/$subdir/$srcfile $binfile executable $exec_opts] != ""} {
+    untested "failed to compile"
+    return -1
+}
+
+# Start with a fresh gdb.
+clean_restart ${testfile}
+
+gdb_test_no_output "python import gdb.events"
+
+set pyfile [gdb_remote_download host ${srcdir}/${subdir}/py-events.py]
+gdb_test_no_output "source ${pyfile}" "load python file"
+
+gdb_test "test-objfile-events" "Object file events registered."
+
+gdb_breakpoint "main" {temporary}
+
+gdb_test "run" ".*event type: new_objfile.*new objfile name.*" "new objfile notification"
+
+gdb_test_no_output "set detach-on-fork off" ""
+
+gdb_test "test-events" "Event testers registered."
+
+gdb_breakpoint "first"
+gdb_breakpoint "first"
+
+# Test continue event and breakpoint stop event
+gdb_test "continue" ".*event type: continue.*
+.*event type: stop.*
+.*stop reason: breakpoint.*
+.*first breakpoint number: 2.*
+.*breakpoint number: 2.*
+.*breakpoint number: 3.*
+all threads stopped.*"
+
+# Test that when "step N" trips on a breakpoint, we get a stop event
+# with breakpoint stop reason.
+gdb_breakpoint "do_nothing"
+gdb_test "step 3" ".*event type: continue.*
+.*event type: stop.*
+.*stop reason: breakpoint.*
+.*first breakpoint number: 4.*
+.*breakpoint number: 4.*
+all threads stopped.*"
+
+delete_breakpoints
+
+# Test inferior call events
+
+set process_id "invalid"
+gdb_test_multiple "thread" "get current thread" {
+    -re -wrap "process ($decimal).*" {
+	set process_id $expect_out(1,string)
+	pass $gdb_test_name
+    }
+    -re -wrap "Thread $hex \\(LWP ($decimal)\\).*" {
+	set process_id $expect_out(1,string)
+	pass $gdb_test_name
+    }
+    -re -wrap "Thread $decimal\.($decimal).*" {
+	set process_id $expect_out(1,string)
+	pass $gdb_test_name
+    }
+}
+
+gdb_test_multiple "print do_nothing" "get address of do_nothing" {
+    -re "\[^\n\r\]*(0x\[0-9a-f\]+) \<do_nothing\>.*$gdb_prompt $" {
+	set addr $expect_out(1,string)
+	pass "get address of do_nothing"
+    }
+}
+
+set expected [list "event type: pre-call"]
+lappend expected "ptid: \\($process_id, $process_id, 0\\)" "address: $addr"
+lappend expected "event type: post-call"
+lappend expected "ptid: \\($process_id, $process_id, 0\\)" "address: $addr"
+gdb_test_sequence "call do_nothing()" "" $expected
+
+# Test register changed event
+gdb_test_no_output {set $old_sp = $sp}
+gdb_test_sequence {set $sp = 0} "" {
+    "event type: register-changed"
+    "frame: "
+    "num: "
+}
+gdb_test_sequence {set $sp = 1} "" {
+    "event type: register-changed"
+    "frame: "
+    "num: "
+}
+gdb_test_sequence {set $sp = $old_sp} "" {
+    "event type: register-changed"
+    "frame: "
+    "num: "
+}
+
+# Test that no register_changed event is generated on "non-user"
+# modifications
+set test "up"
+gdb_test_multiple {up} $test {
+    -re "event type: register-changed.*\r\n$gdb_prompt $" {
+	fail $test
+    }
+    -re "#1.*in first.*\r\n.*do_nothing.*\r\n$gdb_prompt $" {
+	pass $test
+    }
+}
+
+set test "down"
+gdb_test_multiple {down} $test {
+    -re "event type: register-changed.*\r\n$gdb_prompt $" {
+	fail $test
+    }
+    -re "#0.*do_nothing.* at .*\r\n.*void do_nothing.*\r\n$gdb_prompt $" {
+	pass $test
+    }
+}
+
+set test "step"
+# Note: This will step the inferior out of do_nothing and back into first.
+gdb_test_multiple {step} $test {
+    -re "event type: register-changed.*\r\n$gdb_prompt $" {
+	fail $test
+    }
+    -re "first.* at .*\r\n$gdb_prompt $" {
+	pass $test
+    }
+}
+
+# Test memory changed event
+gdb_test_no_output {set $saved = *(int*) $sp}
+gdb_test_sequence {set *(int*) $sp = 0} "" {
+    "event type: memory-changed"
+    "address: "
+    "length: "
+}
+gdb_test_sequence {set *(int*) $sp = $saved} "" {
+    "event type: memory-changed"
+    "address: "
+    "length: "
+}
+
+# Test that no memory_changed event is generated on breakpoint
+# activity
+set test "break second"
+gdb_test_multiple "break second" $test {
+    -re "event type: memory-changed" {
+	fail $test
+    }
+    -re "Breakpoint (\[0-9\]+) at .*\r\n$gdb_prompt $" {
+	set second_breakpoint $expect_out(1,string)
+	pass $test
+    }
+
+}
+
+set test "continue to breakpoint $second_breakpoint"
+set expected ".*event type: continue.*\r\n"
+append expected ".*event type: stop.*\r\n"
+append expected ".*stop reason: breakpoint.*\r\n"
+append expected ".*all threads stopped.*\r\n$gdb_prompt $"
+
+gdb_test_multiple "continue" $test {
+    -re "event type: memory-changed.*\r\n$gdb_prompt $" {
+	fail $test
+    }
+    -re $expected {
+	pass $test
+    }
+}
+
+gdb_test_no_output "delete $second_breakpoint"
+
+#test exited event.
+proc get_process_id {test} {
+    global gdb_prompt
+    gdb_test_multiple "info proc" $test {
+	-re "process (\\d+).*$gdb_prompt $" {
+	    set process_id $expect_out(1,string)
+	    pass $gdb_test_name
+	}
+    }
+    return ${process_id}
+}
+
+set process_id [get_process_id "get inferior 1 process id"]
+gdb_test "continue" ".*event type: continue.*
+.*clear_objfiles\[\r\n\]*progspace: .*py-events.*
+.*event type: exit.*
+.*exit code: 12.*
+.*exit inf: 1.*
+.*exit pid: $process_id.*
+dir ok: True.*" "Inferior 1 terminated."
+
+gdb_test "inferior 2" ".*Switching to inferior 2.*"
+set process_id [get_process_id "get inferior 2 process id"]
+gdb_test "continue" ".*event type: continue.*
+.*event type: exit.*
+.*exit code: 12.*
+.*exit inf: 2.*
+.*exit pid: $process_id.*
+dir ok: True.*" "Inferior 2 terminated."
+
+
+# Test before_prompt event.
+gdb_test_multiline "define new user command" \
+    "define xxz" "End with a line saying just .end.." \
+    "set variable \$x = 72" "" \
+    "set variable \$y = 93" "" \
+    "end" ""
+
+gdb_test_multiline "add before_prompt listener" \
+    "python" "" \
+    "count = 0" "" \
+    "def listener():" "" \
+    "  global count" "" \
+    "  count = count + 1" "" \
+    "gdb.events.before_prompt.connect(listener)" "" \
+    "end" ""
+
+gdb_test_no_output "set variable \$x = 32" "do something"
+# Result is due to one emitted before "set var" and one emitted before
+# this command.
+gdb_test "python print(count)" 2 "check for before_prompt event"
+
+gdb_test_no_output "xxz" "run a canned sequence"
+gdb_test "python print(count)" 4 "check for before_prompt event again"
+
+# Test evaluating expressions from within an inferior exit event handler.  This
+# used to cause a crash when expression were evaluated as C++.
+gdb_test_no_output "set language c++"
+
+gdb_test_multiline "add exited listener" \
+    "python" "" \
+    "def increment_foo(_):" "" \
+    "  gdb.execute('set \$_foo=\$_foo+1')" "" \
+    "gdb.events.exited.connect(increment_foo)" "" \
+    "end" ""
+gdb_test "set \$_foo=0" "" "initialize foo variable"
+gdb_test "print \$_foo" "= 0" "check foo initialized"
+
+with_test_prefix "inferior run exit" {
+    gdb_run_cmd
+    gdb_test "" "exited with code.*" "run to exit"
+    gdb_test "print \$_foo" "= 1" "check foo after run"
+}
+
+with_test_prefix "inferior continue exit" {
+    gdb_start_cmd
+    gdb_test "" "Temporary breakpoint .* main .*" "stop on a frame"
+    gdb_test "continue" "exited with code.*" "continue to exit"
+    gdb_test "print \$_foo" "= 2" "check foo after start continue"
+}
+
+# Check that when GDB exits, we see gdb.ExitedEvent objects with no
+# 'exit_code' attribute, and that a gdb.GdbExitingEvent is emitted.
+with_test_prefix "gdb exiting: normal" {
+    gdb_test "test-exiting-event normal" "GDB exiting event registered\\."
+
+    set saw_exiting_event 0
+    set saw_inferior_exit 0
+    gdb_test_multiple "quit" "" {
+	-re "Quit anyway\\? \\(y or n\\) $" {
+	    send_gdb "y\n"
+	    exp_continue
+	}
+	-re "event type: gdb-exiting\r\nexit code: $decimal" {
+	    incr saw_exiting_event
+	    exp_continue
+	}
+	-re "event type: exit\r\nexit code: not-present\r\nexit inf: $decimal\r\nexit pid: $decimal\r\ndir ok: False\r\n" {
+	    incr saw_inferior_exit
+	    exp_continue
+	}
+	eof {
+	    gdb_assert { $saw_exiting_event == 1 }
+	    gdb_assert { $saw_inferior_exit == 2 }
+	    pass $gdb_test_name
+	}
+    }
+}
+
+# Check that if the GdbExitingEvent raises an exception then this
+# doesn't impact GDB's exit process.
+with_test_prefix "gdb exiting: error" {
+    clean_restart ${testfile}
+
+    if {![runto_main]} {
+	fail "cannot run to main."
+	return 0
+    }
+
+    gdb_test_no_output "source ${pyfile}" "load python file"
+    gdb_test "test-exiting-event error" "GDB exiting event registered\\."
+    gdb_test "test-events" "Event testers registered\\."
+
+    set saw_exiting_error 0
+    set saw_inferior_exit 0
+    gdb_test_multiple "quit" "" {
+	-re "Quit anyway\\? \\(y or n\\) $" {
+	    send_gdb "y\n"
+	    exp_continue
+	}
+	-re "event type: gdb-exiting\r\nexit code: $decimal" {
+	    fail "$gdb_test_name XXXX"
+	    exp_continue
+	}
+	-re "Python Exception <class 'gdb.GdbError'>: error from gdb_exiting_handler\r\n" {
+	    incr saw_exiting_error
+	    exp_continue
+	}
+	-re "event type: exit\r\nexit code: not-present\r\nexit inf: $decimal\r\nexit pid: $decimal\r\ndir ok: False\r\n" {
+	    incr saw_inferior_exit
+	    exp_continue
+	}
+	eof {
+	    gdb_assert { $saw_inferior_exit == 1 }
+	    gdb_assert { $saw_exiting_error == 1 }
+	    pass $gdb_test_name
+	}
+    }
+}

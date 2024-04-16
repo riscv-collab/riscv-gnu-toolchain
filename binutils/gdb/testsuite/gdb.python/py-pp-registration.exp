@@ -1,0 +1,116 @@
+# Copyright (C) 2010-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It tests python pretty
+# printer registration.
+
+load_lib gdb-python.exp
+
+require allow_python_tests
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+set remote_python_file [gdb_remote_download host \
+			    ${srcdir}/${subdir}/${testfile}.py]
+
+if ![runto_main ] {
+    return -1
+}
+
+proc prepare_test { } {
+    global testfile remote_python_file
+
+    # Start with a fresh gdb.
+    clean_restart ${testfile}
+
+    set run_to_here [gdb_get_line_number {break to inspect} ${testfile}.c ]
+    if ![runto ${testfile}.c:$run_to_here] {
+	return 0
+    }
+
+    gdb_test_no_output "source ${remote_python_file}" "read file"
+
+    gdb_test_no_output "py progspace = gdb.current_progspace()"
+    gdb_test_no_output "py my_pretty_printer1 = build_pretty_printer1()"
+    gdb_test_no_output "py my_pretty_printer2 = build_pretty_printer2()"
+
+    return 1
+}
+
+proc test_printers { s_prefix } {
+    global hex
+
+    gdb_test "print flt" " = x=<42> y=<43>"
+    gdb_test "print s" " = ${s_prefix} a=<1> b=<$hex>"
+}
+
+# Test registration with verbose off.
+
+with_test_prefix "verbose off" {
+    if ![prepare_test] {
+	return -1
+    }
+
+    gdb_test_no_output "set verbose off"
+
+    gdb_test_no_output "py gdb.printing.register_pretty_printer(gdb, lookup_function_lookup_test)"
+    gdb_test_no_output "py gdb.printing.register_pretty_printer(progspace, my_pretty_printer1)"
+
+    test_printers "s1"
+}
+
+# Test registration with verbose on.
+
+with_test_prefix "verbose on" {
+    if ![prepare_test] {
+	return -1
+    }
+
+    gdb_test_no_output "set verbose on"
+
+    gdb_test "py gdb.printing.register_pretty_printer(gdb, lookup_function_lookup_test)" \
+	"Registering global lookup_function_lookup_test pretty-printer ..."
+    gdb_test "py gdb.printing.register_pretty_printer(progspace, my_pretty_printer1)" \
+	"Registering pp-test pretty-printer for .*py-pp-registration ..."
+
+    test_printers "s1"
+}
+
+# Exercise the "replace" argument to register_pretty_printer.
+
+with_test_prefix "replace" {
+    if ![prepare_test] {
+	return -1
+    }
+
+    gdb_test_no_output "py gdb.printing.register_pretty_printer(gdb, lookup_function_lookup_test)"
+    gdb_test_no_output "py gdb.printing.register_pretty_printer(progspace, my_pretty_printer1)"
+    gdb_test "py gdb.printing.register_pretty_printer(progspace, my_pretty_printer2, replace=False)" \
+	"RuntimeError: pretty-printer already registered: pp-test\r\nError while executing Python code."
+
+    with_test_prefix "test printers 1" {
+	test_printers "s1"
+    }
+
+    gdb_test_no_output "py gdb.printing.register_pretty_printer(progspace, my_pretty_printer2, replace=True)"
+
+    with_test_prefix "test printers 2" {
+	test_printers "s2"
+    }
+}

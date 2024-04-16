@@ -1,0 +1,104 @@
+# Copyright 2010-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile
+set executable ${testfile}
+
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" \
+	 ${binfile} \
+	 executable \
+	 [list debug additional_flags=-lrt]] != "" } {
+    return -1
+}
+
+clean_restart $testfile
+
+if ![runto_main] {
+    return -1
+}
+
+# `nostop noprint pass' could in some cases report false PASS due to
+# the (preempt 'handle') code path in linux-nat.c.
+
+gdb_test "handle SIGUSR1 stop print pass" \
+    "Signal\[ \t\]+Stop\[ \t\]+Print\[ \t\]+Pass to program\[ \t\]+Description\r\nSIGUSR1\[ \t\]+Yes\[ \t\]+Yes\[ \t\]+Yes\[ \t\].*"
+gdb_test "handle SIGUSR2 stop print pass" \
+    "Signal\[ \t\]+Stop\[ \t\]+Print\[ \t\]+Pass to program\[ \t\]+Description\r\nSIGUSR2\[ \t\]+Yes\[ \t\]+Yes\[ \t\]+Yes\[ \t\].*"
+
+gdb_breakpoint [gdb_get_line_number "break-at-exit"]
+
+set test "get pid"
+set pid ""
+gdb_test_multiple "p ((int (*) (void))getpid) ()" $test {
+    -re " = (\[0-9\]+)\r\n$gdb_prompt $" {
+	set pid $expect_out(1,string)
+	pass $test
+    }
+}
+if {$pid == ""} {
+    untested "failed to get pid"
+    return
+}
+
+for {set sigcount 0} {$sigcount < 4} {incr sigcount} {
+    set test "catch signal $sigcount"
+    set sigusr ""
+    gdb_test_multiple "continue" $test {
+	-re "Thread .* received signal SIGUSR(\[12\]), User defined signal \[12\]\\.\r\n.*\r\n$gdb_prompt $" {
+	    set sigusr $expect_out(1,string)
+	    pass $test
+	}
+    }
+    if {$sigusr == ""} {
+	return -1
+    }
+
+    set test "signal $sigcount si_signo"
+    if {$sigusr == 1} {
+	set signo 10
+    } else {
+	set signo 12
+    }
+    gdb_test_multiple {p $_siginfo.si_signo} $test {
+	-re " = $signo\r\n$gdb_prompt $" {
+	    pass $test
+	}
+	-re "Attempt to extract a component of a value that is not a structure\\.\r\n$gdb_prompt $" {
+	    unsupported $test
+	}
+    }
+
+    set test "signal $sigcount si_code is SI_TKILL"
+    gdb_test_multiple {p $_siginfo.si_code} $test {
+	-re " = -6\r\n$gdb_prompt $" {
+	    pass $test
+	}
+	-re "Attempt to extract a component of a value that is not a structure\\.\r\n$gdb_prompt $" {
+	    unsupported $test
+	}
+    }
+
+    set test "signal $sigcount si_pid"
+    gdb_test_multiple {p $_siginfo._sifields._kill.si_pid} $test {
+	-re " = $pid\r\n$gdb_prompt $" {
+	    pass $test
+	}
+	-re "Attempt to extract a component of a value that is not a structure\\.\r\n$gdb_prompt $" {
+	    unsupported $test
+	}
+    }
+}
+
+gdb_continue_to_breakpoint break-at-exit ".*break-at-exit.*"

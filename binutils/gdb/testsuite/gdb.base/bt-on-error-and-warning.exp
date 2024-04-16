@@ -1,0 +1,117 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that GDB can print a backtrace when it encounters an internal
+# error or an internal warning, and that this functionality can be
+# switched off.
+
+standard_testfile bt-on-fatal-signal.c
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile]} {
+    return -1
+}
+
+# Check we can run to main.  If this works this time then we just
+# assume that it will work later on (when we repeatedly restart GDB).
+if {![runto_main]} {
+    return -1
+}
+
+# Check that the backtrace-on-fatal-signal feature is supported.  If
+# this target doesn't have the backtrace function available then
+# trying to turn this on will give an error, in which case we just
+# skip this test.
+gdb_test_multiple "maint set internal-error backtrace on" \
+    "check backtrace is supported" {
+    -re "support for this feature is not compiled into GDB" {
+	untested "feature not supported"
+	return -1
+    }
+    -re "$gdb_prompt $" {
+	pass $gdb_test_name
+    }
+}
+
+# MODE should be either 'on' or 'off', while PROBLEM_TYPE should be
+# 'internal-error' or 'internal-warning'.  This proc sets the
+# backtrace printing for PROBLEM_TYPE to MODE, then uses 'maint
+# PROBLEM_TYPE foobar' to raise a fake error or warning.
+#
+# We then check that a backtrace either is, or isn't printed, inline
+# with MODE.
+proc run_test {problem_type mode} {
+
+    with_test_prefix "problem=${problem_type}, mode=${mode}" {
+	gdb_test_no_output "maint set ${problem_type} backtrace ${mode}"
+
+	set header_lines 0
+	set bt_lines 0
+
+	gdb_test_multiple "maint ${problem_type} foobar" "scan for backtrace" {
+	    -early -re "^\r\n" {
+		exp_continue
+	    }
+	    -early -re "^maint ${problem_type} foobar\r\n" {
+		exp_continue
+	    }
+	    -early -re "^\[^\r\n\]+: ${problem_type}: foobar\r\n" {
+		incr header_lines
+		exp_continue
+	    }
+	    -early -re "^A problem internal to GDB has been detected" {
+		incr header_lines
+		exp_continue
+	    }
+	    -early -re "^,\r\nfurther debugging may prove unreliable\\.\r\n" {
+		incr header_lines
+		exp_continue
+	    }
+	    -early -re "^----- Backtrace -----\r\n" {
+		incr bt_lines
+		exp_continue
+	    }
+	    -early -re "^\[^-\].+\r\n---------------------\r\n" {
+		incr bt_lines
+		exp_continue
+	    }
+	    eof {
+		fail ${gdb_test_name}
+		return
+	    }
+	    -re "$::gdb_prompt $" {
+		pass ${gdb_test_name}
+	    }
+	}
+
+	gdb_assert { ${header_lines} == 3 }
+	if { $mode == "on" } {
+	    gdb_assert { ${bt_lines} == 2 }
+	} else {
+	    gdb_assert { ${bt_lines} == 0 }
+	}
+    }
+}
+
+# For each problem type (error or warning) raise a fake problem using
+# the maintenance commands and check that a backtrace is (or isn't)
+# printed, depending on the user setting.
+foreach problem_type { internal-error internal-warning } {
+    gdb_test_no_output "maint set ${problem_type} corefile no"
+    gdb_test_no_output "maint set ${problem_type} quit no"
+
+    foreach mode { on off } {
+	run_test ${problem_type} ${mode}
+    }
+}

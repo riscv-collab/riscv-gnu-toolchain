@@ -1,0 +1,82 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "ada.exp"
+
+require allow_ada_tests
+
+standard_ada_testfile crash
+
+if {[gdb_compile_ada "${srcfile}" "${binfile}" executable [list debug]] != "" } {
+  return -1
+}
+
+clean_restart ${testfile}
+
+# Run the program to a certain point, and then use the gcore command
+# to generate a core file. The only objective of this part of this
+# testcase is to generate this core file, so we can then exercise
+# task-switching when debugging from core files.
+
+if {![runto request_for_crash]} {
+    untested "couldn't run to Request_For_Crash"
+    return -1
+}
+
+set corefile [standard_output_file crash.gcore]
+set core_supported [gdb_gcore_cmd "$corefile" "save a corefile"]
+if {!$core_supported} {
+  return -1
+}
+
+# Now taht the core file has been created, we can start the real
+# part of this testcase, which is to debug using that core file.
+# Restart GDB and load that core file.
+
+clean_restart ${testfile}
+
+set core_loaded [gdb_core_cmd "$corefile" "re-load generated corefile"]
+if { $core_loaded == -1 } {
+    # No use proceeding from here.
+    return
+}
+
+# First, switch to task 1.
+
+gdb_test "task 1" \
+         "crash\\.request_for_crash \\(\\) at .*crash\\.adb:$decimal.*"
+
+
+gdb_test "info tasks" \
+         [multi_line "\\s+ID\\s+TID\\s+P-ID\\s+Pri\\s+State\\s+Name" \
+                     "\\*\\s+1\\s+.*main_task" \
+                     "\\s+2.*my_t"] \
+         "info tasks after switching to task 1"
+
+# Switch to task 2. Unlike in the case where we tested the switch to
+# task 1, don't check the location where the debugger says the program
+# is, as this might depend on the runtime, and in particular it might
+# depend on whether the runtime is built with debugging information
+# or not. Just check that we get the "switching to task" message, and
+# we will verify right after with an additional test that the current
+# task is now task 2.
+gdb_test "task 2" \
+         "\\\[Switching to task 2 \"my_t\"\\\].*"
+
+gdb_test "info tasks" \
+         [multi_line "\\s+ID\\s+TID\\s+P-ID\\s+Pri\\s+State\\s+Name" \
+                     "\\s+1\\s+.*main_task" \
+                     "\\*\\s+2.*my_t"] \
+         "info tasks after switching to task 2"

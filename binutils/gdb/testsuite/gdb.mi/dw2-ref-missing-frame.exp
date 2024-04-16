@@ -1,0 +1,57 @@
+# Copyright 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib dwarf.exp
+# This test can only be run on targets which support DWARF-2 and use gas.
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+require dwarf2_support
+
+standard_testfile .S dw2-ref-missing-frame-func.c dw2-ref-missing-frame-main.c
+set objsfile [standard_output_file ${testfile}.o]
+set objfuncfile [standard_output_file ${testfile}-func.o]
+set objmainfile [standard_output_file ${testfile}-main.o]
+
+if { [gdb_compile "${srcdir}/${subdir}/${srcfile}" $objsfile object {}] != ""
+     || [gdb_compile "${srcdir}/${subdir}/${srcfile2}" $objfuncfile object {}] != ""
+     || [gdb_compile "${srcdir}/${subdir}/${srcfile3}" $objmainfile object {debug}] != ""
+     || [gdb_compile "$objfuncfile $objsfile $objmainfile" $binfile executable {}] != "" } {
+    return -1
+}
+
+if {[mi_clean_restart $binfile]} {
+    return
+}
+
+if [mi_runto func_nofb_marker] {
+    # First try referencing DW_AT_frame_base which is not defined.
+    mi_gdb_test "300-stack-list-locals --thread 1 --frame 1 --all-values" \
+	"300\\^done,locals=\\\[\{name=\"func_nofb_var\",value=\"\\\<error reading variable: Could not find the frame base for \\\\\"func_nofb\\\\\"\\\.\\\>\"\},\{name=\"func_nofb_var2\",value=\"\\\<error reading variable: Could not find the frame base for \\\\\"func_nofb\\\\\"\\\.\\\>\"\}\\\].*" \
+	"test func_nofb_marker"
+}
+
+# GDB could have crashed.
+if {[mi_clean_restart $binfile]} {
+    return
+}
+
+# And now try referencing DW_AT_frame_base defined using a self-reference
+# (DW_OP_fbreg).
+if [mi_runto func_loopfb_marker] {
+    mi_gdb_test "301-stack-list-locals --thread 1 --frame 1 --all-values" \
+	"301\\^done,locals=\\\[\{name=\"func_loopfb_var\",value=\"\\\<error reading variable: DWARF-2 expression error: Loop detected.*\"\},\{name=\"func_loopfb_var2\",value=\"\\\<error reading variable: DWARF-2 expression error: Loop detected.*\"\}\\\]" \
+	"test func_loopfb_var"
+}

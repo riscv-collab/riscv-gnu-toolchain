@@ -1,0 +1,262 @@
+# Copyright 2002-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file was written by Tom Tromey <tromey@redhat.com>
+
+# This file is part of the gdb testsuite.
+
+#
+# Tests for readline operations.
+#
+
+# This function is used to test operate-and-get-next.
+# NAME is the name of the test.
+# ARGS is a list of alternating commands and expected results.
+proc operate_and_get_next {name args} {
+  global gdb_prompt
+
+  set my_gdb_prompt "($gdb_prompt| >)"
+
+  set reverse {}
+  foreach {item result} $args {
+    verbose "sending $item"
+    sleep 1
+
+    # We can't use gdb_test here because we might see a " >" prompt.
+    set status 0
+    send_gdb "$item\n"
+    gdb_expect {
+      -re "$item" {
+	# Ok
+      }
+      timeout {
+	set status 1
+      }
+    }
+
+    if {! $status} {
+      gdb_expect {
+	-re "$result" {
+	  # Ok.
+	}
+	timeout {
+	  set status 1
+	}
+      }
+    }
+
+    if {$status} {
+      fail "$name - send $item"
+      return 0
+    }
+    pass "$name - send $item"
+
+    set reverse [linsert $reverse 0 $item $result]
+  }
+
+  # Now use C-p to go back to the start.
+  foreach {item result} $reverse {
+    # Actually send C-p followed by C-l.  This lets us recognize the
+    # command when gdb prints it again.
+    send_gdb "\x10\x0c"
+    set status 0
+    gdb_expect {
+      -re "$item" {
+	# Ok
+      }
+      timeout {
+	set status 1
+      }
+    }
+    if {$status} {
+      fail "$name - C-p to $item"
+      return 0
+    }
+    pass "$name - C-p to $item"
+  }
+
+  # Now C-o through the list.  Don't send the command, since it is
+  # already there.  Strip off the first command from the list so we
+  # can see the next command inside the loop.
+  set count 0
+  foreach {item result} $args {
+    set status 0
+
+    # If this isn't the first item, make sure we see the command at
+    # the prompt.
+    if {$count > 0} {
+      gdb_expect {
+	-re ".*$item" {
+	  # Ok
+	}
+	timeout {
+	  set status 1
+	}
+      }
+    }
+
+    if {! $status} {
+      # For the last item, send a simple \n instead of C-o.
+      if {$count == [llength $args] - 2} {
+	send_gdb "\n"
+      } else {
+	# 15 is C-o.
+	send_gdb [format %c 15]
+      }
+      set status 0
+      gdb_expect {
+	-re "$result" {
+	  # Ok
+	}
+	timeout {
+	  set status 1
+	}
+      }
+    }
+
+    if {$status} {
+      fail "$name - C-o for $item"
+      return 0
+    }
+    pass "$name - C-o for $item"
+
+    set count [expr {$count + 2}]
+  }
+
+  # Match the prompt so the next test starts at the right place.
+  gdb_test "" ".*" "$name - final prompt"
+
+  return 1
+}
+
+save_vars { env(TERM) } {
+    # The arrow key test relies on the standard VT100 bindings, so
+    # make sure that an appropriate terminal is selected.  The same
+    # bug doesn't show up if we use ^P / ^N instead.
+    setenv TERM vt100
+
+    gdb_start
+    gdb_reinitialize_dir $srcdir/$subdir
+
+    if { ![readline_is_used] } {
+	unsupported "readline isn't used."
+	return -1
+    }
+
+    save_vars { timeout env(GDBHISTSIZE) env(GDBHISTFILE) } {
+	set timeout 30
+
+	# A simple test of operate-and-get-next.
+	operate_and_get_next "Simple operate-and-get-next" \
+	    "p 1" ".* = 1" \
+	    "p 2" ".* = 2" \
+	    "p 3" ".* = 3"
+
+	# Test operate-and-get-next with a secondary prompt.
+	operate_and_get_next "operate-and-get-next with secondary prompt" \
+	    "if 1 > 0" "" \
+	    "p 5" "" \
+	    "end" ".* = 5"
+
+	# Verify that arrow keys work in secondary prompts.  The control
+	# sequence is a hard-coded VT100 up arrow.
+	gdb_test "print 42" "\\\$\[0-9\]* = 42"
+	set msg "arrow keys with secondary prompt"
+	gdb_test_multiple "if 1 > 0\n\033\[A\033\[A\nend" $msg {
+	    -re ".*\\\$\[0-9\]* = 42\r\n$gdb_prompt $" {
+		pass $msg
+	    }
+	    -re ".*Undefined command:.*$gdb_prompt $" {
+		fail $msg
+	    }
+	}
+
+	# Use the up arrow to select a previous command.  Check that
+	# no unexpected output is added between the previously
+	# selected command, and the output of that command.
+	gdb_test "print 123" "\\\$\[0-9\]* = 123"
+	gdb_test_multiple "\033\[A" "use up arrow" {
+	    -re -wrap "print 123\r\n\\\$\[0-9\]* = 123" {
+		pass $gdb_test_name
+	    }
+	}
+
+	# Now repeat the first test with a history file that fills the entire
+	# history list.
+
+	set env(GDBHISTFILE) "${srcdir}/${subdir}/gdb_history"
+	set env(GDBHISTSIZE) "10"
+
+	clean_restart
+
+	operate_and_get_next "Simple operate-and-get-next, two" \
+	    "p 7" ".* = 7" \
+	    "p 8" ".* = 8" \
+	    "p 9" ".* = 9"
+
+	# Test sending a long command to GDB, a command that requires
+	# multiple terminal lines.  Long ago there was a readline bug
+	# that would cause GDB to crash in this situation.  We force
+	# the bug by setting up a narrow terminal width, and then
+	# sending a long command.
+	clean_restart
+
+	# The number of characters to send in the command.  We
+	# actually send a few more than this; this total is really the
+	# extra characters we add on after sending the command name.
+	set char_total 4500
+	set char_sent 0
+
+	# Adjust the terminal width.  Detect horizontal scrolling, which
+	# happens with stub-termcap.c.
+	set horizontal_scrolling 0
+	set cmd "set width 7"
+	gdb_test_multiple $cmd "" {
+	    -re "^$cmd\r\n$gdb_prompt $" {
+		pass $gdb_test_name
+	    }
+	    -re "^$cmd\r\n<b\\) $" {
+		set horizontal_scrolling 1
+		pass $gdb_test_name
+	    }
+	}
+
+	if { !$horizontal_scrolling } {
+	    # Send the command prefix, then lots of additional characters
+	    # that create a really long command that wraps over multiple
+	    # lines.
+	    send_gdb "help X"
+	    gdb_test_multiple "" "send long command to GDB" {
+		-re "X" {
+		    incr char_sent
+		    if {$char_sent <= $char_total} {
+			send_gdb "X"
+			exp_continue
+		    }
+		}
+		-re "\[ \b\r\n\]" {
+		    exp_continue
+		}
+	    }
+
+	    # Send the final newline so that GDB will process the command.
+	    # Check GDB returns a suitable error.
+	    send_gdb "\n"
+	    gdb_test "" \
+		"Undefined command: \"X+\"\\.  Try \"help\"\\." \
+		"All the characters transferred"
+	}
+    }
+}

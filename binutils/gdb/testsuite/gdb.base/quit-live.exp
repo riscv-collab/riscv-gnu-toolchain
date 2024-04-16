@@ -1,0 +1,177 @@
+# Copyright (C) 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test quitting GDB with live inferiors.
+#
+# Exercises combinations of:
+#
+# - quitting with "quit" command, or with SIGTERM/SIGHUP signals.
+#
+# - quitting with live inferior selected, or file_stratum inferior
+#   selected.
+#
+# - quitting after "run", or after "attach".
+#
+# - quitting with local executable, or executable loaded from target
+#   directly (via default "target:/" sysroot), or with no executable
+#   loaded.
+
+# Note: sending an asynchronous SIGHUP with kill is not the exact same
+# as closing GDB's input, and that resulting in SIGHUP.  However, it's
+# still a good approximation, and it has the advantage that because
+# GDB still has a terminal, internal errors (if any) are visible in
+# gdb.sum/gdb.log.
+
+standard_testfile
+
+if {[build_executable "failed to build" $testfile $srcfile debug]} {
+    return
+}
+
+# Send signal SIG to GDB, and expect GDB to exit.
+
+proc test_quit_with_sig {sig} {
+    set gdb_pid [exp_pid -i [board_info host fileid]]
+    remote_exec host "kill -$sig ${gdb_pid}"
+
+    set test "quit with SIG$sig"
+    # If GDB mishandles the signal and doesn't exit, this should FAIL
+    # with timeout.  We don't expect a GDB prompt, so if we see one,
+    # we'll FAIL too (without having to wait for timeout).
+    gdb_test_multiple "" $test {
+	eof {
+	    pass $test
+	}
+    }
+}
+
+# Call the "quit" command with an inferior live.
+#
+# APPEAR_HOW specifies how the running inferior appears in GDB.  Can
+# be either:
+#
+# - "run"
+#
+#    Appear via the "run" command.
+#
+# - "attach"
+#
+#    Appear via the "attach" command.
+#
+# - "attach-nofile"
+#
+#    Appear via the "attach" command, but with no program preloaded in
+#    GDB so that GDB reads the program directly from the target when
+#    remote debugging (i.e., from the target:/ sysroot).  This makes
+#    sure that GDB doesn't misbehave if it decides to close the
+#    'target:/.../program' exec_file after closing the remote
+#    connection.
+#
+# EXTRA_INFERIOR is a boolean that specifies whether we try to quit
+# GDB with an extra executable-only (before "run") inferior selected
+# or whether we try to quit GDB when the live inferior is selected,
+# with no extra inferior.
+#
+# QUIT_HOW specifies how to tell GDB to quit.  It can be either "quit"
+# (for "quit" command), "sighup" or "sigterm" (for quitting with
+# SIGHUP and SIGTERM signals, respectively).
+
+proc quit_with_live_inferior {appear_how extra_inferior quit_how} {
+    global srcfile testfile binfile
+    global gdb_spawn_id gdb_prompt
+
+    set test_spawn_id ""
+
+    if {$appear_how != "attach-nofile"} {
+	clean_restart $binfile
+    } else {
+	clean_restart
+    }
+
+    if {$appear_how == "run"} {
+	if {![runto_main]} {
+	    return
+	}
+    } elseif {$appear_how == "attach" || $appear_how == "attach-nofile"} {
+	set test_spawn_id [spawn_wait_for_attach $binfile]
+	set testpid [spawn_id_get_pid $test_spawn_id]
+
+	if {[gdb_test "attach $testpid" \
+		 "Attaching to .*process $testpid.*Reading symbols from.*" \
+		 "attach"] != 0} {
+	    kill_wait_spawned_process $test_spawn_id
+	    return
+	}
+    } else {
+	error "unhandled '\$appear_how': $appear_how"
+    }
+
+    if {$extra_inferior} {
+	gdb_test "add-inferior" "Added inferior 2 on connection .*" \
+	    "add empty inferior 2"
+	gdb_test "inferior 2" "Switching to inferior 2.*" \
+	    "switch to inferior 2"
+    }
+
+    if {$quit_how == "quit"} {
+	# Make regexp that matches the "quit" command's output.
+	proc make_re {how} {
+	    multi_line \
+		"A debugging session is active.\[ \t\r\n\]*Inferior 1\[^\r\n\]* will be $how\." \
+		"" \
+		"Quit anyway\\? \\(y or n\\) $"
+	}
+
+	if {$appear_how == "run"} {
+	    set quit_anyway_re [make_re "killed"]
+	} else {
+	    set quit_anyway_re [make_re "detached"]
+	}
+
+	set test "quit with \"quit\""
+	gdb_test_multiple "quit" $test {
+	    -re $quit_anyway_re {
+		send_gdb "y\n"
+		gdb_test_multiple "" $test {
+		    eof {
+			pass $test
+		    }
+		}
+	    }
+	}
+    } elseif {$quit_how == "sighup"} {
+	test_quit_with_sig HUP
+    } elseif {$quit_how == "sigterm"} {
+	test_quit_with_sig TERM
+    } else {
+	error "unhandled '\$quit_how': $quit_how"
+    }
+
+    if {$test_spawn_id != ""} {
+	kill_wait_spawned_process $test_spawn_id
+    }
+}
+
+foreach_with_prefix appear_how {"run" "attach" "attach-nofile"} {
+    if {$appear_how != "run" && ![can_spawn_for_attach]} {
+	continue
+    }
+
+    foreach_with_prefix extra_inferior {0 1} {
+	foreach_with_prefix quit_how {"quit" "sigterm" "sighup"} {
+	    quit_with_live_inferior $appear_how $extra_inferior $quit_how
+	}
+    }
+}

@@ -1,0 +1,146 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test checks that GDB correctly handles several cases that can
+# occur when GDB attempts to detach an inferior process.  The process
+# can exit or be terminated (e.g.  via SIGKILL) prior to GDB's event
+# loop getting a chance to remove it from GDB's internal data
+# structures.  To complicate things even more, detach works differently
+# when a checkpoint (created via GDB's "checkpoint" command) exists for
+# the inferior.  This test checks all four possibilities: process exit
+# with no checkpoint, process termination with no checkpoint, process
+# exit with a checkpoint, and process termination with a checkpoint.
+
+standard_testfile
+
+# This test requires python.
+require allow_python_tests
+
+# This test attempts to kill a process on the host running GDB, so
+# disallow remote targets.  (Setting --target_board to
+# native-gdbserver or native-extended-gdbserver should still work.)
+require {!is_remote target}
+
+# Checkpoint support only works on native Linux:
+if { [istarget "*-*-linux*"] && [target_info gdb_protocol] == ""} {
+    set has_checkpoint true
+} else {
+    set has_checkpoint false
+}
+
+set flags {}
+lappend flags debug
+lappend flags additional_flags=-DBINFILE=$binfile
+
+if {[build_executable "failed to prepare" $testfile $srcfile $flags] == -1} {
+    return -1
+}
+
+set checkpoint_line [gdb_get_line_number "Checkpoint here"]
+
+# Start an inferior, which blocks in a spin loop.  Setup a Python
+# function that performs an action based on EXIT_P that will cause the
+# inferior to exit, and then, within the same Python function, ask GDB
+# to detach from the inferior.  Use 'continue&' to run the inferior in
+# the background, and then invoke the Python function.  Note, too, that
+# non-stop mode is enabled during the restart; if this is not done,
+# remote_target::putpkt_binary in remote.c will disallow some of the
+# operations necessary for this test.
+#
+# The idea is that GDB's event loop will not get a chance to handle
+# the inferior exiting, so it will only be at the point that we try to
+# detach that we notice that the inferior has exited.
+#
+# When EXIT_P is true the action we perform to terminate the inferior
+# is to set a flag in the inferior, which allows the inferior to break
+# out of its spin loop.
+#
+# When EXIT_P is false the action we perform is to send SIGKILL to the
+# inferior.
+#
+# When CHECKPOINT_P is true, before issuing 'continue&' we use the
+# 'checkpoint' command to create a checkpoint of GDB.
+#
+# When CHECKPOINT_P is false we don't use the 'checkpoint' command.
+proc run_test { exit_p checkpoint_p } {
+    save_vars { ::GDBFLAGS } {
+	append ::GDBFLAGS " -ex \"set non-stop on\""
+	clean_restart $::binfile
+    }
+
+    if {![runto_main]} {
+	return -1
+    }
+
+    if { $checkpoint_p } {
+	# Active checkpoint-specific code in $srcfile.
+	gdb_test_no_output "set var with_checkpoint=1"
+
+	# Run to line where we want to set the checkpoint.
+	gdb_breakpoint "$::srcfile:$::checkpoint_line"
+	gdb_continue_to_breakpoint "checkpoint line"
+
+	# Set the checkpoint.
+	gdb_test "checkpoint" \
+	    "checkpoint 1: fork returned pid $::decimal\\."
+    }
+
+    # Must get the PID before we resume the inferior.
+    set inf_pid [get_inferior_pid]
+
+    # Put the PID in a python variable so that a numerical PID won't
+    # appear in the PASS/FAIL output.
+    gdb_test_no_output "python inf_pid=$inf_pid" "assign inf_pid"
+
+    gdb_test "continue &"
+
+    if { $exit_p } {
+	set action_line "gdb.execute(\"set variable dont_exit_just_yet=0\")"
+    } else {
+	set action_line "os.kill(inf_pid, signal.SIGKILL)"
+    }
+
+    gdb_test_multiline "Create worker function" \
+	"python" "" \
+	"import time" "" \
+	"import os" "" \
+	"import signal" "" \
+	"def kill_and_detach():" "" \
+	"   $action_line" "" \
+	"   time.sleep(1)" "" \
+	"   gdb.execute(\"detach\")" "" \
+	"end" ""
+
+    if { $checkpoint_p } {
+	# NOTE: The 'checkpoint' system in GDB appears to be a little
+	# iffy.  This detach does seem to restore the checkpoint, but
+	# it leaves the inferior stuck in a running state.
+	gdb_test_no_output "python kill_and_detach()"
+    } else {
+	gdb_test "python kill_and_detach()" \
+	    "\\\[Inferior $::decimal \[^\r\n\]+ detached\\\]"
+    }
+}
+
+if { $has_checkpoint } {
+    set checkpoint_iters { true false }
+} else {
+    set checkpoint_iters { false }
+}
+
+foreach_with_prefix exit_p { true false } {
+    foreach_with_prefix checkpoint_p $checkpoint_iters {
+	run_test $exit_p $checkpoint_p
+    }
+}

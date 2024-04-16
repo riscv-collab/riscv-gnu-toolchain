@@ -1,0 +1,98 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test GDB can cope with two watchpoints being hit by different threads at the
+# same time, GDB reports one of them and after "continue" to report the other
+# one GDB should not be confused by differently set watchpoints that time.
+# This is the goal of "reorder1".  "reorder0" tests the basic functionality of
+# two watchpoints being hit at the same time, without reordering them during the
+# stop.  The formerly broken functionality is due to the all-stop mode default
+# "show breakpoint always-inserted" being "off".  Formerly the remembered hit
+# could be assigned during continuation of a thread with pending SIGTRAP to the
+# different/new watchpoint, just based on the watchpoint/debug register number.
+
+require allow_hw_watchpoint_access_tests allow_hw_watchpoint_multi_tests
+if {![istarget *-*-linux*]} {
+    return 0
+}
+
+standard_testfile
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" ${binfile} executable [list debug additional_flags=-lrt]] != "" } {
+    return -1
+}
+
+foreach reorder {0 1} { with_test_prefix "reorder$reorder" {
+
+    clean_restart $testfile
+
+    gdb_test "set can-use-hw-watchpoints 1"
+
+    if ![runto_main] {
+	return -1
+    }
+
+    # Use "rwatch" as "watch" would report the watchpoint changed just based on its
+    # read memory value during a stop by unrelated event.  We are interested in not
+    # losing the hardware watchpoint trigger.
+
+    gdb_test "rwatch thread1_rwatch" "Hardware read watchpoint \[0-9\]+: thread1_rwatch"
+    set test "rwatch thread2_rwatch"
+    gdb_test_multiple $test $test {
+	-re "Target does not support this type of hardware watchpoint\\.\r\n$gdb_prompt $" {
+	    # ppc64 supports at most 1 hw watchpoints.
+	    unsupported $test
+	    return
+	}
+	-re "Hardware read watchpoint \[0-9\]+: thread2_rwatch\r\n$gdb_prompt $" {
+	    pass $test
+	}
+    }
+    gdb_breakpoint [gdb_get_line_number "break-at-exit"]
+
+    # The watchpoints can happen in arbitrary order depending on random:
+    # SEL: Found 2 SIGTRAP events, selecting #[01]
+    # As GDB contains no srand() on the specific host/OS it will behave always the
+    # same.  Such order cannot be guaranteed for GDB in general.
+
+    gdb_test "continue" \
+	     "Hardware read watchpoint \[0-9\]+: thread\[12\]_rwatch\r\n\r\nValue = 0\r\n0x\[0-9a-f\]+ in thread\[12\]_func .*" \
+	     "continue a"
+
+    if $reorder {
+	# GDB orders watchpoints by their addresses so inserting new variables
+	# with lower addresses will shift the former watchpoints to higher
+	# debug registers.
+
+	gdb_test "rwatch unused1_rwatch" "Hardware read watchpoint \[0-9\]+: unused1_rwatch"
+	gdb_test "rwatch unused2_rwatch" "Hardware read watchpoint \[0-9\]+: unused2_rwatch"
+    }
+
+    gdb_test "continue" \
+	     "Hardware read watchpoint \[0-9\]+: thread\[12\]_rwatch\r\n\r\nValue = 0\r\n0x\[0-9a-f\]+ in thread\[12\]_func .*" \
+	     "continue b"
+
+    # While the debug output itself is not checked in this testcase one bug was
+    # found in the DEBUG_INFRUN code path.
+    gdb_test "set debug infrun 1"
+
+    set prompt "$gdb_prompt \\\[infrun\\\] fetch_inferior_event: exit\r\n$"
+    gdb_test_multiple "continue" "continue to breakpoint: break-at-exit" -prompt $prompt {
+        -re ".*break-at-exit.*$prompt$" {
+	    pass $gdb_test_name
+	}
+    }
+}}

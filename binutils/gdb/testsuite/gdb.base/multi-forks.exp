@@ -1,0 +1,201 @@
+#   Copyright 2005-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Until "set follow-fork-mode" and "catch fork" are implemented on
+# other targets...
+#
+require {istarget "*-*-linux*"}
+
+
+standard_testfile .c
+
+set flags {}
+lappend flags debug
+lappend_include_file flags $srcdir/lib/unbuffer_output.c
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable $flags] != "" } {
+     untested "failed to compile"
+     return -1
+}
+
+# Start with a fresh gdb
+
+clean_restart ${binfile}
+
+global gdb_prompt
+
+# This is a test of gdb's ability to follow the parent, child or both
+# parent and child of multiple Unix fork() system calls.
+
+set exit_bp_loc [gdb_get_line_number "Set exit breakpoint here."]
+
+# Insert a breakpoint at the location provided by the exit_bp_loc global
+# and resume the execution until hitting that breakpoint.  We also make
+# sure to consume all the expected output from all processes as well,
+# to make sure it doesn't cause trouble during a subsequent test.
+
+proc continue_to_exit_bp_loc {} {
+    global exit_bp_loc decimal gdb_prompt
+    global inferior_spawn_id gdb_spawn_id
+
+    gdb_breakpoint $exit_bp_loc
+
+    send_gdb "continue\n"
+
+    # The output from the child processes can be interleaved arbitrarily
+    # with the output from GDB and the parent process.  If we don't
+    # consume it all now, it can confuse later interactions.
+    set seen_done 0
+    set seen_break 0
+    set seen_prompt 0
+    set seen_timeout 0
+    while { ($seen_done < 16 || ! $seen_prompt) && ! $seen_timeout } {
+	# We don't know what order the interesting things will arrive in.
+	# Using a pattern of the form 'x|y|z' instead of -re x ... -re y
+	# ... -re z ensures that expect always chooses the match that
+	# occurs leftmost in the input, and not the pattern appearing
+	# first in the script that occurs anywhere in the input, so that
+	# we don't skip anything.
+	gdb_expect {
+	    -i "$inferior_spawn_id $gdb_spawn_id"
+	    -re "($decimal done)|(Breakpoint)|($gdb_prompt)" {
+		if {[info exists expect_out(1,string)]} {
+		    incr seen_done
+		} elseif {[info exists expect_out(2,string)]} {
+		    set seen_break 1
+		} elseif {[info exists expect_out(3,string)]} {
+		    set seen_prompt 1
+		}
+		array unset expect_out
+	    }
+	    timeout { set seen_timeout 1 }
+	}
+    }
+
+    if { $seen_timeout } {
+	fail "run to exit 2 (timeout)"
+    } elseif { ! $seen_prompt } {
+	fail "run to exit 2 (no prompt)"
+    } elseif { ! $seen_break } {
+	fail "run to exit 2 (no breakpoint hit)"
+    } elseif { $seen_done != 16 } {
+	fail "run to exit 2 (missing done messages)"
+    } else {
+	pass "run to exit 2"
+    }
+}
+
+# The inferior program builds a tree of processes by executing a loop
+# four times, calling fork at each iteration.  Thus, at each
+# iteration, the total number of processes doubles; after four
+# iterations, we have 16 processes.  Each process saves the results
+# from its 'fork' calls, so we can tell which leaf a given process is
+# by looking at which forks returned zero and which returned a pid: a
+# zero means to take the child's branch; a pid means to take the
+# parent's branch.
+
+foreach mode { "child" "parent" } {
+    clean_restart ${binfile}
+    runto_main
+
+    gdb_test_no_output "set follow-fork $mode"
+    with_test_prefix "follow $mode" {
+	continue_to_exit_bp_loc
+
+	set test "print pids"
+	if { $mode eq "child" } {
+	    # Gdb is set to follow the child.
+	    # The result should be that each of the 4 forks returns zero.
+	    gdb_test "print pids" "\\$.* = \\{0, 0, 0, 0\\}.*" $test
+	} else {
+	    # Gdb is set to follow the parent.
+	    # Result should be that none of the 4 forks returns zero.
+	    set val \
+		[join [list \
+			   "pids\[0\]==0" \
+			   "pids\[1\]==0" \
+			   "pids\[2\]==0" \
+			   "pids\[3\]==0"] " || "]
+	    gdb_test "print $val" " = 0" $test
+	}
+    }
+}
+
+#
+# Now test with detach-on-fork off.
+#
+
+# Start with a fresh gdb
+
+clean_restart ${binfile}
+
+runto_main
+gdb_breakpoint $exit_bp_loc
+
+gdb_test "help set detach-on-fork" "whether gdb will detach the child.*" \
+    "help set detach"
+
+gdb_test "show detach-on-fork" "on." "show detach default on"
+
+gdb_test_no_output "set detach off" "set detach off"
+
+#
+# We will now run every fork up to the exit bp, 
+# eventually winding up with 16 inferiors.
+#
+
+for {set i 1} {$i <= 15} {incr i} {
+  gdb_test_multiple "continue" "run to exit $i" {
+      -re "Continuing\.\r\n" {
+	  exp_continue
+      }
+      -re "\[New inferior $decimal \\(process $decimal\\)\]\r\n" {
+	  exp_continue
+      }
+      -re -wrap "Breakpoint .* main .*exit.*" {
+	  pass $gdb_test_name
+      }
+  }
+  gdb_test "info inferior" " 2 .* 3 .* 4 .* 5 .*" "info inferior $i"
+  gdb_test "inferior $i + 1" "(_dl_sysinfo_int80|fork|__kernel_(v|)syscall).*" \
+      "inferior $i"
+}
+
+gdb_test "continue" "Breakpoint .* main .*exit.*" "run to exit 16"
+gdb_test "info inferior" " 2 .* 3 .* 4 .* 5 .*" "info inferior 16"
+gdb_test "inferior 2" " main .*" "restart final"
+
+#
+# Now we should examine all the pids.
+#
+
+# 
+# Test detach inferior
+# 
+
+# [assumes we're at #1]
+gdb_test "detach inferior 2" "Detaching .*" "detach 2"
+gdb_test "detach inferior 3" "Detaching .*" "detach 3"
+gdb_test "detach inferior 4" "Detaching .*" "detach 4"
+gdb_test "detach inferior 5" "Detaching .*" "detach 5"
+
+# 
+# Test kill inferior
+#
+
+for {set i 6} { $i <= 16} {incr i} {
+    gdb_test_no_output "kill inferior $i" "kill $i"
+    gdb_test "info inferior $i" "<null>.*" "did kill $i"
+}

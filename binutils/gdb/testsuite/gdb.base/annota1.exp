@@ -1,0 +1,587 @@
+# Copyright 1999-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file was written by Elena Zannoni (ezannoni@cygnus.com)
+
+
+# This testcase cannot use runto_main because of the different prompt
+# we get when using annotation level 2.
+#
+require target_can_use_run_cmd
+
+set breakpoints_invalid "\r\n\032\032breakpoints-invalid\r\n"
+
+#
+# test running programs
+#
+
+standard_testfile .c
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug nowarnings}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+
+clean_restart ${binfile}
+
+# The commands we test here produce many lines of output; disable "press 
+# <return> to continue" prompts.
+gdb_test_no_output "set height 0"
+
+#
+# break in main
+#
+
+set main_line [gdb_get_line_number "break main"]
+
+gdb_test "break ${srcfile}:${main_line}" \
+    "Breakpoint.*at.* file .*$srcfile, line $main_line\\." \
+    "breakpoint main"
+
+
+#
+# NOTE: this prompt is OK only when the annotation level is > 1
+# NOTE: When this prompt is in use the gdb_test procedure cannot be used because
+# it assumes that the last char after the gdb_prompt is a white space. This is not
+# true with this annotated prompt. So we must use send_gdb and gdb_expect.
+#
+
+set old_gdb_prompt $gdb_prompt
+set gdb_prompt "\r\n\032\032pre-prompt\r\n$gdb_prompt \r\n\032\032prompt\r\n"
+
+#
+# Escape all the characters in the path that need it. For instance 
+# the directory name could contain '+'.
+#
+set escapedsrcfile [string_to_regexp ${srcdir}/${subdir}/${srcfile}]
+
+
+#
+# set the annotation level to 2
+#
+# of course, this will test:
+# annotate-pre-prompt
+# annotate-prompt
+# annotate-post-prompt (in the next block)
+#
+send_gdb "set annotate 2\n" 
+gdb_expect {
+    -re "set annotate 2\r\n$gdb_prompt$" { pass "annotation set at level 2" }
+    -re ".*$gdb_prompt$"       { fail "annotation set at level 2" }
+    timeout	            { fail "annotation set at level 2 (timeout)" }
+  }
+
+
+#
+# info break will test:
+# annotate-breakpoints-headers
+# annotate-field
+# annotate-breakpoints-table
+# annotate-record
+# annotate-breakpoints-table-end
+#
+gdb_test_multiple "info break" "breakpoint info" {
+    -re "\r\n\032\032post-prompt\r\n\r\n\032\032breakpoints-headers\r\n\r\n\032\032field 0\r\nNum     \r\n\032\032field 1\r\nType           \r\n\032\032field 2\r\nDisp \r\n\032\032field 3\r\nEnb \r\n\032\032field 4\r\nAddress    +\r\n\032\032field 5\r\nWhat\r\n\r\n\032\032breakpoints-table\r\n\r\n\032\032record\r\n\r\n\032\032field 0\r\n1       \r\n\032\032field 1\r\nbreakpoint     \r\n\032\032field 2\r\nkeep \r\n\032\032field 3\r\ny   \r\n\032\032field 4\r\n$hex +\r\n\032\032field 5\r\nin main at ${escapedsrcfile}:$main_line\r\n\r\n\032\032breakpoints-table-end\r\n$gdb_prompt$" {
+	pass $gdb_test_name
+    }
+    -re "\r\n\032\032post-prompt\r\n\r\n\032\032breakpoints-headers\r\n\r\n\032\032field 0\r\nNum     \r\n\032\032field 1\r\nType           \r\n\032\032field 2\r\nDisp \r\n\032\032field 3\r\nEnb \r\n\032\032field 4\r\nAddress    +\r\n\032\032field 5\r\nWhat\r\n\r\n\032\032breakpoints-table\r\n\r\n\032\032record\r\n\r\n\032\032field 0\r\n1       \r\n\032\032field 1\r\nbreakpoint     \r\n\032\032field 2\r\nkeep \r\n\032\032field 3\r\ny   \r\n\032\032field 4\r\n$hex +\r\n\032\032field 5\r\nin main at .*${srcfile}:$main_line\r\n\r\n\032\032breakpoints-table-end\r\n$gdb_prompt$" {
+	setup_xfail "*-*-*" 8375
+	fail $gdb_test_name
+    }
+}
+
+
+#
+# run to a break point will test:
+# annotate-frames-invalid
+# annotate-breakpoints-invalid (a.k.a. breakpoints-changed)
+# annotate-starting
+# annotate-breakpoint
+# annotate-frame-begin
+# annotate-frame-function-name
+# annotate-frame-args
+# annotate-frame-source-begin
+# annotate-frame-source-file
+# annotate-frame-source-file-end
+# annotate-frame-source-line
+# annotate-frame-source-end
+# annotate-source
+# annotate-frame-end
+# annotate-stopped
+#
+#exp_internal 1
+set binexp [string_to_regexp $binfile]
+
+set warning_slow_re \
+    "warning: File transfers from remote targets can be slow\[^\r\n\]+\r\n"
+set warning_gdb_index_re \
+    [multi_line \
+	 "warning: Skipping \[^\r\n\]+ .gdb_index section in \[^\r\n\]+" \
+	 "Do \"set use-deprecated-index-sections on\" before the file is read" \
+	 "to use the section anyway\\.\r\n"]
+set reading_re \
+    "Reading \[^\r\n\]+\r\n"
+set libthread_db_re \
+    [multi_line \
+	 "\\\[Thread debugging using libthread_db enabled\\\]" \
+	 "Using host libthread_db library \[^\r\n\]+\r\n"]
+
+set optional_re \
+    [list \
+	 "\(" \
+	 "\($reading_re)" \
+	 "|" \
+	 "\($warning_slow_re\)" \
+	 "|" \
+	 "\($libthread_db_re\)" \
+	 "|" \
+	 "\(\r\n$warning_gdb_index_re\)?" \
+	 "\)*"]
+set optional_re [join $optional_re ""]
+
+set run_re \
+    [list \
+	 "\r\n\032\032post-prompt\r\n" \
+	 "Starting program: $binexp \r\n" \
+	 $optional_re \
+	 "\(\r\n\032\032breakpoints-invalid\r\n\)?" \
+	 $optional_re \
+	 "\r\n\032\032starting\r\n" \
+	 $optional_re \
+	 "\r\n\032\032frames-invalid\r\n" \
+	 $optional_re \
+	 "\r\n\032\032breakpoints-invalid\r\n" \
+	 $optional_re \
+	 "\r\n\032\032breakpoint 1\r\n" \
+	 "\r\n" \
+	 "Breakpoint 1, " \
+	 "\r\n\032\032frame-begin 0 $hex\r\n" \
+	 "\r\n\032\032frame-function-name\r\n" \
+	 "main" \
+	 "\r\n\032\032frame-args\r\n" \
+	 " \\(\\)" \
+	 "\r\n\032\032frame-source-begin\r\n" \
+	 " at " \
+	 "\r\n\032\032frame-source-file\r\n" \
+	 ".*annota1.c" \
+	 "\r\n\032\032frame-source-file-end\r\n" \
+	 ":" \
+	 "\r\n\032\032frame-source-line\r\n" \
+	 "$main_line" \
+	 "\r\n\032\032frame-source-end\r\n" \
+	 "\r\n" \
+	 "\r\n\032\032source.*$srcfile:$main_line:.*:beg:$hex\r\n" \
+	 "\r\n\032\032frame-end\r\n" \
+	 "\r\n\032\032stopped\r\n"]
+
+set run_re [join $run_re ""]
+
+gdb_test_multiple "run" "run until main breakpoint" {
+    -re $run_re.*$gdb_prompt$ {
+	pass $gdb_test_name
+    }
+}
+#exp_internal 0
+#exit 0
+
+#
+# Let's do a next, to get to a point where the array is initialized
+# We don't care about the annotated output for this operation, it is the same as
+# the one produced by run above
+#
+gdb_test_multiple "next" "go after array init line" {
+    -re "source .*annota1.c.*$gdb_prompt$" {
+	pass $gdb_test_name
+    }
+}
+
+
+#
+# printing the array will test:
+# annotate-value-history-begin
+# annotate-value-history-value
+# annotate-array-section-begin
+# annotate-elt
+# FIXME: annotate-elt-rep and annotate-elt-rep-end not tested
+# annotate-array-section-end
+# annotate-value-history-end
+# FIXME: annotate-value-begin and annotate-value-end not tested (the gdb output
+#              command would cause them to be used)
+#
+gdb_test_multiple "print my_array" "print array" {
+    -re "\r\n\032\032post-prompt\r\n\r\n\032\032value-history-begin 1 -\r\n.*= \r\n\032\032value-history-value\r\n.\r\n\032\032array-section-begin 0 -\r\n1\r\n\032\032elt\r\n, 2\r\n\032\032elt\r\n, 3\r\n\032\032elt\r\n\r\n\032\032array-section-end\r\n.\r\n\r\n\032\032value-history-end\r\n$gdb_prompt$" {
+	pass $gdb_test_name
+    }
+}
+
+
+#
+# this should generate an error message, so to test:
+# annotate-error-begin
+# FIXME: annotate-error not tested
+#
+
+#exp_internal 1
+gdb_test_multiple "print non_existent_value" "print non_existent_value" {
+    -re "\r\n\032\032post-prompt\r\n\r\n\032\032error-begin\r\nNo symbol \"non_existent_value\" in current context.\r\n\r\n\032\032error\r\n$gdb_prompt$" {
+	pass $gdb_test_name
+    }
+}
+
+
+#
+# break at signal handler. So that, once we are in the sig handler, if we do a bt
+# we can test annotate-signal-handler-caller
+#
+gdb_test_multiple "break handle_USR1" "break handle_USR1" {
+    -re  "\r\n\032\032post-prompt\r\nBreakpoint.*at $hex: file.*$srcfile, line.*\r\n\032\032breakpoints-invalid\r\n.*$gdb_prompt$" {
+	pass $gdb_test_name
+    }
+}
+
+#
+# break at printf. When we are stopped at printf, we can test 
+#
+gdb_test_multiple "break printf" "break printf" {
+    -re  "\r\n\032\032post-prompt\r\nBreakpoint.*at $hex.*\032\032breakpoints-invalid\r\n.*$gdb_prompt$" {
+	pass $gdb_test_name
+    }
+    -re  "\r\n\032\032post-prompt\r\nwarning: Breakpoint address adjusted from $hex to $hex.\r\n\r\n\032\032breakpoints-invalid\r\nBreakpoint.*at $hex.*$gdb_prompt$" {
+	pass $gdb_test_name
+    }
+}
+
+#
+# get to printf
+#
+set pat_begin "\r\n\032\032post-prompt\r\nContinuing.\r\n\r\n\032\032starting\r\n\r\n\032\032frames-invalid\r\n${breakpoints_invalid}\r\n\032\032frames-invalid\r\n"
+set pat_adjust "warning: Breakpoint 3 address previously adjusted from $hex to $hex.\r\n"
+set pat_end "\r\n\032\032breakpoint 3\r\n\r\nBreakpoint 3, \r\n\032\032frame-begin 0 $hex\r\n\r\n(\032\032frame-address\r\n$hex\r\n\032\032frame-address-end\r\n in \r\n)*.*\032\032frame-function-name\r\n.*printf(@.*)?\r\n\032\032frame-args\r\n.*\032\032frame-end\r\n\r\n\032\032stopped\r\n$gdb_prompt$"
+
+gdb_test_multiple "continue" "continue to printf" {
+    -re "${pat_begin}($pat_adjust)?$pat_end" {
+	pass $gdb_test_name
+    }
+    -re ".*$gdb_prompt$"     { fail $gdb_test_name }
+}
+
+#
+# test:
+# annotate-frame-where
+# annotate-frame-address
+# annotate-frame-address-end
+#
+set pat_begin \
+    [list \
+	 "\r\n\032\032post-prompt\r\n" \
+	 "\r\n\032\032frame-begin 0 $hex\r\n" \
+	 ".0  \r\n" \
+	 "(" \
+	 "\032\032frame-address\r\n" \
+	 "${hex}( \\\[PAC\\\])?" \
+	 "\r\n\032\032frame-address-end\r\n" \
+	 " in \r\n" \
+	 ")*" \
+	 "\032\032frame-function-name\r\n" \
+	 ".*printf(@.*)?" \
+	 "\r\n\032\032frame-args\r\n" \
+	 " \\(.*frame-end\r\n" \
+	 "\r\n\032\032frame-begin 1 $hex\r\n" \
+	 ".1  " \
+	 "\r\n\032\032frame-address\r\n" \
+	 "${hex}( \\\[PAC\\\])?" \
+	 "\r\n\032\032frame-address-end\r\n" \
+	 " in " \
+	 "\r\n\032\032frame-function-name\r\n" \
+	 "main" \
+	 "\r\n\032\032frame-args\r\n" \
+	 " \\(\\)" \
+	 "\r\n\032\032frame-source-begin\r\n" \
+	 " at " \
+	 "\r\n\032\032frame-source-file\r\n"]
+
+set pat_begin [join $pat_begin ""]
+
+set pat_end \
+    [list \
+	 "\r\n\032\032frame-source-file-end\r\n" \
+	 ":" \
+	 "\r\n\032\032frame-source-line\r\n" \
+	 ".*" \
+	 "\r\n\032\032frame-source-end\r\n\r\n" \
+	 "\r\n\032\032frame-end\r\n" \
+	 "(" \
+	 "\r\n\032\032frame-begin .*\r\n" \
+	 "\r\n\032\032frame-end\r\n" \
+	 ")*" \
+	 "$gdb_prompt$"]
+
+set pat_end [join $pat_end ""]
+
+gdb_test_multiple "backtrace" "backtrace from shlibrary" {
+    -re "$pat_begin$escapedsrcfile$pat_end" {
+	pass $gdb_test_name
+    }
+    -re "$pat_begin.*$srcfile$pat_end" {
+	setup_xfail "*-*-*" 8375
+	fail $gdb_test_name
+    }
+}
+
+
+#
+# test printing a frame with some arguments: 
+# annotate-arg-begin
+# annotate-arg-name-end
+# annotate-arg-value
+# annotate-arg-end
+#
+
+if [target_info exists gdb,nosignals] {
+    unsupported "send SIGUSR1"
+    unsupported "backtrace @ signal handler"
+} else {
+    gdb_test_multiple "signal SIGUSR1" "send SIGUSR1" {
+	-re "\r\n\032\032post-prompt\r\nContinuing with signal SIGUSR1.\r\n\r\n\032\032starting\(\(\r\n\r\n\032\032frames-invalid\)|\(\r\n\r\n\032\032breakpoints-invalid\)\)+\r\n\r\n\032\032breakpoint 2\r\n\r\nBreakpoint 2, \r\n\032\032frame-begin 0 $hex\r\n\r\n\032\032frame-function-name\r\nhandle_USR1\r\n\032\032frame-args\r\n \\(\r\n\032\032arg-begin\r\nsig\r\n\032\032arg-name-end\r\n=\r\n\032\032arg-value -\r\n$decimal\r\n\032\032arg-end\r\n\\)\r\n\032\032frame-source-begin\r\n at \r\n\032\032frame-source-file\r\n${escapedsrcfile}\r\n\032\032frame-source-file-end\r\n:\r\n\032\032frame-source-line\r\n.*\r\n\032\032frame-source-end\r\n\r\n\r\n\032\032source.*annota1.c:.*:.*:beg:$hex\r\n\r\n\032\032frame-end\r\n\r\n\032\032stopped\r\n$gdb_prompt$" {
+	    pass $gdb_test_name
+	}
+	-re "\r\n\032\032post-prompt\r\nContinuing with signal SIGUSR1.\r\n\r\n\032\032starting\(\(\r\n\r\n\032\032frames-invalid\)|\(\r\n\r\n\032\032breakpoints-invalid\)\)+\r\n\r\n\032\032breakpoint 2\r\n\r\nBreakpoint 2, \r\n\032\032frame-begin 0 $hex\r\n\r\n\032\032frame-function-name\r\nhandle_USR1\r\n\032\032frame-args\r\n \\(\r\n\032\032arg-begin\r\nsig\r\n\032\032arg-name-end\r\n=\r\n\032\032arg-value -\r\n$decimal\r\n\032\032arg-end\r\n\\)\r\n\032\032frame-source-begin\r\n at \r\n\032\032frame-source-file\r\n.*${srcfile}\r\n\032\032frame-source-file-end\r\n:\r\n\032\032frame-source-line\r\n.*\r\n\032\032frame-source-end\r\n\r\n\r\n\032\032source.*annota1.c:.*:.*:beg:$hex\r\n\r\n\032\032frame-end\r\n\r\n\032\032stopped\r\n$gdb_prompt$" {
+	    setup_xfail "*-*-*" 8375
+	    fail $gdb_test_name
+	}
+    }
+
+    #
+    # test:
+    # annotate-signal-handler-caller
+    #
+    gdb_test_multiple "backtrace" "backtrace @ signal handler" {
+	-re "frame-begin 0 $hex\r\n#0.*frame-end.*frame-begin 1 $hex\r\n#1.*(\032\032signal-handler-caller\r\n.signal handler called.\r\n\r\n)+\032\032frame-end\r\n\r\n\032\032frame-begin 2 $hex\r\n#2.*(frame-begin 3 $hex\r\n#3.*)*frame-end.*$gdb_prompt$" {
+	    pass $gdb_test_name
+	}
+    }
+}
+
+#
+# delete all the breakpoints
+#
+gdb_test_multiple "delete 1" "delete bp 1" {
+    -re "\r\n\032\032post-prompt\r\n${breakpoints_invalid}$gdb_prompt$" {
+	pass $gdb_test_name
+    }
+}
+
+gdb_test_multiple "delete 2" "delete bp 2" {
+    -re "\r\n\032\032post-prompt\r\n${breakpoints_invalid}$gdb_prompt$" {
+	pass $gdb_test_name
+    }
+}
+
+gdb_test_multiple "delete 3" "delete bp 3" {
+    -re "\r\n\032\032post-prompt\r\n${breakpoints_invalid}$gdb_prompt$" {
+	pass $gdb_test_name
+    }
+}
+
+#
+# break in main, after value is initialized. This is in preparation
+# to test the annotate output for the display command.
+#
+gdb_test_multiple "break ${srcfile}:${main_line}" "break in main" {
+    -re "post-prompt.*Breakpoint 4 at $hex: file ${escapedsrcfile}, line $main_line.*\032\032breakpoints-invalid.*$gdb_prompt$" {
+	pass $gdb_test_name
+    }
+    -re "post-prompt.*Breakpoint 4 at $hex: file .*${srcfile}, line $main_line.*\032\032breakpoints-invalid.*$gdb_prompt$" {
+	setup_xfail "*-*-*" 8375
+	fail $gdb_test_name
+    }
+}
+
+#
+# display the value; test:
+# annotate-display-begin
+# annotate-display-number-end
+# annotate-display-format
+# annotate-display-expression
+# annotate-display-expression-end
+# annotate-display-end
+# FIXME: annotate-display-value not tested
+#
+gdb_test_multiple "display value" "set up display" {
+    -re "post-prompt\r\n\r\n\032\032display-begin\r\n1\r\n\032\032display-number-end\r\n: \r\n\032\032display-format\r\n\r\n\032\032display-expression\r\nvalue\r\n\032\032display-expression-end\r\n = \r\n\032\032display-expression\r\n7\r\n\r\n\032\032display-end\r\n$gdb_prompt$" {
+	pass "set up display"
+    }
+}
+
+# Get the core into the output directory.
+if {![is_remote host]} {
+    gdb_test -prompt "$gdb_prompt$" \
+	"set cwd [file dirname $binfile]" "" \
+	"set inferior cwd to test directory"
+}
+
+# should ask query. Test annotate-query.
+# we don't care about anything else here, only the query.
+
+send_gdb "run\n"
+gdb_expect {
+  -re "pre-query.*already.*\\(y or n\\).*query\r\n" {
+         send_gdb "y\n"
+         gdb_expect {
+	     -re ".*post-query.*$gdb_prompt$" \
+		     { pass "re-run" }
+	     -re ".*$gdb_prompt$"  { fail "re-run" }
+	     timeout { fail "re-run (timeout)" }
+	 }
+     }
+  -re ".*$gdb_prompt$"  { fail "re-run" }
+  timeout { fail "re-run (timeout)" }
+}
+
+#
+# Test that breakpoints-invalid is issued once and only once for
+# breakpoint ignore count changes, after annotation stopped.
+#
+
+set value_inc_line [gdb_get_line_number "increment value"]
+
+gdb_test_multiple "break $value_inc_line" "break at value++" {
+    -re "Breakpoint 5 at $hex: file .*$srcfile, line $value_inc_line.*$gdb_prompt$" {
+	pass "break at value++"
+    }
+}
+
+gdb_test_multiple "ignore 5 4" "ignore 5 4" {
+    -re "Will ignore next 4 crossings of breakpoint 5.*$gdb_prompt$" {
+	pass "ignore 5 4"
+    }
+}
+
+gdb_test_multiple "continue" "annotate ignore count change" {
+    -re ".*breakpoints-invalid.*breakpoints-invalid.*$gdb_prompt$" {
+	fail "annotate ignore count change"
+    }
+    -re ".*$srcfile:$value_inc_line:.*\032\032stopped\r\n$gdb_prompt$" {
+	pass "annotate ignore count change"
+    }
+}
+
+# check that ignore command is working, or the above can provide
+# misleading assurance ...
+
+gdb_test_multiple "next" "next to exit loop" {
+    -re "source .*annota1.c.*$gdb_prompt$" {
+    }
+}
+
+set after_loop_line [gdb_get_line_number "after loop"]
+
+gdb_test_multiple "next" "breakpoint ignore count" {
+    -re ".*$srcfile:$after_loop_line:.*$gdb_prompt$" {
+	pass "breakpoint ignore count"
+    }
+}
+
+# Get the inferior's PID for later.
+
+set pid -1
+gdb_test_multiple "info inferior 1" "get inferior pid" {
+    -re "process (\[0-9\]*).*$gdb_prompt$" {
+	set pid $expect_out(1,string)
+	pass $gdb_test_name
+    }
+}
+
+#
+# Send a signal that is not handled; test:
+# annotate-signalled
+# annotate-signal-name
+# annotate-signal-name-end
+# annotate-signal-string
+# annotate-signal-string-end
+# FIXME: annotate-signal not tested (requires that the inferior be 
+#                        stopped by a "random" signal)
+
+if [target_info exists gdb,nosignals] {
+    unsupported "signal sent"
+} else {
+    gdb_test_multiple "signal SIGTRAP" "signal sent" {
+	-re ".*\032\032post-prompt\r\nContinuing with signal SIGTRAP.\r\n\r\n\032\032starting\(\r\n\r\n\032\032frames-invalid\)+\r\n\r\n\032\032signalled\r\n\r\nProgram terminated with signal \r\n\032\032signal-name\r\nSIGTRAP\r\n\032\032signal-name-end\r\n, \r\n\032\032signal-string\r\nTrace.breakpoint trap\r\n\032\032signal-string-end\r\n.\r\nThe program no longer exists.\r\n\r\n\032\032thread-exited,id=\"${decimal}\",group-id=\"i${decimal}\"\r\n\r\n\032\032stopped\r\n$gdb_prompt$" {
+	    pass $gdb_test_name
+	}
+    }
+}
+
+# Check for production of a core file and remove it!
+remove_core $pid
+
+proc thread_test {} {
+    global subdir srcdir testfile srcfile binfile
+    global gdb_prompt old_gdb_prompt
+    global decimal
+    set srcfile watch_thread_num.c
+    set binfile [standard_output_file ${testfile}-watch_thread_num]
+    set gdb_prompt $old_gdb_prompt
+
+    if { [gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug nowarnings}] == "" } {
+
+	clean_restart $binfile
+	if {![runto_main]} {
+	    return
+	}
+
+	set linenum [gdb_get_line_number "all threads started"]
+	gdb_breakpoint "$linenum"
+
+	set linenum [gdb_get_line_number "first child thread exited"]
+	gdb_breakpoint "$linenum"
+
+	set gdb_prompt \
+	    "\r\n\032\032pre-prompt\r\n$gdb_prompt \r\n\032\032prompt\r\n"
+
+	gdb_test_multiple "set annotate 2" "" {
+	    -re "set annotate 2\r\n$gdb_prompt$" {
+	    }
+	}
+
+	gdb_test_multiple "continue" "new thread" {
+	    -re "\032\032new-thread.*\r\n$gdb_prompt$" {
+		pass $gdb_test_name
+	    }
+	}
+
+    gdb_test_multiple "continue" "thread exit" {
+	    -re "\032\032thread-exited,id=\"${decimal}\",group-id=\"i${decimal}\".*\r\n$gdb_prompt$" {
+		pass $gdb_test_name
+	    }
+    }
+    }
+}
+
+proc thread_switch {} {
+    gdb_test_multiple "thread 1" "thread switch" {
+	-re ".*\032\032thread-changed" {
+	    pass $gdb_test_name
+	}
+    }
+}
+
+thread_test
+thread_switch
+
+# restore the original prompt for the rest of the testsuite
+
+set gdb_prompt $old_gdb_prompt

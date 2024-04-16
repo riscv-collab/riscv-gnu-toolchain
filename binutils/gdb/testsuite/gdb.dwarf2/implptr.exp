@@ -1,0 +1,103 @@
+# Copyright 2010-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+load_lib dwarf.exp
+
+# Test DW_OP_GNU_implicit_pointer.
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+# This test can only be run on x86 targets.
+require is_x86_like_target
+
+standard_testfile .S
+set csrcfile ${testfile}.c
+set opts {}
+
+lappend opts nopie
+
+if [info exists COMPILE] {
+    # make check RUNTESTFLAGS='gdb.dwarf2/implptr.exp COMPILE=1 CC_FOR_TARGET=gcc\ -m32'
+    set srcfile ${csrcfile}
+    lappend opts debug optimize=-O2
+}
+
+if {[prepare_for_testing "failed to prepare" ${testfile} $srcfile $opts]} {
+    return -1
+}
+
+# Additional test to verify the referenced CU is not aged out.
+gdb_test_no_output "maintenance set dwarf max-cache-age 0"
+
+if ![runto_main] {
+    return -1
+}
+
+# Test various pointer depths in bar.
+proc implptr_test_bar {} {
+    global csrcfile
+    set line [gdb_get_line_number "bar breakpoint" $csrcfile]
+    gdb_test "break implptr.c:$line" "Breakpoint 2.*" \
+       "set bar breakpoint for implptr"
+    gdb_continue_to_breakpoint "continue to bar breakpoint for implptr"
+    gdb_test "print j" " = \\(intp\\) <synthetic pointer>" "print j in implptr:bar"
+    gdb_test {print sizeof (j[0])} " = 4" {print sizeof (j[0]) in implptr:bar}
+    gdb_test "print *j" " = 5" "print *j in implptr:bar"
+    gdb_test "print **k" " = 5" "print **k in implptr:bar"
+    gdb_test "print ***l" " = 5" "print ***l in implptr:bar"
+}
+
+# Test implicit pointer offset.
+proc implptr_test_baz {} {
+    global csrcfile
+    set line [gdb_get_line_number "baz breakpoint" $csrcfile]
+    gdb_test "break implptr.c:$line" "Breakpoint 3.*" \
+	"set baz breakpoint for implptr"
+    gdb_continue_to_breakpoint "continue to baz breakpoint for implptr"
+
+    # We are breaking in an inlined function.  GDB should appear to
+    # have stopped "in" the inlined function.
+    gdb_test "up" "#1  foo .*"
+    gdb_test {p p[0].y} " = 92" "sanity check element 0"
+    gdb_test {p p[1].y} " = 46" "sanity check element 1"
+    gdb_test "down" "#0  add .*"
+    gdb_test "p a->y" " = 92" "check element 0 for the offset"
+    gdb_test "p b->y" " = 46" "check element 1 for the offset"
+    gdb_continue_to_breakpoint "ignore the second baz breakpoint"
+}
+
+# Test some values in foo.
+proc implptr_test_foo {} {
+    global csrcfile
+    set line [gdb_get_line_number "foo breakpoint" $csrcfile]
+    gdb_test "break implptr.c:$line" "Breakpoint 4.*" \
+	"set foo breakpoint for implptr"
+    gdb_continue_to_breakpoint "continue to foo breakpoint for implptr"
+    gdb_test "print p\[0].x" " = \\(int \\*\\) <synthetic pointer>" \
+	"print p\[0].x in implptr:foo"
+    gdb_test "print *p\[0].x" " = 69" \
+	"print *p\[0].x in implptr:foo"
+    gdb_test "print/d *(((char *) p\[0].x) + 1)" " = 0" \
+	"print byte inside *p\[0].x in implptr:foo"
+    gdb_test "print *(p\[0].x + 10)" \
+	"access outside bounds of object referenced via synthetic pointer" \
+	"print invalid offset from *p\[0].x in implptr:foo"
+    gdb_test "print j" " = 69" \
+	"print j in implptr:foo"
+}
+
+implptr_test_bar
+implptr_test_baz
+implptr_test_foo

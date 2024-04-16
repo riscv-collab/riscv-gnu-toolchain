@@ -1,0 +1,71 @@
+# Copyright (C) 2007-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Exit of a thread when there are other threads in the inferior should
+# not hang GDB.
+
+standard_testfile
+set executable ${testfile}
+
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug}] != "" } {
+    return -1
+}
+
+clean_restart ${executable}
+
+if ![runto_main] {
+    return -1
+}
+
+gdb_breakpoint $srcfile:[gdb_get_line_number "break-here"]
+gdb_continue_to_breakpoint "break-here" ".* break-here .*"
+
+# Resume only the second thread
+gdb_test_no_output "set scheduler-locking on" \
+    "enable scheduler-locking, for thread 2"
+
+# Continue.  Thread 2 exits, and the main thread was already stopped.
+gdb_test "continue" \
+    "No unwaited-for children left." \
+    "continue stops when thread 2 exits"
+
+gdb_test "info threads" \
+	 "\r\n\[ \t\]*Id\[ \t\]+Target\[ \t\]+Id\[ \t\]+Frame\[ \t\]*\r\n *1 *Thread \[^\r\n\]* \[^\r\n\]*\[\r\n\]*The current thread <Thread ID 2> has terminated.*" \
+	 "only main thread left, thread 2 terminated"
+
+# Select the main thread, let the third thread start, and stop at the
+# main thread breakpoint.
+gdb_test "thread 1" "" "select main thread"
+gdb_test_no_output "set scheduler-locking off" \
+    "disable scheduler-locking, letting new thread start"
+
+gdb_breakpoint $srcfile:[gdb_get_line_number "break-here-2"]
+gdb_continue_to_breakpoint "break-here-2" ".* break-here-2 .*"
+
+# Let the main thread continue alone.
+gdb_test_no_output "set scheduler-locking on" \
+    "enable scheduler-locking, for main thread"
+# The main thread exits, and thread 3 was already stopped.
+gdb_test "continue" \
+    "No unwaited-for children left." \
+    "continue stops when the main thread exits"
+
+gdb_test "info threads" \
+	 "\r\n\[ \t\]*Id\[ \t\]+Target\[ \t\]+Id\[ \t\]+Frame\[ \t\]*\r\n *3 *Thread \[^\r\n\]* \[^\r\n\]*\[\r\n\]*The current thread <Thread ID 1> has terminated.*" \
+	 "only thread 3 left, main thread terminated"
+
+# Make sure thread apply all works when we have exited threads in the
+# list.
+gdb_test "thread apply all print 999" " = 999" "thread apply all with exited thread"

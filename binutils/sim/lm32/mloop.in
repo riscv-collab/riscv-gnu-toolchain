@@ -1,0 +1,207 @@
+# Simulator main loop for lm32. -*- C -*-
+# Contributed by Jon Beniston <jon@beniston.com>
+#
+# This file is part of the GNU Simulators.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3, or (at your option)
+# any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, see <http://www.gnu.org/licenses/>.
+
+# Syntax:
+# /bin/sh mainloop.in command
+#
+# Command is one of:
+#
+# init
+# support
+# extract-{simple,scache,pbb}
+# {full,fast}-exec-{simple,scache,pbb}
+#
+
+case "x$1" in
+
+xsupport)
+
+cat <<EOF
+#line $LINENO "$0"
+#include <stdlib.h>
+
+static INLINE const IDESC *
+extract (SIM_CPU *current_cpu, PCADDR pc, CGEN_INSN_INT insn,
+	   ARGBUF *abuf, int fast_p)
+{
+  const IDESC *id = @cpu@_decode (current_cpu, pc, insn, insn, abuf);
+
+  @cpu@_fill_argbuf (current_cpu, abuf, id, pc, fast_p);
+  if (! fast_p)
+    {
+      int trace_p = PC_IN_TRACE_RANGE_P (current_cpu, pc);
+      int profile_p = PC_IN_PROFILE_RANGE_P (current_cpu, pc);
+      @cpu@_fill_argbuf_tp (current_cpu, abuf, trace_p, profile_p);
+    }
+  return id;
+}
+
+static INLINE SEM_PC
+execute (SIM_CPU *current_cpu, SCACHE *sc, int fast_p)
+{
+  SEM_PC vpc;
+
+  if (fast_p)
+    {
+#if ! WITH_SEM_SWITCH_FAST
+#if WITH_SCACHE
+      vpc = (*sc->argbuf.semantic.sem_fast) (current_cpu, sc);
+#else
+      vpc = (*sc->argbuf.semantic.sem_fast) (current_cpu, &sc->argbuf);
+#endif
+#else
+      abort ();
+#endif /* WITH_SEM_SWITCH_FAST */
+    }
+  else
+    {
+#if ! WITH_SEM_SWITCH_FULL
+      ARGBUF *abuf = &sc->argbuf;
+      const IDESC *idesc = abuf->idesc;
+      const CGEN_INSN *idata = idesc->idata;
+#if WITH_SCACHE_PBB
+      int virtual_p = CGEN_INSN_ATTR_VALUE (idata, CGEN_INSN_VIRTUAL);
+#else
+      int virtual_p = 0;
+#endif
+      if (! virtual_p)
+	{
+	  /* FIXME: call x-before */
+	  if (ARGBUF_PROFILE_P (abuf))
+	    PROFILE_COUNT_INSN (current_cpu, abuf->addr, idesc->num);
+	  /* FIXME: Later make cover macros: PROFILE_INSN_{INIT,FINI}.  */
+	  if (PROFILE_MODEL_P (current_cpu)
+	      && ARGBUF_PROFILE_P (abuf))
+	    @cpu@_model_insn_before (current_cpu, 1 /*first_p*/);
+	  CGEN_TRACE_INSN_INIT (current_cpu, abuf, 1);
+	  CGEN_TRACE_INSN (current_cpu, idata,
+		      (const struct argbuf *) abuf, abuf->addr);
+	}
+#if WITH_SCACHE
+      vpc = (*sc->argbuf.semantic.sem_full) (current_cpu, sc);
+#else
+      vpc = (*sc->argbuf.semantic.sem_full) (current_cpu, abuf);
+#endif
+      if (! virtual_p)
+	{
+	  /* FIXME: call x-after */
+	  if (PROFILE_MODEL_P (current_cpu)
+	      && ARGBUF_PROFILE_P (abuf))
+	    {
+	      int cycles;
+
+	      cycles = (*idesc->timing->model_fn) (current_cpu, sc);
+	      @cpu@_model_insn_after (current_cpu, 1 /*last_p*/, cycles);
+	    }
+	  CGEN_TRACE_INSN_FINI (current_cpu, abuf, 1);
+	}
+#else
+      abort ();
+#endif /* WITH_SEM_SWITCH_FULL */
+    }
+
+  return vpc;
+}
+
+EOF
+
+;;
+
+xinit)
+
+# Nothing needed.
+
+;;
+
+xextract-simple | xextract-scache)
+
+cat <<EOF
+#line $LINENO "$0"
+{
+  CGEN_INSN_INT insn = GETIMEMUSI (current_cpu, vpc);
+  extract (current_cpu, vpc, insn, SEM_ARGBUF (sc), FAST_P);
+}
+EOF
+
+;;
+
+xextract-pbb)
+
+# Inputs:  current_cpu, pc, sc, max_insns, FAST_P
+# Outputs: sc, pc
+# sc must be left pointing past the last created entry.
+# pc must be left pointing past the last created entry.
+# If the pbb is terminated by a cti insn, SET_CTI_VPC(sc) must be called
+# to record the vpc of the cti insn.
+# SET_INSN_COUNT(n) must be called to record number of real insns.
+
+cat <<EOF
+#line $LINENO "$0"
+{
+  const IDESC *idesc;
+  int icount = 0;
+
+  while (max_insns > 0)
+    {
+      USI insn = GETIMEMUSI (current_cpu, pc);
+      
+      idesc = extract (current_cpu, pc, insn, &sc->argbuf, FAST_P);
+      ++sc;
+      --max_insns;
+      ++icount;
+      pc += idesc->length;
+
+      if (IDESC_CTI_P (idesc))
+        {
+          SET_CTI_VPC (sc - 1);
+          break;
+        }
+    }
+
+ Finish:
+  SET_INSN_COUNT (icount);
+}
+EOF
+
+;;
+
+xfull-exec-* | xfast-exec-*)
+
+# Inputs: current_cpu, vpc, FAST_P
+# Outputs: vpc
+
+cat <<EOF
+#line $LINENO "$0"
+  /* Update cycle counter */
+  SET_H_CSR (LM32_CSR_CC, GET_H_CSR (LM32_CSR_CC) + 1);
+#if (! FAST_P && WITH_SEM_SWITCH_FULL) || (FAST_P && WITH_SEM_SWITCH_FAST)
+#define DEFINE_SWITCH
+#include "sem-switch.c"
+#else
+  vpc = execute (current_cpu, vpc, FAST_P);
+#endif
+EOF
+
+;;
+
+*)
+  echo "Invalid argument to mainloop.in: $1" >&2
+  exit 1
+  ;;
+
+esac

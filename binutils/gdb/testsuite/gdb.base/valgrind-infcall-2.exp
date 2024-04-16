@@ -1,0 +1,75 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test-case tests the scenario for the crash fixed by commit ee3c5f8968
+# "Fix GDB crash when registers cannot be modified":
+# $ valgrind /usr/bin/sleep 10000
+# ==31595== Memcheck, a memory error detector
+# ==31595== Command: /usr/bin/sleep 10000
+# ==31595==
+# $ gdb /usr/bin/sleep
+# (gdb) target remote | vgdb --pid=31595
+# Remote debugging using | vgdb --pid=31595
+#   ...
+# $hex in __GI___nanosleep () at nanosleep.c:27
+# 27	  return SYSCALL_CANCEL (nanosleep, requested_time, remaining);
+# (gdb) p printf ("bla")
+# terminate called after throwing an instance of 'gdb_exception_error'
+# Aborted (core dumped)
+
+# Valgrind gdbserver requires gdb with xml support.
+require allow_xml_test
+
+load_lib valgrind.exp
+
+require {!is_remote target}
+
+standard_testfile .c
+if {[build_executable $testfile.exp $testfile $srcfile {debug}] == -1} {
+    return -1
+}
+
+set active_at_startup 0
+if { [vgdb_start $active_at_startup] == -1 } {
+    return -1
+}
+
+# Determine whether we're at nanosleep.
+gdb_test_multiple "bt 1" "do printf" {
+    -re -wrap "nanosleep.*" {
+	# If gdb doesn't crash, we get something like:
+	# (gdb) p printf ("bla")
+	# Could not write register "rdi"; remote failure reply 'E.
+	# ERROR changing register rdi regno 5
+	# gdb commands changing registers (pc, sp, ...) (e.g. 'jump',
+	# set pc, calling from gdb a function in the debugged process, ...)
+	# can only be accepted if the thread is VgTs_Runnable or VgTs_Yielding
+	# state
+	# Thread status is VgTs_WaitSys
+	# '
+	# (gdb)
+	gdb_test "p (int)printf (\"bla\")" \
+	    "can only be accepted if the thread is .*" \
+	    $gdb_test_name
+    }
+    -re -wrap "" {
+	# For some reason the error condition does not trigger if we're not
+	# at nanosleep at the point that we're connecting to vgdb.  See also
+	# comment at "exec sleep 1" in vgdb_start.
+	unsupported $gdb_test_name
+    }
+}
+
+vgdb_stop

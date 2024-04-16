@@ -1,0 +1,111 @@
+# This testcase is part of GDB, the GNU debugger.
+#
+# Copyright 2019-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test script exposes a bug where, if gdbserver dies while GDB is
+# sourcing a python command like 'gdb.execute ("continue")', then GDB
+# will deadlock.
+
+load_lib gdbserver-support.exp
+
+standard_testfile multi-ui-errors.c
+
+require allow_gdbserver_tests allow_python_tests
+
+if {[build_executable "failed to prepare" ${testfile} \
+	 ${srcfile}] == -1} {
+    return -1
+}
+
+set target_binfile [gdb_remote_download target $binfile]
+set host_binfile [gdb_remote_download host $binfile]
+
+# Start gdbserver.
+set res [gdbserver_spawn "${target_binfile}"]
+set gdbserver_protocol [lindex $res 0]
+set gdbserver_gdbport [lindex $res 1]
+set gdbserver_pid [exp_pid -i $server_spawn_id]
+
+set break_linenr [gdb_get_line_number "@@XX@@ Inferior Starting @@XX@@"]
+
+# Generate a python script we will later source.
+set file1 [standard_output_file file1.py]
+set fd [open "$file1" w]
+puts $fd \
+"import gdb
+
+def do_gdb_stuff ():
+    gdb.execute ('file $host_binfile')
+    gdb.execute ('target $gdbserver_protocol $gdbserver_gdbport')
+    gdb.execute ('break $srcfile:$break_linenr')
+    gdb.execute ('continue')
+    gdb.execute ('p server_pid')
+    gdb.execute ('continue')
+
+do_gdb_stuff()"
+close $fd
+
+set host_file1 [gdb_remote_download host $file1]
+
+# Now start GDB, sourcing the python command file we generated above.
+# Set the height and width so we don't end up at a paging prompt.
+if {[gdb_spawn_with_cmdline_opts \
+	 "-quiet -iex \"set height 0\" -iex \"set width 0\" -ex \"source $host_file1\""] != 0} {
+    fail "spawn"
+    return
+}
+
+# Get the gdbserver PID.
+set gdbserver_pid 0
+
+# Wait for the inferior to start up.
+with_spawn_id $server_spawn_id {
+    gdb_test_multiple "" "get gdbserver PID" {
+	-re " = ($decimal)\r\n" {
+	    set gdbserver_pid $expect_out(1,string)
+	    pass $gdb_test_name
+	}
+    }
+
+    if { $gdbserver_pid == 0 } {
+	return
+    }
+
+    gdb_test_multiple "" "ensure inferior is running" {
+	-re "@@XX@@ Inferior Starting @@XX@@" {
+	    pass $gdb_test_name
+	}
+	timeout {
+	    fail $gdb_test_name
+	}
+    }
+}
+
+# Now kill the gdbserver.
+remote_exec target "kill -9 $gdbserver_pid"
+
+# Wait for GDB to return to a prompt.
+gdb_test_multiple "" "landed at prompt after gdbserver dies" {
+    -re "$gdb_prompt $" {
+	pass $gdb_test_name
+    }
+    timeout {
+	fail "$gdb_test_name (timeout)"
+    }
+}
+
+# Run a simple command to ensure we can interact with GDB.
+gdb_test "echo hello\\n" "hello" "can we interact with gdb"

@@ -1,0 +1,87 @@
+# Copyright 1999-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+standard_testfile
+
+if { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+proc test_list_thread_groups { } {
+    global hex
+    global decimal
+    global binfile
+
+    mi_clean_restart
+
+    # Before any run, exit-code should not be present.
+    mi_gdb_test \
+	"122-list-thread-groups" \
+	"122\\^done,groups=\\\[\{id=\"i1\",type=\"process\"\}\]" \
+	"-list-thread-groups before run shows no exit-code"
+
+    mi_clean_restart $binfile
+
+    with_test_prefix "first run" {
+	mi_runto_main
+
+	# During the run, exit-code should not be present.
+	mi_gdb_test \
+	    "123-list-thread-groups" \
+	    "123\\^done,groups=\\\[\{id=\"i1\",type=\"process\",pid=\"$decimal\",executable=\".*\".*" \
+	    "-list-thread-groups during run shows no exit-code"
+
+	# Exit the inferior.
+	mi_send_resuming_command "exec-continue" "continuing to inferior exit"
+	mi_expect_stop "exited-normally" "" "" "" "" "" "exit normally"
+
+	# After the run, exit-code should be present.
+	mi_gdb_test \
+	    "124-list-thread-groups" \
+	    "124\\^done,groups=\\\[\{id=\"i1\",type=\"process\",exit-code=\"0\",executable=\".*\"\}\]" \
+	    "-list-thread-groups after exit shows exit-code"
+    }
+
+    with_test_prefix "second run" {
+	mi_runto_main
+
+	# Write the exit code we want in the global var
+	mi_gdb_test "set var exit_code = 8" ".*\\^done" "write exit code"
+
+	# During the second run, exit-code should not be present.
+	mi_gdb_test \
+	    "125-list-thread-groups" \
+	    "125\\^done,groups=\\\[\{id=\"i1\",type=\"process\",pid=\"$decimal\",executable=\".*\".*" \
+	    "-list-thread-groups during run shows no exit-code"
+
+	# Exit the inferior.
+	mi_send_resuming_command "exec-continue" "continuing to inferior exit"
+	mi_expect_stop "exited" "" "" "" "" "" "exit with code"
+
+	# After the second run, exit-code should be present.
+	mi_gdb_test \
+	    "126-list-thread-groups" \
+	    "126\\^done,groups=\\\[\{id=\"i1\",type=\"process\",exit-code=\"010\",executable=\".*\"\}\]" \
+	    "-list-thread-groups after exit shows exit-code"
+    }
+}
+
+test_list_thread_groups
+
+mi_gdb_exit

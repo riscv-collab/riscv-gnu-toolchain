@@ -1,0 +1,208 @@
+# Copyright 2015-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test vector register access for s390 platforms.
+
+require {is_any_target s390-*-* s390x-*-*}
+
+standard_testfile .S
+
+if [isnative] {
+    # Create a temporary directory, to take a core dump there later.
+    set coredir [standard_output_file ${testfile}.d]
+    remote_exec build "rm -rf $coredir"
+    remote_exec build "mkdir $coredir"
+}
+
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile \
+	  [list "additional_flags=-mzarch"]] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+# Run to the first vector instruction and step it.  If the inferior
+# doesn't crash, we have vector support.
+
+gdb_breakpoint "check_vx"
+gdb_continue_to_breakpoint "first vector insn"
+set before_pc 0
+gdb_test_multiple "x/i \$pc" "get PC at vector insn" {
+    -re "(0x\\S+)\\s+\\S+\\s+vlr\\s+.*$gdb_prompt $" {
+	set before_pc $expect_out(1,string)
+    }
+}
+
+gdb_test_multiple "stepi" "check for vector support" {
+    -re "Program received signal SIGILL,.*\r\n$gdb_prompt $" {
+	unsupported "no vector support."
+	return
+    }
+    -re "\[0-9\]+.*\r\n$gdb_prompt $" {
+	pass "vector support available"
+    }
+    -re "$gdb_prompt $" {
+	fail "no vector support (unknown error)"
+	return
+    }
+}
+
+# Has the PC advanced by the expected amount?  The kernel may do
+# something special for the first vector insn in the process.
+
+set after_pc 0
+gdb_test_multiple "x/i \$pc" "get PC after vector insn" {
+    -re "(0x\\S+)\\s+.*$gdb_prompt $" {
+	set after_pc $expect_out(1,string)
+    }
+}
+
+if [expr $before_pc + 6 != $after_pc] {
+    fail "stepping first vector insn"
+}
+
+# Lift the core file limit, if possible, and change into the temporary
+# directory.
+
+if { $coredir != "" } {
+    gdb_test {print (int) setrlimit (4, &(unsigned long [2]){~0UL, ~0UL})} \
+	" = .*" "setrlimit"
+    gdb_test "print (int) chdir (\"${coredir}\")" " = 0" "chdir"
+}
+
+# Initialize all vector registers with GDB "set" commands, using
+# distinct values.  Handle left and right halves separately, in
+# pseudo-random order.
+
+set a_high 1
+set a_low 2
+set b_high 3
+set b_low 5
+
+set a [expr ($a_high << 32) | $a_low]
+set b [expr ($b_high << 32) | $b_low]
+
+for {set j 0} {$j < 32} {incr j 1} {
+    set i [expr 17 * $j % 32]
+    gdb_test_no_output \
+	"set \$v$i.v2_int64\[0\] = [expr $a * ($i + 1)]" \
+	"set v$i left"
+    set i [expr 19 * (31 - $j) % 32]
+    gdb_test_no_output \
+	"set \$v$i.v2_int64\[1\] = [expr $b * (32 - $i)]" \
+	"set v$i right"
+}
+
+# Verify a vector register's union members.
+
+gdb_test "info register v0 v31" \
+    "v4_float .* v2_double .* v16_int8 .* v8_int16 .* v4_int32 .* v2_int64 .* uint128\
+     .*v4_float .* v2_double .* v16_int8 .* v8_int16 .* v4_int32 .* v2_int64 .* uint128 .*"
+
+# Let the inferior store all vector registers in a buffer, then dump
+# the buffer and check it.
+
+gdb_continue_to_breakpoint "store vrs"
+set vregs [capture_command_output "x/64xg &save_area" ""]
+
+set i 0
+foreach {- left right} [regexp -all -inline -line {^.*:\s+(\w+)\s+(\w+)} $vregs] {
+    if [expr $left != $a * ($i + 1) || $right != $b * (32 - $i)] {
+	fail "verify \$v$i after set"
+    }
+    if { $i < 16 } {
+	# Check that the FP register was updated accordingly.
+	gdb_test "info register f$i" "raw ${left}.*"
+    }
+    incr i 1
+}
+
+if { $i != 32 } {
+    fail "dump save area (bad output)"
+}
+
+# Let the inferior change all VRs according to a simple algorithm,
+# then print all VRs and compare their values with our result of the
+# same algorithm.
+
+gdb_continue_to_breakpoint "change vrs"
+set vregs [capture_command_output "info registers vector" ""]
+
+# Format a 128-bit value, given individual 4-byte values, as hex.
+# Suppress leading zeros.
+proc hex128 {a_high a_low b_high b_low} {
+    set result [format "%x%08x%08x%08x" $a_high $a_low $b_high $b_low]
+    regsub -- "^0*" $result "" result
+    if { $result eq "" } { set result 0 }
+    return $result
+}
+
+set j 1
+foreach {- r i val} [regexp -all -inline -line \
+			 {^(\D*)(\d+)\s+.*?uint128 = 0x([0-9a-f]+?)} $vregs] {
+    if { $r ne "v" } {
+	fail "info registers vector: bad line $j"
+    } elseif { $val ne [hex128 \
+			    [expr $a_high * ($i + 1) * $a_high ] \
+			    [expr $a_low * ($i + 1) * $a_low ] \
+			    [expr $b_high * (32 - $i) * $b_high * 32] \
+			    [expr $b_low * (32 - $i) * $b_low * 32] ] } {
+	fail "compare \$v$i"
+    }
+    incr j 1
+}
+
+if { $j != 33 } {
+    fail "info registers vector"
+}
+
+if { $coredir == "" } {
+    return
+}
+
+# Take a core dump.
+
+gdb_test "signal SIGABRT" "Program terminated with signal SIGABRT, .*"
+gdb_exit
+
+# Find the core file and rename it (avoid accumulating core files).
+
+set cores [glob -nocomplain -directory $coredir *core*]
+if {[llength $cores] != 1} {
+    untested "core file not found"
+    remote_exec build "rm -rf $coredir"
+    return -1
+}
+set destcore [standard_output_file ${testfile}.core]
+remote_exec build "mv [file join $coredir [lindex $cores 0]] $destcore"
+remote_exec build "rm -rf $coredir"
+
+# Restart gdb and load the core file.  Compare the VRs.
+
+clean_restart ${testfile}
+
+with_test_prefix "core" {
+    set core_loaded [gdb_core_cmd $destcore "load"]
+    if { $core_loaded != -1 } {
+	set vregs_from_core [capture_command_output "info registers vector" ""]
+	if { $vregs_from_core eq $vregs } {
+	    pass "compare vector registers"
+	} else {
+	    fail "vector registers mismatch"
+	}
+    }
+}

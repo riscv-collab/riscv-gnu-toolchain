@@ -1,0 +1,162 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Load the GDB executable, and then 'save gdb-index', and make some
+# checks of the generated index file.
+
+load_lib selftest-support.exp
+
+# Can't save an index with readnow.
+require !readnow
+
+# A multiplier used to ensure slow tasks are less likely to timeout.
+set timeout_factor 20
+
+set filename [selftest_prepare]
+if { $filename eq "" } {
+    unsupported "${gdb_test_file_name}.exp"
+    return -1
+}
+
+with_timeout_factor $timeout_factor {
+    # Start GDB, load FILENAME.
+    clean_restart $filename
+}
+
+# Record how many worker threads GDB is using.
+set worker_threads [gdb_get_worker_threads]
+
+# Generate an index file.
+set dir1 [standard_output_file "index_1"]
+remote_exec host "mkdir -p ${dir1}"
+with_timeout_factor $timeout_factor {
+    gdb_test_no_output "save gdb-index $dir1" \
+	"create gdb-index file"
+
+    gdb_test_no_output "save gdb-index -dwarf-5 $dir1" \
+	"create dwarf-index files"
+}
+
+# Close GDB.
+gdb_exit
+
+# Validate that the index-file FILENAME has made efficient use of its
+# symbol hash table.  Calculate the number of symbols in the hash
+# table and the total hash table size.  The hash table starts with
+# 1024 entries, and then doubles each time it is filled to 75%.  At
+# 75% filled, doubling the size takes it to 37.5% filled.
+#
+# Thus, the hash table is correctly filled if:
+#  1. Its size is 1024 (i.e. it has not yet had its first doubling), or
+#  2. Its filled percentage is over 37%
+#
+# We could check that it is not over filled, but I don't as that's not
+# really an issue.  But we did once have a bug where the table was
+# doubled incorrectly, in which case we'd see a filled percentage of
+# around 2% in some cases, which is a huge waste of disk space.
+proc check_symbol_table_usage { filename } {
+    # Open the file in binary mode and read-only mode.
+    set fp [open $filename rb]
+
+    # Configure the channel to use binary translation.
+    fconfigure $fp -translation binary
+
+    # Read the first 8 bytes of the file, which contain the header of
+    # the index section.
+    set header [read $fp [expr 7 * 4]]
+
+    # Scan the header to get the version, the CU list offset, and the
+    # types CU list offset.
+    binary scan $header iiiiii version \
+	_ _ _ symbol_table_offset shortcut_offset
+
+    # The length of the symbol hash table (in entries).
+    set len [expr ($shortcut_offset - $symbol_table_offset) / 8]
+
+    # Now walk the hash table and count how many entries are in use.
+    set offset $symbol_table_offset
+    set count 0
+    while { $offset < $shortcut_offset } {
+	seek $fp $offset
+	set entry [read $fp 8]
+	binary scan $entry ii name_ptr flags
+	if { $name_ptr != 0 } {
+	    incr count
+	}
+
+	incr offset 8
+    }
+
+    # Close the file.
+    close $fp
+
+    # Calculate how full the cache is.
+    set pct [expr (100 * double($count)) / $len]
+
+    # Write our results out to the gdb.log.
+    verbose -log "Hash table size: $len"
+    verbose -log "Hash table entries: $count"
+    verbose -log "Percentage usage: $pct%"
+
+    # The minimum fill percentage is actually 37.5%, but we give TCL a
+    # little flexibility in case the FP maths give a result a little
+    # off.
+    gdb_assert { $len == 1024 || $pct > 37 } \
+	"symbol hash table usage"
+}
+
+set index_filename_base [file tail $filename]
+check_symbol_table_usage "$dir1/${index_filename_base}.gdb-index"
+
+# If GDB is using more than 1 worker thread then reduce the number of
+# worker threads, regenerate the index, and check that we get the same
+# index file back.  At one point the layout of the index would vary
+# based on the number of worker threads used.
+if { $worker_threads > 1 } {
+    # Start GDB, but don't load a file yet.
+    clean_restart
+
+    # Adjust the number of threads to use.
+    set reduced_threads [expr $worker_threads / 2]
+    gdb_test_no_output "maint set worker-threads $reduced_threads"
+
+    with_timeout_factor $timeout_factor {
+	# Now load the test binary.
+	gdb_file_cmd $filename
+    }
+
+    # Generate an index file.
+    set dir2 [standard_output_file "index_2"]
+    remote_exec host "mkdir -p ${dir2}"
+    with_timeout_factor $timeout_factor {
+	gdb_test_no_output "save gdb-index $dir2" \
+	    "create second gdb-index file"
+
+	gdb_test_no_output "save gdb-index -dwarf-5 $dir2" \
+	    "create second dwarf-index files"
+    }
+
+    # Close GDB.
+    gdb_exit
+
+    # Now check that the index files are identical.
+    foreach suffix { gdb-index debug_names debug_str } {
+	set result \
+	    [remote_exec host \
+		 "cmp -s \"$dir1/${index_filename_base}.${suffix}\" \"$dir2/${index_filename_base}.${suffix}\""]
+	gdb_assert { [lindex $result 0] == 0 } \
+	    "$suffix files are identical"
+    }
+}

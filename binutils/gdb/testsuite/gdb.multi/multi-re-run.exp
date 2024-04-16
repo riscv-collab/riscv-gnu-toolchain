@@ -1,0 +1,121 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test loading two inferiors into GDB, and running one of them twice
+# in a row.  GDB used to have a bug that made it so that after an
+# inferior exit, the current program space was left pointing to the
+# wrong inferior's pspace, causing subsequent symbol lookups to
+# misbehave, including failing to load libthread_db.so.  See PR
+# gdb/25410.
+
+# Build two executables, with different symbols.
+
+set exec1 "multi-re-run-1"
+set srcfile1 multi-re-run-1.c
+set binfile1 [standard_output_file ${exec1}]
+
+set exec2 "multi-re-run-2"
+set srcfile2 multi-re-run-2.c
+set binfile2 [standard_output_file ${exec2}]
+
+with_test_prefix "exec1" {
+    if { [build_executable "failed to prepare" ${exec1} "${srcfile1}" \
+	      [list pthreads debug]] } {
+	return -1
+    }
+}
+
+with_test_prefix "exec2" {
+    if { [build_executable "failed to prepare" ${exec2} "${srcfile2}" \
+	      [list pthreads debug]] } {
+	return -1
+    }
+}
+
+# Start two inferiors, leave one stopped, and run the other a couple
+# times.  RE_RUN_INF is the inferior that is re-run.
+
+proc test_re_run {re_run_inf} {
+    global binfile1 binfile2
+    global inferior_exited_re
+    global gdb_prompt
+    global last_loaded_file
+
+    clean_restart ${binfile1}
+
+    delete_breakpoints
+
+    # Start another inferior.
+    gdb_test "add-inferior" "Added inferior 2.*" \
+	"add empty inferior 2"
+    gdb_test "inferior 2" "Switching to inferior 2.*" \
+	"switch to inferior 2"
+    gdb_load ${binfile2}
+
+    if {$re_run_inf == 1} {
+	set steady_inf 2
+	set steady_binfile $binfile2
+	set re_run_binfile $binfile1
+    } else {
+	set steady_inf 1
+	set steady_binfile $binfile1
+	set re_run_binfile $binfile2
+    }
+
+    gdb_test "inferior $steady_inf" "Switching to inferior $steady_inf.*" \
+	"switch to steady inferior"
+    set last_loaded_file $steady_binfile
+
+    # Run the steady inferior to a breakpoint, and let it stay stopped
+    # there.
+    if {![runto all_started]} {
+	return 0
+    }
+
+    gdb_test "inferior $re_run_inf" "Switching to inferior $re_run_inf.*" \
+	"switch to re-run inferior"
+    set last_loaded_file $re_run_binfile
+
+    # Now run the RE_RUN_INF inferior a couple times.  GDB used to
+    # have a bug that caused the second run to fail to load
+    # libthread_db.so.
+    foreach_with_prefix iter {1 2} {
+	delete_breakpoints
+
+	if ![runto all_started] {
+	    return 0
+	}
+
+	# If a thread_stratum target fails to load, then TLS debugging
+	# fails too.
+	gdb_test "print tls_var" " = 1"
+
+	gdb_continue_to_end "" continue 1
+
+	# In the original bug, after an inferior exit, GDB would leave
+	# the current program space pointing to the wrong inferior's
+	# pspace, and thus the wrong symbols were visible.
+	if {$re_run_inf == 1} {
+	    gdb_test "print re_run_var_1" " = 1"
+	} else {
+	    gdb_test "print re_run_var_2" " = 2"
+	}
+    }
+}
+
+# For completeness, test re-running either inferior 1 or inferior 2.
+foreach_with_prefix re_run_inf {1 2} {
+    test_re_run $re_run_inf
+}

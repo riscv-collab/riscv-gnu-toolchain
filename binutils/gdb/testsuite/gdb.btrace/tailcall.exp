@@ -1,0 +1,111 @@
+# This testcase is part of GDB, the GNU debugger.
+#
+# Copyright 2013-2024 Free Software Foundation, Inc.
+#
+# Contributed by Intel Corp. <markus.t.metzger@intel.com>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require allow_btrace_tests
+
+# This test requires the compiler to generate a tail call.  To guarantee that
+# we always get one, we use an assembly source file.
+#
+# We use different assembly sources based on the target architecture.
+#
+# Luckily, they are similar enough that a single test script can handle
+# both.
+set opts {}
+if [info exists COMPILE] {
+    # make check RUNTESTFLAGS="gdb.btrace/tailcall.exp COMPILE=1"
+    standard_testfile tailcall.c
+    lappend opts debug optimize=-O2
+} elseif {[istarget "i?86-*-*"] || [istarget "x86_64-*-*"]} {
+	if {[is_amd64_regs_target]} {
+		standard_testfile x86_64-tailcall.S
+	} else {
+		standard_testfile i686-tailcall.S
+	}
+} else {
+    unsupported "target architecture not supported"
+    return -1
+}
+
+if [prepare_for_testing "failed to prepare" $testfile $srcfile $opts] {
+    return -1
+}
+if ![runto_main] {
+    return -1
+}
+
+# we want to see the full trace for this test
+gdb_test_no_output "set record function-call-history-size 0"
+
+# trace the call to foo
+gdb_test_no_output "record btrace"
+gdb_test "next 2"
+
+# show the flat branch trace
+gdb_test "record function-call-history 1" [multi_line \
+  "1\tmain" \
+  "2\tfoo" \
+  "3\tbar" \
+  "4\tmain" \
+  ] "flat"
+
+# show the branch trace with calls indented
+gdb_test "record function-call-history /c 1" [multi_line \
+  "1\tmain" \
+  "2\t  foo" \
+  "3\t    bar" \
+  "4\tmain" \
+  ] "indented"
+
+# go into bar
+gdb_test "record goto 4" ".*bar \\(\\) at .*tailcall.c:24\r\n.*"
+
+# check the backtrace
+gdb_test "backtrace" [multi_line \
+  "#0.*bar \\(\\) at tailcall.c:24" \
+  "#1.*foo \\(\\) at tailcall.c:29" \
+  "#2.*main \\(\\) at tailcall.c:37" \
+  "Backtrace stopped: not enough registers or memory available to unwind further" \
+  ]
+
+# walk the backtrace
+gdb_test "up" "#1\[^\r\n\]*foo \\(\\) at tailcall.c:29\r\n.*" "up to foo"
+gdb_test "up" "#2\[^\r\n\]*main \\(\\) at tailcall.c:37\r\n.*" "up to main"
+gdb_test "down" "#1\[^\r\n\]*foo \\(\\) at tailcall.c:29\r\n.*" "down to foo"
+
+# test stepping into and out of tailcalls.
+gdb_test "finish" "\[^\r\n\]*main \\(\\) at tailcall.c:38\r\n.*" \
+    "finish.1"
+gdb_test "reverse-step" "\[^\r\n\]*bar \\(\\) at tailcall.c:24\r\n.*" \
+    "reverse-step.1"
+gdb_test "reverse-finish" "\[^\r\n\]*foo \\(\\) at tailcall.c:29\r\n.*" \
+    "reverse-finish.1"
+gdb_test "reverse-step" "\[^\r\n\]*main \\(\\) at tailcall.c:37\r\n.*" \
+    "reverse-step.2"
+gdb_test "next" "\[^\r\n\]*38.*" \
+    "next.1"
+gdb_test "reverse-next" "\[^\r\n\]*main \\(\\) at tailcall.c:37\r\n.*" \
+    "reverse-next.1"
+gdb_test "step" "\[^\r\n\]*foo \\(\\) at tailcall.c:29\r\n.*" \
+    "step.1"
+gdb_test "finish" "\[^\r\n\]*main \\(\\) at tailcall.c:38\r\n.*" \
+    "finish.2"
+gdb_test "reverse-step" "\[^\r\n\]*bar \\(\\) at tailcall.c:24\r\n.*" \
+    "reverse-step.3"
+gdb_test "finish" "\[^\r\n\]*main \\(\\) at tailcall.c:38\r\n.*" \
+    "finish.3"

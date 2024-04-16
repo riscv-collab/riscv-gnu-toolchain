@@ -1,0 +1,335 @@
+# Copyright (C) 2013-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It tests Python-based
+# frame-filters.
+
+load_lib gdb-python.exp
+
+require allow_python_tests
+
+standard_testfile
+
+# We cannot use prepare_for_testing as we have to set the safe-patch
+# to check objfile and progspace printers.
+if {[build_executable $testfile.exp $testfile $srcfile debug] == -1} {
+    return -1
+}
+
+# Start with a fresh gdb.
+gdb_exit
+gdb_start
+
+gdb_test "info frame-filter" \
+    "No frame filters\\." \
+    "info frame filter before loading filters"
+
+# Make the -gdb.py script available to gdb, it is automagically loaded by gdb.
+# Care is taken to put it in the same directory as the binary so that
+# gdb will find it.
+set remote_obj_python_file \
+    [gdb_remote_download host ${srcdir}/${subdir}/${testfile}-gdb.py \
+	 ${testfile}-gdb.py]
+
+gdb_reinitialize_dir $srcdir/$subdir
+gdb_test_no_output "set auto-load safe-path ${remote_obj_python_file}" \
+    "set auto-load safe-path"
+gdb_load ${binfile}
+# Verify gdb loaded the script.
+gdb_test "info auto-load python-scripts" "Yes.*${testfile}-gdb.py.*" \
+    "Test auto-load had loaded python scripts"
+
+if {![runto_main]} {
+    return
+}
+gdb_test_no_output "set python print-stack full" \
+    "set python print-stack to full"
+
+# Verify that 'bt', 'bt -no-filters' print the same info
+# when there are no filters, no matching filters, or matching filters.
+# In particular, no address should be printed, as the default for
+# backtrace -frame-info is 'location', and the breakpoint we just hit
+# is at the beginning of a line.
+# Same tests done again after having loaded the filters.
+gdb_test "bt 1" "#0  main .*" "bt 1, no filter loaded"
+gdb_test "bt -no-filters 1" "#0  main .*" "bt -no-filters 1, no filter loaded"
+
+
+# Load global frame-filters
+set remote_python_file [gdb_remote_download host \
+			    ${srcdir}/${subdir}/${testfile}.py]
+gdb_test_no_output "source ${remote_python_file}" "load python file"
+
+# Re-verify the frame-info printed once filters are loaded.
+# For the first check, the Reverse filter is matching.
+gdb_test "bt 1" "#0  niam .*" "bt 1, filters loaded"
+gdb_test "bt -no-filters 1" "#0  main .*" "bt -no-filters 1, filters loaded"
+
+gdb_breakpoint [gdb_get_line_number "Backtrace end breakpoint"]
+gdb_breakpoint [gdb_get_line_number "Inner test breakpoint"]
+gdb_continue_to_breakpoint "Inner test breakpoint"
+
+# Test multiple local blocks.
+gdb_test "bt full no-filters" \
+    ".*#0.*end_func.*h = 9.*f = 42.*g = 19.*bar = $hex \"Inside block x2\".*d = 15.*e = 14.*foo = $hex \"Inside block\".*str = $hex \"The End\".*st2 = $hex \"Is Near\".*b = 12.*c = 5.*"
+gdb_test "bt full" \
+    ".*#0.*cnuf_dne.*h = 9.*f = 42.*g = 19.*bar = $hex \"Inside block x2\".*d = 15.*e = 14.*foo = $hex \"Inside block\".*str = $hex \"The End\".*st2 = $hex \"Is Near\".*b = 12.*c = 5.*" \
+    "bt full with filters"
+
+# Test pagination can be aborted even for frame filters.
+gdb_test_no_output "set height 5" "pagination quit - set height limited"
+foreach bttype [list "bt" "bt full"] {
+    set test "pagination quit - $bttype"
+    gdb_test_multiple "$bttype" $test {
+	-re "$pagination_prompt$" {
+	    pass $test
+	}
+    }
+    gdb_test "q" "^Quit" "pagination quit - $bttype - q"
+}
+gdb_test_no_output "set height unlimited" "pagination quit - set height unlimited"
+
+gdb_continue_to_breakpoint "Backtrace end breakpoint"
+
+# Test set/show
+gdb_test "info frame-filter" \
+    ".*900.*Yes.*Elider.*100.*Yes.*Reverse.*10.*.*No.*Object.*1.*" \
+    "info frame filter before setting priority"
+gdb_test "show frame-filter priority global Elider" \
+    "Priority of filter 'Elider' in list 'global' is: 900" \
+    "show frame-filter priority global Elider before setting"
+gdb_test_no_output  "set frame-filter priority global Elider 1000" \
+    "set frame-filter priotiy global Elider 1000"
+gdb_test "show frame-filter priority global Elider" \
+        "Priority of filter 'Elider' in list 'global' is: 1000" \
+        "show frame-filter priority global Elider after setting"
+gdb_test "info frame-filter" \
+    ".*1000.*Yes.*Elider.*100.*Yes.*Reverse.*10.*.*No.*Object.*1.*" \
+    "info frame filter after setting priority"
+gdb_test "set frame-filter priority global NoSuchFilter 900" \
+    "frame-filter 'NoSuchFilter' not found." \
+    "set priority of a non-existing filter"
+
+# Test enable/disable
+gdb_test "info frame-filter" \
+    ".*1000.*Yes.*Elider.*100.*Yes.*Reverse.*10.*.*No.*Object.*1.*" \
+    "info frame filter before disable frame filter"
+gdb_test_no_output  "disable frame-filter global Elider" \
+    "disable frame-filter global Elider"
+gdb_test "info frame-filter" \
+    ".*1000.*No.*Elider.*100.*Yes.*Reverse.*10.*.*No.*Object.*1.*" \
+    "info frame filter after disable frame filter"
+gdb_test_no_output  "enable frame-filter global Elider" \
+    "enable frame-filter global Elider"
+gdb_test "info frame-filter" \
+    ".*1000.*Yes.*Elider.*100.*Yes.*Reverse.*10.*.*No.*Object.*1.*" \
+    "info frame filter after reenabling frame filter"
+gdb_test "disable frame-filter global NoSuchFilter" \
+    "frame-filter 'NoSuchFilter' not found." \
+    "disable a non-existing filter"
+
+# Test no-filters
+gdb_test "bt no-filters" \
+    ".*#0.*end_func.*#22.*in func1.*#27.*in main \\(\\).*"
+
+# Test reverse
+gdb_test "bt" \
+    ".*#0.*cnuf_dne.*#22.*in 1cnuf.*#27.*in niam \\(\\).*" \
+    "bt with frame filters"
+
+# Disable Reverse
+gdb_test_no_output "disable frame-filter global Reverse" \
+    "disable frame-filter global Reverse"
+gdb_test "bt" \
+    ".*#0.*end_func.*#22.*in func1.*#27.*in main \\(\\).*" \
+    "bt with frame-filter Reverse disabled"
+gdb_test "bt -2" \
+    ".*#26.*func5.*#27.*in main \\(\\).*" \
+    "bt -2 with frame-filter Reverse disabled"
+gdb_test "bt 3" \
+    ".*#0.*end_func.*#1.*in funca \\(\\).*#2.*in funcb \\(j=10\\)\[^#\]*More stack frames follow.*" \
+    "bt 3 with frame-filter Reverse disabled"
+gdb_test "bt no-filter full" \
+    ".*#0.*end_func.*str = $hex \"The End\".*st2 = $hex \"Is Near\".*b = 12.*c = 5.*#1.*in funca \\(\\).*#2.*in funcb \\(j=10\\).*bar = \{a = 42, b = 84\}.*" \
+    "bt no-filters full with Reverse disabled"
+gdb_test "bt full" \
+    ".*#0.*end_func.*str = $hex \"The End\".*st2 = $hex \"Is Near\".*b = 12.*c = 5.*#1.*in funca \\(\\).*#2.*in funcb \\(j=10\\).*bar = \{a = 42, b = 84\}.*#22.*in func1 \\(\\).*#23.*in func2 \\(f=3\\).*elided = $hex \"Elided frame\".*fb = \{nothing = $hex \"Elided Foo Bar\", f = 84, s = 38\}.*bf = $hex.*" \
+    "bt full with Reverse disabled"
+gdb_test "bt full hide" \
+    ".*#0.*end_func.*str = $hex \"The End\".*st2 = $hex \"Is Near\".*b = 12.*c = 5.*#1.*in funca \\(\\).*#2.*in funcb \\(j=10\\).*bar = \{a = 42, b = 84\}.*#22.*in func1 \\(\\)\[^#\]*#24.*in func3 \\(i=3\\).*" \
+    "bt full hide with Reverse disabled"
+
+# Re-enable Reverse
+gdb_test_no_output "enable frame-filter global Reverse" \
+    "re-enable frame-filter global Reverse"
+
+# Test set print frame-arguments
+# none
+gdb_test_no_output "set print frame-arguments none" \
+    "turn off frame arguments"
+gdb_test "bt no-filter 1" \
+    "#0.*end_func \\(foo=\.\.\., bar=\.\.\., fb=\.\.\., bf=\.\.\.\\) at .*py-framefilter.c.*" \
+    "bt no-filter 1 no args"
+gdb_test "bt 1" \
+    "#0.*cnuf_dneThe End \\(foo=\.\.\., bar=\.\.\., fb=\.\.\., bf=\.\.\.\\) at .*py-framefilter.c.*" \
+    "bt 1 no args"
+
+# scalars
+gdb_test_no_output "set print frame-arguments scalars" \
+    "turn frame arguments to scalars only"
+gdb_test "bt no-filter 1" \
+    "#0.*end_func \\(foo=21, bar=$hex \"Param\", fb=$hex, bf=\.\.\.\\) at .*py-framefilter.c.*" \
+    "bt no-filter 1 scalars"
+gdb_test "bt 1" \
+    "#0.*cnuf_dneThe End \\(foo=21, bar=$hex \"Param\", fb=$hex, bf=\.\.\.\\) at .*py-framefilter.c.*" \
+    "bt 1 scalars"
+
+# presence
+gdb_test_no_output "set print frame-arguments presence" \
+    "turn frame arguments to presence only"
+gdb_test "bt no-filter 1" \
+    "#0.*end_func \\(\.\.\.\\) at .*py-framefilter.c.*" \
+    "bt no-filter 1 presence"
+gdb_test "bt 1" \
+    "#0.*cnuf_dneThe End \\(\.\.\.\\) at .*py-framefilter.c.*" \
+    "bt 1 presence"
+
+# Test set print frame-info, with only presence for args.
+# short-location
+gdb_test_no_output "set print frame-info short-location" \
+    "frame-info short-location"
+gdb_test "bt no-filter 1" \
+     "#0.*end_func \\(\.\.\.\\)\r\n.*" \
+    "bt no-filter 1 short-location"
+gdb_test "bt 1" \
+    "#0.*cnuf_dneThe End \\(\.\.\.\\)\r\n.*" \
+    "bt 1 short-location"
+
+# source-and-location
+gdb_test_no_output "set print frame-info source-and-location" \
+    "frame-info source-and-location"
+gdb_test "bt no-filter 1" \
+    "#0.*end_func \\(\.\.\.\\) at .*py-framefilter.c.*\r\n.*\[1-9\]\[0-9\]*.*" \
+    "bt no-filter 1 source-and-location"
+gdb_test "bt 1" \
+    "#0.*cnuf_dneThe End \\(\.\.\.\\) at .*py-framefilter.c.*\r\n.*\[1-9\]\[0-9\]*.*" \
+    "bt 1 source-and-location"
+
+# source-line
+gdb_test_no_output "set print frame-info source-line" \
+    "frame-info source-line"
+gdb_test "bt no-filter 1" \
+    "\[1-9\]\[0-9\]*\[ \t\]*return; /\\* Backtrace end breakpoint \\*/.*" \
+    "bt no-filter 1 source-line"
+gdb_test "bt 1" \
+    "\[1-9\]\[0-9\]*\[ \t\]*return; /\\* Backtrace end breakpoint \\*/.*" \
+    "bt 1 source-line"
+
+# set print frame-info back to auto.
+gdb_test_no_output "set print frame-info auto" \
+    "frame-info auto"
+
+# all
+gdb_test_no_output "set print frame-arguments all" \
+    "turn on frame arguments"
+gdb_test "bt no-filter 1" \
+    "#0.*end_func \\(foo=21, bar=$hex \"Param\", fb=$hex, bf=\{nothing = $hex \"Foo Bar\", f = 42, s = 19\}\\) at .*py-framefilter.c.*" \
+    "bt no-filter 1 all args"
+gdb_test "bt 1" \
+    "#0.*cnuf_dneThe End \\(foo=21, bar=$hex \"Param\", fb=$hex, bf=\{nothing = $hex \"Foo Bar\", f = 42, s = 19\}\\) at .*py-framefilter.c.*" \
+    "bt 1 all args"
+
+# set print address off
+gdb_test_no_output "set print address off" \
+    "Turn off address printing"
+gdb_test "bt no-filter 1" \
+    "#0  end_func \\(foo=21, bar=\"Param\", fb=, bf=\{nothing = \"Foo Bar\", f = 42, s = 19\}\\) at .*py-framefilter.c.*" \
+    "bt no-filter 1 no address"
+gdb_test "bt 1" \
+    "#0  cnuf_dneThe End \\(foo=21, bar=\"Param\", fb=, bf=\{nothing = \"Foo Bar\", f = 42, s = 19\}\\) at .*py-framefilter.c.*" \
+    "bt 1 no addresss"
+
+gdb_test_no_output "set python print-stack message" \
+    "Set python print-stack to message for Error filter"
+gdb_test_no_output  "enable frame-filter global Error" \
+    "enable frame-filter global Error"
+set test "bt 1 with Error filter"
+gdb_test_multiple "bt 1" $test {
+    -re "Python Exception .*: whoops\r\n.*$gdb_prompt $" {
+	pass $test
+    }
+}
+
+# Now verify that we can see a quit.
+gdb_test_no_output "python name_error = KeyboardInterrupt" \
+    "Change ErrorFilter to throw KeyboardInterrupt"
+gdb_test "bt 1" "Quit" "bt 1 with KeyboardInterrupt"
+
+
+# Test with no debuginfo
+
+# We cannot use prepare_for_testing as we have to set the safe-patch
+# to check objfile and progspace printers.
+if {[build_executable $testfile.exp $testfile $srcfile {nodebug}] == -1} {
+    return -1
+}
+
+# Start with a fresh gdb.
+gdb_exit
+gdb_start
+
+# Make the -gdb.py script available to gdb, it is automagically loaded by gdb.
+# Care is taken to put it in the same directory as the binary so that
+# gdb will find it.
+set remote_obj_python_file \
+    [gdb_remote_download host ${srcdir}/${subdir}/${testfile}-gdb.py \
+	 ${testfile}-gdb.py]
+
+gdb_reinitialize_dir $srcdir/$subdir
+gdb_test_no_output "set auto-load safe-path ${remote_obj_python_file}" \
+    "set auto-load safe-path for no debug info"
+gdb_load ${binfile}
+
+# Verify gdb loaded the script.
+gdb_test "info auto-load python-scripts" "Yes.*${testfile}-gdb.py.*" \
+    "Set autoload path for no debug info tests"
+if {![runto_main]} {
+    return
+}
+
+gdb_test_no_output "set python print-stack full" \
+    "set python print-stack full for no debuginfo tests"
+
+# Load global frame-filters
+set remote_python_file [gdb_remote_download host \
+			    ${srcdir}/${subdir}/${testfile}.py]
+gdb_test_no_output "source ${remote_python_file}" \
+    "load python file for no debuginfo tests"
+
+# Disable Reverse
+gdb_test_no_output "disable frame-filter global Reverse" \
+    "disable frame-filter global Reverse for no debuginfo"
+gdb_test "bt" \
+    ".*#0..*in main \\(\\).*" \
+    "bt for no debuginfo"
+gdb_test "bt full" \
+    ".*#0..*in main \\(\\).*" \
+    "bt full for no debuginfo"
+gdb_test "bt no-filters" \
+    ".*#0..*in main \\(\\).*" \
+    "bt no filters for no debuginfo"
+gdb_test "bt no-filters full" \
+    ".*#0..*in main \\(\\).*" \
+    "bt no-filters full no debuginfo"

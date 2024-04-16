@@ -1,0 +1,247 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib trace-support.exp
+
+require allow_shlib_tests
+require gdb_trace_common_supports_arch
+
+standard_testfile pending.c
+set libfile1 "pendshr1"
+set libfile2 "pendshr2"
+set executable $testfile
+set libsrc1  $srcdir/$subdir/$libfile1.c
+set libsrc2  $srcdir/$subdir/$libfile2.c
+set lib_sl1  [standard_output_file pendshr1.sl]
+set lib_sl2  [standard_output_file pendshr2.sl]
+
+set lib_opts [gdb_target_symbol_prefix_flags]
+
+if { [gdb_compile_shlib $libsrc1 $lib_sl1 $lib_opts] != ""
+     || [gdb_compile_shlib $libsrc2 $lib_sl2 $lib_opts] != ""} {
+    untested "failed to compile shared library"
+    return -1
+}
+
+set exec_opts [list debug shlib=$lib_sl1 shlib_load]
+if { [gdb_compile $srcdir/$subdir/$srcfile $binfile executable $exec_opts] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+# Test when GDB connects to a disconnected stub, existing tracepoints in
+# remote stub can be uploaded to GDB, and GDB emits MI notification if
+# new tracepoints are created.
+
+proc test_reconnect { } {
+    with_test_prefix "reconnect" {
+
+	global gdbserver_reconnect_p
+	global gdb_prompt
+	global executable
+	global lib_sl1 lib_sl2
+
+	set gdbserver_reconnect_p 1
+	if { [info proc gdb_reconnect] == "" } {
+	    return 0
+	}
+
+	clean_restart $executable
+	gdb_load_shlib $lib_sl1
+	gdb_load_shlib $lib_sl2
+	if {![runto_main]} {
+	    return 0
+	}
+	# Create tracepoints on marker and main, and leave them in the
+	# remote stub.
+	gdb_test "trace marker" "Tracepoint.*at.* file .*" \
+	    "tracepoint on marker"
+	gdb_test "trace main" "Tracepoint.*at.* file .*" \
+	    "tracepoint on main"
+	gdb_test_no_output "tstart" "start trace experiment"
+
+	set test "disconnect"
+	gdb_test_multiple "disconnect" $test {
+	    -re "Trace is running but will stop on detach; detach anyway\\? \\(y or n\\) $" {
+		pass $test
+
+		set test "disconnected"
+		gdb_test_multiple "y" $test {
+		    -re "$gdb_prompt $" {
+			pass "$test"
+		    }
+		}
+	    }
+	}
+
+	global binfile
+
+	if {[mi_clean_restart $binfile]} {
+	    return
+	}
+
+	global gdbserver_protocol
+	global gdbserver_gdbport
+
+	# Create tracepoints on marker and pendfunc2.
+	mi_gdb_test "-break-insert -a -f pendfunc2" \
+	    {.*\^done,bkpt=.*addr=\"<PENDING>\".*} \
+	    "insert tracepoint on pendfunc2"
+	mi_gdb_test "-break-insert -a marker" {.*\^done,bkpt=.*\".*} \
+	    "insert tracepoint on marker"
+
+	# Connect to the remote stub again, and make sure GDB merges the
+	# tracepoints of both sides correctly.
+	send_gdb "47-target-select $gdbserver_protocol $gdbserver_gdbport\n"
+
+	global mi_gdb_prompt
+	set test "tracepoint created"
+	gdb_expect {
+	    -re "=breakpoint-created,bkpt=\{number=\"1\",type=\"tracepoint\"" {
+		# Tracepoint 1 in GDB, which has already existed before
+		# connecting, should have been merged with a tracepoint on
+		# the target, so we shouldn't see a =breakpoint-created
+		# notification for it.
+		fail "$test: 1"
+		exp_continue
+	    }
+	    -re "=breakpoint-created,bkpt=\{number=\"2\",type=\"tracepoint\"" {
+		# Similar to above.
+		fail "$test: 2"
+		exp_continue
+	    }
+	    -re "=breakpoint-created,bkpt=\{number=\"3\",type=\"tracepoint\",disp=\"keep\",enabled=\"y\",\[^\n\]+,func=\"main\"\[^\n\]+,installed=\"y\"" {
+		# A tracepoint on main was defined in the stub, not in GDB,
+		# so we should see a =breakpoint-created notification.
+		pass $test
+	    }
+	}
+	# Tracepoint on marker is defined.  After the sync, we know that
+	# the tracepoint is in remote stub.  Mark it 'installed'.
+	set test "tracepoint on marker is installed"
+	gdb_expect {
+	    -re "=breakpoint-modified,bkpt=\{number=\"2\".*,func=\"marker\".*installed=\"y\".*${mi_gdb_prompt}$" {
+		pass "$test"
+	    }
+	}
+	# Check that tracepoint 1 is still pending.
+	mi_gdb_test "-break-info 1" \
+	    {.*\^done,BreakpointTable=.*addr=\"<PENDING>\".*} \
+	    "break-info 1"
+
+	set gdbserver_reconnect_p 0
+    }
+}
+
+# Test 'breakpoint-modified' notification is emited when pending tracepoints are
+# resolved.
+
+proc test_pending_resolved { } {
+    with_test_prefix "pending resolved" {
+	global decimal hex
+	global executable
+	global binfile
+	global lib_sl1 lib_sl2
+	global mi_gdb_prompt
+
+	if {[mi_clean_restart $binfile]} {
+	    return
+	}
+	mi_load_shlibs $lib_sl1 $lib_sl2
+
+	# Create a pending tracepoint on pendfunc2
+	mi_gdb_test "-break-insert -a -f pendfunc2" \
+	    {.*\^done,bkpt=.*addr=\"<PENDING>\".*} \
+	    "insert breakpoint on pendfunc2"
+	# Insert breakpoint on marker
+	mi_gdb_test "-break-insert marker" {.*\^done,bkpt=.*} \
+	    "insert breakpoint on marker"
+
+	mi_run_cmd
+	mi_expect_stop "breakpoint-hit" "marker" ""\
+	    ".*" ".*" {"" "disp=\"keep\""} \
+	    "continue to marker breakpoint"
+	mi_gdb_test "-trace-start" {\^done} "trace start"
+
+	mi_send_resuming_command "exec-continue" "continuing execution to marker 1"
+
+	# It is expected to get two "=breakpoint-modified" notifications.
+	# Pending tracepoint is resolved.
+	set test "tracepoint on pendfunc2 resolved"
+	gdb_expect {
+	    -re "=breakpoint-modified,bkpt=\{number=\"1\",type=\"tracepoint\".*.*times=\"0\".*installed=\"n\"" {
+		pass "$test"
+	    }
+	}
+	# Resolved tracepoint is installed.
+	set test "tracepoint on pendfunc2 installed"
+	gdb_expect {
+	    -re "=breakpoint-modified,bkpt=\{number=\"1\",type=\"tracepoint\".*.*times=\"0\".*installed=\"y\"" {
+		pass "$test"
+	    }
+	}
+
+	mi_expect_stop "breakpoint-hit" "marker" ".*" ".*" ".*" \
+	    {"" "disp=\"keep\""} "continue to marker"
+
+
+	mi_gdb_test "-trace-stop" {\^done,.*} "trace stop"
+	mi_gdb_test "-trace-find frame-number 0" \
+	    "-trace-find frame-number 0\r\n\\^done,found=\"1\",tracepoint=\"${decimal}\",traceframe=\"0\",frame=\{.*" \
+	    "-trace-find frame-number 0"
+	mi_gdb_test "-trace-find none" {\^done,found="0"} "back to live inferior"
+
+	mi_send_resuming_command "exec-continue" "continuing to exit"
+	set test "tracepoint on pendfunc2 becomes pending again"
+	gdb_expect {
+	    -re ".*=breakpoint-modified,bkpt=\{number=\"1\",type=\"tracepoint\".*addr=\"<PENDING>\",.*times=\"0\"" {
+		pass "$test"
+	    }
+	    -re ".*${mi_gdb_prompt}$" {
+		fail $test
+	    }
+	    timeout {
+		fail "$test (timeout)"
+	    }
+	}
+
+	mi_expect_stop "exited-normally" "" "" "" "" "" ""
+    }
+}
+
+# Test target supports tracepoints or not.
+
+clean_restart $executable
+
+gdb_load_shlib $lib_sl1
+gdb_load_shlib $lib_sl2
+
+if ![runto_main] {
+    return -1
+}
+
+if ![gdb_target_supports_trace] {
+    unsupported "current target does not support trace"
+    return -1
+}
+
+gdb_exit
+
+test_reconnect
+
+test_pending_resolved

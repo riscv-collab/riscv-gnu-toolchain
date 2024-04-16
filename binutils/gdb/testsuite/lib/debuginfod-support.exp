@@ -1,0 +1,196 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Helper functions to make it easier to write debuginfod tests.
+
+# Return true if the debuginfod tests should be run, otherwise, return
+# false.
+proc allow_debuginfod_tests {} {
+    if [is_remote host] {
+	return false
+    }
+
+    if { [which debuginfod] == 0 } {
+	return false
+    }
+
+    if { [which curl] == 0 } {
+	untested "cannot find curl"
+	return false
+    }
+
+    # Skip testing if gdb was not configured with debuginfod.
+    #
+    # If GDB is built with ASan, it warns that some signal handlers
+    # (installed by ASan) exist on startup.  That makes TCL's exec throw an
+    # error.  Disable that by passing --quiet.
+    if { [string first "with-debuginfod" \
+	      [eval exec $::GDB --quiet $::INTERNAL_GDBFLAGS \
+		   --configuration]] == -1 } {
+	return false
+    }
+
+    return true
+}
+
+# Create two directories within the current output directory.  One directory
+# will be used by GDB as the client cache to hold downloaded debug
+# information, and the other directory will be used by the debuginfod server
+# as its cache of the parsed debug files that will be served to GDB.
+#
+# Call this proc with the names to two variables, these variables will be
+# set in the parent scope with the paths to the two directories.
+#
+# This proc allocates the names for the directories, but doesn't create
+# them.  In fact, if the directories already exist, this proc will delete
+# them, this ensures that any existing contents are also deleted.
+proc prepare_for_debuginfod { cache_var db_var } {
+    upvar $cache_var cache
+    upvar $db_var db
+
+    set cache [standard_output_file ".client_cache"]
+    set db [standard_output_file ".debuginfod.db"]
+
+    # Delete any preexisting test files.
+    file delete -force $cache
+    file delete -force $db
+}
+
+# Run BODY with the three environment variables required to control
+# debuginfod set.  The timeout is set based on the usual timeouts used by
+# GDB within dejagnu (see get_largest_timeout), the debuginfod cache is set
+# to CACHE (this is where downloaded debug data is placed), and the
+# debuginfod urls environment variable is set to be the empty string.
+#
+# Within BODY you should start a debuginfod server and set the environment
+# variable DEBUGINFOD_URLS as appropriate (see start_debuginfod for details).
+#
+# The reason that this proc doesn't automatically start debuginfod, is that
+# in some test cases we want to initially test with debuginfod not running
+# and/or disabled.
+proc with_debuginfod_env { cache body } {
+    set envlist \
+	[list \
+	     env(DEBUGINFOD_URLS) \
+	     env(DEBUGINFOD_TIMEOUT) \
+	     env(DEBUGINFOD_CACHE_PATH)]
+
+    save_vars $envlist {
+	setenv DEBUGINFOD_TIMEOUT [get_largest_timeout]
+	setenv DEBUGINFOD_CACHE_PATH $cache
+	setenv DEBUGINFOD_URLS ""
+
+	uplevel 1 $body
+    }
+}
+
+# Start a debuginfod server.  DB is the directory to use for the server's
+# database cache, while DEBUGDIR is a directory containing all the debug
+# information that the server should server.
+#
+# This proc will try to find an available port to start the server on, will
+# start the server, and check that the server has started correctly.
+#
+# If the server starts correctly, then this proc will return the url that
+# should be used to communicate with the server.  If the server can't be
+# started, then an error will be printed, and an empty string returned.
+#
+# If the server is successfully started then the global variable
+# debuginfod_spawn_id will be set with the spawn_id of the debuginfod
+# process.
+proc start_debuginfod { db debugdir } {
+    global debuginfod_spawn_id spawn_id
+
+    # Find an unused port.
+    set port 7999
+    set found false
+    while { ! $found } {
+	incr port
+	if { $port == 65536 } {
+	    perror "no available ports"
+	    return ""
+	}
+
+	if { [info exists spawn_id] } {
+	    set old_spawn_id $spawn_id
+	}
+
+	spawn debuginfod -vvvv -d $db -p $port -F $debugdir
+	set debuginfod_spawn_id $spawn_id
+
+	if { [info exists old_spawn_id] } {
+	    set spawn_id $old_spawn_id
+	    unset old_spawn_id
+	}
+
+	expect {
+	    -i $debuginfod_spawn_id
+	    "started http server on IPv4 IPv6 port=$port" { set found true }
+	    "started http server on IPv4 port=$port" { set found true }
+	    "started http server on IPv6 port=$port" {}
+	    "failed to bind to port" {}
+	    timeout {
+		stop_debuginfod
+		perror "find port timeout"
+		return ""
+	    }
+	}
+	if { ! $found } {
+	    stop_debuginfod
+	}
+    }
+
+    set url "http://127.0.0.1:$port"
+
+    set metrics [list "ready 1" \
+		     "thread_work_total{role=\"traverse\"} 1" \
+		     "thread_work_pending{role=\"scan\"} 0" \
+		     "thread_busy{role=\"scan\"} 0"]
+
+    # Check server metrics to confirm init has completed.
+    foreach m $metrics {
+	set timelim 20
+	while { $timelim != 0 } {
+	    sleep 0.5
+	    catch {exec curl -s $url/metrics} got
+
+	    if { [regexp $m $got] } {
+		break
+	    }
+
+	    incr timelim -1
+	}
+
+	if { $timelim == 0 } {
+	    stop_debuginfod
+	    perror "server init timeout"
+	    return ""
+	}
+    }
+
+    return $url
+}
+
+# If the global debuginfod_spawn_id exists, then kill that process and unset
+# the debuginfod_spawn_id global.  This can be used to shutdown the
+# debuginfod server.
+proc stop_debuginfod { } {
+    global debuginfod_spawn_id
+
+    if [info exists debuginfod_spawn_id] {
+	kill_wait_spawned_process $debuginfod_spawn_id
+	unset debuginfod_spawn_id
+    }
+}

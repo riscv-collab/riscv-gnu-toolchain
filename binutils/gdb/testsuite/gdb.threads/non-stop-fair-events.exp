@@ -1,0 +1,244 @@
+# Copyright (C) 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that GDB in non-stop mode gives roughly equal priority to
+# events of all threads.
+
+standard_testfile
+set executable ${testfile}
+
+require {!target_info exists gdb,nosignals}
+
+set options { "additional_flags=-DTIMEOUT=$timeout" debug pthreads }
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile $options] == -1} {
+    return -1
+}
+
+gdb_test_no_output "set non-stop on"
+
+if ![runto_main] {
+    return -1
+}
+
+# We want "handle print", to make sure the target backend reports the
+# signal to the run control core.
+gdb_test "handle SIGUSR1 print nostop pass" ""
+
+# Get current value of VAR from the inferior.  TEST is used as test
+# message.
+
+proc get_value {var test} {
+    global expect_out
+    global gdb_prompt
+    global decimal
+
+    set value -1
+    gdb_test_multiple "print $var" "$test" {
+	-re ".*= ($decimal).*\r\n$gdb_prompt $" {
+	    set value $expect_out(1,string)
+	    pass "$test"
+        }
+    }
+    return ${value}
+}
+
+set NUM_THREADS [get_value "num_threads" "get num_threads"]
+
+# Account for the main thread.
+incr NUM_THREADS
+
+# Probe for displaced stepping support.  We're stopped at the main
+# breakpoint.  If displaced stepping is supported, we should see
+# related debug output.
+set displaced_stepping_enabled 0
+set msg "check displaced-stepping"
+gdb_test_no_output "set debug displaced 1"
+gdb_test_multiple "next" $msg {
+    -re "prepared successfully .*$gdb_prompt $" {
+	set displaced_stepping_enabled 1
+    }
+    -re ".*$gdb_prompt $" {
+    }
+}
+gdb_test_no_output "set debug displaced 0"
+
+# Run threads to their start positions.  This prepares for a new test
+# sequence.
+
+proc restart {} {
+    global gdb_prompt
+    global NUM_THREADS
+
+    delete_breakpoints
+
+    gdb_test "print got_sig = 0" " = 0"
+
+    gdb_breakpoint [gdb_get_line_number "set thread breakpoint here"]
+    gdb_breakpoint [gdb_get_line_number "set kill breakpoint here"]
+
+    set test "continue -a&"
+    gdb_test_multiple $test $test {
+	-re "Continuing.\r\n$gdb_prompt " {
+	    pass $test
+	}
+    }
+
+    for {set i 1} { $i <= $NUM_THREADS } { incr i } {
+	set test "thread $i restarted"
+	gdb_test_multiple "" $test {
+	    -re "breakpoint here" {
+		# The prompt was already matched in the "continue &"
+		# test above.  We're now consuming asynchronous output
+		# that comes after the prompt.
+		pass $test
+	    }
+	}
+    }
+
+    delete_breakpoints
+}
+
+# Run command and wait for the prompt, without end anchor.
+
+proc gdb_test_no_anchor {cmd} {
+    global gdb_prompt
+
+    gdb_test_multiple $cmd $cmd {
+	-re "$gdb_prompt " {
+	    pass $cmd
+	}
+    }
+}
+
+# Enable/disable debugging.
+
+proc enable_debug {enable} {
+
+    # Comment out to debug problems with the test.
+    return
+
+    gdb_test_no_anchor "set debug infrun $enable"
+    gdb_test_no_anchor "set debug displaced $enable"
+}
+
+# The test proper.  SIGNAL_THREAD is the thread that has been elected
+# to receive the SIGUSR1 signal.
+
+proc test {signal_thread} {
+    global gdb_prompt
+    global NUM_THREADS
+    global timeout
+    global displaced_stepping_enabled
+
+    with_test_prefix "signal_thread=$signal_thread" {
+	restart
+
+	# Set all threads stepping the infinite loop line in parallel.
+	for {set i 2} { $i <= $NUM_THREADS } { incr i } {
+	    gdb_test "thread $i" \
+		"child_function.*set thread breakpoint here.*" \
+		"switch to thread $i to step it"
+
+	    if {$i == $signal_thread} {
+		gdb_test "print signal_thread = self" " = .*"
+	    }
+
+	    gdb_test "step&" "" "set $i thread stepping"
+	}
+
+	gdb_test "thread 1" "Switching to .*" \
+	    "switch to the main thread to queue signal"
+
+	# Let the main thread queue the signal.
+	gdb_breakpoint "loop_broke"
+
+	enable_debug 1
+
+	# On software single-step targets that don't support displaced
+	# stepping, threads keep hitting each others' single-step
+	# breakpoints, and then GDB needs to pause all threads to step
+	# past those.  The end result is that progress in the main
+	# thread will be slower and it may take a bit longer for the
+	# signal to be queued; bump the timeout.
+	if {!$displaced_stepping_enabled && ![can_hardware_single_step]} {
+	    # The more threads we have, the longer it takes.
+	    set factor $NUM_THREADS
+	} else {
+	    set factor 1
+	}
+	with_timeout_factor $factor {
+	    gdb_test "print timeout = $timeout" " = $timeout" \
+		"set timeout in the inferior"
+
+	    set saw_continuing 0
+	    set test "continue &"
+	    gdb_test_multiple $test $test {
+		-re "Continuing.\r\n" {
+		    set saw_continuing 1
+		    exp_continue
+		}
+		-re "$gdb_prompt " {
+		    gdb_assert $saw_continuing $test
+		}
+		-re "infrun:" {
+		    exp_continue
+		}
+	    }
+
+	    set gotit 0
+
+	    # Wait for all threads to finish their steps, and for the main
+	    # thread to hit the breakpoint.
+	    for {set i 1} { $i <= $NUM_THREADS } { incr i } {
+		set test "thread $i broke out of loop"
+		set gotit 0
+		gdb_test_multiple "" $test {
+		    -re "loop_broke" {
+			# The prompt was already matched in the "continue
+			# &" test above.  We're now consuming asynchronous
+			# output that comes after the prompt.
+			set gotit 1
+			pass $test
+		    }
+		    -re "infrun:" {
+			exp_continue
+		    }
+		}
+		if {!$gotit} {
+		    break
+		}
+	    }
+	}
+
+	enable_debug 0
+
+	# It's helpful to have this in the log if the test ever
+	# happens to fail.
+	gdb_test "info threads"
+
+	return $gotit
+    }
+}
+
+# The kernel/debug API may always walk its thread list looking for the
+# first with an event, resulting in giving priority to e.g. the thread
+# with lowest kernel thread ID.  So test once with the signal pending
+# in each thread, except the main thread.
+for {set i 2} { $i <= $NUM_THREADS } { incr i } {
+    if {![test $i]} {
+	# Avoid cascading timeouts, and bail out.
+	return
+    }
+}

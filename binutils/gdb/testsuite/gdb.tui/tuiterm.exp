@@ -1,0 +1,808 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Unit-test Term, the testsuite's terminal implementation that is used to test
+# the TUI.
+
+tuiterm_env
+
+# Validate the cursor position.
+#
+# EXPECTED_CUR_COL and EXPECTED_CUR_ROW are the expected cursor column and row
+# positions.
+
+proc check_cursor_position { test expected_cur_col expected_cur_row } {
+    with_test_prefix $test {
+	gdb_assert {$expected_cur_col == ${Term::_cur_col}} "column"
+	gdb_assert {$expected_cur_row == ${Term::_cur_row}} "row"
+    }
+}
+
+# Validate the terminal contents and cursor position.
+#
+# EXPECTED_CONTENTS must be a list of strings, one element for each terminal
+# line.
+#
+# EXPECTED_CUR_COL and EXPECTED_CUR_ROW are passed to check_cursor_position.
+
+proc check { test expected_contents expected_cur_col expected_cur_row } {
+    with_test_prefix $test {
+	# Check term contents.
+	set regexp "^"
+
+	foreach line $expected_contents {
+	    append regexp $line
+	    append regexp "\n"
+	}
+
+	append regexp "$"
+	Term::check_contents "contents" $regexp
+    }
+
+    check_cursor_position $test $expected_cur_col $expected_cur_row
+}
+
+proc setup_terminal { cols rows } {
+    setenv TERM ansi
+    Term::_setup $rows $cols
+}
+
+# Most tests are fine with a small terminal.  This proc initializes the terminal
+# with 8 columns and 4 rows, with the following content:
+#
+#   abcdefgh
+#   ijklmnop
+#   qrstuvwx
+#   yz01234
+#
+# The bottom right cell is left blank: trying to write to it using _insert
+# would move the cursor past the screen, causing a scroll, but scrolling is
+# not implemented at the moment.
+
+proc setup_small {} {
+    setup_terminal 8 4
+
+    Term::_insert "abcdefgh"
+    Term::_insert "ijklmnop"
+    Term::_insert "qrstuvwx"
+    Term::_insert "yz01234"
+
+    check "check after setup" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 7 3
+}
+
+# Some tests require a larger terminal.  This proc initializes the terminal with
+# 80 columns and 25 rows, but leaves the content empty.
+
+proc setup_large {} {
+    setup_terminal 80 25
+}
+
+# Each proc below tests a control character or sequence individually.
+
+proc test_backspace {} {
+    # Note: the backspace (BS) control character only moves the cursor left,
+    # it does not delete characters.
+
+    Term::_move_cursor 1 2
+
+    Term::_ctl_0x08
+    check "backspace one" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 0 2
+
+    # Cursor should not move if it is already at column 0.
+    Term::_ctl_0x08
+    check "backspace 2" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 0 2
+}
+
+proc test_linefeed { } {
+    Term::_move_cursor 1 2
+    Term::_ctl_0x0a
+    check "linefeed" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 1 3
+}
+
+proc test_linefeed_scroll { } {
+    Term::_move_cursor 0 3
+    Term::_ctl_0x0a
+    check "linefeed_scroll" {
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+	"yz01234 "
+    } 0 3
+    Term::dump_screen
+}
+
+proc test_carriage_return { } {
+    Term::_move_cursor 1 2
+    Term::_ctl_0x0d
+    check "carriage return 1" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 0 2
+
+    Term::_ctl_0x0d
+    check "carriage return 2" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 0 2
+}
+
+proc test_insert_characters { } {
+    Term::_move_cursor 1 2
+
+    Term::_csi_@
+    check "insert characters 1" {
+	"abcdefgh"
+	"ijklmnop"
+	"q rstuvw"
+	"yz01234 "
+    } 1 2
+
+    Term::_csi_@ 20
+    check "insert characters 2" {
+	"abcdefgh"
+	"ijklmnop"
+	"q       "
+	"yz01234 "
+    } 1 2
+
+    Term::_move_cursor 0 1
+    Term::_csi_@ 6
+    check "insert characters 3" {
+	"abcdefgh"
+	"      ij"
+	"q       "
+	"yz01234 "
+    } 0 1
+}
+
+proc test_pan_down { } {
+    Term::_move_cursor 1 2
+    Term::_csi_S
+    check "pan down, default arg" {
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+	"        "
+    } 1 2
+
+    Term::_csi_S 2
+    check "pan down, explicit arg" {
+	"yz01234 "
+	"        "
+	"        "
+	"        "
+    } 1 2
+
+    Term::_csi_S 100
+    check "pan down, excessive arg" {
+	"        "
+	"        "
+	"        "
+	"        "
+    } 1 2
+}
+
+proc test_pan_up { } {
+    Term::_move_cursor 1 2
+    Term::_csi_T
+    check "pan down, default arg" {
+	"        "
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+    } 1 2
+
+    Term::_csi_T 2
+    check "pan down, explicit arg" {
+	"        "
+	"        "
+	"        "
+	"abcdefgh"
+    } 1 2
+
+    Term::_csi_T 100
+    check "pan down, excessive arg" {
+	"        "
+	"        "
+	"        "
+	"        "
+    } 1 2
+}
+
+proc test_cursor_up { } {
+    Term::_move_cursor 2 3
+
+    Term::_csi_A
+    check "cursor up 1" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 2 2
+
+    Term::_csi_A 2
+    check "cursor up 2" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 2 0
+
+    Term::_csi_A 1
+    check "cursor up 3" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 2 0
+}
+
+proc test_cursor_down { } {
+    Term::_move_cursor 1 0
+
+    Term::_csi_B
+    check "cursor down 1" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 1 1
+
+    Term::_csi_B 2
+    check "cursor down 2" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 1 3
+
+    Term::_csi_B 1
+    check "cursor down 3" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 1 3
+}
+
+proc test_cursor_forward { } {
+    Term::_move_cursor 0 1
+
+    Term::_csi_C
+    check "cursor forward 1" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 1 1
+
+    Term::_csi_C 6
+    check "cursor forward 2" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 7 1
+
+    Term::_csi_C 1
+    check "cursor forward 3" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 7 1
+}
+
+proc test_cursor_backward { } {
+    Term::_move_cursor 7 1
+
+    Term::_csi_D
+    check "cursor backward 1" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 6 1
+
+    Term::_csi_D 6
+    check "cursor backward 2" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 0 1
+
+    Term::_csi_D 1
+    check "cursor backward 3" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 0 1
+}
+
+proc test_cursor_next_line { } {
+    Term::_move_cursor 2 0
+
+    Term::_csi_E
+    check "cursor next line 1" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 0 1
+
+    Term::_move_cursor 2 1
+    Term::_csi_E 2
+    check "cursor next line 2" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 0 3
+
+    Term::_move_cursor 2 3
+    Term::_csi_E 1
+    check "cursor next line 3" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 0 3
+}
+
+proc test_cursor_previous_line { } {
+    Term::_move_cursor 2 3
+
+    Term::_csi_F
+    check "cursor previous line 1" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 0 2
+
+    Term::_move_cursor 2 2
+    Term::_csi_F 2
+    check "cursor previous line 2" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 0 0
+
+    Term::_move_cursor 2 0
+    Term::_csi_F 1
+    check "cursor previous line 3" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 0 0
+}
+
+proc test_horizontal_absolute { } {
+    Term::_move_cursor 2 2
+    Term::_csi_G
+    check "cursor horizontal absolute 1" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 0 2
+
+    Term::_move_cursor 2 2
+    Term::_csi_G 4
+    check "cursor horizontal absolute 2" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 3 2
+}
+
+proc test_cursor_position { } {
+    Term::_move_cursor 1 1
+
+    Term::_csi_H 3 5
+    check "cursor horizontal absolute 2" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 4 2
+}
+
+proc test_cursor_horizontal_forward_tabulation { } {
+    Term::_move_cursor 5 2
+    Term::_csi_I
+    check_cursor_position "default param" 8 2
+
+    Term::_csi_I 2
+    check_cursor_position "explicit param" 24 2
+
+    Term::_move_cursor 77 2
+    Term::_csi_I 5
+    check_cursor_position "try to go past the end" 79 2
+}
+
+proc test_erase_in_display { } {
+    Term::_move_cursor 5 2
+    Term::_csi_J
+    check "erase in display, cursor to end with default param" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstu   "
+	"        "
+    } 5 2
+
+    Term::_move_cursor 3 2
+    Term::_csi_J 0
+    check "erase in display, cursor to end with explicit param" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrs     "
+	"        "
+    } 3 2
+
+    Term::_move_cursor 2 1
+    Term::_csi_J 1
+    check "erase in display, beginning to cursor" {
+	"        "
+	"   lmnop"
+	"qrs     "
+	"        "
+    } 2 1
+
+    Term::_move_cursor 5 1
+    Term::_csi_J 2
+    check "erase in display, entire display" {
+	"        "
+	"        "
+	"        "
+	"        "
+    } 5 1
+}
+
+proc test_erase_in_line { } {
+    Term::_move_cursor 5 2
+    Term::_csi_K
+    check "erase in line, cursor to end with default param" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstu   "
+	"yz01234 "
+    } 5 2
+
+    Term::_move_cursor 3 2
+    Term::_csi_K 0
+    check "erase in line, cursor to end with explicit param" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrs     "
+	"yz01234 "
+    } 3 2
+
+    Term::_move_cursor 3 1
+    Term::_csi_K 1
+    check "erase in line, beginning to cursor" {
+	"abcdefgh"
+	"    mnop"
+	"qrs     "
+	"yz01234 "
+    } 3 1
+
+    Term::_move_cursor 3 0
+    Term::_csi_K 2
+    check "erase in line, entire line" {
+	"        "
+	"    mnop"
+	"qrs     "
+	"yz01234 "
+    } 3 0
+}
+
+proc test_delete_line { } {
+    Term::_move_cursor 3 2
+    Term::_csi_M
+    check "delete line, default param" {
+	"abcdefgh"
+	"ijklmnop"
+	"yz01234 "
+	"        "
+    } 3 2
+
+    Term::_move_cursor 3 0
+    Term::_csi_M 2
+    check "delete line, explicit param" {
+	"yz01234 "
+	"        "
+	"        "
+	"        "
+    } 3 0
+}
+
+proc test_delete_character { } {
+    Term::_move_cursor 2 1
+
+    Term::_csi_P
+    check "delete character, default param" {
+	"abcdefgh"
+	"ijlmnop "
+	"qrstuvwx"
+	"yz01234 "
+    } 2 1
+
+    Term::_csi_P 3
+    check "delete character, explicit param" {
+	"abcdefgh"
+	"ijop    "
+	"qrstuvwx"
+	"yz01234 "
+    } 2 1
+
+    Term::_csi_P 12
+    check "delete character, more than number of columns" {
+	"abcdefgh"
+	"ij      "
+	"qrstuvwx"
+	"yz01234 "
+    } 2 1
+}
+
+proc test_erase_character { } {
+    Term::_move_cursor 3 2
+    Term::_csi_X
+    check "erase character, default param" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrs uvwx"
+	"yz01234 "
+    } 3 2
+
+    Term::_move_cursor 1 3
+    Term::_csi_X 4
+    check "erase character, explicit param" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrs uvwx"
+	"y    34 "
+    } 1 3
+}
+
+proc test_cursor_backward_tabulation { } {
+    Term::_move_cursor 77 2
+    Term::_csi_Z
+    check_cursor_position "default param" 72 2
+
+    Term::_csi_Z 2
+    check_cursor_position "explicit param" 56 2
+
+    Term::_move_cursor 6 2
+    Term::_csi_Z 12
+    check_cursor_position "try to go past the beginning" 0 2
+}
+
+proc test_repeat { } {
+    Term::_move_cursor 2 1
+    set Term::_last_char X
+
+    Term::_csi_b 3
+    check "repeat" {
+	"abcdefgh"
+	"ijXXXnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 5 1
+}
+
+proc test_vertical_line_position_absolute { } {
+    Term::_move_cursor 2 1
+
+    Term::_csi_d
+    check "default param" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 2 0
+
+    Term::_csi_d 3
+    check "explicit param" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 2 2
+
+    Term::_csi_d 100
+    check "try to move off-display" {
+	"abcdefgh"
+	"ijklmnop"
+	"qrstuvwx"
+	"yz01234 "
+    } 2 3
+}
+
+proc test_insert_line { } {
+    Term::_move_cursor 2 1
+    Term::_csi_L
+    check "insert line, default param" {
+	"abcdefgh"
+	"        "
+	"ijklmnop"
+	"qrstuvwx"
+    } 2 1
+
+    Term::_move_cursor 2 0
+    Term::_csi_L 2
+    check "insert line, explicit param" {
+	"        "
+	"        "
+	"abcdefgh"
+	"        "
+    } 2 0
+
+    Term::_csi_L 12
+    check "insert line, insert more lines than display has" {
+	"        "
+	"        "
+	"        "
+	"        "
+    } 2 0
+}
+
+proc test_attrs {} {
+    foreach { attr vals } {
+	reverse {
+	    7 1
+	    27 0
+	}
+	underline {
+	    4 1
+	    24 0
+	}
+	intensity {
+	    1 bold
+	    2 dim
+	    22 normal
+	}
+	invisible {
+	    8 1
+	    28 0
+	}
+	blinking {
+	    5 1
+	    25 0
+	}
+	fg {
+	    30 black
+	    31 red
+	    32 green
+	    33 yellow
+	    34 blue
+	    35 magenta
+	    36 cyan
+	    37 white
+	    39 default
+	}
+	bg {
+	    40 black
+	    41 red
+	    42 green
+	    43 yellow
+	    44 blue
+	    45 magenta
+	    46 cyan
+	    47 white
+	    49 default
+	}
+    } {
+	setup_terminal 12 1
+	set re ""
+	foreach { arg val } $vals {
+	    Term::_insert "a"
+	    Term::_csi_m $arg
+	    append re "a<$attr:$val>"
+	}
+
+	Term::_insert "a"
+	append re "a"
+
+	set re "^$re *$"
+
+	set line [Term::get_line_with_attrs 0]
+	gdb_assert { [regexp $re $line] } "attribute: $attr"
+    }
+}
+
+# Run proc TEST_PROC_NAME with a "small" terminal.
+
+proc run_one_test_small { test_proc_name } {
+    save_vars { env(TERM) stty_init } {
+	setup_small
+	eval $test_proc_name
+    }
+}
+
+# Run proc TEST_PROC_NAME with a "large" terminal.
+
+proc run_one_test_large { test_proc_name } {
+    save_vars { env(TERM) stty_init } {
+	setup_large
+	eval $test_proc_name
+    }
+}
+
+foreach_with_prefix test {
+    test_backspace
+    test_linefeed
+    test_linefeed_scroll
+    test_carriage_return
+    test_insert_characters
+    test_cursor_up
+    test_cursor_down
+    test_cursor_forward
+    test_cursor_backward
+    test_cursor_next_line
+    test_cursor_previous_line
+    test_horizontal_absolute
+    test_cursor_position
+    test_erase_in_display
+    test_erase_in_line
+    test_delete_line
+    test_delete_character
+    test_erase_character
+    test_repeat
+    test_vertical_line_position_absolute
+    test_insert_line
+    test_pan_up
+    test_pan_down
+} {
+    run_one_test_small $test
+}
+
+foreach_with_prefix test {
+    test_cursor_horizontal_forward_tabulation
+    test_cursor_backward_tabulation
+} {
+    run_one_test_large $test
+}
+
+test_attrs

@@ -1,0 +1,170 @@
+#   Copyright 1998-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file was written by Michael Snyder (msnyder@cygnus.com)
+
+load_lib "trace-support.exp"
+
+standard_testfile actions.c
+require gdb_trace_common_supports_arch
+if { [gdb_compile "${srcdir}/${subdir}/${srcfile}" $binfile \
+	  executable {debug nowarnings}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+clean_restart
+gdb_file_cmd $binfile
+
+#
+# test while-stepping command
+#
+
+gdb_delete_tracepoints
+set trcpt1 [gdb_gettpnum gdb_c_test]
+if {$trcpt1 <= 0} {
+    fail "could not find gdb_c_test function"
+    return
+}
+
+# 5.12 basic while-stepping command (collect regs)
+
+gdb_test "info tracepoints" \
+    "Num     Type\[ \]+Disp Enb Address\[ \]+What.*
+\[0-9\]+\[\t \]+tracepoint     keep y.* in gdb_c_test at .*$srcfile:\[0-9\]+.
+\[\t \]+not installed on target" \
+	"5.12: set a tracepoint, stepcount is zero"
+
+set stepcount 12
+
+gdb_trace_setactions "5.12: set stepcount to $stepcount" \
+	"" \
+	"while-stepping $stepcount" "" \
+	"collect \$regs" "^$" \
+	"end" ""
+
+gdb_test "info tracepoints" \
+    "Num     Type\[ \]+Disp Enb Address\[ \]+What.*
+\[0-9\]+\[\t \]+tracepoint     keep y.* in gdb_c_test at .*$srcfile:\[0-9\]+.
+\[\t \]+while-stepping 12.*" \
+	"5.12: info trace shows \"while-stepping\""
+
+# 5.13 step out of context while collecting local variable
+#      [deferred to dynamic test section]
+
+proc while_stepping_bogus_arg { bogus msgstring } {
+    global gdb_prompt
+
+    gdb_trace_setactions "$msgstring" \
+	    "" \
+	    "while-stepping $bogus" ".*while-stepping step count"
+}
+
+# 5.14 while-stepping (no argument)
+
+while_stepping_bogus_arg "" "5.14: while-stepping null stepcount"
+
+# 5.15 while-stepping (zero stepcount)
+
+while_stepping_bogus_arg "0" "5.15: while-stepping rejects zero stepcount"
+
+# 5.16 while-stepping without collecting anything
+gdb_trace_setactions "5.16: step without collecting anything" \
+	"" \
+	"while-stepping $stepcount" "^$" \
+	"end" ""
+
+gdb_test "info tracepoints" \
+    "Num     Type\[ \]+Disp Enb Address\[ \]+What.*
+\[0-9\]+\[\t \]+tracepoint     keep y.* in gdb_c_test at .*$srcfile:\[0-9\]+.
+.*while-stepping $stepcount.*
+.*end.*" \
+	"5.16: confirm actions, step without collecting anything"
+
+# Can't use runto_main here, because that would delete the tracepoints
+# created above.
+
+# Load the binary to the target too.
+gdb_load $binfile
+
+gdb_breakpoint "main"
+gdb_run_cmd
+if {[gdb_test "" "Breakpoint .*" "run to main"] != 0} {
+    return -1
+}
+
+if ![gdb_target_supports_trace] {
+    unsupported "target does not support trace"
+    return -1
+}
+
+gdb_trace_setactions "set stepcount to $stepcount" \
+	"" \
+	"while-stepping $stepcount" "" \
+	"collect \$regs " "^$" \
+	"collect \$locals " "^$" \
+	"end" ""
+
+proc check_tracepoint { data_source } {
+    with_test_prefix "$data_source" {
+	global srcfile
+	global stepcount
+
+	gdb_test "info tracepoints" \
+	    "Num     Type\[ \]+Disp Enb Address\[ \]+What.*
+\[0-9\]+\[\t \]+tracepoint     keep y.* in gdb_c_test at .*$srcfile:\[0-9\]+.
+\[\t \]+while-stepping $stepcount.*
+\[\t \]+collect \\\$regs.*
+\[\t \]+collect \\\$locals.*
+\[\t \]+end.*"
+    }
+}
+
+gdb_test_no_output "tstart"
+check_tracepoint "live"
+gdb_test_no_output "tstop"
+set tracefile [standard_output_file ${testfile}]
+gdb_test "tsave ${tracefile}.tf" \
+    "Trace data saved to file '${tracefile}.tf'\\." \
+    "save tfile trace file"
+gdb_test "tsave -ctf ${tracefile}.ctf" \
+    "Trace data saved to directory '${tracefile}.ctf'\\." \
+    "save ctf trace file"
+
+# Restart GDB and read the trace data in tfile target.
+clean_restart
+gdb_file_cmd $binfile
+gdb_test "target tfile ${tracefile}.tf" ".*" \
+    "change to tfile target"
+check_tracepoint "tfile"
+
+# Try to read ctf data if GDB supports.
+set gdb_can_read_ctf_data 0
+gdb_test_multiple "target ctf" "" {
+    -re "Undefined target command: \"ctf\"\.  Try \"help target\"\.\r\n$gdb_prompt $" {
+	set gdb_can_read_ctf_data 0
+    }
+    -re "No CTF directory specified.*\r\n$gdb_prompt $" {
+	set gdb_can_read_ctf_data 1
+    }
+}
+
+if { $gdb_can_read_ctf_data } {
+    clean_restart
+    gdb_file_cmd $binfile
+    gdb_test "target ctf ${tracefile}.ctf" ".*" \
+	"change to ctf target"
+    check_tracepoint "ctf"
+}

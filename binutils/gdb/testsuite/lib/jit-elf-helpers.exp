@@ -1,0 +1,117 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Magic constants used to calculate a starting address when linking
+# "jit" shared libraries.  When loaded, will be mapped by jit-elf-main
+# to the same address.
+
+set jit_load_address   0x7000000
+set jit_load_increment 0x1000000
+
+# Compile jit-elf-main.c as an executable.
+#
+# BINSUFFIX is appended to the binary name.
+# OPTIONS is passed to gdb_compile when compiling the program.
+#
+# On success, return 0.
+# On failure, return -1.
+proc compile_jit_main {main_srcfile main_binfile options} {
+    global jit_load_address jit_load_increment
+
+    set options [concat \
+	$options \
+	additional_flags=-DLOAD_ADDRESS=$jit_load_address \
+	additional_flags=-DLOAD_INCREMENT=$jit_load_increment \
+	debug]
+
+    if { [gdb_compile ${main_srcfile} ${main_binfile} \
+	      executable $options] != "" } {
+	set f [file tail $main_binfile]
+	untested "failed to compile $f"
+	return -1
+    }
+
+    return 0
+}
+
+# Compile jit-elf-main.c as a shared library.
+#
+# OPTIONS is passed to gdb_compile when compiling the program.
+#
+# On success, return 0.
+# On failure, return -1.
+proc compile_jit_elf_main_as_so {main_solib_srcfile main_solib_binfile options} {
+    global jit_load_address jit_load_increment
+
+    set options [concat \
+	$options \
+	additional_flags=-DLOAD_ADDRESS=$jit_load_address \
+	additional_flags=-DLOAD_INCREMENT=$jit_load_increment \
+	debug]
+
+    if { [gdb_compile_shlib ${main_solib_srcfile} ${main_solib_binfile} \
+	      $options] != "" } {
+	set f [file tail $main_solib_binfile]
+	untested "failed to compile shared library $f"
+	return -1
+    }
+
+    return 0
+}
+
+# Compile jit-elf-solib.c as a shared library in multiple copies and
+# upload them to the target.
+#
+# OPTIONS_LIST is a list of additional options to pass through to
+# gdb_compile_shlib.
+#
+# On success, return a list of target path to the shared libraries.
+# On failure, return -1.
+proc compile_and_download_n_jit_so {jit_solib_basename jit_solib_srcfile \
+					count {options_list {}}} {
+    global jit_load_address jit_load_increment
+    set binfiles_target {}
+
+    for {set i 1} {$i <= $count} {incr i} {
+	set binfile [standard_output_file ${jit_solib_basename}.$i.so]
+
+	# Note: compiling without debug info by default: some test
+	# do symbol renaming by munging on ELF symbol table, and that
+	# wouldn't work for .debug sections.  Also, output for "info
+	# function" changes when debug info is present.
+	set addr [format 0x%x [expr $jit_load_address + $jit_load_increment * [expr $i-1]]]
+
+	# Use "text_segment=..." to ask the linker to relocate everything in the
+	# compiled shared library against a fixed base address.  Combined
+	# with mapping the resulting binary to the same fixed base it allows
+	# to dynamically execute functions from it without any further adjustments.
+	set fname [format "jit_function_%04d" $i]
+	set options [list \
+			 ${options_list} \
+			 additional_flags=-DFUNCTION_NAME=$fname \
+			 text_segment=$addr]
+	if { [gdb_compile_shlib ${jit_solib_srcfile} ${binfile} \
+		  $options] != "" } {
+	    set f [file tail $binfile]
+	    untested "failed to compile shared library $f"
+	    return -1
+	}
+
+	set path [gdb_remote_download target ${binfile}]
+	lappend binfiles_target $path
+    }
+
+    return $binfiles_target
+}

@@ -1,0 +1,344 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Note that the testcase gdb.dwarf2/dw2-inline-break.exp largely
+# mirrors this testcase, and should be updated if this testcase is
+# changed.
+
+standard_testfile
+
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile \
+          {debug additional_flags=-Winline}] } {
+    return -1
+}
+
+# Return a string that may be used to match the output of "info break NUM".
+#
+# Optional arguments:
+#
+# source    - the name of the source file
+# func      - the name of the function
+# disp      - the event disposition
+# enabled   - enable state
+# locs      - number of locations
+# line      - source line number (ignored without -source)
+
+proc break_info_1 {num args} {
+    global decimal
+
+    # Column delimiter
+    set c {[\t ]+}
+
+    # Row delimiter
+    set end {[\r\n \t]+}
+
+    # Table header
+    set header "[join [list Num Type Disp Enb Address What] ${c}]"
+
+    # Get/configure any optional parameters.
+    parse_args [list {source ""} {func ".*"} {disp "keep"} \
+		    {enabled "y"} {locs 1} [list line $decimal] \
+		    {type "breakpoint"}]
+
+    if {$source != ""} {
+	set source "$source:$line"
+    }
+
+    # Result starts with the standard header.
+    set result "$header${end}"
+
+    # Set up for multi-location breakpoint marker.
+    if {$locs == 1} {
+	set multi ".*"
+    } else {
+	set multi "<MULTIPLE>${end}"
+    }
+    append result "[join [list $num $type $disp $enabled $multi] $c]"
+
+    # Add location info.
+    for {set i 1} {$i <= $locs} {incr i} {
+	if {$locs > 1} {
+	    append result "[join [list $num.$i $enabled] $c].*"
+	}
+
+	#  Add function/source file info.
+	append result "in $func at .*$source"
+
+	if {$i < $locs} {
+	    append result ${end}
+	}
+    }
+
+    return $result
+}
+
+#
+# func1 is a static inlined function that is called once.
+# The result should be a single-location breakpoint.
+#
+gdb_test "break func1" \
+    "Breakpoint.*at.* file .*$srcfile, line.*"
+
+#
+# func2 is a non-static inlined function that is called once.
+# The result should be a breakpoint with two locations: the
+# out-of-line function and the single inlined instance.
+#
+gdb_test "break func2" \
+    "Breakpoint.*at.*func2.*\\(2 locations\\)"
+
+#
+# func3b is a static inlined function that is called once from
+# within another static inlined function.  The result should be
+# a single-location breakpoint.
+#
+gdb_test "break func3b" \
+    "Breakpoint.*at.* file .*$srcfile, line.*"
+
+#
+# func4b is a static inlined function that is called once from
+# within a non-static inlined function.  The result should be
+# a breakpoint with two locations: the inlined instance within
+# the inlined call to func4a in main, and the inlined instance
+# within the out-of-line func4a.
+#
+gdb_test "break func4b" \
+    "Breakpoint.*at.*func4b.*\\(2 locations\\)"
+
+#
+# func5b is a non-static inlined function that is called once
+# from within a static inlined function.  The result should be a
+# breakpoint with two locations: the out-of-line function and the
+# inlined instance within the inlined call to func5a in main.
+#
+gdb_test "break func5b" \
+    "Breakpoint.*at.*func5b.*\\(2 locations\\)"
+#
+# func6b is a non-static inlined function that is called once from
+# within another non-static inlined function.  The result should be
+# a breakpoint with three locations: the out-of-line function, the
+# inlined instance within the out-of-line func6a, and the inlined
+# instance within the inlined call to func6a in main,
+#
+gdb_test "break func6b" \
+    "Breakpoint.*at.*func6b.*\\(3 locations\\)"
+
+#
+# func7b is a static inlined function that is called twice: once from
+# func7a, and once from main.  The result should be a breakpoint with
+# two locations: the inlined instance within the inlined instance of
+# func7a, and the inlined instance within main.
+#
+gdb_test "break func7b" \
+    "Breakpoint.*at.*func7b.*\\(2 locations\\)"
+
+#
+# func8b is a non-static inlined function that is called twice: once
+# func8a, and once from main.  The result should be a breakpoint with
+# three locations: the out-of-line function, the inlined instance
+# within the inlined instance of func7a, and the inlined instance
+# within main.
+#
+gdb_test "break func8b" \
+    "Breakpoint.*at.*func8b.*\\(3 locations\\)"
+
+#
+# func1 is a static inlined function.  The result should be that no
+# symbol is found to print.
+#
+gdb_test "print func1" \
+    "No symbol \"func1\" in current context."
+
+#
+# func2 is a non-static inlined function.  The result should be that
+# one symbol is found to print, and that the printed symbol is called
+# "func2".  Note that this does not cover the failure case that two
+# symbols were found, but that gdb chose the out-of-line copy to
+# print, but if this was failing the "print func1" test would likely
+# fail instead.
+#
+gdb_test "print func2" \
+    "\\\$.* = {int \\(int\\)} .* <func2>"
+
+# Test that "info break" reports the location of the breakpoints "inside"
+# the inlined functions
+
+set results(1) [break_info_1 1 -source $srcfile -func "func1"]
+set results(2) [break_info_1 2 -locs 2 -source $srcfile -func "func2"]
+set results(3) [break_info_1 3 -source $srcfile -func "func3b"]
+set results(4) [break_info_1 4 -locs 2 -source $srcfile -func "func4b"]
+set results(5) [break_info_1 5 -locs 2 -source $srcfile -func "func5b"]
+set results(6) [break_info_1 6 -locs 3 -source $srcfile -func "func6b"]
+set results(7) [break_info_1 7 -locs 2 -source $srcfile -func "func7b"]
+set results(8) [break_info_1 8 -locs 3 -source $srcfile -func "func8b"]
+
+for {set i 1} {$i <= [array size results]} {incr i} {
+    send_log "Expecting: $results($i)\n"
+    gdb_test "info break $i" $results($i)
+}
+
+# Test "permanent" and "temporary" breakpoints.
+foreach_with_prefix cmd [list "break" "tbreak"] {
+
+    # Start with a clean state.
+    delete_breakpoints
+    if {![runto_main]} {
+	return -1
+    }
+
+    # Assemble flags to pass to gdb_breakpoint.  Lame but this is just
+    # a test suite!
+    set break_flags "message"
+    if {[string match $cmd "tbreak"]} {
+	lappend break_flags "temporary"
+    }
+
+    # Insert breakpoints for all inline_func? and not_inline_func? and check
+    # that we actually stop where we think we should.
+    for {set i 1} {$i < 4} {incr i} {
+	foreach inline {"not_inline" "inline"} {
+	    eval gdb_breakpoint "${inline}_func$i" $break_flags
+	}
+    }
+
+    set ws {[\r\n\t ]+}
+    set backtrace [list "(in|at)? main"]
+    for {set i 3} {$i > 0} {incr i -1} {
+
+	foreach inline {"not_inline" "inline"} {
+
+	    # Check that we stop at the correct location and print out
+	    # the (possibly) inlined frames.
+	    set num [gdb_get_line_number "/* ${inline}_func$i  */"]
+	    set pattern ".*$srcfile:$num${ws}.*$num${ws}int y = $decimal;"
+	    append pattern "${ws}/\\\* ${inline}_func$i  \\\*/"
+	    send_log "Expecting $pattern\n"
+	    gdb_continue_to_breakpoint "${inline}_func$i" $pattern
+
+	    # Also check for the correct backtrace.
+	    set backtrace [linsert $backtrace 0 "(in|at)?${ws}${inline}_func$i"]
+	    gdb_test_sequence "bt" "bt stopped in ${inline}_func$i" $backtrace
+	}
+    }
+}
+
+# func_extern_caller calls func_inline_caller which calls
+# func_inline_callee.  The latter two are both inline functions.  Test
+# that setting a breakpoint on each of the functions reports a stop at
+# that function.  This exercises the inline frame skipping logic.  If
+# we set a breakpoint at function A, we want to present the stop at A,
+# even if A's entry code is an inlined call to another inline function
+# B.
+
+foreach_with_prefix func {
+    "func_extern_caller"
+    "func_inline_caller"
+    "func_inline_callee"
+} {
+    clean_restart $binfile
+
+    if {![runto_main]} {
+	continue
+    }
+
+    gdb_breakpoint $func
+    gdb_test "continue" "Breakpoint .* $func .*at .*$srcfile.*" \
+	"breakpoint hit presents stop at breakpointed function"
+}
+
+# Test setting a breakpoint in an inline function by line number and
+# by address, and that GDB presents the stop there.
+
+set line [gdb_get_line_number "break here"]
+
+with_test_prefix "line number" {
+    clean_restart $binfile
+
+    if {![runto_main]} {
+	continue
+    }
+
+    # Set the breakpoint by line number, and check that GDB reports
+    # the breakpoint location being the inline function.
+    gdb_test "break $srcfile:$line" ".*Breakpoint .* at .*: file .*$srcfile, line $line."
+
+    gdb_test "info break \$bpnum" "in func1 at .*$srcfile:$line"
+
+    gdb_test "continue" "Breakpoint .*, func1 \\(x=1\\) at .*$srcfile:$line.*break here.*" \
+	"breakpoint hit presents stop at inlined function"
+
+    # Save the PC for the following by-address test.
+    set address [get_hexadecimal_valueof "\$pc" "0"]
+}
+
+# Test setting a breakpoint in an inline function by address, and that
+# GDB presents the stop there.
+
+with_test_prefix "address" {
+
+    clean_restart $binfile
+
+    if {![runto_main]} {
+	continue
+    }
+
+    # Set the breakpoint by address, and check that GDB reports the
+    # breakpoint location being the inline function.
+    gdb_test "break *$address" \
+	".*Breakpoint .* at $address: file .*$srcfile, line $line." \
+	"set breakpoint on address"
+
+    gdb_test "info break \$bpnum" "in func1 at .*$srcfile:$line"
+
+    gdb_test "continue" "Breakpoint .*, func1 \\(x=1\\) at .*$srcfile:$line.*break here.*" \
+	"breakpoint hit presents stop at inlined function"
+}
+
+with_test_prefix "check alignment" {
+
+    clean_restart $binfile
+
+    if {![runto_main]} {
+	continue
+    }
+
+    gdb_test "break func4b" \
+	"Breakpoint.*at.*func4b.*\\(2 locations\\)"
+
+    set expected_line_length -1
+    gdb_test_multiple "info break \$bpnum" "xxxx" {
+	-re "Num     Type           Disp Enb Address            What\r\n" {
+	    exp_continue
+	}
+	-re "($decimal \[^\r\n\]+)<MULTIPLE>\[^\r\n\]+\r\n" {
+	    if {$expected_line_length != -1} {
+		fail "multiple header lines seen"
+	    }
+	    set expected_line_length [string length $expect_out(1,string)]
+	    exp_continue
+	}
+	-re "($decimal\.($decimal) \[^\r\n\]+)$hex\[^\r\n\]+\r\n" {
+	    set len [string length $expect_out(1,string)]
+	    set loc $expect_out(2,string)
+	    gdb_assert {$len == $expected_line_length} \
+		"check alignment of location line $loc"
+	    exp_continue
+	}
+	-re "$gdb_prompt $" {
+	}
+    }
+}
+
+unset -nocomplain results

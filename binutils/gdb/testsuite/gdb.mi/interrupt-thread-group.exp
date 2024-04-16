@@ -1,0 +1,120 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test --exec-interrupt with thread-group.
+#
+# Run two inferiors, try interrupting them both with --exec-interrupt +
+# --thread-group.
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+standard_testfile .c
+
+if {[gdb_compile_pthreads "$srcdir/$subdir/$srcfile" $binfile \
+	 executable {debug additional_flags=-std=gnu99}] != "" } {
+    return -1
+}
+
+save_vars { GDBFLAGS } {
+    append GDBFLAGS " -ex \"set non-stop on\" -ex \"set mi-async\""
+    mi_clean_restart $binfile
+}
+
+mi_detect_async
+
+# Create breakpoint by hand instead of using mi_runto, since we'll need it for
+# both inferiors.
+mi_create_breakpoint "all_threads_started" \
+    "set breakpoint on all_threads_started"
+
+# Run first inferior to all_threads_started (to ensure all threads are started)
+# and resume it.
+if { [mi_run_cmd] < 0 } {
+    return
+}
+
+mi_expect_stop "breakpoint-hit" "all_threads_started" ".*" ".*" ".*" {"" "disp=\"keep\""} \
+    "inferior i1 stops at all_threads_started"
+
+mi_send_resuming_command "exec-continue --thread-group i1" \
+    "continue inferior 1"
+
+# We can't run a second inferior on stub targets.  We can still test with one
+# inferior and ensure that the command has the desired effect.
+set use_second_inferior [expr {![use_gdb_stub]}]
+
+if { $use_second_inferior } {
+    mi_gdb_test "-add-inferior" \
+	"\\^done,inferior=\"i2\",connection=\\{\[^\}\]+\\}" \
+	"add inferior 2"
+    mi_gdb_test "-file-exec-and-symbols --thread-group i2 $::binfile" \
+	"\\^done" \
+	"set executable of inferior 2"
+    # Run second inferior to all_threads_started (to ensure all threads are
+    # started) and resume it.
+    mi_gdb_test "-exec-run --thread-group i2" \
+	"\\^running.*" \
+	"run inferior 2"
+
+    mi_expect_stop "breakpoint-hit" "all_threads_started" ".*" ".*" ".*" {"" "disp=\"keep\"" "locno=\"[0-9]+\""} \
+	"inferior i2 stops at all_threads_started"
+
+    mi_send_resuming_command "exec-continue --thread-group i2" \
+	"continue inferior 2"
+
+    mi_check_thread_states {
+	"running" "running" "running" "running" "running"
+	"running" "running" "running" "running" "running"
+    } "before interrupting"
+} else {
+    mi_check_thread_states {
+	"running" "running" "running" "running" "running"
+    } "before interrupting"
+}
+
+# Interrupt inferior 1, wait for events.
+mi_gdb_test "-exec-interrupt --thread-group i1" \
+    "\\^done" \
+    "interrupt inferior 1"
+
+for {set i 0} {$i < 5} {incr i} {
+    mi_expect_interrupt "inferior 1, interrupt $i"
+}
+
+if { $use_second_inferior } {
+    mi_check_thread_states {
+	"stopped" "stopped" "stopped" "stopped" "stopped"
+	"running" "running" "running" "running" "running"
+    } "after interrupting inferior 1"
+
+    # Interrupt inferior 2, wait for events.
+    mi_gdb_test "-exec-interrupt --thread-group i2" \
+	"\\^done" \
+	"interrupt inferior 2"
+
+    for {set i 0} {$i < 5} {incr i} {
+	mi_expect_interrupt "inferior 2, interrupt $i"
+    }
+
+    mi_check_thread_states {
+	"stopped" "stopped" "stopped" "stopped" "stopped"
+	"stopped" "stopped" "stopped" "stopped" "stopped"
+    } "after interrupting inferior 2"
+} else {
+    mi_check_thread_states {
+	"stopped" "stopped" "stopped" "stopped" "stopped"
+    } "after interrupting inferior 1"
+}

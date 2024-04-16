@@ -1,0 +1,74 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "ada.exp"
+
+require allow_ada_tests
+
+standard_ada_testfile mi_access
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+if {[gdb_compile_ada "${srcfile}" "${binfile}" executable debug] != "" } {
+    return -1
+}
+
+mi_clean_restart $binfile
+
+if {[mi_runto_main] < 0} {
+    return 0
+}
+
+set bp_location [gdb_get_line_number "STOP" ${testdir}/mi_access.adb]
+mi_continue_to_line \
+    "mi_access.adb:$bp_location" \
+    "stop at start of mi_access"
+
+# The bug was that creating a varobj for A_String_Access would crash.
+# The value of NUMCHILD may vary on different systems.  Use generic $decimal
+# to match possible values.
+set re_ok "\\^done,name=\"A_String_Access\",numchild=\"$decimal\",.*"
+set re_error "\\^error,msg=\"Value out of range\.\".*"
+mi_gdb_test "-var-create A_String_Access * A_String_Access" \
+    "($re_ok|$re_error)" \
+    "Create varobj"
+
+set bp_location [gdb_get_line_number "STOP2" ${testdir}/mi_access.adb]
+mi_continue_to_line \
+    "mi_access.adb:$bp_location" \
+    "stop at stop 2"
+
+# If the  VAROBJ_UPDATE_RESULT.TYPE is true, the new_type and new_num_children
+# strings and values will be printed.  This currently happens on PowerPC but
+# not X86-64.
+set re_default [string_to_regexp {^done,changelist=[{name="A_String_Access",in_scope="true",type_changed="false",has_more="0"}]}]
+set re_varobj_update_result_type [string_to_regexp {^done,changelist=[{name="A_String_Access",in_scope="true",type_changed="true",new_type="pck.string_access",new_num_children="1",has_more="0"}]}]
+mi_gdb_test "-var-update A_String_Access" \
+    "($re_default|$re_varobj_update_result_type)" \
+    "update at stop 2"
+
+mi_gdb_test "-var-list-children A_String_Access" \
+    [string_to_regexp {^done,numchild="1",children=[child={name="A_String_Access.A_String_Access.all",exp="A_String_Access.all",numchild="3",type="array (3 .. 5) of character",thread-id="1"}],has_more="0"}] \
+    "list children at stop 2"
+
+set bp_location [gdb_get_line_number "STOP3" ${testdir}/mi_access.adb]
+mi_continue_to_line \
+    "mi_access.adb:$bp_location" \
+    "stop at stop 3"
+
+mi_gdb_test "-var-update A_String_Access" \
+    [string_to_regexp {^done,changelist=[{name="A_String_Access",in_scope="true",type_changed="true",new_type="pck.string_access",new_num_children="0",has_more="0"}]}] \
+    "update at stop 3"

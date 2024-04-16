@@ -1,0 +1,94 @@
+# Copyright (C) 2016-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require is_aarch32_target
+
+standard_testfile
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile} \
+    [list debug]] } {
+    return -1
+}
+
+if { ![runto_main] } {
+    return -1
+}
+
+# Check kernel helpers are supported or not.
+
+set kernel_helper_supported 0
+gdb_test_multiple "p *kernel_user_helper_version" \
+    "check kernel helper version" {
+	-re " = ($decimal)\r\n$gdb_prompt $" {
+	    if { $expect_out(1,string) >= 1 } {
+		set kernel_helper_supported 1
+	    }
+	}
+    }
+
+if { !$kernel_helper_supported } {
+    unsupported "kernel doesn't have helpers"
+    return 0
+}
+
+# Get the instruction branching to kernel helper, they can be
+# blx rN or bx rN.
+set branch_to_kernel_helper 0
+set branch_insn "bl?x\[ \t\]*r${decimal}"
+set test "disassemble main"
+gdb_test_multiple $test $test {
+    -re ".*($hex) <\\+$decimal>:\[ \t\]+$branch_insn" {
+	set branch_to_kernel_helper $expect_out(1,string)
+	exp_continue
+    }
+    -re ".*$gdb_prompt $" {
+    }
+}
+
+if { ![gdb_assert $branch_to_kernel_helper \
+	   "find instruction branch to kernel helper"] } {
+    return
+}
+
+with_test_prefix "single-step" {
+    gdb_breakpoint "*${branch_to_kernel_helper}"
+    gdb_continue_to_breakpoint "branch to kernel helper"
+    gdb_test "si"
+
+    set test "bt"
+    gdb_test_multiple $test $test {
+	-re "#0  \[^\\r\\n\]*main .*\r\n$gdb_prompt $" {
+	    # Test that the program still stops in main rather than
+	    # somewhere else.
+	    pass $test
+	}
+	-re "#0  0xffff0fe0 .*\r\n$gdb_prompt $" {
+	    # AArch64 linux kernel can do hardware single step, so
+	    # the program can stop at kernel helper.
+	    pass $test
+	}
+
+    }
+
+    delete_breakpoints
+}
+
+with_test_prefix "cond-breakpoint" {
+    gdb_breakpoint "*${branch_to_kernel_helper} if i > 5"
+    gdb_continue_to_breakpoint "branch to kernel helper"
+    gdb_test "p i" " = 6"
+
+    delete_breakpoints
+}

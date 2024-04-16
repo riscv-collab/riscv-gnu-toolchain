@@ -1,0 +1,246 @@
+# Copyright (C) 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It tests Python-based
+# pretty-printing for the CLI.
+
+load_lib gdb-python.exp
+
+require allow_python_tests
+
+standard_testfile
+
+# Start with a fresh gdb.
+gdb_exit
+gdb_start
+
+proc run_lang_tests {exefile lang} {
+    global srcdir subdir srcfile testfile hex
+    if { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${exefile}" executable "debug $lang"] != "" } {
+	untested "failed to compile in $lang mode"
+	return -1
+    }
+
+    set nl "\[\r\n\]+"
+
+    # Start with a fresh gdb.
+    clean_restart $exefile
+
+    if {![runto_main]} {
+	return
+    }
+
+    gdb_test_no_output "set print pretty on"
+
+    gdb_breakpoint [gdb_get_line_number "break to inspect" ${testfile}.c]
+    gdb_continue_to_breakpoint "break to inspect" ".*break to inspect.*"
+
+
+    set remote_python_file [gdb_remote_download host \
+				${srcdir}/${subdir}/${testfile}.py]
+
+    gdb_test_no_output "source ${remote_python_file}" "load python file"
+    
+    gdb_test "print ss" " = a=< a=<1> b=<$hex>> b=< a=<2> b=<$hex>>"
+    gdb_test "print ssa\[1\]" " = a=< a=<5> b=<$hex>> b=< a=<6> b=<$hex>>"
+    gdb_test "print ssa" " = {a=< a=<3> b=<$hex>> b=< a=<4> b=<$hex>>, a=< a=<5> b=<$hex>> b=< a=<6> b=<$hex>>}"
+    
+    gdb_test "print arraystruct" " = {$nl *y = 7, *$nl *x = { a=<23> b=<$hex>,  a=<24> b=<$hex>} *$nl *}"
+
+    # Test that when a pretty-printer returns a gdb.Value in its to_string, we
+    # call the pretty-printer of that value too.
+    gdb_test "print tsrvw" " = Inner to_string 1989"
+
+    if {$lang == "c++"} {
+	gdb_test "print cps" "=  a=<8> b=<$hex>"
+	gdb_test "print cpss" " = {$nl *zss = 9, *$nl *s =  a=<10> b=<$hex>$nl}"
+	gdb_test "print cpssa\[0\]" " = {$nl *zss = 11, *$nl *s =  a=<12> b=<$hex>$nl}"
+	gdb_test "print cpssa\[1\]" " = {$nl *zss = 13, *$nl *s =  a=<14> b=<$hex>$nl}"
+	gdb_test "print cpssa" " = {{$nl *zss = 11, *$nl *s =  a=<12> b=<$hex>$nl *}, {$nl *zss = 13, *$nl *s =  a=<14> b=<$hex>$nl *}}"
+	gdb_test "print sss" "= a=<15> b=< a=<8> b=<$hex>>"
+	gdb_test "print ref" "= a=<15> b=< a=<8> b=<$hex>>"
+	gdb_test "print derived" \
+	    " = \{.*<Vbase1> = pp class name: Vbase1.*<Vbase2> = \{.*<VirtualTest> = pp value variable is: 1,.*members of Vbase2:.*_vptr.Vbase2 = $hex.*<Vbase3> = \{.*members of Vbase3.*members of Derived:.*value = 2.*"
+	gdb_test "print ns " "\"embedded\\\\000null\\\\000string\"" \
+	    "print ns with default element limit"
+	gdb_test_no_output "set print elements 3"
+	gdb_test "print ns" "emb\.\.\.." \
+	    "print ns with element limit of 3"
+	gdb_test_no_output "set print elements 10"
+	gdb_test "print ns" "embedded\\\\000n\.\.\.." \
+	    "print ns with element limit of 10"
+	gdb_test_no_output "set print elements 200"
+
+	gdb_test "print has_member" \
+	    "=  a=<23> b=<$hex <has_static_member::global>>.*"
+	gdb_test "print has_static_member::global" \
+	    "=  a=<23> b=<$hex <has_static_member::global>>"
+    }
+
+    if { ![is_address_zero_readable] } {
+	gdb_test "print ns2" \
+	    ".error reading variable: Cannot access memory at address 0x0."
+    }
+
+    gdb_test "print x" " = \"this is x\""
+    gdb_test "print cstring" " = \"const string\""
+
+    gdb_test "print estring" " = \"embedded x\\\\201\\\\202\\\\203\\\\204\""
+    if { ![is_address_zero_readable] } {
+	    gdb_test "print estring3" \
+		" = <error reading variable: Cannot create a lazy string with address 0x0, and a non-zero length.>"
+    }
+
+    gdb_test_no_output "python pp_ls_encoding = 'UTF-8'"
+    gdb_test "print estring2" "\"embedded \", <incomplete sequence \\\\302>"
+
+    gdb_test_no_output "set python print-stack full"
+    gdb_test "print hint_error" "Exception: hint failed\r\nhint_error_val"
+
+    gdb_test "print c" " = container \"container\" with 2 elements = {$nl *.0. = 23,$nl *.1. = 72$nl}" \
+	"print c, pretty printing on, default display hint"
+
+    gdb_test_no_output "set variable c.is_array_p=1"
+    gdb_test "print c" " = container \"container\" with 2 elements = \\{23, 72\\}" \
+	"print c, pretty printing on, display hint is now array"
+
+    # Setting is_map_p while _is_array_p is also set will cause the
+    # display_hint method to raise an exception (see py-prettyprint.py).
+    gdb_test_no_output "set variable c.is_map_p=1"
+
+    # This test checks what happens when the display hint throws an
+    # error.  GDB just treats this as though the display hint was
+    # None.
+    set py_exception \
+	[multi_line \
+	     "Traceback\[^\r\n\]+" \
+	     "\\s+File \"\[^\r\n\]+/py-prettyprint.py\", line \[0-9\]+, in display_hint" \
+	     "\\s+raise Exception\[^\r\n\]+" \
+	     "Exception: invalid object state found in display_hint"]
+    gdb_test "print c" \
+	[multi_line \
+	     " = ${py_exception}" \
+	     "container \"container\" with 2 elements = {" \
+	     "\\s+\\\[0\\\] = 23," \
+	     "\\s+\\\[1\\\] = 72" \
+	     "}"] \
+	"print c, pretty printing on, exception raised from display_hint"
+
+    # Unset is_array_p so that display_hint no longer raises an
+    # exception.
+    gdb_test_no_output "set variable c.is_array_p=0"
+
+    gdb_test "print c" " = container \"container\" with 2 elements = \{$nl  \\\[23\\\] = 72$nl\}" \
+	"print c, pretty printing on, display hint is now map"
+
+    gdb_test "print nstype" " = {$nl *.0. = 7,$nl *.1. = 42$nl}"
+
+    gdb_test_no_output "set print pretty off"
+    gdb_test "print nstype" " = {.0. = 7, .1. = 42}" \
+	"print nstype on one line"
+
+    # Now we have pretty printing turned off, try printing 'c' again.
+    gdb_test "print c" " = container \"container\" with 2 elements = \{\\\[23\\\] = 72\}" \
+	"print c, pretty printing off, display hint is now map"
+
+    gdb_test_no_output "set variable c.is_map_p=0"
+    gdb_test "print c" " = container \"container\" with 2 elements = \{\\\[0\\\] = 23, \\\[1\\\] = 72\}" \
+	"print c, pretty printing off, default display hint"
+
+    # Check that GDB doesn't lose typedefs when looking for a printer.
+    gdb_test "print an_int" " = -1"
+    gdb_test "print (int) an_int" " = -1"
+    gdb_test "print (int_type) an_int" " = type=int_type, val=-1"
+
+    gdb_test "print an_int_type" " = type=int_type, val=1"
+    gdb_test "print (int_type) an_int_type" " = type=int_type, val=1"
+
+    gdb_test "print an_int_type2" " = type=int_type2, val=2"
+    gdb_test "print (int) an_int_type2" " = 2"
+    gdb_test "print (int_type) an_int_type2" " = type=int_type, val=2"
+    gdb_test "print (int_type2) an_int_type2" " = type=int_type2, val=2"
+
+    # PR python/16047: it is ok for a pretty printer not to have a
+    # to_string method.
+    gdb_test "print (int_type3) an_int_type2" " = {s = 27}"
+
+    gdb_continue_to_end
+}
+
+with_test_prefix c {
+    if { [run_lang_tests "${binfile}" "c"] == -1 } {
+	return
+    }
+}
+with_test_prefix c++ {
+    if { [run_lang_tests "${binfile}-cxx" "c++"] == -1 } {
+	return
+    }
+}
+
+# Run various other tests.
+
+clean_restart $binfile
+
+if {![runto_main]} {
+    return
+}
+
+set remote_python_file [gdb_remote_download host \
+			    ${srcdir}/${subdir}/${testfile}.py]
+
+gdb_test_no_output "source ${remote_python_file}" "load python file"
+
+gdb_breakpoint [gdb_get_line_number "eval-break"]
+gdb_continue_to_breakpoint "eval-break" ".* eval-break .*"
+
+gdb_test "info locals" "eval9 = eval=<123456789>"
+
+gdb_breakpoint [gdb_get_line_number "break to inspect" ${testfile}.c ]
+gdb_continue_to_breakpoint "break to inspect" ".*break to inspect.*"
+
+gdb_test "print ss" " = a=< a=<1> b=<$hex>> b=< a=<2> b=<$hex>>" \
+    "print ss enabled #1"
+
+gdb_test_no_output "python disable_lookup_function ()"
+
+gdb_test "print ss" " = {a = {a = 1, b = $hex}, b = {a = 2, b = $hex}}" \
+    "print ss disabled"
+
+gdb_test_no_output "python enable_lookup_function ()"
+
+gdb_test "print ss" " = a=< a=<1> b=<$hex>> b=< a=<2> b=<$hex>>" \
+    "print ss enabled #2"
+
+gdb_test "print -raw-values -- ss" " = {a = {a = 1, b = $hex}, b = {a = 2, b = $hex}}" \
+    "print -raw-values -- ss"
+
+gdb_test "print -raw-values on -- ss" " = {a = {a = 1, b = $hex}, b = {a = 2, b = $hex}}" \
+    "print -raw-values on -- ss"
+
+gdb_test "with print raw-values -- print ss" " = {a = {a = 1, b = $hex}, b = {a = 2, b = $hex}}" \
+    "with print raw-values -- print ss"
+
+# Test interaction between /r format and raw-values option:
+#   When /r is not present, raw-values option tells to bypass (or not) the pretty printers.
+#     (these cases are tested above).
+#   When /r is present, it must override the option raw-values off.
+gdb_test "print /r ss" " = {a = {a = 1, b = $hex}, b = {a = 2, b = $hex}}"
+
+gdb_test "with print raw-values off -- print /r ss" " = {a = {a = 1, b = $hex}, b = {a = 2, b = $hex}}"
+
+gdb_test "print -raw-values off -- /r ss" " = {a = {a = 1, b = $hex}, b = {a = 2, b = $hex}}"
+
+

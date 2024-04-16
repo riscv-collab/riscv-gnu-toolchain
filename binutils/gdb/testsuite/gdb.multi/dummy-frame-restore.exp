@@ -1,0 +1,93 @@
+# Copyright 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile .c
+set executable ${testfile}
+
+# The plain remote target can't do multiple inferiors.
+require !use_gdb_stub
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile {debug}]} {
+    return -1
+}
+
+# Inferior 1 stops at f1.
+
+if {![runto f1]} {
+    return 0
+}
+
+gdb_test "add-inferior -exec ${binfile}" \
+    "Added inferior 2.*" \
+    "add inferior 2 with -exec ${executable}"
+gdb_test "inferior 2" "witching to inferior 2 .*" "switch to inferior 2"
+
+delete_breakpoints
+
+# Inferior 2 stops at f2.
+
+if {![runto f2]} {
+    return 0
+}
+
+gdb_breakpoint commonfun
+
+# Check the stack bactrace in inferior INF.  PREFIX is the test
+# message prefix.
+
+proc check_bt { inf prefix } {
+    with_test_prefix "$prefix" {
+	gdb_test "bt 1" "#0  f$inf .*" "bt in inferior $inf"
+    }
+}
+
+# Do inferior call commonfun () in inferior 2 and inferior 1, but
+# finish it in inferior INF1 first and then inferior INF2.  Check
+# the stack backtrace in each inferior is still correct after
+# inferior call.
+
+proc test { inf1 inf2 } {
+
+    with_test_prefix "inf $inf1 first" {
+	gdb_test "inferior 2" "witching to inferior 2 .*" \
+	    "switch to inferior 2 (1)"
+	check_bt 2 "before infcall"
+	gdb_test "p commonfun()" "Breakpoint .*The program being debugged stopped while in a function called from GDB.*" "infcall in inferior 2"
+
+	gdb_test "inferior 1" "witching to inferior 1 .*" \
+	    "switch to inferior 1 (1)"
+	check_bt 1 "before infcall"
+	gdb_test "p commonfun()" "Breakpoint .*The program being debugged stopped while in a function called from GDB.*" "infcall in inferior 1"
+
+	gdb_test "maintenance print dummy-frames" ": id={stack=.*}.*: id=.*" \
+	    "two dummy frames"
+
+	gdb_test "inferior $inf1" "witching to inferior $inf1 .*" \
+	    "switch to inferior $inf1 (2)"
+	gdb_test "finish" "Run till exit from #0  commonfun .*" \
+	    "finish in inferior $inf1"
+	check_bt $inf1 "after infcall"
+
+	gdb_test "inferior $inf2" "witching to inferior $inf2 .*" \
+	    "switch to inferior $inf2 (2)"
+	gdb_test "finish" "Run till exit from #0  commonfun .*" \
+	    "finish in inferior $inf2"
+	check_bt $inf2 "after infcall"
+    }
+}
+
+# Do the test in different orders.
+test 1 2
+test 2 1

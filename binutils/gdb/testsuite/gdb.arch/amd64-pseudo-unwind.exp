@@ -1,0 +1,91 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test verifies that we can read and write the value of a pseudo register
+# in unwound frames.  For the test, we choose one raw register, rbx, and one
+# pseudo register that is backed by rbx, ebx.  We have two frames (the inner one,
+# #0 and the outer one, #1) that each set a value for rbx.  We verify that we
+# can read both rbx and ebx correctly for each frame, and that when we write to
+# ebx, rbx for that frame is correctly updated.
+
+if { ![istarget x86_64-*-* ] || ![is_lp64_target] } {
+    verbose "Skipping amd64 pseudo register unwind."
+    return
+}
+
+standard_testfile amd64-pseudo-unwind.c amd64-pseudo-unwind-asm.S
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	"${srcfile} ${srcfile2}" {debug}] } {
+    return -1
+}
+
+clean_restart ${binfile}
+
+if ![runto_main] then {
+    fail "could not run to main"
+}
+
+gdb_breakpoint break_here_asm temporary
+gdb_continue_to_breakpoint "continue to callee"
+
+# Verify the value of rbx/ebx in the inner frame (callee).
+with_test_prefix "callee, before change" {
+    gdb_test "p/x \$rbx" " = 0x2021222324252627"
+    gdb_test "p/x \$ebx" " = 0x24252627"
+}
+
+# Verify that we can change the value of the pseudo register (ebx) in the inner
+# frame (callee).
+gdb_test_no_output "set \$ebx = 0x34353637"
+
+# Verify the value of rbx/ebx in the inner frame (callee) after the change.
+with_test_prefix "callee, after change" {
+    gdb_test "p/x \$rbx" " = 0x2021222334353637"
+    gdb_test "p/x \$ebx" " = 0x34353637"
+}
+
+# Go up one frame, and do the same.
+gdb_test "up"
+
+# Verify the value of rbx/ebx in the outer frame (caller).
+with_test_prefix "caller, before change" {
+    gdb_test "p/x \$rbx" " = 0x1011121314151617"
+    gdb_test "p/x \$ebx" " = 0x14151617"
+}
+
+# Verify that we can change the value of the pseudo register (ebx) in the outer
+# frame (caller).
+gdb_test_no_output "set \$ebx = 0x44454647"
+
+# Verify the value of rbx/ebx in the outer frame (caller) after the change.
+with_test_prefix "caller, after change" {
+    gdb_test "p/x \$rbx" " = 0x1011121344454647"
+    gdb_test "p/x \$ebx" " = 0x44454647"
+}
+
+# Go back to frame 0 (callee), check that the change to the outer frame didn't
+# mess up anything there.
+gdb_test "down"
+with_test_prefix "callee, after change in caller" {
+    gdb_test "p/x \$rbx" " = 0x2021222334353637"
+    gdb_test "p/x \$ebx" " = 0x34353637"
+}
+
+# Verify that the value of the saved rbx we changed is correctly seen by the
+# inferior.
+gdb_breakpoint break_here_c temporary
+gdb_continue_to_breakpoint "continue to break_here_c"
+gdb_test "p/x value" " = 0x1011121344454647"

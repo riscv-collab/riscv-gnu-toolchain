@@ -1,0 +1,304 @@
+# Copyright 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test alternating between watchpoint types, watching a sliding window
+# of addresses (thus alternating between aligned and unaligned
+# addresses).  Only a single watchpoint exists at any given time.  On
+# targets that only update the debug registers on resume, this
+# stresses the debug register setup code, both in GDB and in the
+# target/kernel as one watchpoint replaces the other in a single
+# operation.  (Note that we don't have any of these watchpoints
+# trigger.)
+
+# The allow_hw_watchpoint_tests checks if watchpoints are supported by the
+# processor.  On PowerPC, the check runs a small test program under gdb
+# to determine if the Power processor supports HW watchpoints.  The check
+# must be done before starting the test so as to not disrupt the execution
+# of the actual test.
+
+set allow_hw_watchpoint_tests_p [allow_hw_watchpoint_tests]
+
+# starting the test.
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+if {![runto_main]} {
+    return 0
+}
+
+# The line we'll be stepping.
+set srcline [gdb_get_line_number "stepi line"]
+
+# The address the program is stopped at currently.
+set cur_addr ""
+
+# Get the current PC.
+
+proc get_pc {} {
+    global hex gdb_prompt
+
+    set addr ""
+    set test "get PC"
+    gdb_test_multiple "p /x \$pc" "$test" {
+	-re " = ($hex).*$gdb_prompt $" {
+	    set addr $expect_out(1,string)
+	    pass "$test"
+	}
+    }
+
+    return $addr
+}
+
+
+# Issue a stepi, and make sure the program advanced past the current
+# instruction (stored in the CUR_ADDR global).
+
+proc stepi {} {
+    global hex gdb_prompt cur_addr
+
+    set srcline "  for (i = 0; i < 100000; i++); /* stepi line */"
+    set test "stepi advanced"
+    gdb_test_multiple "stepi" $test {
+	-re -wrap "[string_to_regexp $srcline]" {
+	    set addr [get_valueof "/x" "\$pc" "0"]
+	    if {$addr != $cur_addr} {
+		pass $test
+	    } else {
+		fail $test
+	    }
+	    set cur_addr $addr
+	}
+    }
+}
+
+gdb_breakpoint $srcline
+gdb_continue_to_breakpoint "stepi line"
+set cur_addr [get_pc]
+
+# The test tries various sequences of different types of watchpoints.
+# Probe for support first.
+proc build_cmds_list {} {
+    global gdb_prompt
+
+    # So we get an immediate warning/error if the target doesn't support a
+    # given watchpoint type.
+    gdb_test_no_output "set breakpoint always-inserted on" \
+	"Set breakpoints always inserted while building cmds list"
+
+    # The list of supported commands.  Below we'll probe for support and
+    # add elements to this list.
+    set cmds {}
+
+    foreach cmd {"watch" "awatch" "rwatch"} {
+	set test $cmd
+	gdb_test_multiple "$cmd buf.byte\[0\]" $test {
+	    -re "You may have requested too many.*$gdb_prompt $" {
+		unsupported $test
+	    }
+	    -re "Target does not support.*$gdb_prompt $" {
+		unsupported $test
+	    }
+	    -re "Can't set read/access watchpoint when hardware watchpoints are disabled.*$gdb_prompt $" {
+		unsupported $test
+	    }
+	    -re "$gdb_prompt $" {
+		pass $test
+		lappend cmds $cmd
+	    }
+	}
+
+	delete_breakpoints
+    }
+
+    set test "hbreak"
+    gdb_test_multiple "hbreak -q main" $test {
+	-re "You may have requested too many.*$gdb_prompt $" {
+	    unsupported $test
+	}
+	-re "No hardware breakpoint support.*$gdb_prompt $" {
+	    unsupported $test
+	}
+	-re "$gdb_prompt $" {
+	    pass $test
+	    lappend cmds "hbreak"
+	}
+    }
+
+    delete_breakpoints
+
+    return $cmds
+}
+
+# Return true if the memory range [buf.byte + OFFSET, +WIDTH] can be
+# monitored by CMD, otherwise return false.
+
+proc valid_addr_p {cmd offset width} {
+
+    if { [istarget "aarch64*-*-linux*"] } {
+	# The aarch64 Linux kernel port only accepts 4-byte aligned addresses
+	# for hardware breakpoints and 8-byte aligned addresses for hardware
+	# watchpoints.  However, both GDB and GDBserver support unaligned
+	# watchpoints by using more than one properly aligned watchpoint
+	# registers to represent the whole unaligned region.  Breakpoint
+	# addresses must still be aligned though.
+	if {$cmd == "hbreak" } {
+	    if { [expr ($offset) % 4] != 0 } {
+		return 0
+	    }
+	}
+    } elseif { [istarget "arm*-*-linux*"] } {
+	if { $cmd == "hbreak" } {
+	    # Breakpoints must be of length 2 (thumb) or 4 (ARM) bytes.
+	    if { $width != 2 && $width != 4 } {
+		return 0
+	    }
+	} else {
+	    # Watchpoints can be of length 1, 2, 4 or 8 bytes.
+	    if { [expr $width % 2] != 0 } {
+		return 0
+	    }
+	}
+
+	if { [expr ($offset) % 8] == 0 && $width == 8 } {
+	    # If WIDTH is 8 byte, the address should be 8-byte aligned.
+	    return 1
+	} elseif { [expr ($offset) % 4] == 0 } {
+	    return 1
+	} elseif { [expr ($offset) % 4] == 2 && $width == 2 } {
+	    # Halfword watchpoints and breakpoints.
+	    return 1
+	} elseif { [expr ($offset) % 4] == 1 && $width == 1 && $cmd != "hbreak" } {
+	    # Single byte watchpoints.
+	    return 1
+	} else {
+	    return 0
+	}
+    }
+
+    return 1
+}
+
+# Watch WIDTH bytes at BASE + OFFSET.  CMD specifices the specific
+# type of watchpoint to use.  If CMD is "hbreak", WIDTH is ignored.
+# The HW_WP_P flag tells us if hardware watchpoints are enabled or
+# not.
+
+proc watch_command {cmd base offset width hw_wp_p} {
+    global srcfile srcline hex
+
+    if {$cmd == "hbreak"} {
+	set expr "*(buf.byte + $base + $offset)"
+	gdb_test "hbreak $expr" "Hardware assisted breakpoint \[0-9\]+ at $hex"
+    } elseif {$cmd == "watch"} {
+	set expr "*(buf.byte + $base + $offset)@$width"
+
+	if { ! $hw_wp_p } {
+	    set wp_prefix "Watchpoint"
+	} else {
+	    set wp_prefix "Hardware watchpoint"
+	}
+
+	gdb_test "$cmd $expr" \
+	    "${wp_prefix} \[0-9\]+: [string_to_regexp $expr]"
+    } elseif {$cmd == "awatch"} {
+	set expr "*(buf.byte + $base + $offset)@$width"
+	gdb_test "$cmd $expr" \
+	    "Hardware access \\(read/write\\) watchpoint \[0-9\]+: [string_to_regexp $expr]"
+    } elseif {$cmd == "rwatch"} {
+	set expr "*(buf.byte + $base + $offset)@$width"
+	gdb_test "$cmd $expr" \
+	    "Hardware read watchpoint \[0-9\]+: [string_to_regexp $expr]"
+    }
+}
+
+# Run the watchpoint tests (see the description at the top for details), the
+# HW_WP_P flag tells us if hardware watchpoints are enabled or not.
+proc run_watchpoints_tests {hw_wp_p} {
+
+    set cmds [build_cmds_list]
+
+    foreach always_inserted {"off" "on" } {
+	gdb_test_no_output "set breakpoint always-inserted $always_inserted"
+	foreach cmd1 $cmds {
+	    foreach cmd2 $cmds {
+		for {set width 1} {$width < 4} {incr width} {
+
+		    if {$cmd1 == "hbreak" && $cmd2 == "hbreak" \
+			    && $width > 1} {
+			# hbreak ignores WIDTH, no use testing more than
+			# once.
+			continue
+		    }
+
+		    for {set x 0} {$x < 4} {incr x} {
+
+			if { ![valid_addr_p $cmd1 $x $width]
+			     || ![valid_addr_p $cmd2 $x+1 $width] } {
+			    # Skip tests if requested address or length
+			    # of breakpoint or watchpoint don't meet
+			    # target or kernel requirements.
+			    continue
+			}
+
+			set prefix "always-inserted $always_inserted: "
+			append prefix "$cmd1 x $cmd2: "
+			with_test_prefix "$prefix: width $width, iter $x" {
+			    with_test_prefix "base + 0" {
+				watch_command $cmd1 $x 0 $width $hw_wp_p
+				stepi
+				gdb_test_no_output "delete \$bpnum"
+			    }
+			    with_test_prefix "base + 1" {
+				watch_command $cmd2 $x 1 $width $hw_wp_p
+				stepi
+				gdb_test_no_output "delete \$bpnum"
+			    }
+			}
+		    }
+		}
+	    }
+	}
+    }
+}
+
+# Based on HW_WP_P set whether hardware watchpoints can be used or
+# not, then call RUN_WATCHPOINTS_TESTS.
+proc setup_and_run_watchpoints_tests { hw_wp_p } {
+    if {$hw_wp_p} {
+	set prefix "hw-watch"
+    } else {
+	set prefix "sw-watch"
+    }
+
+    with_test_prefix $prefix {
+	gdb_test_no_output "set can-use-hw-watchpoints ${hw_wp_p}"
+
+	run_watchpoints_tests $hw_wp_p
+    }
+}
+
+# Run tests with hardware watchpoints disabled, then again with them
+# enabled (if this target supports hardware watchpoints).
+if { $allow_hw_watchpoint_tests_p } {
+    # Run test with H/W enabled.
+    setup_and_run_watchpoints_tests 1
+}
+
+# Run test with H/W disabled
+setup_and_run_watchpoints_tests 0

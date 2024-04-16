@@ -1,0 +1,117 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+# This test case verifies that GDB gracefully handles a shared library file
+# vanishing after being dlopen'ed.  This consists of three nested function calls:
+#
+# main() -> foo() -> bar()
+#
+# where:
+# - foo exists in solib-vanish-lib1.so, which is dlopen'ed by main()
+# - bar exists in solib-vanish-lib2.so, which is dynamically linked into
+#   solib-vanish-lib1.so
+#
+# Immediately after dlopen'ing solib-vanish-lib1.so, the so file is moved aside
+# by renaming.  The main executable and solib-vanish-lib2.so are still
+# accessible.
+#
+# If a breakpoint is set on bar(), gdb throws an error when this breakpoint is
+# hit:
+#
+#   (gdb) r
+#   Starting program: /local/gdb/git/pr_16577_repro/simple/solib-vanish-main
+#
+#   Breakpoint 1, BFD: reopening ./solib-vanish-lib1.so: No such file or directory
+#
+#   BFD: reopening ./solib-vanish-lib1.so: No such file or directory
+#
+#   (gdb)
+#
+# Notice that this does not print the current frame, i.e.:
+#   bar (y=1) at solib-vanish-lib2.c:19
+#   19	  return y + 1; /* break here */
+#   (gdb)
+#
+# The current gdb git tip segfaults if we then try to step:
+#   (gdb) n
+#   Segmentation fault
+
+# This test verifies that:
+# 1) GDB does not segfault when stepping
+# 2) The stack frame is printed
+
+require allow_shlib_tests
+
+# Library 2
+set lib2name "solib-vanish-lib2"
+set srcfile_lib2 ${srcdir}/${subdir}/${lib2name}.c
+set binfile_lib2 [standard_output_file ${lib2name}.so]
+set lib2_flags {debug}
+
+# Library 1
+set lib1name "solib-vanish-lib1"
+set srcfile_lib1 ${srcdir}/${subdir}/${lib1name}.c
+set binfile_lib1 [standard_output_file ${lib1name}.so]
+set lib1_flags [list debug shlib=${binfile_lib2}]
+
+if { [gdb_compile_shlib ${srcfile_lib2} ${binfile_lib2} $lib2_flags] != ""
+     || [gdb_compile_shlib ${srcfile_lib1} ${binfile_lib1} $lib1_flags] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+# Main program
+set testfile "solib-vanish-main"
+set srcfile ${srcdir}/${subdir}/${testfile}.c
+set executable ${testfile}
+set binfile [standard_output_file ${executable}]
+set bin_flags [list debug shlib_load]
+set binfile_lib1_target [gdb_download_shlib $binfile_lib1]
+lappend bin_flags additional_flags=-DVANISH_LIB=\"$binfile_lib1_target\"
+
+if {[is_remote target]} {
+    lappend cleanfiles_target $binfile_lib1_target.renamed
+}
+
+if { [gdb_compile ${srcfile} ${binfile} executable $bin_flags] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+clean_restart $testfile
+
+gdb_locate_shlib $binfile_lib1
+gdb_load_shlib $binfile_lib2
+
+if { ![runto_main] } {
+    return
+}
+
+delete_breakpoints
+
+set lib2_lineno [gdb_get_line_number "break here" ${srcfile_lib2}]
+
+gdb_breakpoint "${lib2name}.c:${lib2_lineno}" {allow-pending}
+
+# Verify that both the location and source code are displayed
+gdb_continue_to_breakpoint "bar" \
+    ".*${lib2name}.c:${lib2_lineno}.*break here.*"
+
+# This should not segfault
+gdb_test "next" \
+    "" \
+    "next succeeds"
+

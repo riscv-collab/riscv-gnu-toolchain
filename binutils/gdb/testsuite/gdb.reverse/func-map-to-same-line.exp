@@ -1,0 +1,140 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+# This file is part of the GDB testsuite.  It tests reverse stepping.
+# Lots of code borrowed from "step-test.exp".
+
+# This test checks to make sure there is no regression failures for
+# the reverse-next command when stepping back over two functions in
+# the same line.
+
+require supports_reverse
+
+# This test uses the gcc no-column-info command which was added in gcc 7.1.
+
+proc run_tests {} {
+    global testfile
+
+    clean_restart ${testfile}
+
+    if { ![runto_main] } {
+	return
+    }
+
+    with_test_prefix "next-test" {
+	gdb_test_no_output "record" "turn on process record"
+
+	# This regression test verifies the reverse-step and reverse-next
+	# commands work properly when executing backwards thru a source line
+	# containing two function calls on the same source line, i.e.
+	# func1 (); func2 ();.  This test is compiled so the dwarf info
+	# does not contain the line table information.
+
+	# Test 1, reverse-next command
+	# Set breakpoint at the line after the function calls.
+	set bp_start_reverse_test [gdb_get_line_number "START REVERSE TEST"]
+
+	gdb_breakpoint $bp_start_reverse_test temporary
+
+	# Continue to break point for reverse-next test.
+	# Command definition:  reverse-next [count]
+	#   Run backward to the beginning of the previous line executed in
+	#   the current (innermost) stack frame.  If the line contains
+	#   function calls, they will be “un-executed” without stopping.
+	#   Starting from the first line of a function, reverse-next will
+	#   take you back to the caller of that function, before the
+	#   function was called, just as the normal next command would take
+	#   you from the last line of a function back to its return to its
+	#   caller 2.
+
+	gdb_continue_to_breakpoint \
+	"stopped at command reverse-next test start location" \
+	".*$bp_start_reverse_test\r\n.*"
+
+	# The reverse-next should step all the way back to the beginning of
+	# the line, i.e. at the beginning of the func1 call.
+	gdb_test "reverse-next" ".*func1 \\(\\); func2 \\(\\);.*" \
+	    " reverse-next to line with two functions"
+
+	# We should be stopped at the first instruction of the line.  A
+	# reverse-step should step back and stop at the beginning of the
+	# previous line b = 2, i.e. not in func1 ().
+	gdb_test "reverse-stepi" ".*b = 2;.*" \
+	    "reverse-stepi to previous line b = 2"
+    }
+
+    # Setup for test 2
+    clean_restart ${testfile}
+
+    if { ![runto_main] } {
+	return
+    }
+
+    with_test_prefix "step-test" {
+	gdb_test_no_output "record" "turn on process record"
+
+	# Test 2, reverse-step command
+	# Set breakpoint at the line after the function calls.
+	gdb_breakpoint $bp_start_reverse_test temporary
+
+	# Continue to the start of the reverse-step test.
+	# Command definition:  reverse-step [count]
+	#   Run the program backward until control reaches the start of a
+	#   different source line; then stop it, and return control to gdb.
+	#   Like the step command, reverse-step will only stop at the
+	#   beginning of a source line.  It “un-executes” the previously
+	#   executed source line.  If the previous source line included calls
+	#   to debuggable functions, reverse-step will step (backward) into
+	#   the called function, stopping at the beginning of the last
+	#   statement in the called function (typically a return statement).
+	#   Also, as with the step command, if non-debuggable functions are
+	#   called, reverse-step will run thru them backward without
+	#   stopping.
+
+	gdb_continue_to_breakpoint \
+	    "stopped at command reverse-step test start location" \
+	    ".*$bp_start_reverse_test\r\n.*"
+
+	# The first reverse step should take us call of func2 ().
+	gdb_test "reverse-step" ".*END FUNC2.*" \
+	    "reverse-step into func2 "
+
+	# The second reverse step should take us into func1 ().
+	gdb_test "reverse-step" ".*END FUNC1.*" \
+	    "reverse-step into func1 "
+
+	# The third reverse step should take us call of func1 ().
+	gdb_test "reverse-step" ".*func1 \\(\\); func2 \\(\\);.*" \
+	    "reverse-step to line func1(); func2(), at call for func1 "
+	# We should be stopped at the first instruction of the line.  A
+	# reversee stepi should take us to b = 2 ().
+	gdb_test "reverse-stepi" ".*b = 2;.*" \
+	    "reverse-stepi to line b = 2 "
+    }
+}
+
+standard_testfile  .c
+
+# test with and without gcc column info enabled
+foreach_with_prefix column_info_flag {column-info no-column-info} {
+    set options [list debug $column_info_flag]
+
+    if {[prepare_for_testing "failed to prepare" ${testfile} ${srcfile} \
+	     $options]} {
+	return -1
+   }
+
+    run_tests
+}

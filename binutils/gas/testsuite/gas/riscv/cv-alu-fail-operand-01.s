@@ -1,0 +1,33 @@
+# Destination must be of type register
+target:
+	cv.abs 5,t2
+	cv.slet 10,t2,t6
+	cv.sletu 11,t2,t6
+	cv.min 15,t2,t6
+	cv.minu 16,t2,t6
+	cv.max 8,t2,t6
+	cv.maxu 3,t2,t6
+	cv.exths 2,t2
+	cv.exthz 6,t2
+	cv.extbs 4,t2
+	cv.extbz 7,t2
+	cv.clip 17,t2,5
+	cv.clipu 11,t2,5
+	cv.clipr 16,t2,t6
+	cv.clipur 15,t2,t6
+	cv.addn 9,t2,t0,4
+	cv.addun 30,t2,t0,4
+	cv.addrn 21,t0,t3,9
+	cv.addurn 6,t0,t3,14
+	cv.addnr 2,t0,t3
+	cv.addunr 26,t0,t3
+	cv.addrnr 3,t0,t3
+	cv.addurnr 14,t0,t3
+	cv.subn 15,t0,t3,6
+	cv.subun 9,t0,t3,24
+	cv.subrn 24,t0,t3,21
+	cv.suburn 25,t0,t3,3
+	cv.subnr 3,t0,t3
+	cv.subunr 12,t0,t3
+	cv.subrnr 13,t0,t3
+	cv.suburnr 8,t0,t3

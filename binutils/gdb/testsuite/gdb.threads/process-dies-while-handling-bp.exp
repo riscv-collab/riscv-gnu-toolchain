@@ -1,0 +1,137 @@
+# Copyright (C) 2015-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test spawns a few threads that constantly trip on a breakpoint
+# that does not cause a user-visible stop.  While one of those
+# breakpoints is being handled, the main thread exits the whole
+# process.  The result is that the current thread for which GDB is
+# handling the event disappears too and any attempt to access
+# register/memory now errors out.  GDB and GDBserver should be able to
+# handle this scenario gracefully.
+#
+# See https://sourceware.org/bugzilla/show_bug.cgi?id=18749
+
+standard_testfile
+
+set linenum [gdb_get_line_number "set break here"]
+
+if {[build_executable "failed to prepare" $testfile $srcfile {debug pthreads}] == -1} {
+    return -1
+}
+
+# The test proper.  If COND_BP_TARGET is true, then test with
+# conditional breakpoints evaluated on the target side, if possible.
+
+proc do_test { non_stop cond_bp_target } {
+    global GDBFLAGS
+    global gdb_prompt
+    global binfile
+    global linenum
+
+    set saved_gdbflags $GDBFLAGS
+    set GDBFLAGS [concat $GDBFLAGS " -ex \"set non-stop $non_stop\""]
+    clean_restart $binfile
+    set GDBFLAGS $saved_gdbflags
+
+    if {![runto_main]} {
+	return 0
+    }
+
+    # Whether it's known that the test fails.
+    set should_kfail 0
+
+    if {![gdb_is_target_remote]} {
+	set should_kfail 1
+    } else {
+	if {!$cond_bp_target} {
+	    # Leaving breakpoint evaluation to GDB exposes failures
+	    # similar to native debugging.
+	    gdb_test \
+		"set remote conditional-breakpoints-packet off" \
+		"Support for the 'ConditionalBreakpoints' packet on the current remote target is set to \"off\"."
+
+	    set should_kfail 1
+	} else {
+	    set test "show remote conditional-breakpoints-packet"
+	    gdb_test_multiple $test $test {
+		-re "\, currently enabled.*\r\n$gdb_prompt $" {
+		    pass $test
+		}
+		-re "\, currently disabled.*\r\n$gdb_prompt $" {
+		    unsupported "no support for target-side conditional breakpoints"
+		    return
+		}
+	    }
+	    set should_kfail 1
+	}
+    }
+
+    gdb_test "break $linenum if zero == 1" \
+	"Breakpoint .*" \
+	"set breakpoint that evals false"
+
+    set test "continue &"
+    gdb_test_multiple $test $test {
+	-re "$gdb_prompt " {
+	    pass $test
+	}
+    }
+
+    set ok 0
+
+    # Setup the kfail upfront in order to also catch GDB internal
+    # errors.
+    if {$should_kfail} {
+	setup_kfail "gdb/18749" "*-*-*"
+    }
+
+    set test "inferior 1 exited"
+    gdb_test_multiple "" $test {
+	-re "Inferior 1 \(\[^\r\n\]+\) exited normally" {
+	    set ok 1
+
+	    # Clear the kfail to avoid a PASS -> KPASS dance across
+	    # runs.
+	    clear_kfail "*-*-linux*"
+
+	    pass $test
+	}
+	-re "$gdb_prompt " {
+	    # Several errors end up at the top level, and printing the
+	    # prompt.
+	    fail "$test (prompt)"
+	}
+	-re "Cannot access memory" {
+	    fail "$test (memory error)"
+	}
+	eof {
+	    fail "$test (GDB died)"
+	}
+    }
+
+    if {!$ok} {
+	# No use testing further.
+	return
+    }
+
+    gdb_test "info threads" "No threads\." \
+	"no threads left"
+}
+
+foreach_with_prefix non_stop {"on" "off"} {
+    foreach_with_prefix cond_bp_target {1 0} {
+	do_test $non_stop $cond_bp_target
+    }
+}

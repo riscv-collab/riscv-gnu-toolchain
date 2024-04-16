@@ -1,0 +1,89 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Some compilers give anonymous structures a linkage name, and that
+# linkage name doesn't demangle (within GDB calling gdb_demangle
+# return NULL).  At one point this caused GDB to crash due to
+# dereferencing a NULL pointer.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+standard_testfile .c -debug.S
+
+# Set up the DWARF for the test.
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    global srcfile
+
+    cu {} {
+	DW_TAG_compile_unit {
+	    {DW_AT_language @DW_LANG_C_plus_plus}
+	    {DW_AT_name     $srcfile}
+	    {DW_AT_comp_dir /tmp}
+
+	} {
+	    declare_labels a_l b_l
+
+	    a_l: DW_TAG_base_type {
+		{DW_AT_byte_size 4 DW_FORM_sdata}
+		{DW_AT_encoding  @DW_ATE_signed}
+		{DW_AT_name      int}
+	    }
+
+	    # To expose the bug that existed at one point this
+	    # structure must have a linkage name, but no name, and the
+	    # linkage name is something that doesn't demangle.
+	    b_l: DW_TAG_structure_type {
+		{DW_AT_byte_size 8 DW_FORM_sdata}
+		{DW_AT_encoding  @DW_ATE_signed}
+		{DW_AT_linkage_name <anon>}
+	    } {
+		member {
+		    {name x}
+		    {type :$a_l}
+		    {data_member_location 0 data1}
+		}
+		member {
+		    {name y}
+		    {type :$a_l}
+		    {data_member_location 0 data1}
+		}
+	    }
+	    DW_TAG_subprogram {
+		{MACRO_AT_func {main}}
+		{type :$a_l}
+	    }
+	    DW_TAG_variable {
+		{type :$b_l}
+		{external 1 flag}
+		{DW_AT_name global_var}
+		{DW_AT_location {
+		    DW_OP_addr [gdb_target_symbol global_var]
+		} SPECIAL_expr}
+	    }
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	  [list $srcfile $asm_file] {nodebug}] } {
+    return -1
+}
+
+gdb_assert [runto_main] "run to main"
+gdb_test "p global_var" " = {x = 0, y = 0}"

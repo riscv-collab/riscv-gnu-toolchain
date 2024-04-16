@@ -1,0 +1,160 @@
+# Copyright (C) 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.
+# It tests GDB provided ports.
+
+load_lib gdb-guile.exp
+
+require allow_guile_tests
+
+standard_testfile
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+    return
+}
+
+if ![gdb_guile_runto_main] {
+   return
+}
+
+gdb_reinitialize_dir $srcdir/$subdir
+
+gdb_install_guile_utils
+gdb_install_guile_module
+
+gdb_scm_test_silent_cmd "guile (use-modules (rnrs io ports) (rnrs bytevectors))" \
+    "import (rnrs io ports) (rnrs bytevectors)"
+
+gdb_test "guile (print (stdio-port? 42))" "= #f"
+gdb_test "guile (print (stdio-port? (%make-void-port \"r\")))" "= #f"
+gdb_test "guile (print (stdio-port? (input-port)))" "= #t"
+gdb_test "guile (print (stdio-port? (output-port)))" "= #t"
+gdb_test "guile (print (stdio-port? (error-port)))" "= #t"
+
+# Test memory port open/close.
+
+proc test_port { mode } {
+    with_test_prefix "basic $mode tests" {
+	gdb_test_no_output "guile (define my-port (open-memory #:mode \"$mode\"))" \
+	    "create memory port"
+	gdb_test "guile (print (memory-port? my-port))" "= #t"
+	switch -glob $mode {
+	    "r+*" {
+		gdb_test "guile (print (input-port? my-port))" "= #t"
+		gdb_test "guile (print (output-port? my-port))" "= #t"
+	    }
+	    "r*" {
+		gdb_test "guile (print (input-port? my-port))" "= #t"
+		gdb_test "guile (print (output-port? my-port))" "= #f"
+	    }
+	    "w*" {
+		gdb_test "guile (print (input-port? my-port))" "= #f"
+		gdb_test "guile (print (output-port? my-port))" "= #t"
+	    }
+	    default {
+		error "bad test mode"
+	    }
+	}
+	gdb_test "guile (print (port-closed? my-port))" "= #f" \
+	    "test port-closed? before it's closed"
+	gdb_test "guile (print (close-port my-port))" "= #t"
+	gdb_test "guile (print (port-closed? my-port))" "= #t" \
+	    "test port-closed? after it's closed"
+    }
+}
+
+set port_variations { r w r+ rb wb r+b r0 w0 r+0 }
+foreach variation $port_variations {
+    test_port $variation
+}
+
+# Test read/write of memory ports.
+
+proc test_mem_port_rw { buffered } {
+    if $buffered {
+	set mode "r+"
+    } else {
+	set mode "r+0"
+    }
+    gdb_test_no_output "guile (define rw-mem-port (open-memory #:mode \"$mode\"))" \
+	"create r/w memory port"
+    gdb_test "guile (print rw-mem-port)" \
+	"#<input-output: gdb:memory-port 0x0-0xf+>"
+    gdb_test_no_output "guile (define sp-reg (parse-and-eval \"\$sp\"))" \
+	"get sp reg"
+    # Note: Only use $sp_reg for gdb_test result matching, don't use it in
+    # gdb commands.  Otherwise transcript.N becomes unusable.
+    set sp_reg [get_valueof /u "\$sp" 0]
+    gdb_test_no_output "guile (define byte-at-sp (parse-and-eval \"*(char*) \$sp\"))" \
+	"save current value at sp"
+    # Pass the result of parse-and-eval through value-fetch-lazy!,
+    # otherwise the value gets left as a lazy reference to memory, which
+    # when re-evaluated after we flush the write will yield the newly
+    # written value.  PR 18175
+    gdb_test_no_output "guile (value-fetch-lazy! byte-at-sp)" \
+	"un-lazyify byte-at-sp"
+    gdb_test "guile (print (seek rw-mem-port (value->integer sp-reg) SEEK_SET))" \
+	"= $sp_reg" \
+	"seek to \$sp"
+    gdb_test_no_output "guile (define old-value (value->integer byte-at-sp))" \
+	"define old-value"
+    gdb_test_no_output "guile (define new-value (logxor old-value 1))" \
+	"define new-value"
+    gdb_test "guile (print (put-bytevector rw-mem-port (make-bytevector 1 new-value)))" \
+	"= #<unspecified>"
+    if $buffered {
+	# Value shouldn't be in memory yet.
+	gdb_test "guile (print (value=? (parse-and-eval \"*(char*) \$sp\") byte-at-sp))" \
+	    "= #t" \
+	    "test byte at sp, before flush"
+	gdb_test_no_output "guile (force-output rw-mem-port)" \
+	    "flush port"
+    }
+    # Value should be in memory now.
+    gdb_test "guile (print (value=? (parse-and-eval \"*(char*) \$sp\") byte-at-sp))" \
+	"= #f" \
+	"test byte at sp, after flush"
+    # Restore the value for cleanliness sake, and to verify close-port
+    # flushes the buffer.
+    gdb_test "guile (print (seek rw-mem-port (value->integer sp-reg) SEEK_SET))" \
+	"= $sp_reg" \
+	"seek to \$sp for restore"
+    gdb_test "guile (print (put-bytevector rw-mem-port (make-bytevector 1 old-value)))" \
+	"= #<unspecified>"
+    gdb_test "guile (print (close-port rw-mem-port))" \
+	"= #t"
+    gdb_test "guile (print (value=? (parse-and-eval \"*(char*) \$sp\") byte-at-sp))" \
+	"= #t" \
+	"test byte at sp, after close"
+}
+
+foreach_with_prefix buffered {1 0} {
+    test_mem_port_rw $buffered
+}
+
+# Test zero-length memory ports.
+
+gdb_test_no_output "guile (define zero-mem-port (open-memory #:start 0 #:size 0 #:mode \"r+\"))" \
+    "create zero length memory port"
+gdb_test "guile (print (read-char zero-mem-port))" \
+    "= #<eof>"
+gdb_test "guile (print (write-char #\\a zero-mem-port))" \
+    "ERROR: .*Out of range: writing beyond end of memory range.*Error while executing Scheme code."
+gdb_test "guile (print (get-bytevector-n zero-mem-port 0))" \
+    "= #vu8\\(\\)"
+gdb_test "guile (print (put-bytevector zero-mem-port (make-bytevector 0)))" \
+    "= #<unspecified>"
+gdb_test "guile (print (close-port zero-mem-port))" "= #t"

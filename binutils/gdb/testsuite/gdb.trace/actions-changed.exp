@@ -1,0 +1,173 @@
+# Copyright 2013-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib trace-support.exp
+
+standard_testfile
+
+require gdb_trace_common_supports_arch
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+proc test_actions_changed { } {
+    gdb_breakpoint "end" qualified
+
+    gdb_test "trace subr" "Tracepoint .*" \
+	"tracepoint at subr"
+
+    # The first set of tests are regression tests for a GDB bug where
+    # the while-stepping count of a tracepoint would be left stale if
+    # the tracepoint's actions were redefined, and the new action list
+    # had no while-stepping action.
+
+    # First pass, define simple action.
+    with_test_prefix "1" {
+	gdb_trace_setactions "define simple action" \
+	    "" \
+	    "collect parm" "^$"
+
+	gdb_test_no_output "tstart"
+
+	gdb_test "continue" ".*Breakpoint \[0-9\]+, end \\(i=1\\) .*" \
+	    "advance through tracing"
+
+	gdb_test "tstatus" ".*Collected 1 trace frame.*" \
+	    "collected 1 trace frame"
+
+	gdb_test_no_output "tstop"
+    }
+
+    # Redefine action, run second trace.
+    with_test_prefix "2" {
+	gdb_trace_setactions "redefine simple action" \
+	    "" \
+	    "collect keeping, busy" "^$"
+
+	gdb_test_no_output "tstart"
+
+	gdb_test "continue" ".*Breakpoint \[0-9\]+, end \\(i=2\\) .*" \
+	    "advance through tracing"
+
+	gdb_test "tstatus" ".*Collected 1 trace frame.*" \
+	    "collected 1 trace frame"
+
+	gdb_test_no_output "tstop"
+    }
+
+    # Redefine to stepping action, run third trace.
+    with_test_prefix "3" {
+	gdb_trace_setactions "redefine to stepping action" \
+	    "" \
+	    "collect parm" "^$" \
+	    "while-stepping 5" "^$" \
+	    "collect parm" "^$" \
+	    "end" "^$"
+
+	gdb_test_no_output "tstart"
+
+	gdb_test "continue" ".*Breakpoint \[0-9\]+, end \\(i=3\\) .*" \
+	    "advance through tracing"
+
+	gdb_test "tstatus" ".*Collected 6 trace frames.*" \
+	    "collected 6 trace frames"
+
+	gdb_test_no_output "tstop"
+    }
+
+    # Redefine to non-stepping, run fourth trace.
+    with_test_prefix "4" {
+	gdb_trace_setactions "redefine to non-stepping action" \
+	    "" \
+	    "collect parm" "^$"
+
+	gdb_test_no_output "tstart"
+
+	gdb_test "continue" ".*Breakpoint \[0-9\]+, end \\(i=4\\) .*" \
+	    "advance through tracing"
+
+	gdb_test "tstatus" ".*Collected 1 trace frame.*" \
+	    "collected 1 trace frame"
+
+	gdb_test_no_output "tstop"
+    }
+
+    # The following tests are related to the above, but use two
+    # tracepoints.  They are regression tests for a GDB bug where only
+    # the first tracepoint would end up with the step count set.
+
+    # Store the first tracepoint's number.
+    gdb_test_no_output "set \$prev_tpnum=\$tpnum" "store previous \$tpnum"
+
+    # And here's the second tracepoint.
+    gdb_test "trace subr2" "Tracepoint .*" "tracepoint at subr2"
+
+    # Set a stepping action in both tracepoints, with the "commands"
+    # command.
+    with_test_prefix "5" {
+	gdb_trace_setcommands \
+	    "redefine 2 tracepoints to stepping action, using commands" \
+	    "\$prev_tpnum-\$tpnum" \
+	    "collect parm" "^$" \
+	    "while-stepping 5" "^$" \
+	    "collect parm" "^$" \
+	    "end" "^$"
+
+	gdb_test_no_output "tstart"
+
+	gdb_test "continue" ".*Breakpoint \[0-9\]+, end \\(i=5\\) .*" \
+	    "advance through tracing"
+
+	gdb_test "tstatus" ".*Collected 12 trace frames.*" \
+	    "collected 12 trace frames"
+
+	gdb_test_no_output "tstop"
+    }
+
+    # Redefine the actions of both tracepoints to non-stepping, also
+    # using the "commands" command.
+    with_test_prefix "6" {
+	gdb_trace_setcommands \
+	    "redefine 2 tracepoints to non-stepping action, using commands" \
+	    "\$prev_tpnum-\$tpnum" \
+	    "collect parm" "^$"
+
+	gdb_test_no_output "tstart"
+
+	gdb_test "continue" ".*Breakpoint \[0-9\]+, end \\(i=6\\) .*" \
+	    "advance through tracing"
+
+	gdb_test "tstatus" ".*Collected 2 trace frame.*" \
+	    "collected 2 trace frames"
+
+	gdb_test_no_output "tstop"
+    }
+}
+
+# Check whether the target supports tracepoints.
+
+clean_restart $testfile
+
+if ![runto_main] {
+    return -1
+}
+
+if ![gdb_target_supports_trace] {
+    unsupported "current target does not support trace"
+    return -1
+}
+
+test_actions_changed

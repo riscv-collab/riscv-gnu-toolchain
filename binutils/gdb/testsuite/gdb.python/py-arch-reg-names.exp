@@ -1,0 +1,119 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check the gdb.Architecture.registers functionality.
+
+load_lib gdb-python.exp
+require allow_python_tests
+standard_testfile py-arch.c
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+    return -1
+}
+
+if ![runto_main] {
+   return -1
+}
+
+# First, use 'info registers' to get a list of register names.
+set regs {}
+gdb_test_multiple "info registers general" "info registers general" {
+    -re "^info registers general\r\n" {
+	exp_continue
+    }
+    -re "^(\[^ \t\]+)\[ \t\]+\[^\r\n\]+\r\n" {
+	set reg $expect_out(1,string)
+	lappend regs $reg
+	exp_continue
+    }
+    -re "^$gdb_prompt " {
+    }
+}
+gdb_assert {[llength $regs] > 0} \
+    "Found at least one register"
+
+# Now get the same register names using Python API.
+gdb_py_test_silent_cmd \
+    "python frame = gdb.selected_frame()" "get frame" 0
+gdb_py_test_silent_cmd \
+    "python arch = frame.architecture()" "get arch" 0
+gdb_py_test_silent_cmd \
+    "python regs = list (arch.registers (\"general\"))" \
+    "get general registers" 0
+gdb_py_test_silent_cmd \
+    "python regs = map (lambda r : r.name, regs)" \
+    "get names of general registers" 0
+
+set py_regs {}
+gdb_test_multiple "python print (\"\\n\".join (regs))" \
+    "general register from python" {
+	-re "^python print \[^\r\n\]+\r\n" {
+	    exp_continue
+	}
+	-re "^(\[^\r\n\]+)\r\n" {
+	    set reg $expect_out(1,string)
+	    lappend py_regs $reg
+	    exp_continue
+	}
+	-re "^$gdb_prompt " {
+	}
+    }
+
+gdb_assert {[llength $py_regs] > 0} \
+    "Found at least one register from python"
+gdb_assert {[llength $py_regs] == [llength $regs]} \
+    "Same numnber of registers found"
+
+set found_non_match 0
+for { set i 0 } { $i < [llength $regs] } { incr i } {
+    if {[lindex $regs $i] != [lindex $py_regs $i]} {
+	set found_non_match 1
+    }
+}
+gdb_assert { $found_non_match == 0 } "all registers match"
+
+# Check that we get the same register descriptors from two different
+# iterators.
+gdb_py_test_silent_cmd \
+    "python iter1 = arch.registers ()" \
+    "get first all register iterator" 0
+gdb_py_test_silent_cmd \
+    "python iter2 = arch.registers ()" \
+    "get second all register iterator" 0
+gdb_py_test_silent_cmd \
+    [multi_line_input \
+	 "python" \
+	 "for r1, r2 in zip(iter1, iter2):" \
+	 "  if (r1.name != r2.name):"\
+	 "    raise gdb.GdbError (\"miss-matched names\")" \
+	 "  if (r1 != r2):" \
+	 "    raise gdb.GdbError (\"miss-matched objects\")" \
+	 "end" ] \
+    "check names and objects match" 1
+
+# Ensure that the '.find' method on the iterator returns the same
+# Python object as we got from the iterator's list of descriptors.
+gdb_py_test_silent_cmd \
+    [multi_line \
+	 "python" \
+	 "def check_regs (arch, regs):" \
+	 "   for r in (regs):" \
+	 "     if (arch.registers ().find (r.name) != r):" \
+	 "       raise gdb.GdbError (\"object miss-match\")" \
+	 "end" ] \
+    "build check_obj function" 0
+gdb_py_test_silent_cmd \
+    "python check_regs (arch, arch.registers (\"general\"))" \
+    "ensure find gets expected descriptors" 1

@@ -1,0 +1,119 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Do this here before we start GDB for the test.
+set scheduler_locking_supported [target_supports_scheduler_locking]
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+standard_testfile basics.c
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug}] != "" } {
+     untested "failed to compile"
+     return -1
+}
+
+proc test_command_param_changed { } {
+    global scheduler_locking_supported
+    global binfile
+
+    with_test_prefix "cmd param" {
+	mi_clean_restart $binfile
+	mi_runto_main
+
+	if { $scheduler_locking_supported } {
+	    foreach opt { "on" "off" "step" } {
+		mi_gdb_test "set scheduler-locking ${opt}" \
+		    ".*=cmd-param-changed,param=\"scheduler-locking\",value=\"${opt}\".*\\^done" \
+		    "\"set scheduler-locking ${opt}\""
+	    }
+	    foreach opt { "on" "off" "step" } {
+		mi_gdb_test "interpreter-exec console \"set scheduler-locking ${opt}\"" \
+		    ".*=cmd-param-changed,param=\"scheduler-locking\",value=\"${opt}\".*\\^done" \
+		    "interpreter-exec \"set scheduler-locking ${opt}\""
+	    }
+	    # Don't emit MI notification for request from MI.
+	    mi_gdb_test "-gdb-set scheduler-locking on" \
+		{\^done} \
+		"\"set scheduler-locking on\" no event (requested by MI)"
+	    mi_gdb_test "interpreter-exec mi \"-gdb-set scheduler-locking step\"" \
+	    "\\&\"interpreter-exec mi .*\"-gdb-set scheduler-locking step.*\"\\\\n\"\r\n\\^done\r\n\\^done" \
+		"\"set scheduler-locking step\" no event (requested by MI interp)"
+	    mi_gdb_test "set scheduler-locking step" \
+		"\\&\"set scheduler-locking step\\\\n\"\r\n\\^done" \
+		"\"set scheduler-locking stepr\" no event"
+	}
+
+	mi_gdb_test "-exec-arguments foo" {\^done} \
+	    "\"-exec-arguments foo\" no event"
+
+	foreach command { "remotecache" "check type" } {
+
+	    # The default value of each command option may be different, so we first
+	    # set it to 'off', and this may or may not trigger MI notification.
+	    mi_gdb_test "set ${command} off" ".*\\^done" "\"set ${command}\" warmup"
+
+	    foreach boolean_opt { "on" "off" } {
+		mi_gdb_test "set ${command} ${boolean_opt}" \
+		    ".*=cmd-param-changed,param=\"${command}\",value=\"${boolean_opt}\".*\\^done" \
+		    "\"set ${command} ${boolean_opt}\""
+	    }
+	    mi_gdb_test "set ${command} off" \
+		"\\&\"set ${command} off\\\\n\"\r\n\\^done" \
+		"\"set ${command}\" no event"
+	}
+
+
+	foreach command { "trace-notes" "remote exec-file" } {
+	    foreach str_opt { "foo" "bar" } {
+		mi_gdb_test "set ${command} ${str_opt}" \
+		    ".*=cmd-param-changed,param=\"${command}\",value=\"${str_opt}\".*\\^done" \
+		    "\"set ${command} ${str_opt}\""
+	    }
+	    mi_gdb_test "set ${command} bar" \
+		"\\&\"set ${command} bar\\\\n\"\r\n(\\&\"warning.*|)\\^done" \
+		"\"set ${command} bar\" no event"
+	}
+
+	# No notification is emitted for 'maint set' commands.
+	foreach boolean_opt { "on" "off" } {
+	    mi_gdb_test "maint set dwarf always-disassemble ${boolean_opt}" \
+		"\\&\"maint set dwarf always-disassemble ${boolean_opt}\\\\n\"\r\n\\^done" \
+		"\"maint dwarf always-disassemble ${boolean_opt}\""
+	}
+
+	# Full command parameters are included in the notification when a
+	# abbreviated one is typed.
+	mi_gdb_test "set ch type on" \
+	    ".*=cmd-param-changed,param=\"check type\",value=\"on\".*\\^done" \
+	    "\"set ch type on\""
+
+	# Notification is emitted for both 'set directories' and 'directory'.
+	mi_gdb_test "set directories \$cdir:\$cwd:/tmp" \
+	    ".*=cmd-param-changed,param=\"directories\",value=\".*\".*\\^done" \
+	    "\"set directories \$cdir:\$cwd:/tmp\""
+	mi_gdb_test "directory /usr/src/gdb" \
+	    ".*=cmd-param-changed,param=\"directories\",value=\".*\".*\\^done" \
+	    "\"directory /usr/src/gdb\""
+	mi_gdb_test "directory" \
+	    ".*=cmd-param-changed,param=\"directories\",value=\".*\".*\\^done" \
+	    "\"directory\""
+
+	mi_gdb_exit
+    }
+}
+
+test_command_param_changed

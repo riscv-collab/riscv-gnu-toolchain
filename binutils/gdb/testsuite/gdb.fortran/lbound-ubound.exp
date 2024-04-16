@@ -1,0 +1,217 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/> .
+
+# Testing GDB's implementation of LBOUND and UBOUND.
+
+require allow_fortran_tests
+
+standard_testfile ".F90"
+load_lib fortran.exp
+
+if {[prepare_for_testing ${testfile}.exp ${testfile} ${srcfile} \
+	 {debug f90}]} {
+    return -1
+}
+
+# Avoid shared lib symbols.
+gdb_test_no_output "set auto-solib-add off"
+
+if ![fortran_runto_main] {
+    return -1
+}
+
+# Avoid libc symbols, in particular the 'array' type.
+gdb_test_no_output "nosharedlibrary"
+
+gdb_breakpoint [gdb_get_line_number "Test Breakpoint"]
+gdb_breakpoint [gdb_get_line_number "Breakpoint before deallocate\."]
+gdb_breakpoint [gdb_get_line_number "Final Breakpoint"]
+
+set found_dealloc_breakpoint false
+
+# We place a limit on the number of tests that can be run, just in
+# case something goes wrong, and GDB gets stuck in an loop here.
+set test_count 0
+while { $test_count < 500 } {
+    with_test_prefix "test $test_count" {
+	incr test_count
+
+	set expected_lbound ""
+	set expected_ubound ""
+	set found_prompt false
+	gdb_test_multiple "continue" "continue" {
+	    -re -wrap "! Test Breakpoint.*" {
+		# We stopped at the next test case.
+		pass $gdb_test_name
+	    }
+
+	    -re -wrap "! Breakpoint before deallocate.*" {
+		# There are no more test cases.
+		pass $gdb_test_name
+		set found_dealloc_breakpoint true
+	    }
+	}
+
+	if ($found_dealloc_breakpoint) {
+	    break
+	}
+
+	set expected_lbound [get_valueof "" "lb" "" "get expected lbound"]
+	set expected_ubound [get_valueof "" "ub" "" "get expected ubound"]
+
+	if { $expected_lbound == "" } {
+	    error "failed to extract expected results for lbound"
+	}
+
+	if { $expected_ubound == "" } {
+	    error "failed to extract expected results for ubound"
+	}
+
+	verbose -log "APB: Run a test here"
+	verbose -log "APB: Expected lbound '$expected_lbound'"
+	verbose -log "APB: Expected ubound '$expected_ubound'"
+
+	# We want to take a look at the line in the previous frame that
+	# called the current function.  I couldn't find a better way of
+	# doing this than 'up', which will print the line, then 'down'
+	# again.
+	#
+	# I don't want to fill the log with passes for these up/down
+	# commands, so we don't report any.  If something goes wrong then we
+	# should get a fail from gdb_test_multiple.
+	set array_name ""
+	set xfail_data ""
+	gdb_test_multiple "up" "up" {
+	    -re "\r\n\[0-9\]+\[ \t\]+DO_TEST \\((\[^\r\n\]+)\\)\r\n$gdb_prompt $" {
+		set array_name $expect_out(1,string)
+	    }
+	}
+
+	if { $array_name == "" } {
+	    error "failed to extract array name"
+	}
+
+	# Check GDB can correctly print complete set of upper and
+	# lower bounds for an array.
+	set pattern [string_to_regexp " = $expected_lbound"]
+	gdb_test "p lbound ($array_name)" "$pattern" \
+	    "check value of lbound ('$array_name') expression"
+	set pattern [string_to_regexp " = $expected_ubound"]
+	gdb_test "p ubound ($array_name)" "$pattern" \
+	    "check value of ubound ('$array_name') expression"
+
+	# Now ask for each bound in turn and check it against the
+	# expected results.
+	#
+	# First ask for bound 0.  This should fail, but will also tell
+	# us the actual bounds of the array.  Thanks GDB.
+	set upper_dim ""
+	gdb_test_multiple "p lbound ($array_name, 0)" "" {
+	    -re "\r\nLBOUND dimension must be from 1 to (\[0-9\]+)\r\n$gdb_prompt $" {
+		set upper_dim $expect_out(1,string)
+	    }
+	}
+
+	gdb_assert { ![string eq $upper_dim ""] } \
+	    "extracted the upper dimension value"
+
+	# Check that asking for the ubound dimension 0 gives the same
+	# dimension range as in the lbound case.
+	gdb_test_multiple "p ubound ($array_name, 0)" "" {
+	    -re "\r\nUBOUND dimension must be from 1 to (\[0-9\]+)\r\n$gdb_prompt $" {
+		gdb_assert {$upper_dim == $expect_out(1,string)} \
+		    "ubound limit matches lbound limit"
+	    }
+	}
+
+	# Now ask for the upper and lower bound for each dimension in
+	# turn.  Add these results into a string which, when complete,
+	# will look like the expected results seen above.
+	set lbound_str ""
+	set ubound_str ""
+	set prefix "("
+	for { set i 1 } { $i <= $upper_dim } { incr i } {
+	    set v [get_valueof "/d" "lbound ($array_name, $i)" "???"]
+	    set lbound_str "${lbound_str}${prefix}${v}"
+
+	    set v [get_valueof "/d" "ubound ($array_name, $i)" "???"]
+	    set ubound_str "${ubound_str}${prefix}${v}"
+
+	    set prefix ", "
+	}
+
+	# Add closing parenthesis.
+	set lbound_str "${lbound_str})"
+	set ubound_str "${ubound_str})"
+
+	gdb_assert [string eq ${lbound_str} $expected_lbound] \
+	    "lbounds match"
+	gdb_assert [string eq ${ubound_str} $expected_ubound] \
+	    "ubounds match"
+
+	# Finally, check that asking for a dimension above the valid
+	# range gives the expected error.
+	set bad_dim [expr $upper_dim + 1]
+	gdb_test "p lbound ($array_name, $bad_dim)" \
+	    "LBOUND dimension must be from 1 to $upper_dim" \
+	    "check error message for lbound of dim = $bad_dim"
+
+	gdb_test "p ubound ($array_name, $bad_dim)" \
+	    "UBOUND dimension must be from 1 to $upper_dim" \
+	    "check error message for ubound of dim = $bad_dim"
+
+	# Move back up a frame just so we finish the test in frame 0.
+	gdb_test_multiple "down" "down" {
+	    -re "\r\n$gdb_prompt $" {
+		# Don't issue a pass here.
+	    }
+	}
+    }
+}
+
+gdb_assert {$found_dealloc_breakpoint} "ran all compiled in tests"
+
+# Test the kind parameter of ubound and lbound a few times.
+gdb_test "p lbound(array_1d_1bytes_overflow, 1, 1)" "= 127"
+gdb_test "p lbound(array_1d_1bytes_overflow, 1, 2)" "= -129"
+gdb_test "p ubound(array_1d_1bytes_overflow, 1, 1)" "= -117"
+
+gdb_test "p lbound(array_1d_2bytes_overflow, 1, 2)" "= 32757"
+gdb_test "p ubound(array_1d_2bytes_overflow, 1, 2)" "= -32766"
+gdb_test "p ubound(array_1d_2bytes_overflow, 1, 4)" "= 32770"
+
+# On 32-bit machines most compilers will complain when trying to allocate an
+# array with ranges outside the 4 byte integer range.  As the behavior is
+# compiler implementation dependent, we do not run these test on 32 bit targets.
+if {[is_64_target]} {
+    gdb_test "p lbound(array_1d_4bytes_overflow, 1, 4)" "= 2147483644"
+    gdb_test "p lbound(array_1d_4bytes_overflow, 1, 8)" "= -2147483652"
+    gdb_test "p ubound(array_1d_4bytes_overflow, 1, 4)" "= -2147483637"
+    gdb_test "p lbound(array_1d_4bytes_overflow)" "= \\(2147483644\\)"
+}
+
+# Ensure we reached the final breakpoint.  If more tests have been added
+# to the test script, and this starts failing, then the safety 'while'
+# loop above might need to be increased.
+gdb_continue_to_breakpoint "Final Breakpoint"
+
+# Now for some final tests.  This is mostly testing that GDB gives the
+# correct errors in certain cases.
+foreach var {str_1 an_int} {
+    foreach func {lbound ubound} {
+	gdb_test "p ${func} ($var)" \
+	    "[string toupper $func] can only be applied to arrays"
+    }
+}

@@ -1,0 +1,106 @@
+# Copyright 2011-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib dwarf.exp
+
+set test "typeddwarf"
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+# This test can only be run on x86 and amd64 targets (and not x32).
+if { [is_x86_like_target] } {
+    set sfile ${test}.S
+} elseif { [is_x86_64_m64_target] } {
+    set sfile ${test}-amd64.S
+} else {
+    return 0
+}
+
+set opts {}
+lappend opts nodebug
+lappend opts nopie
+
+if { [prepare_for_testing "failed to prepare" "${test}" ${sfile} $opts] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+# Initialize tests to be an empty array.
+unset -nocomplain tests
+array set tests {}
+
+proc gdb-test {line var value} {
+    global tests
+
+    lappend tests($line) [list $var $value 0]
+}
+
+# Add an XFAIL'd test.  If ARCH_PATTERN is given, and does not match
+# the target, then the test is simply added and not XFAIL'd.
+proc xfail-gdb-test {line var value {arch_pattern ""}} {
+    global tests
+
+    set flag 1
+    if {$arch_pattern != ""} {
+	if {! [istarget $arch_pattern]} {
+	    set flag 0
+	}
+    }
+
+    lappend tests($line) [list $var $value $flag]
+}
+
+proc scan_gdb_tests {} {
+    global srcdir subdir test
+
+    set file "$srcdir/$subdir/$test.c"
+
+    set fd [open "$file"]
+    while {![eof $fd]} {
+	set line [gets $fd]
+	if {! [regexp "\{ (gdb-test .+) \} \}" $line ignore test_cmd]} {
+	    continue
+	}
+
+	eval $test_cmd
+    }
+    close $fd
+}
+
+scan_gdb_tests
+
+foreach line [lsort [array names tests]] {
+    gdb_test "break typeddwarf.c:$line" "Breakpoint .*" \
+	"set breakpoint at typeddwarf.c:$line"
+    gdb_continue_to_breakpoint "continue to typeddwarf.c:$line"
+
+    foreach test $tests($line) {
+	set var [lindex $test 0]
+	set value [lindex $test 1]
+	set should_xfail [lindex $test 2]
+
+	if {$should_xfail} {
+	    setup_xfail *-*-*
+	}
+
+	gdb_test "print $var" \
+	    " = $value" \
+	    "check value of $var at typeddwarf.c:$line"
+    }
+}

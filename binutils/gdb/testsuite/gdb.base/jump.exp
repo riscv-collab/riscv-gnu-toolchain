@@ -1,0 +1,125 @@
+#   Copyright 1998-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+
+clear_xfail "*-*-*"
+
+standard_testfile .c
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile]} {
+    return -1
+}
+
+# General testing of the 'jump' command.  GDB is already started.
+# There might be multiple inferior in the current debug session, in
+# which case, the relevant inferior is already selected.
+proc do_tests {} {
+    # Set a breakpoint on the statement that we're about to jump to.
+    # The statement doesn't contain a function call.
+    set non_call_line [gdb_get_line_number "bp-on-non-call"]
+    gdb_breakpoint "$non_call_line"
+    set bp_on_non_call \
+	[get_integer_valueof "\$bpnum" "INVALID" "bp_on_non_call"]
+
+    # Can we jump to the statement?  Do we stop there?
+    gdb_test "jump $non_call_line" \
+	"Breakpoint ${bp_on_non_call}(\.${::decimal})?, .*${::srcfile}:$non_call_line.*" \
+	"jump to non-call"
+
+    # Set a breakpoint on the statement that we're about to jump to.
+    # The statement does contain a function call.
+    set call_line [gdb_get_line_number "bp-on-call"]
+    gdb_breakpoint "$call_line"
+    set bp_on_call [get_integer_valueof "\$bpnum" "INVALID" "bp_on_call"]
+
+    # Can we jump to the statement?  Do we stop there?
+    gdb_test "jump $call_line" \
+	"Breakpoint ${bp_on_call}(\.${::decimal})?, .*${::srcfile}:$call_line.*" \
+	"jump to call"
+
+    # If we disable the breakpoint at the function call, and then
+    # if we jump to that statement, do we not stop there, but at
+    # the following breakpoint?
+    gdb_test_no_output "disable $bp_on_call" "disable breakpoint on call"
+
+    gdb_test "jump $call_line" \
+	"Breakpoint ${bp_on_non_call}(\.${::decimal})?, .*${::srcfile}:$non_call_line.*" \
+	"jump to call with disabled breakpoint"
+
+    # Disable the breakpoint at the non-function call, so it won't hit
+    # if do_test is called again.
+    gdb_test_no_output "disable ${bp_on_non_call}" "disable bp_on_non_call"
+
+    # Verify that GDB responds gracefully to the "jump" command without
+    # an argument.
+    gdb_test "jump" "Argument required .starting address.*" \
+	"jump without argument disallowed"
+
+    # Verify that GDB responds gracefully to the "jump" command with
+    # trailing junk.
+    gdb_test "jump $call_line 100" \
+	"malformed linespec error: unexpected number, \"100\"" \
+	"jump with trailing argument junk"
+
+    # Verify that GDB responds gracefully to a request to jump out of
+    # the current function.  (Note that this will very likely cause the
+    # inferior to die.  Be prepared to rerun the inferior, if further
+    # testing is desired.)
+    # Try it both ways: confirming and not confirming the jump.
+    set out_line [gdb_get_line_number "out-of-func"]
+    gdb_test "jump $out_line" \
+	"Not confirmed.*" \
+	"aborted jump out of current function" \
+	"Line $out_line is not in `main'.  Jump anyway.*y or n. $" \
+	"n"
+
+    gdb_test "jump $out_line" \
+	"Continuing at.*" \
+	"jump out of current function" \
+	"Line $out_line is not in `main'.  Jump anyway.*y or n. $" \
+	"y"
+}
+
+set num_inferiors 1
+if {![use_gdb_stub]} {
+    set num_inferiors 2
+}
+
+# Run to main, add inferiors if needed.
+if {![runto_main]} {
+    return -1
+}
+for {set inf 2} {$inf <= $num_inferiors} {incr inf} {
+    # Start a new inferior, and run it with the same executable.
+    gdb_test "add-inferior -exec ${binfile}" \
+	"Added inferior ${inf}.*" \
+	"add inferior ${inf} with -exec "
+    gdb_test "inferior ${inf}" \
+	"Switching to inferior ${inf} .*" \
+	"switch to inferior ${inf}"
+    if {![runto_main]} {
+	return -1
+    }
+}
+
+# Run tests on all inferiors.
+for {set inf 1} {$inf <= $num_inferiors} {incr inf} {
+    with_test_prefix "inferior $inf" {
+	# Switch to the target inferior.
+	gdb_test "inferior $inf" ".*Switching to inferior $inf .*"
+	# Run the tests.
+	do_tests
+    }
+}

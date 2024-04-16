@@ -1,0 +1,149 @@
+# Copyright 2002-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+
+require support_displaced_stepping
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+proc mi_nonstop_resume { command test } {
+    if { [mi_send_resuming_command $command $test] != 0 } {
+	# If a resume fails, assume non-stop is broken or unsupported
+	# for this target.  We have logged a FAIL or UNSUPPORTED; skip
+	# the remaining tests to limit timeouts.
+	return -code continue
+    }
+}
+
+#
+# Start here
+#
+standard_testfile non-stop.c
+
+set options [list debug]
+if {[gdb_compile_pthreads "$srcdir/$subdir/$srcfile" $binfile executable $options] != "" } {
+    return -1
+}
+
+
+save_vars { GDBFLAGS } {
+    append GDBFLAGS " -ex \"set non-stop on\""
+    mi_clean_restart $binfile
+}
+
+mi_gdb_test "-gdb-set mi-async 1" ".*"
+mi_detect_async
+
+if { [mi_runto_main] < 0 } {
+    return
+}
+
+mi_create_breakpoint break_at_me "breakpoint at marker" \
+    -number 2 -func break_at_me
+
+mi_nonstop_resume "exec-continue" "resume 1"
+mi_expect_stop "breakpoint-hit" "break_at_me" ".*" "non-stop.c" ".*" {"" "disp=\"keep\""} "w0,i0 stop"
+mi_expect_stop "breakpoint-hit" "break_at_me" ".*" "non-stop.c" ".*" {"" "disp=\"keep\""} "w1,i0 stop"
+
+mi_check_thread_states {"running" "stopped" "stopped"} "thread state, stop 1"
+
+mi_gdb_test "-thread-select 2" "\\^done.*" "select thread 2"
+mi_create_varobj I_W0 "i" "create varobj in first thread"
+mi_gdb_test "-thread-select 3" "\\^done.*" "select thread 3"
+mi_create_varobj I_W1 "i" "create varobj in second thread" 
+
+mi_nonstop_resume "exec-continue --thread 2" "resume 1"
+mi_check_thread_states {"running" "running" "stopped"} "thread state, resume 1"
+mi_expect_stop "breakpoint-hit" "break_at_me" ".*" "non-stop.c" ".*" {"" "disp=\"keep\""} "w0,i1 stop"
+mi_check_thread_states {"running" "stopped" "stopped"} "thread state, stop 2"
+
+mi_nonstop_resume "exec-continue --thread 3" "resume 2"
+mi_check_thread_states {"running" "stopped" "running"} "thread state, resume 2"
+mi_expect_stop "breakpoint-hit" "break_at_me" ".*" "non-stop.c" ".*" {"" "disp=\"keep\""} "w1,i1 stop"
+mi_check_thread_states {"running" "stopped" "stopped"} "thread state, stop 3"
+
+mi_varobj_update * {I_W1 I_W0} "update varobj, 1"
+mi_check_varobj_value I_W0 1 "check varobj, w0, 1"
+mi_check_varobj_value I_W1 1 "check varobj, w1, 1"
+
+mi_gdb_test "-exec-interrupt --thread 1" "\\^done" "interrupted"
+mi_expect_interrupt "got interrupt"
+
+# The interrupt command sends SIGINT to the target, and therefore the
+# thread might not be stopped immediately when we return from the target.
+# So, wait a bit
+sleep 1
+mi_check_thread_states {"stopped" "stopped" "stopped"} "thread state, stop 4"
+
+mi_gdb_test "-exec-continue --all" ".*\\*running,thread-id=\"1\"\r\n\\*running,thread-id=\"2\"\r\n\\*running,thread-id=\"3\"" \
+    "resume all"
+
+mi_expect_stop "breakpoint-hit" "break_at_me" "\[^\n\]*" "non-stop.c" "\[0-9\]*" {"" "disp=\"keep\""} "w0,i2 stop"
+mi_expect_stop "breakpoint-hit" "break_at_me" ".*" "non-stop.c" ".*" {"" "disp=\"keep\""} "w1,i2 stop"
+
+# At this point, thread 1 (main) is running, and worker threads are stopped.
+# Check that we can modify breakpoint condition, even when operating on a 
+# running thread.
+mi_gdb_test "-break-condition --thread 1 2 id==1" "\\^done" "set condition, 1"
+
+mi_nonstop_resume "exec-continue --thread 2" "resume 2"
+mi_nonstop_resume "exec-continue --thread 3" "resume 3"
+
+sleep 2
+mi_expect_stop "breakpoint-hit" "break_at_me" ".*" "non-stop.c" ".*" {"" "disp=\"keep\""} "w0,i3 stop"
+mi_check_thread_states {"running" "running" "stopped"} "thread state, stop on cond breakpoint"
+
+# Check that when we update all varobj, we don't get no error about varobj
+# bound to running thread.
+mi_varobj_update * {I_W1} "update varobj, 2"
+mi_check_varobj_value I_W1 3 "check varobj, w1, 2"
+
+
+# Check that stack commands are allowed on a stopped thread, even if some other threads
+# are running, and produce something sane.  Also check we check error on running thread.
+mi_gdb_test "-stack-list-frames --thread 2" "\\^error,msg=\".*\"" "stacktrace of running thread"
+mi_gdb_test "-stack-list-frames --thread 3" \
+    "\\^done,stack=\\\[frame={level=\"0\",addr=\".*\",func=\"break_at_me\".*" \
+    "stacktrace of stopped thread"
+
+# verify that after thread exit, the thread is reported as exited in -thread-info, and
+# we can still interact with other threads.
+mi_gdb_test "-thread-select 2" "\\^done.*" "select first worker thread"
+# Since thread 2 is running, we need to set variable via another thread.
+mi_gdb_test "-gdb-set --thread 3 variable exit_first_thread=1" ".*\\^done" "ask the second thread to exit"
+
+set test "wait for thread exit"
+if { [mi_is_target_remote] } {
+    # The remote protocol doesn't have support for thread exit
+    # notifications.
+    unsupported $test
+} else {
+    gdb_expect {
+	-re ".*=thread-exited,id=\"2\",group-id=\"i\[0-9\]+\"\r\n$" {
+	    pass $test
+	}
+	timeout {
+	    fail "$test (timeout)"
+	}
+    }
+}
+
+# See that we can still poke other threads.
+mi_gdb_test "-stack-list-frames --thread 3" \
+    "\\^done,stack=\\\[frame={level=\"0\",addr=\".*\",func=\"break_at_me\".*" \
+    "stacktrace of stopped thread, 2"
+
+mi_gdb_exit

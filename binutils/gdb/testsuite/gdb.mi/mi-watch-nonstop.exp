@@ -1,0 +1,64 @@
+#   Copyright 2011-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require allow_hw_watchpoint_tests support_displaced_stepping
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+proc mi_nonstop_resume { command test } {
+    if { [mi_send_resuming_command $command $test] != 0 } {
+	# If a resume fails, assume non-stop is broken or unsupported
+	# for this target.  We have logged a FAIL or UNSUPPORTED; skip
+	# the remaining tests to limit timeouts.
+	return -code continue
+    }
+}
+
+#
+# Start here
+#
+standard_testfile watch-nonstop.c
+
+if {[gdb_compile "$srcdir/$subdir/$srcfile" $binfile executable {debug}] != "" } {
+    return -1
+}
+
+save_vars { GDBFLAGS } {
+    append GDBFLAGS " -ex \"set non-stop on\""
+    mi_clean_restart $binfile
+}
+
+mi_gdb_test "-gdb-set mi-async 1" ".*"
+mi_detect_async
+
+if { [mi_runto_main] < 0 } {
+    return
+}
+
+# Set a watchpoint.
+mi_gdb_test "111-break-watch global" \
+    "111\\^done,wpt=\{number=\"2\",exp=\"global\"\}" \
+    "break-watch operation"
+
+# Set the target running.
+mi_nonstop_resume "exec-continue" "resume 1"
+
+# Now try deleting the watchpoint.  This would fail with "Couldn't
+# write debug register: No such process."  on GNU/Linux, because we'd
+# try to poke at the debug registers of a running thread.
+mi_gdb_test "777-break-delete 2" \
+    "777\\^done" \
+    "delete watchpoint"

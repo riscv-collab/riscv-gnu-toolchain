@@ -1,0 +1,102 @@
+# Copyright (C) 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "dtrace.exp"
+
+# Run the tests.
+# This returns -1 on failure to compile or start, 0 otherwise.
+proc dtrace_test {} {
+    global testfile hex srcfile binfile
+
+    standard_testfile
+    
+    if {[dtrace_build_usdt_test_program] == -1} {
+        untested "failed to compile"
+        return -1
+    }
+
+    clean_restart ${binfile}
+    
+    if ![runto_main] {
+        return -1
+    }
+
+    gdb_test "print \$_probe_argc" "No probe at PC $hex" \
+        "check argument not at probe point"
+
+    # Test the 'info probes' command.
+    gdb_test "info probes dtrace" \
+        "test *progress-counter *$hex +no.*test *two-locations *$hex +always.*test *two-locations *$hex +always.*" \
+        "info probes dtrace"
+
+    # Disabling the probe test:two-locations shall have no effect,
+    # since no is-enabled probes are defined for it in the object
+    # file.
+
+    gdb_test "disable probe test two-locations" \
+	"Probe test:two-locations cannot be disabled.*" \
+	"disable probe test two-locations"
+
+    # On the other hand, the probe test:progress-counter can be
+    # enabled and then disabled again.
+
+    gdb_test "enable probe test progress-counter" \
+	"Probe test:progress-counter enabled.*" \
+	"enable probe test progress-counter"
+
+    gdb_test "disable probe test progress-counter" \
+	"Probe test:progress-counter disabled.*" \
+	"disable probe test progress-counter"
+
+    # Since test:progress-counter is disabled we can run to the second
+    # instance of the test:two-locations probe.
+
+    runto "-probe-dtrace test:two-locations"]
+    runto "-probe-dtrace test:two-locations"]
+
+    # Go back to the breakpoint on main() and enable the
+    # test:progress-counter probe.  Set a breakpoint on it and see
+    # that it gets reached.
+
+    if ![runto_main] {
+	return -1
+    }
+
+    gdb_test "enable probe test progress-counter" \
+	"Probe test:progress-counter enabled.*" \
+	"enable probe test progress-counter"
+
+    gdb_test "break -probe-dtrace test:progress-counter" \
+	".*Breakpoint \[0-9\]+ .*" "set breakpoint in test:progress-counter"
+    gdb_continue_to_breakpoint "test:progress-counter"
+
+    # Test probe arguments.
+    gdb_test "print \$_probe_argc" " = 2" \
+        "print \$_probe_argc for probe progress-counter"
+    gdb_test "print \$_probe_arg0" \
+        " = $hex \"application\"" \
+        "print \$_probe_arg0 for probe progress-counter"
+    gdb_test "print \$_probe_arg1" " = 1" \
+        "print \$_probe_arg1 for probe progress-counter"
+
+    # Set a breakpoint with multiple probe locations.
+    gdb_test "break -pdtrace test:two-locations" \
+        "Breakpoint \[0-9\]+ at $hex.*2 locations.*" \
+        "set multi-location probe breakpoint (probe two-locations)"
+
+    return 0
+}
+
+dtrace_test

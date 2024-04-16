@@ -1,0 +1,73 @@
+# Copyright 2014-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Generate a test program containing DTrace USDT probes, whose sources
+# are ${srcfile} and ${testfile}.d.  The sequence of commands used to
+# generate the test program is:
+#
+# 1. Generate a header file from ${testfile}.d using dtrace -h.
+# 2. Compile ${srcfile}.c.
+# 3. Generate an object file containing a DOF program using dtrace -G.
+# 4. Link everything together to get the test program.
+#
+# Note that if DTrace is not found in the host system then this
+# function uses the pdtrace implementation, which is located at
+# testsuite/lib/pdtrace.
+#
+# This function requires 'testfile', 'srcfile' and 'binfile' to be
+# properly set.
+#
+# This function returns -1 on failure, 0 otherwise
+proc dtrace_build_usdt_test_program {} {
+    global testfile hex objdir srcdir srcfile subdir binfile
+    
+    # Make sure that dtrace is installed, it is the real one (not the
+    # script installed by SystemTap, for example) and of the right
+    # version (>= 0.4.0).  If it is not then use pdtrace instead.
+    set dtrace "dtrace"
+    set result [remote_exec host "$dtrace -V"]
+    if {[lindex $result 0] != 0 || ![regexp {^dtrace: Sun D [0-9]\.[0-9]\.[0-9]} [lindex $result 1]]} {
+	set dtrace "${objdir}/lib/pdtrace"
+    }
+    set dscript_file "${srcdir}/${subdir}/${testfile}.d"
+
+    # 1. Generate a header file from testprogram.d using dtrace -h.
+    set out_header_file [standard_output_file "${testfile}.h"]
+    set result [remote_exec host "$dtrace -h -s $dscript_file -o $out_header_file"]
+    verbose -log [lindex $result 1]
+    if {[lindex $result 0] != 0} {
+        return -1
+    }
+
+    # 2. Compile testprogram.c.
+    set options [list debug quiet \
+		     additional_flags=-I[file dirname $out_header_file]]
+    if {[gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}.o" object ${options}] != ""} {
+        return -1
+    }
+
+    # 3. Generate an object file containing a DOF program using dtrace -G.
+    set result [remote_exec host "$dtrace -G -s $dscript_file -o ${binfile}-p.o ${binfile}.o"]
+    verbose -log [lindex $result 1]
+    if {[lindex $result 0] != 0} {
+        return -1
+    }
+
+    # 4. Link everything together to get the test program.
+    if {[gdb_compile "${binfile}.o ${binfile}-p.o" ${binfile} executable \
+	     {debug quiet}] != ""} {
+        return -1
+    }
+}

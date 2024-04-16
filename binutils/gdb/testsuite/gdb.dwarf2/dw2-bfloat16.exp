@@ -1,0 +1,101 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# This test checks if GDB can identify bfloat16 and IEEE half float types and
+# print them correctly.
+#
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+standard_testfile .c -dw.S
+
+# Make some DWARF for the test.
+# 0x4049 is the equivalent of 3.141 for bfloat16.
+# 0x4248 is the equivalent of 3.1406 for IEEE half float.
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    global srcdir subdir srcfile
+
+    cu {} {
+	DW_TAG_compile_unit {
+                {DW_AT_language @DW_LANG_C}
+                {DW_AT_name     $srcfile}
+                {DW_AT_comp_dir /tmp}
+        } {
+	    declare_labels bf16_type fp16_type \
+		bf16_var fp16_var
+
+            bf16_type: DW_TAG_base_type {
+                {DW_AT_name __bf16}
+		{encoding @DW_ATE_float}
+                {DW_AT_byte_size 2 DW_FORM_sdata}
+            }
+
+            fp16_type: DW_TAG_base_type {
+                {DW_AT_name __fp16}
+		{encoding @DW_ATE_float}
+                {DW_AT_byte_size 2 DW_FORM_sdata}
+            }
+
+	    bf16_var: DW_TAG_variable {
+		{DW_AT_name "bf16_1"}
+		{DW_AT_type :${bf16_type}}
+		{DW_AT_const_value 0x4049 DW_FORM_sdata}
+	    }
+
+	    fp16_var: DW_TAG_variable {
+		{DW_AT_name "fp16_1"}
+		{DW_AT_type :${fp16_type}}
+		{DW_AT_const_value 0x4248 DW_FORM_sdata}
+	    }
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	  [list $srcfile $asm_file] {nodebug}] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+# Make sure we can print both types correctly.
+gdb_test "print bf16_1" " = 3.141"
+gdb_test "print fp16_1" " = 3.1406"
+
+#
+# Test that 'x/hf' correctly handles "half float".
+#
+
+set bytes {0x48 0x42}
+set endian [get_endianness]
+if {$endian == "big"} {
+    set bytes [lreverse $bytes]
+}
+
+gdb_test_no_output "set var \$s = (unsigned char *) &storage" \
+    "set convenience variable"
+gdb_test "print/x \$s\[0\] = [lindex $bytes 0]" \
+    " = $hex" "set first element"
+gdb_test "print/x \$s\[1\] = [lindex $bytes 1]" \
+    " = $hex" "set second element"
+gdb_test "print *(__fp16 *) \$s" " = 3\\.1406" \
+    "print float16 value"
+gdb_test "x/hf \$s" "$hex <storage>:\[ \t\]*3\\.1406" \
+    "examine float16 value"

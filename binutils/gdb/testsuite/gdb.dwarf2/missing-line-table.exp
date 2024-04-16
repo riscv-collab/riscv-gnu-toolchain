@@ -1,0 +1,122 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Create a compilation unit containing two functions (the CU's
+# low/high pc range will include both functions), but define a line
+# table that only covers one of the functions.
+#
+# Use GDB to try and place a breakpoint in both functions.  GDB should
+# correctly find some address within both functions at which to place
+# a breakpoint.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support the DWARF
+# assembler.
+require dwarf2_support
+
+standard_testfile .c -dw.S
+
+get_func_info main
+get_func_info foo
+
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    declare_labels Llines
+
+    cu {} {
+	compile_unit {
+	    {language @DW_LANG_C}
+	    {name missing-line-table.c}
+	    {stmt_list $Llines DW_FORM_sec_offset}
+	    {DW_AT_low_pc $::foo_start DW_FORM_addr}
+	    {DW_AT_high_pc $::main_end DW_FORM_addr}
+	} {
+	    subprogram {
+		{external 1 flag}
+		{MACRO_AT_func {main}}
+	    }
+	    subprogram {
+		{external 1 flag}
+		{MACRO_AT_func {foo}}
+	    }
+	}
+    }
+
+    lines {version 2} Llines {
+	include_dir "${::srcdir}/${::subdir}"
+	file_name "$::srcfile" 1
+
+	program {
+	    DW_LNE_set_address main
+	    line [gdb_get_line_number "L1"]
+	    DW_LNS_copy
+
+	    DW_LNE_set_address main_label
+	    line [gdb_get_line_number "L2"]
+	    DW_LNS_copy
+
+	    DW_LNE_set_address main_label_2
+	    line [gdb_get_line_number "L3"]
+	    DW_LNS_copy
+
+	    DW_LNE_set_address "$::main_start + $::main_len"
+	    DW_LNE_end_sequence
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	  [list $srcfile $asm_file] {nodebug}] } {
+    return -1
+}
+
+# Place a breakpoint on FUNC.  Check that the address at which the
+# breakpoint is placed lies within FUNC which is starts at address
+# START, and address END is the first address after FUNC.
+proc check_breakpoint { func start end } {
+    with_test_prefix "func=$func" {
+	set addr "*unknown*"
+	gdb_test_multiple "break $func" "place breakpoint" {
+	    -re -wrap "Breakpoint $::decimal at ($::hex)(?:: \[^\r\n\]+)?" {
+		set addr $expect_out(1,string)
+		pass $gdb_test_name
+	    }
+	}
+
+	verbose -log "breakpoint at: $addr"
+	verbose -log "$func start: $start, $func end: $end"
+
+	gdb_assert {$addr >= $start && $addr < $end} \
+	    "check breakpoint address is within function"
+    }
+}
+
+# The get_func_info calls declare the function start/end in terms of a
+# program label and offsets, but we now need these as actual
+# addresses.  As the program is running, this can be done easily by
+# asking GDB to evaluate each in turn.
+foreach func {foo main} {
+    foreach part {start end} {
+	set ${func}_${part} \
+	    [get_hexadecimal_valueof [set ${func}_${part}] "??" \
+		 "get value of ${func}_${part}"]
+    }
+}
+
+# Place breakpoints within 'foo' and 'main', and check that the
+# breakpoint is actually placed within the function.
+check_breakpoint "foo" $foo_start $foo_end
+check_breakpoint "main" $main_start $main_end

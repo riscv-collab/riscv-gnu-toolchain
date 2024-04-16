@@ -1,0 +1,150 @@
+# This testcase is part of GDB, the GNU debugger.
+#
+# Copyright 2020-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that GDB can handle receiving the W and X packets for a target
+# with multiple threads, but only a single inferior.
+#
+# Specifically, check GDB handles this case where multi-process
+# extensions are turned off.  At one point this was causing GDB to
+# give a warning when the exit arrived that the remote needed to
+# include a thread-id, which was not correct.
+
+load_lib gdbserver-support.exp
+
+require allow_gdbserver_tests
+
+standard_testfile
+
+# Start up GDB and GDBserver debugging EXECUTABLE.  When
+# DISABLE_MULTI_PROCESS is true then disable GDB's remote
+# multi-process support, otherwise, leave it enabled.
+#
+# Places a breakpoint in function 'breakpt' and then continues to the
+# breakpoint, at which point it runs 'info threads'.
+proc prepare_for_test { executable target_executable disable_multi_process } {
+    global GDBFLAGS
+
+    save_vars { GDBFLAGS } {
+	# If GDB and GDBserver are both running locally, set the sysroot to avoid
+	# reading files via the remote protocol.
+	if { ![is_remote host] && ![is_remote target] } {
+	    set GDBFLAGS "$GDBFLAGS -ex \"set sysroot\""
+	}
+
+	clean_restart ${executable}
+    }
+
+    # Make sure we're disconnected, in case we're testing with an
+    # extended-remote board, therefore already connected.
+    gdb_test "disconnect" ".*"
+
+    # Disable XML-based thread listing, and possible the multi-process
+    # extensions.
+    gdb_test \
+	"set remote threads-packet off" \
+	"Support for the 'qXfer:threads:read' packet on future remote targets is set to \"off\"."
+
+    if { $disable_multi_process } {
+	gdb_test \
+	    "set remote multiprocess-feature-packet off" \
+	    "Support for the 'multiprocess-feature' packet on future remote targets is set to \"off\"."
+    }
+
+    # Start gdbserver and connect.
+    set res [gdbserver_start "" $target_executable]
+    set gdbserver_protocol [lindex $res 0]
+    set gdbserver_gdbport [lindex $res 1]
+    set res [gdb_target_cmd $gdbserver_protocol $gdbserver_gdbport]
+    if ![gdb_assert {$res == 0} "connect"] {
+	return
+    }
+
+    # Run until we hit the breakpt function, then list all threads.
+    gdb_breakpoint "breakpt"
+    gdb_continue_to_breakpoint "breakpt"
+    gdb_test "info threads" ".*"
+}
+
+# Run the tests where the inferior exits normally (the W packet) while
+# we have multiple-threads.  EXECUTABLE is the binary under test, and
+# DISABLE_MULTI_PROCESS indicates if we should disable GDB's remote
+# multi-process support.
+proc run_exit_test { executable target_executable disable_multi_process } {
+    global decimal
+
+    prepare_for_test ${executable} $target_executable ${disable_multi_process}
+
+    # Finally, continue until the process exits, ensure we don't see
+    # any warnings between "Continuing." and the final process has
+    # exited message.
+    if { $disable_multi_process } {
+	set process_pattern "Remote target"
+    } else {
+	set process_pattern "process $decimal"
+    }
+    gdb_test "continue" \
+	[multi_line \
+	     "Continuing\\." \
+	     "\\\[Inferior $decimal \\\(${process_pattern}\\\) exited normally\\\]" ] \
+	"continue until process exits"
+}
+
+# Run the tests where the inferior exits with a signal (the X packet)
+# while we have multiple-threads.  EXECUTABLE is the binary under
+# test, and DISABLE_MULTI_PROCESS indicates if we should disable GDB's
+# remote multi-process support.
+proc run_signal_test { executable target_executable disable_multi_process } {
+    global decimal gdb_prompt
+
+    prepare_for_test ${executable} $target_executable ${disable_multi_process}
+
+    set inf_pid [get_valueof "/d" "global_pid" "unknown"]
+    gdb_assert ![string eq ${inf_pid} "unknown"] "read the pid"
+
+    # This sets the inferior running again, with all threads going
+    # into a long delay loop.
+    send_gdb "continue\n"
+
+    # Send the inferior a signal to kill it.
+    sleep 1
+    remote_exec target "kill -9 ${inf_pid}"
+
+    # Process the output from GDB.
+    gdb_test_multiple "" "inferior exited with signal" {
+	-re "Continuing\\.\r\n\r\nProgram terminated with signal SIGKILL, Killed.\r\nThe program no longer exists.\r\n$gdb_prompt $" {
+	    pass $gdb_test_name
+	}
+    }
+}
+
+# Run all of the tests.
+foreach_with_prefix test { exit signal } {
+    set def "DO_[string toupper $test]_TEST"
+    set func "run_${test}_test"
+
+    set executable "$binfile-${test}"
+    if [build_executable "failed to prepare" $executable $srcfile \
+	    [list debug pthreads additional_flags=-D${def}]] {
+	return -1
+    }
+
+    set target_executable [gdb_remote_download target $executable]
+
+    foreach_with_prefix multi_process { 0 1 } {
+	$func ${executable} $target_executable ${multi_process}
+    }
+}

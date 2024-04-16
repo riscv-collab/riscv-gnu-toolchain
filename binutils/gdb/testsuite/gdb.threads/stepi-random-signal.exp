@@ -1,0 +1,114 @@
+# Copyright 2013-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test relies on checking gdb debug output. Do not run if gdb debug is
+# enabled as any debug will be redirected to the log.
+require !gdb_debug_enabled
+
+standard_testfile
+set executable ${testfile}
+
+if { [gdb_compile_pthreads \
+	  "${srcdir}/${subdir}/${srcfile}" \
+	  "${binfile}" \
+	  executable {debug}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+clean_restart $executable
+
+# Start the second thread.
+if ![runto start] {
+    return -1
+}
+
+# Go back to the main thread, and leave it in the loop, where we're
+# reasonably sure we don't have 'conditional jmp $pc'-like
+# instructions.  We wouldn't be able to detect whether a stepi makes
+# progress over those.
+gdb_test_no_output "set scheduler-locking on"
+gdb_test "thread 1" "Switching to .*"
+gdb_breakpoint $srcfile:[gdb_get_line_number "set break 2 here"]
+gdb_continue_to_breakpoint "loop" ".* set break 2 here .*"
+
+# Now back to thread 2, and let it queue a signal in thread 1.
+gdb_test "thread 2" "Switching to .*"
+gdb_breakpoint $srcfile:[gdb_get_line_number "set break here"]
+gdb_continue_to_breakpoint "after pthread_kill" ".* set break here .*"
+
+# We're now ready to stepi thread 1.  It should immediately dequeue
+# the signal.
+gdb_test "thread 1" "Switching to .*" "thread 1 again"
+
+# No longer need these.
+delete_breakpoints
+
+# Turn on infrun debugging, so we can tell whether the signal is
+# really dequeued and that GDB sees it.
+gdb_test_no_output "set debug infrun 1"
+
+# Make sure the target backend reports the signal to GDB core.  Some
+# backends (like Linux) skip reporting a signal if set to
+# pass/nostop/noprint, resuming the thread immediately instead.
+gdb_test "handle SIGCHLD print"
+
+# Helper to extract the current PC.  PREFIX is used to make each call
+# have its own unique test name.
+
+proc get_pc { prefix } {
+    with_test_prefix "$prefix" {
+	return [get_hexadecimal_valueof "\$pc" ""]
+    }
+}
+
+set prev_addr [get_pc "before stepi"]
+if {$prev_addr == ""} {
+    return
+}
+
+# True if we saw the infrun path we want to test be exercised.
+set seen 0
+
+set test "stepi"
+set prompt "$gdb_prompt \\\[infrun\\\] fetch_inferior_event: exit\r\n$"
+if {[gdb_test_multiple "stepi" "$test" -prompt $prompt {
+    -re {\[infrun\] handle_signal_stop: random signal} {
+	set seen 1
+	exp_continue
+    }
+    -re "$prompt$" {
+    }
+}] != 0} {
+    return
+}
+
+if {$seen} {
+    pass "$test"
+} else {
+    fail "$test (no random signal)"
+}
+
+set addr [get_pc "after stepi"]
+if {$addr == ""} {
+    return
+}
+
+set test "stepi interfered by signal makes progress"
+if {$addr == $prev_addr} {
+    fail "$test"
+} else {
+    pass "$test"
+}

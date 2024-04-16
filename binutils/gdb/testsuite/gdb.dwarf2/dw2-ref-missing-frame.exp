@@ -1,0 +1,64 @@
+# Copyright 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+standard_testfile .S -func.c -main.c
+lassign [function_range func_nofb \
+             "${srcdir}/${subdir}/${srcfile2} ${srcdir}/${subdir}/${srcfile3}"] \
+    func_nofb_start func_nofb_len
+lassign [function_range func_loopfb \
+             "${srcdir}/${subdir}/${srcfile2} ${srcdir}/${subdir}/${srcfile3}"] \
+    func_loopfb_start func_loopfb_len
+
+set flags {}
+lappend flags \
+    additional_flags=[quote_for_host -DFUNC_NOFB_START=$func_nofb_start]
+lappend flags \
+    additional_flags=[quote_for_host -DFUNC_NOFB_END=$func_nofb_start \
+			  + $func_nofb_len]
+lappend flags \
+    additional_flags=[quote_for_host -DFUNC_LOOPFB_START=$func_loopfb_start]
+lappend flags \
+    additional_flags=[quote_for_host -DFUNC_LOOPFB_END=$func_loopfb_start \
+			  + $func_loopfb_len]
+
+set executable ${testfile}
+
+if { [prepare_for_testing_full "failed to prepare" \
+	  [list $testfile {} \
+	       $srcfile [concat $flags {nodebug}]  \
+	       $srcfile2 {nodebug} \
+	       $srcfile3 {debug}]] == -1 } {
+    return -1
+}
+
+# First try referencing DW_AT_frame_base which is not defined.
+if [runto func_nofb] {
+    gdb_test "p func_nofb_var" {Could not find the frame base for "func_nofb".} "func_nofb print"
+    gdb_test "bt full" " in main .* main_var = 1" "func_nofb backtrace"
+}
+
+# GDB could have crashed.
+clean_restart $executable
+
+# And now try referencing DW_AT_frame_base defined using a self-reference
+# (DW_OP_fbreg).
+if [runto func_loopfb] {
+    gdb_test "p func_loopfb_var" "DWARF-2 expression error: Loop detected .*" "func_loopfb print"
+    gdb_test "bt full" " in main .* main_var = 1" "func_loopfb backtrace"
+}

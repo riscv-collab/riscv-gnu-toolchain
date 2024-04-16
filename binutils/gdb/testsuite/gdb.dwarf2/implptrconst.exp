@@ -1,0 +1,103 @@
+# Copyright 2013-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+require allow_cplus_tests
+
+standard_testfile main.c -dw.S
+
+# Make some DWARF for the test.
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    # Creating a CU with 4-byte addresses lets this test link on both
+    # 32- and 64-bit machines.
+    cu { addr_size 4 } {
+ 	compile_unit {} {
+	    declare_labels byte_label size_type_label array_label
+	    declare_labels var_label ptr_label
+
+	    byte_label: base_type {
+		{name byte}
+		{encoding @DW_ATE_signed}
+		{byte_size 1 DW_FORM_sdata}
+	    }
+
+	    size_type_label: base_type {
+		{name sizetype}
+		{encoding @DW_ATE_unsigned}
+		{byte_size 4 DW_FORM_sdata}
+	    }
+
+	    array_label: array_type {
+		{type :$byte_label}
+	    } {
+		subrange_type {
+		    {type :$size_type_label}
+		    {upper_bound 7 DW_FORM_data1}
+		}
+	    }
+
+	    var_label: DW_TAG_variable {
+		{name b}
+		{type :$array_label}
+		{const_value rstuvwxy DW_FORM_block1}
+	    }
+
+	    ptr_label: pointer_type {
+		{byte_size 4 DW_FORM_sdata}
+		{type :$byte_label}
+	    }
+
+	    DW_TAG_variable {
+		{name c}
+		{type :$ptr_label}
+		{location {
+		    GNU_implicit_pointer $var_label 0
+		} SPECIAL_expr}
+	    }
+
+	    DW_TAG_variable {
+		{name d}
+		{type :$ptr_label}
+		{location {
+		    GNU_implicit_pointer $var_label 2
+		} SPECIAL_expr}
+	    }
+	}
+    }
+}
+
+if { [build_executable ${testfile}.exp ${testfile} \
+	  [list $srcfile $asm_file] {nodebug}] } {
+    return -1
+}
+
+# We need --readnow because otherwise we never read in the CU we
+# created above.
+set saved_gdbflags $GDBFLAGS
+set GDBFLAGS "$GDBFLAGS -readnow"
+clean_restart ${testfile}
+set GDBFLAGS $saved_gdbflags
+
+if ![runto_main] {
+    return -1
+}
+
+gdb_test "print *c" " = 114 'r'"
+gdb_test "print d\[-2\]" " = 114 'r'"

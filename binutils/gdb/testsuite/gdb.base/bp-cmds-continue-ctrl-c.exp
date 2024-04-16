@@ -1,0 +1,143 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Set a breakpoint with a "continue" command attached, let the
+# inferior hit the breakpoint continuously.  Check that we can use ^C
+# to interrupt the command, and that if ^C is pressed while GDB has
+# the terminal (between the stop and the re-resume), the resulting
+# "Quit" doesn't mess up the debug session.
+
+require {!target_info exists gdb,nosignals}
+
+# This test requires sending ^C to interrupt the running target.
+require {!target_info exists gdb,nointerrupts}
+
+standard_testfile
+
+if {[build_executable "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+# See intro.
+
+proc do_test {} {
+    global srcfile binfile
+    global gdb_prompt
+
+    gdb_test "break foo" "Breakpoint .*" "set breakpoint"
+
+    gdb_test \
+	[multi_line_input \
+	     {commands} \
+	     {  c} \
+	     {end}] \
+	"" "commands"
+
+    set test "stop with control-c"
+
+    for {set iter 0} {$iter < 20} {incr iter} {
+
+	# Useful for debugging.
+	#send_user "iter: $iter\n"
+
+	# Consume one breakpoint hit (at least), to make sure that the
+	# continue actually continues between attempts, as opposed to
+	# "c" not actually resuming and then Ctrl-C managing to
+	# interrupt anyway.
+	if {[gdb_test_multiple "continue" "$test (continue)" {
+	    -re "Continuing.*Breakpoint \[^\r\n\]*\r\n" {
+	    }
+	}] != 0} {
+	    return
+	}
+
+	set internal_pass "IPASS: $test (iter $iter)"
+
+	# Breakpoint commands run after the target is considered
+	# stopped, and thus run with GDB owning the terminal.  That
+	# means that it is expected that a Ctrl-C that arrives between
+	#  - GDB reporting the breakpoint hit, and,
+	#  - the breakpoint command continuing the target
+	# results in a Quit.
+
+	after 200 {send_gdb "\003"}
+	if {[gdb_test_multiple "" "$test (unexpected)" {
+	    -re "Program terminated with signal SIGALRM.*\r\n$gdb_prompt $" {
+		fail "$test (SIGALRM)"
+		return
+	    }
+	    -re "Program received signal SIGINT.*\r\n$gdb_prompt $" {
+		send_log "$internal_pass (SIGINT)\n"
+	    }
+	    -re "Quit\r\n$gdb_prompt $" {
+		send_log "$internal_pass (Quit)\n"
+
+		# Check that if we managed to quit somewhere deep in
+		# the unwinders, we can still unwind again.
+		set ok 0
+		gdb_test_multiple "bt" "$internal_pass (bt)" {
+		    -re "#0.*$gdb_prompt $" {
+			send_log "$internal_pass (bt)\n"
+			set ok 1
+		    }
+		}
+		if {!$ok} {
+		    return
+		}
+	    }
+	    -re "Quit\r\n\r\nCommand aborted.\r\n$gdb_prompt $" {
+		send_log "$internal_pass (Command aborted)\n"
+	    }
+	    -re "Breakpoint \[^\r\n\]*$srcfile" {
+		exp_continue
+	    }
+	}] != 0} {
+	    break
+	}
+    }
+
+    gdb_assert {$iter == 20} "stop with control-c"
+}
+
+# With native debugging and "run" (with job control), if the inferior
+# is running, the Ctrl-C reaches the inferior directly, not GDB.  With
+# native debugging and "attach", or with remote debugging, the Ctrl-C
+# reaches GDB first.  So for completeness, try both "run" and
+# "attach".
+
+with_test_prefix "run" {
+    clean_restart $binfile
+
+    if {![runto_main]} {
+	return -1
+    }
+
+    do_test
+}
+
+with_test_prefix "attach" {
+    if {[can_spawn_for_attach]} {
+	clean_restart $binfile
+
+	set test_spawn_id [spawn_wait_for_attach $binfile]
+	set testpid [spawn_id_get_pid $test_spawn_id]
+
+	gdb_test "attach $testpid" "Attaching to.*process $testpid.*" "attach"
+
+	do_test
+
+	kill_wait_spawned_process $test_spawn_id
+    }
+}

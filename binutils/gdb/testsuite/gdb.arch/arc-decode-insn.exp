@@ -1,0 +1,128 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+
+# These tests provides certain degree of testing for arc_insn functions,
+# however it is not a comprehensive testsuite that would go through all
+# possible ARC instructions - instead this particular test is focused on branch
+# instructions and whether branch targets are evaluated properly.  Most of the
+# non-branch aspects of instruction decoder are used during prologue analysis,
+# so are indirictly tested there.
+
+# To maintain separation of test data and test logic, all of the information
+# about instructions, like if it has delay slot, condition code, branch target
+# address, is all specified in the test assembly file as a symbols, while this
+# test case reads those symbols to learn which values are right, then compares
+# values coming from decoder with those found in symbols.  More information
+# about requirements to actual test cases can be found in corresponding
+# assembly file of this test case (arc-decode-insn.S).
+
+require {istarget "arc*-*-*"}
+
+standard_testfile .S
+
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile] } {
+    return -1
+}
+
+if ![runto_main] {
+    return 0
+}
+
+# Helper function that reads properties of instruction from the ELF file via
+# its symbols and then confirms that decoder output aligns to the expected
+# values.
+proc test_branch_insn { test_name } {
+
+    # Make messages for failed cases more clear, by using hex in them.
+    set pc [get_hexadecimal_valueof &${test_name}_start -1]
+
+    # Calculate instruction length, based on ${test_name}_end symbol.
+    set end_pc [get_hexadecimal_valueof &${test_name}_end -1]
+    set length [expr $end_pc - $pc]
+
+    set target_address [get_hexadecimal_valueof &${test_name}_target -1]
+
+    # Figure out if there is a delay slot, using symbol
+    # ${test_name}_has_delay_slot.  Note that it should be read via &,
+    # otherwise it would try to print value at the address specified in
+    # ${test_name}_has_delay_slot, while a symbol value itself is required.
+    if { 0 == [get_integer_valueof &${test_name}_has_delay_slot 0] } {
+	set has_delay_slot 0
+    } else {
+	set has_delay_slot 1
+    }
+
+    set cc [get_hexadecimal_valueof &${test_name}_cc 0]
+
+    # Can't use {} to create a list of items, because variables will not be
+    # evaluated inside the {}.
+    gdb_test_sequence "mt print arc arc-instruction $pc" "" [list \
+	"length_with_limm = $length" \
+	"cc = $cc" \
+	"is_control_flow = 1" \
+	"has_delay_slot = $has_delay_slot" \
+	"branch_target = $target_address"]
+}
+
+set branch_test_list { }
+
+# Add items in the same groups as they can be enabled/disabled in assembly
+# file.
+lappend branch_test_list \
+    j_c j_blink j_limm j_u6 j_s12 j_d_c j_d_blink j_d_u6
+lappend branch_test_list \
+    jcc_c jcc_blink jcc_limm jcc_u6 jcc_d_c jcc_d_blink jcc_d_u6 \
+    jcc_eq_s_blink jcc_ne_s_blink
+lappend branch_test_list \
+    jl_c jl_limm jl_u6 jl_s12 jl_d_c jl_d_u6 jl_d_s12 jl_s_b jl_s_d_b
+lappend branch_test_list \
+    jlcc_c jlcc_limm jlcc_u6 jlcc_d_c jlcc_d_u6
+lappend branch_test_list \
+    b_s25 b_d_s25 b_s_s10
+lappend branch_test_list \
+    bbit0_nt_b_c_s9 bbit0_d_nt_b_c_s9 bbit0_t_b_c_s9 bbit0_d_t_b_c_s9 \
+    bbit0_nt_b_u6_s9 bbit0_d_nt_b_u6_s9 bbit0_t_b_u6_s9 bbit0_d_t_b_u6_s9 \
+    bbit0_nt_b_limm_s9 bbit0_t_b_limm_s9 bbit0_nt_limm_c_s9 bbit0_t_limm_c_s9 \
+    bbit0_nt_limm_u6_s9 bbit0_t_limm_u6_s9 \
+    bbit1_nt_b_c_s9 bbit1_d_nt_b_c_s9 bbit1_t_b_c_s9 bbit1_d_t_b_c_s9 \
+    bbit1_nt_b_u6_s9 bbit1_d_nt_b_u6_s9 bbit1_t_b_u6_s9 bbit1_d_t_b_u6_s9 \
+    bbit1_nt_b_limm_s9 bbit1_t_b_limm_s9 bbit1_nt_limm_c_s9 bbit1_t_limm_c_s9 \
+    bbit1_nt_limm_u6_s9 bbit1_t_limm_u6_s9
+lappend branch_test_list \
+    bcc_s21 bcc_d_s21 \
+    beq_s_s10 bne_s_s10 bgt_s_s7 bge_s_s7 blt_s_s7 ble_s_s7 bhi_s_s7 bhs_s_s7 \
+    blo_s_s7 bls_s_s7
+lappend branch_test_list \
+    bi_c bih_c
+lappend branch_test_list \
+    bl_s25 bl_d_s25 bl_s_s13 \
+    blcc_s21 blcc_d_s21
+lappend branch_test_list \
+     breq_nt_b_c_s9 breq_d_nt_b_c_s9 breq_t_b_c_s9 breq_d_t_b_c_s9 \
+     breq_nt_b_u6_s9 breq_d_nt_b_u6_s9 breq_t_b_u6_s9 breq_d_t_b_u6_s9 \
+     breq_nt_b_limm_s9 breq_t_b_limm_s9 breq_nt_limm_c_s9 breq_t_limm_c_s9 \
+     breq_nt_limm_u6_s9 breq_t_limm_u6_s9
+# lappend branch_test_list jli_s_u10
+lappend branch_test_list leave_s
+lappend branch_test_list lpcc_u7
+
+runto start_branch_tests
+foreach test $branch_test_list {
+    test_branch_insn $test
+}
+

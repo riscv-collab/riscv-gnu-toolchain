@@ -1,0 +1,197 @@
+# Copyright (C) 1992-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file was written by Fred Fish. (fnf@cygnus.com)
+
+require allow_cplus_tests
+
+### The demangling style we last sent to GDB.
+set current_demangling_style none
+
+### Set GDB's current demangling style to STYLE.  Subsequent calls to
+### test_demangle will include STYLE in the test name when reporting
+### passes and failures.
+proc set_demangling_style {style} {
+    global gdb_prompt
+    global current_demangling_style
+
+    gdb_test_multiple "set demangle-style $style" \
+	"$style: set demangle-style" {
+	    -re "set demangle-style $style\[\r\n\]+$gdb_prompt $" {
+		pass "$style: set demangle-style"
+	    }
+	    -re ".*$gdb_prompt $" {
+		fail "$style: set demangle-style"
+		error "set_demangling_style: set style"
+	    }
+	    timeout { 
+		fail "$style: set demangle-style (timeout)"
+		error "set_demangling_style: set style"
+	    }
+	}
+
+    gdb_test_multiple "show demangle-style" \
+	"$style: check demangling style" {
+	    -re "The current C\[+\]+ demangling style is \"$style\".\r\n$gdb_prompt $" { 
+		pass "$style: check demangling style"
+	    }
+	    -re ".*$gdb_prompt $" {
+		fail "$style: check demangling style"
+		error "set_demangling_style: check style"
+	    }
+	    timeout { 
+		fail "$style: check demangling style (timeout)" 
+		error "set_demangling_style: check style"
+	    }
+	}
+
+    set current_demangling_style $style
+}
+
+
+### Utility function for test_demangling and test_demangling_exact.
+proc test_demangling_core {tester test result} {
+    global current_demangling_style
+
+    if {! [regexp {^([^ ]+): (.+)$} $test dummy style name]} {
+      error "bad test name passed to test_demangling"
+    }
+
+    if {[string compare $style $current_demangling_style]} {
+	with_test_prefix $test {
+	    set_demangling_style $style
+	}
+    }
+
+    $tester "demangle $name" $result $test
+}
+
+### Demangle an identifier, and check that the result matches a pattern.
+###
+### TEST should be of the form "STYLE: NAME", where STYLE is the name
+### of a demangling style (like "gnu" or "arm"), and NAME is a mangled
+### identifier to demangle.  Pass when the result matches the regular
+### expression RESULT.  Report passes and fails using TEST as the name
+### of the test.
+###
+### Why don't we just pass the STYLE and NAME as two separate
+### arguments, or let the style be a global variable?  That would be
+### cleaner.  However, doing it this way means that:
+### 
+### 1) the name of the test, as recorded in the summary and log,
+### appears verbatim in the script, and
+### 
+### 2) that test names are unique, even though we try to demangle the same
+### identifiers using several different mangling styles.
+### 
+### This makes it a lot easier for people tracking down failures to
+### find the one they care about.
+
+proc test_demangling {test result} {
+    test_demangling_core gdb_test $test $result
+}
+
+### Like test_demangling, above, except that RESULT is not a regexp,
+### but a string that must match exactly.
+
+proc test_demangling_exact {test result} {
+    test_demangling_core gdb_test_exact $test $result
+}
+
+#
+#  Test gnu-v3 style name demangling
+#
+
+proc test_gnuv3_style_demangling {} {
+    global gdb_prompt
+
+    # Rvalue reference tests
+    test_demangling_exact "gnu-v3: _ZN9ArrowLine19ArrowheadIntersectsEP9ArrowheadO6BoxObjP7Graphic" "ArrowLine::ArrowheadIntersects(Arrowhead*, BoxObj&&, Graphic*)"
+    test_demangling "gnu-v3: _Z13BitPatterntoaOK10BitPatternccc" \
+	"BitPatterntoa\[(\]+(const BitPattern|BitPattern const)&&, char, char, char\[)\]+"
+    test_demangling_exact "gnu-v3: _ZN8TextCode14CoreConstDeclsEO7ostream" "TextCode::CoreConstDecls(ostream&&)"
+    test_demangling "gnu-v3: _Z31DrawDestinationTransformedImageP7_XImageiiS0_iimjiijmmP4_XGCOK13ivTransformeriiii" \
+	"DrawDestinationTransformedImage\[(\]+_XImage\[*\]+, int, int, _XImage\[*\]+, int, int, unsigned long, unsigned int, int, int, unsigned int, unsigned long, unsigned long, _XGC\[*\]+, (const ivTransformer|ivTransformer const)&&, int, int, int, int\[)\]+"
+    test_demangling_exact "gnu-v3: _ZN11RelateManip6EffectEO7ivEvent" "RelateManip::Effect(ivEvent&&)"
+    test_demangling_exact "gnu-v3: _ZN20DisplayList_IteratorC4EO11DisplayList" "DisplayList_Iterator::DisplayList_Iterator(DisplayList&&)"
+    test_demangling_exact "gnu-v3: _ZN3fooC4EOS_" "foo::foo(foo&&)"
+    test_demangling_exact "gnu-v3: _ZN3fooC4EiOS_iS0_iS0_" "foo::foo(int, foo&&, int, foo&&, int, foo&&)"
+    test_demangling "gnu-v3: _ZN7ivWorldC2EPKcOiPPcPK12ivOptionDescPK14ivPropertyData" \
+	"ivWorld::ivWorld\[(\]+(const char|char const)\[*\]+, int&&, char\[*\]+\[*\]+, (const ivOptionDesc|ivOptionDesc const)\[*\]+, (const ivPropertyData|ivPropertyData const)\[*\]+\[)\]+"
+    test_demangling "gnu-v3: _Z3argOK7Complex" \
+	"arg\[(\]+(const Complex|Complex const)&&\[)\]+"
+    test_demangling "gnu-v3: _ZNK9BitString8containsEOK10BitPattern" \
+	"BitString::contains\[(\]+(const BitPattern|BitPattern const)&&\[)\]+ const"
+    test_demangling "gnu-v3: _ZNK9BitString8containsEOK12BitSubStringi" \
+	"BitString::contains\[(\]+(const BitSubString|BitSubString const)&&, int\[)\]+ const"
+    test_demangling "gnu-v3: _ZNK9BitString8containsEOKS_" \
+	"BitString::contains\[(\]+(const BitString|BitString const)&&\[)\]+ const"
+    test_demangling_exact "gnu-v3: _ZN4ListI10VHDLEntityE3PixC4EOKS2_" \
+	"List<VHDLEntity>::Pix::Pix(List<VHDLEntity>::Pix const&&)"
+    test_demangling_exact "gnu-v3: _ZN4ListI10VHDLEntityE7elementC2EOKS0_PS2_" \
+	"List<VHDLEntity>::element::element(VHDLEntity const&&, List<VHDLEntity>::element*)"
+    test_demangling_exact "gnu-v3: _ZN4ListI10VHDLEntityE7elementC4EOKS2_" \
+	"List<VHDLEntity>::element::element(List<VHDLEntity>::element const&&)"
+    test_demangling_exact "gnu-v3: _ZNK4ListI10VHDLEntityEclEOKNS1_3PixE" \
+	"List<VHDLEntity>::operator()(List<VHDLEntity>::Pix const&&) const"
+    test_demangling_exact "gnu-v3: _ZN4ListI10VHDLEntityEC4EOKS1_" \
+	"List<VHDLEntity>::List(List<VHDLEntity> const&&)"
+    test_demangling_exact "gnu-v3: _ZN4PixXI11VHDLLibrary14VHDLLibraryRep4ListI10VHDLEntityEEC2EOKS5_" \
+	"PixX<VHDLLibrary, VHDLLibraryRep, List<VHDLEntity> >::PixX(PixX<VHDLLibrary, VHDLLibraryRep, List<VHDLEntity> > const&&)"
+    test_demangling_exact "gnu-v3: _ZNK11VHDLLibrary5nextEEO4PixXIS_14VHDLLibraryRep4ListI10VHDLEntityEE" \
+	"VHDLLibrary::nextE(PixX<VHDLLibrary, VHDLLibraryRep, List<VHDLEntity> >&&) const"
+    test_demangling_exact "gnu-v3: _ZNK4ListI10VHDLEntityE4nextEONS1_3PixE" \
+	"List<VHDLEntity>::next(List<VHDLEntity>::Pix&&) const"
+}
+
+proc catch_demangling_errors {command} {
+    if {[catch $command result]} {
+	puts "ERROR: demangle.exp: while running $command: $result"
+    }
+}
+
+# Test support for different demangling styles.  Note that this does
+# not depend upon running the test program and does not depend upon
+# gdb being able to lookup any C++ symbols.  It simply calls the 
+# internal demangler with synthesized strings and tests the results.
+
+proc do_tests {} {
+    global subdir
+    global gdb_prompt
+
+
+    # Start with a fresh gdb.
+
+    gdb_exit
+    gdb_start
+
+    gdb_test_no_output "set language c++"
+    gdb_test_no_output "set width 0"
+
+    # Using catch_demangling_errors this way ensures that, if one of
+    # the functions raises a Tcl error, then it'll get reported, and
+    # the rest of the functions will still run.
+    catch_demangling_errors test_gnuv3_style_demangling
+
+    # Verify specifying demangle language.
+    gdb_test_no_output "set language unknown"
+    set_demangling_style "auto"
+    gdb_test_exact "demangle -l c++ -- _ZSt4cout" "std::cout"
+    gdb_test_exact "demangle -l c++ _ZSt4cout" "std::cout"
+    gdb_test_exact "demangle -l c -- _ZSt4cout" "Can't demangle \"_ZSt4cout\""
+    gdb_test_exact "demangle -l garbage xyzdje" "Unknown language \"garbage\""
+}
+
+do_tests

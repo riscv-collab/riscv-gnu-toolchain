@@ -1,0 +1,85 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test tstepping an instruction just as long as decr_pc_after_break
+# after removing a breakpoint at PC.  GDB used to get confused with
+# this in non-stop mode, and adjust the PC incorrectly.  PR gdb/12623.
+
+standard_testfile
+
+if [build_executable "failed to build" ${testfile} ${srcfile} {debug}] {
+    return -1
+}
+
+set linenum_for_user_bp [gdb_get_line_number "break for user-bp test here"]
+set linenum_for_step_resume [gdb_get_line_number "break for step-resume test here"]
+
+proc test {non_stop displaced always_inserted} {
+    global binfile
+    global linenum_for_user_bp
+    global linenum_for_step_resume
+    global GDBFLAGS
+
+    save_vars { GDBFLAGS } {
+	set GDBFLAGS "$GDBFLAGS -ex \"set non-stop $non_stop\""
+	clean_restart $binfile
+    }
+
+    gdb_test_no_output "set displaced-stepping $displaced"
+    gdb_test_no_output "set breakpoint always-inserted $always_inserted"
+
+    if ![runto_main] {
+	return -1
+    }
+
+    with_test_prefix "user bp" {
+	delete_breakpoints
+
+	gdb_breakpoint $linenum_for_user_bp
+	gdb_continue_to_breakpoint "continue to breakpoint"
+
+	# If breakpoint always-inserted is on, this makes the location
+	# moribund.
+	delete_breakpoints
+
+	gdb_test "si" "INSN.*insn1.*" "si advances"
+    }
+
+    with_test_prefix "step-resume" {
+	delete_breakpoints
+
+	gdb_breakpoint $linenum_for_step_resume
+	gdb_continue_to_breakpoint "continue to breakpoint"
+
+	gdb_test "next" "insn1.*"
+
+	# We're now stopped where the step-resume breakpoint for the
+	# previous "next" was.  That breakpoint was removed and is now
+	# on the moribund locations list.
+	gdb_test "si" "INSN.*insn2.*" "si advances"
+
+	delete_breakpoints
+    }
+}
+
+foreach_with_prefix non_stop { "off" "on" } {
+    foreach_with_prefix displaced_step { "off" "on" } {
+	foreach_with_prefix always_inserted { "off" "on" } {
+	    test $non_stop $displaced_step $always_inserted
+	}
+    }
+}

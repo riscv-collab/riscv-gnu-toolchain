@@ -1,0 +1,87 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2007-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that the event messages printed when using 'set print
+# inferior-events [on,off]', 'set follow-fork-mode [child,parent]' and
+# 'set detach-on-fork [on,off]' are the correct ones.
+
+# This test relies on "run", so it cannot run on target remote stubs.
+require !use_gdb_stub
+
+# Test relies on checking follow-fork output. Do not run if gdb debug is
+# enabled as it will be redirected to the log.
+require !gdb_debug_enabled
+
+standard_testfile
+
+if { [build_executable "failed to prepare" $testfile $srcfile debug] } {
+    return -1
+}
+
+# This is the expected output for each of the test combinations
+# below.  The order here is important:
+#
+#    inferior-events: on;  follow-fork: child;  detach-on-fork: on
+#    inferior-events: on;  follow-fork: child;  detach-on-fork: off
+#    inferior-events: on;  follow-fork: parent; detach-on-fork: on
+#    inferior-events: on;  follow-fork: parent; detach-on-fork: off
+#    inferior-events: off; follow-fork: child;  detach-on-fork: on
+#    inferior-events: off; follow-fork: child;  detach-on-fork: off
+#    inferior-events: off; follow-fork: parent; detach-on-fork: on
+#    inferior-events: off; follow-fork: parent; detach-on-fork: off
+
+set reading_re "(Reading.*from remote target\\.\\.\\.\r\n)*"
+set exited_normally_re "${reading_re}\\\[Inferior $decimal \\(.*\\) exited normally\\\]"
+# gdbserver produces a slightly different message when attaching after
+# a fork, so we have to tweak the regexp to accommodate that.
+set attach_child_re "${reading_re}\\\[Attaching after .* fork to child .*\\\]\r\n"
+set detach_child_re "${reading_re}\\\[Detaching after fork from child .*\\\]\r\n"
+set detach_parent_re "${reading_re}\\\[Detaching after fork from parent .*\\\]\r\n"
+set new_inf_re "${reading_re}\\\[New inferior $decimal \\(.*\\)\\\]\r\n"
+set inf_detached_re "${reading_re}\\\[Inferior $decimal \\(.*\\) detached\\\]\r\n"
+set thread_db_re "(?:\\\[Thread debugging using .*? enabled\\\]\r\nUsing .*? library .*?\\.\r\n)?"
+
+set expected_output [list \
+			 "${attach_child_re}${new_inf_re}${detach_parent_re}${inf_detached_re}" \
+			 "${attach_child_re}${new_inf_re}" \
+			 "${detach_child_re}" \
+			 "${new_inf_re}" \
+			 "" \
+			 "" \
+			 "" \
+			 "" \
+			]
+
+set i 0
+
+foreach_with_prefix print_inferior_events { "on" "off" } {
+    foreach_with_prefix follow_fork_mode { "child" "parent" } {
+	foreach_with_prefix detach_on_fork { "on" "off" } {
+	    clean_restart $binfile
+	    gdb_test_no_output "set print inferior-events $print_inferior_events"
+	    gdb_test_no_output "set follow-fork-mode $follow_fork_mode"
+	    gdb_test_no_output "set detach-on-fork $detach_on_fork"
+
+	    set output [lindex $expected_output $i]
+	    # Always add the "Starting program..." string so that we
+	    # match exactly the lines we want.
+	    set output "Starting program: $binfile\\s*\r\n${thread_db_re}${output}${thread_db_re}${exited_normally_re}"
+	    set i [expr $i + 1]
+	    gdb_test "run" $output
+	}
+    }
+}

@@ -1,0 +1,128 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Tests various things related to breakpoints with multiple locations.
+
+load_lib mi-support.exp
+standard_testfile .cc
+
+if {[gdb_compile "$srcdir/$subdir/$srcfile" $binfile executable {debug c++}] != "" } {
+    return -1
+}
+
+# Generate the regexp pattern used to match the breakpoint description emitted
+# in the various breakpoint command results/events.
+#
+# - EXPECT_FIXED_OUTPUT: If true (non-zero), we expect GDB to output the fixed
+#   output for multi-locations breakpoint, else we expect it to output the
+#   broken pre-mi3 format.
+# - BP_NUM is the expected breakpoint number
+# - LOC1_EN and LOC2_EN are the expected value of the enabled field, for the
+#   two locations.
+
+
+proc make_breakpoints_pattern { expect_fixed_output bp_num loc1_en loc2_en } {
+    if $expect_fixed_output {
+	return "bkpt=\{number=\"${bp_num}\",type=\"breakpoint\",.*,locations=\\\[\{number=\"${bp_num}\\.1\",enabled=\"${loc1_en}\",.*\},\{number=\"${bp_num}\\.2\",enabled=\"${loc2_en}\",.*\}\\\]\}"
+    } else {
+	return "bkpt=\{number=\"${bp_num}\",type=\"breakpoint\",.*\},\{number=\"${bp_num}\\.1\",enabled=\"${loc1_en}\",.*\},\{number=\"${bp_num}\\.2\",enabled=\"${loc2_en}\",.*\}"
+    }
+}
+
+# Run the test with the following parameters:
+#
+# - MI_VERSION: the version of the MI interpreter to use (e.g. "2")
+# - USE_FIX_FLAG: Whether to issue the -fix-multi-location-breakpoint-output
+#   command after starting GDB
+# - EXPECT_FIXED_OUTPUT: If true (non-zero), we expect GDB to output the fixed
+#   output for multi-locations breakpoint, else we expect it to output the
+#   broken pre-mi3 format.
+
+proc do_test { mi_version use_fix_flag expect_fixed_output } {
+    with_test_prefix "mi_version=${mi_version}" {
+	with_test_prefix "use_fix_flag=${use_fix_flag}" {
+	    global MIFLAGS decimal binfile
+	    set MIFLAGS "-i=mi${mi_version}"
+
+	    mi_clean_restart $binfile
+
+	    mi_runto_main
+
+	    if $use_fix_flag {
+		mi_gdb_test "-fix-multi-location-breakpoint-output" "\\^done" \
+		    "send -fix-multi-location-breakpoint-output"
+	    }
+
+	    # Check the breakpoint-created event.
+	    set pattern [make_breakpoints_pattern $expect_fixed_output 2 y y]
+	    mi_gdb_test "break a_very_unique_name" \
+		[multi_line "&\"break a_very_unique_name\\\\n\"" \
+			    "~\"Breakpoint ${decimal} at.*\\(2 locations\\)\\\\n\"" \
+			    "=breakpoint-created,${pattern}" \
+			    "\\^done" ] \
+		"break a_very_unique_name"
+
+	    # Check the -break-info output.
+	    mi_gdb_test "-break-info" \
+		"\\^done,BreakpointTable=\{.*,body=\\\[${pattern}\\\]\}" \
+		"-break-info"
+
+	    # Check the -break-insert response.
+	    set pattern [make_breakpoints_pattern $expect_fixed_output 3 y y]
+	    mi_gdb_test "-break-insert a_very_unique_name" "\\^done,${pattern}" "insert breakpoint with MI command"
+
+	    # Modify enableness through MI commands shouldn't trigger MI
+	    # notification.
+	    mi_gdb_test "-break-disable 2.2" "\\^done" "-break-disable 2.2"
+	    mi_gdb_test "-break-enable 2.2"  "\\^done" "-break-enable 2.2"
+
+	    # Modify enableness through CLI commands should trigger MI
+	    # notification.
+	    set pattern [make_breakpoints_pattern $expect_fixed_output 2 y n]
+	    mi_gdb_test "dis 2.2" \
+		[multi_line "&\"dis 2.2\\\\n\"" \
+			    "=breakpoint-modified,${pattern}" \
+			    "\\^done" ] \
+		"dis 2.2"
+	    set pattern [make_breakpoints_pattern $expect_fixed_output 2 y y]
+	    mi_gdb_test "en 2.2" \
+		[multi_line "&\"en 2.2\\\\n\"" \
+			    "=breakpoint-modified,${pattern}" \
+			    "\\^done" ] \
+		"en 2.2"
+
+	    mi_gdb_exit
+	}
+    }
+}
+
+# Vanilla mi2
+do_test 2 0 0
+
+# mi2 with -fix-multi-location-breakpoint-output
+do_test 2 1 1
+
+# Vanilla mi3
+do_test 3 0 1
+
+# mi3 with -fix-multi-location-breakpoint-output
+do_test 3 1 1
+
+# Whatever MI version is currently the default one, vanilla
+do_test "" 0 1
+
+# Whatever MI version is currently the default one, with
+# -fix-multi-location-breakpoint-output
+do_test "" 1 1

@@ -1,0 +1,110 @@
+# Copyright 2019-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This is a set of tests related to GDB's ability to parse and
+# correctly handle the (kind=N) type adjustment mechanism within
+# Fortran.
+
+load_lib "fortran.exp"
+
+require allow_fortran_tests
+
+# Cast the value 1 to the type 'BASE_TYPE (kind=TYPE_KIND)'.  The
+# expected result of the cast is CAST_RESULT, and the size of the
+# value returned by the cast should be SIZE_RESULT.  If TYPE_KIND is
+# the empty string then the cast is done to just 'BASE_TYPE'.
+proc test_cast_1_to_type_kind {base_type type_kind cast_result size_result} {
+    if { $type_kind != "" } {
+	set kind_string " (kind=$type_kind)"
+    } else {
+	set kind_string ""
+    }
+    set type_string "${base_type}${kind_string}"
+    gdb_test "p (($type_string) 1)" " = $cast_result"
+    gdb_test "p sizeof (($type_string) 1)" " = $size_result"
+}
+
+# Test parsing of `(kind=N)` type modifiers.
+proc test_basic_parsing_of_type_kinds {} {
+    test_cast_1_to_type_kind "character" "1" "1 '\\\\001'" "1"
+
+    test_cast_1_to_type_kind "complex" "" "\\(1,0\\)" "8"
+    test_cast_1_to_type_kind "complex" "4" "\\(1,0\\)" "8"
+    test_cast_1_to_type_kind "complex" "8" "\\(1,0\\)" "16"
+    test_cast_1_to_type_kind "complex" "16" "\\(1,0\\)" "32"
+
+    test_cast_1_to_type_kind "real" "" "1" "4"
+    test_cast_1_to_type_kind "real" "4" "1" "4"
+    test_cast_1_to_type_kind "real" "8" "1" "8"
+    test_cast_1_to_type_kind "real" "16" "1" "16"
+
+    test_cast_1_to_type_kind "logical" "" "\\.TRUE\\." "4"
+    test_cast_1_to_type_kind "logical" "1" "\\.TRUE\\." "1"
+    test_cast_1_to_type_kind "logical" "4" "\\.TRUE\\." "4"
+    test_cast_1_to_type_kind "logical" "8" "\\.TRUE\\." "8"
+
+    test_cast_1_to_type_kind "integer" "" "1" "4"
+    test_cast_1_to_type_kind "integer" "1" "1" "1"
+    test_cast_1_to_type_kind "integer" "2" "1" "2"
+    test_cast_1_to_type_kind "integer" "4" "1" "4"
+    test_cast_1_to_type_kind "integer" "8" "1" "8"
+
+    test_cast_1_to_type_kind "double precision" "" "1" "8"
+    test_cast_1_to_type_kind "single precision" "" "1" "4"
+
+    test_cast_1_to_type_kind "double complex" "" "\\(1,0\\)" "16"
+    test_cast_1_to_type_kind "single complex" "" "\\(1,0\\)" "8"
+}
+
+proc test_parsing_invalid_type_kinds {} {
+    foreach typename {complex real logical integer} {
+	foreach typesize {3 5 7 9} {
+	    gdb_test "p (($typename (kind=$typesize)) 1)" "unsupported kind $typesize for type $typename.*"
+	}
+    }
+}
+
+# Perform some basic checks that GDB can parse the older style
+# TYPE*SIZE type names.
+proc test_old_star_type_sizes {} {
+    gdb_test "p ((character*1) 1)" " = 1 '\\\\001'"
+
+    gdb_test "p ((complex*4) 1)" " = \\(1,0\\)"
+    gdb_test "p ((complex*8) 1)" " = \\(1,0\\)"
+    gdb_test "p ((complex*16) 1)" " = \\(1,0\\)"
+
+    gdb_test "p ((real*4) 1)" " = 1"
+    gdb_test "p ((real*8) 1)" " = 1"
+    gdb_test "p ((real*16) 1)" " = 1"
+
+    gdb_test "p ((logical*1) 1)" " = \\.TRUE\\."
+    gdb_test "p ((logical*4) 1)" " = \\.TRUE\\."
+    gdb_test "p ((logical*8) 1)" " = \\.TRUE\\."
+
+    gdb_test "p ((integer*1) 1)" " = 1"
+    gdb_test "p ((integer*2) 1)" " = 1"
+    gdb_test "p ((integer*4) 1)" " = 1"
+    gdb_test "p ((integer*8) 1)" " = 1"
+}
+
+clean_restart
+
+if {[set_lang_fortran]} {
+    test_basic_parsing_of_type_kinds
+    test_parsing_invalid_type_kinds
+    test_old_star_type_sizes
+} else {
+    warning "$test_name tests suppressed." 0
+}

@@ -1,0 +1,221 @@
+# Copyright 2002-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the gdb testsuite
+
+# Test casting, especially between class types or pointer-to-class
+# types.
+
+# This file is part of the gdb testsuite
+
+#
+# test running programs
+#
+
+
+require allow_cplus_tests
+
+standard_testfile .cc casts03.cc
+
+set opts {}
+lappend opts debug
+lappend opts c++
+lappend opts additional_flags=-std=c++11
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile $opts]} {
+    return -1
+}
+
+if {![runto_main]} {
+    return
+}
+
+# Prevent symbol on address 0x0 being printed.
+gdb_test_no_output "set print symbol off"  \
+    "turn of symbol printing for the first time"
+
+gdb_test "break [gdb_get_line_number "casts.exp: 1"]" \
+    "Breakpoint.*at.* file .*" \
+    ""
+
+gdb_test "continue" "Breakpoint .* at .*casts.cc.*" ""
+
+# Casting a pointer to a base class to a pointer to a derived class
+# should yield the entire derived class.  Until August 2002, GDB got
+# the enclosing type on `(B *) a' wrong: while the value's static type
+# was `B *', as it should be, the enclosing type (which is supposed to
+# be the dynamic type) was `A *'.  It's senseless to have a static
+# type derived from the dynamic type; it should be the other way
+# 'round.  Dereferencing this oddly typed pointer yielded a value in
+# which only the base class's members were initialized, since GDB uses
+# the enclosing type to decide how many bytes to read.  Members from
+# the derived class were garbage, from GDB's address space.
+gdb_test "print * (B *) a" ".* = {<A> = {a = 42}, b = 1729}" \
+    "cast base class pointer to derived class pointer"
+
+# Check also that we get the same results from letting the compiler do
+# the dereference.
+gdb_test "print * b" ".* = {<A> = {a = 42}, b = 1729}" \
+    "let compiler cast base class pointer to derived class pointer"
+
+# Check upcasting (it is trivial but still). 
+gdb_test "print * (A *) b" ".* = {a = 42}" \
+    "cast derived class pointer to base class pointer"
+
+# Casting References.
+# Check upcasting. 
+gdb_test "print (A &) br" ".* = .A &.* {a = 42}" \
+    "cast derived class reference to base class reference"
+
+# Check downcasting.
+gdb_test "print (B &) ar" ".* = .B.* {<A> = {a = 42}, b = 1729}" \
+    "cast base class reference to derived class reference"
+
+# Check compiler casting
+gdb_test "print br" ".* = .B.* {<A> = {a = 42}, b = 1729}" \
+    "let compiler cast base class reference to derived class reference"
+
+
+# A few basic tests of "new" casts.
+
+gdb_test "print const_cast<const B *> (b)" " = \\(const B \\*\\) $hex" \
+    "basic test of const_cast"
+
+gdb_test "print const_cast<void *> (0)" " = \\(void \\*\\) 0x0" \
+    "const_cast of 0"
+
+gdb_test "print static_cast<A *> (b)" " = \\(A \\*\\) $hex" \
+    "basic test of static_cast"
+
+gdb_test "print static_cast<A &> (*b)" " = \\(A \\&\\) @$hex: {a = 42}" \
+    "static_cast to reference type"
+
+gdb_test "print reinterpret_cast<A *> (b)" " = \\(A \\*\\) $hex" \
+    "basic test of reinterpret_cast"
+
+gdb_test "print reinterpret_cast<void> (b)" "Invalid reinterpret_cast" \
+    "test invalid reinterpret_cast"
+
+gdb_test "print reinterpret_cast<A &> (*b)" " = \\(A \\&\\) @$hex: {a = 42}" \
+    "reinterpret_cast to reference type"
+
+# Basic tests using typeof.
+
+foreach opname {__typeof__ __typeof __decltype} {
+    gdb_test "print (${opname}(a)) (b)" " = \\(A \\*\\) $hex" \
+	"old-style cast using $opname"
+
+    gdb_test "print static_cast<${opname}(a)> (b)" " = \\(A \\*\\) $hex" \
+	"static_cast using $opname"
+
+    gdb_test "print reinterpret_cast<${opname}(a)> (b)" " = \\(A \\*\\) $hex" \
+	"reinterpret_cast using $opname"
+}
+
+gdb_test "whatis __decltype(*a)" "type = A \\&"
+
+# Tests of dynamic_cast.
+
+set nonzero_hex "0x\[0-9A-Fa-f\]\[0-9A-Fa-f\]+"
+
+gdb_test "print dynamic_cast<void> (a)" \
+    ".*must be a pointer or reference type" \
+    "invalid dynamic_cast"
+
+gdb_test "print dynamic_cast<void *> (0)" \
+    " = \\(void \\*\\) 0x0" \
+    "dynamic_cast of 0 to void*"
+
+gdb_test "print dynamic_cast<Alpha *> (&derived)" \
+    " = \\(Alpha \\*\\) $nonzero_hex" \
+    "dynamic_cast simple upcast"
+
+gdb_test "print dynamic_cast<Alpha *> (&doublyderived)" \
+    " = \\(Alpha \\*\\) $nonzero_hex" \
+    "dynamic_cast upcast to unique base"
+
+gdb_test "print dynamic_cast<Alpha &> (derived)" \
+    " = \\(Alpha \\&\\) @$nonzero_hex: {.* = ${nonzero_hex}( <vtable for Derived.*>)?}" \
+    "dynamic_cast simple upcast to reference"
+
+gdb_test "print dynamic_cast<Derived *> (ad)" \
+    " = \\(Derived \\*\\) ${nonzero_hex}( <vtable for Derived.*>)?" \
+    "dynamic_cast simple downcast"
+
+gdb_test "print dynamic_cast<VirtuallyDerived *> (add)" \
+    " = \\(VirtuallyDerived \\*\\) $nonzero_hex" \
+    "dynamic_cast simple downcast to intermediate class"
+
+gdb_test "print dynamic_cast<VirtuallyDerived *> (ad)" \
+    " = \\(VirtuallyDerived \\*\\) 0x0" \
+    "dynamic_cast to non-existing base"
+
+gdb_test "print dynamic_cast<VirtuallyDerived &> (*ad)" \
+    "dynamic_cast failed" \
+    "dynamic_cast to reference to non-existing base"
+
+gdb_test "print dynamic_cast<DoublyDerived *> (add)" \
+    " = \\(DoublyDerived \\*\\) ${nonzero_hex}( <vtable for DoublyDerived.*>)?" \
+    "dynamic_cast unique downcast"
+
+gdb_test "print dynamic_cast<Gamma *> (add)" \
+    " = \\(Gamma \\*\\) $nonzero_hex" \
+    "dynamic_cast to sibling"
+
+gdb_test "print (unsigned long long) &gd == gd_value" " = true"
+gdb_test "print (unsigned long long) (LeftRight *) (Right *) &gd == gd_value" \
+    " = true"
+gdb_test "print (unsigned long long) (LeftRight *) (Right *) r_value == gd_value" \
+    " = true"
+
+gdb_test "print dynamic_cast<VirtualLeftRight *> (vlr) == vlr" " = true"
+gdb_test "print dynamic_cast<VirtualLeftRight *> (vl) == vlr" " = true"
+gdb_test "print dynamic_cast<VirtualLeftRight *> (vr) == vlr" " = true"
+gdb_test "print dynamic_cast<VirtualLeft *> (vlr) == vl" " = true"
+gdb_test "print dynamic_cast<VirtualLeft *> (vl) == vl" " = true"
+gdb_test "print dynamic_cast<VirtualLeft *> (vr) == vl" " = true"
+gdb_test "print dynamic_cast<VirtualRight *> (vlr) == vr" " = true"
+gdb_test "print dynamic_cast<VirtualRight *> (vl) == vr" " = true"
+gdb_test "print dynamic_cast<VirtualRight *> (vr) == vr" " = true"
+
+gdb_test "print &dynamic_cast<VirtualLeftRight &> (*vlr) == vlr" " = true"
+gdb_test "print &dynamic_cast<VirtualLeftRight &> (*vl) == vlr" " = true"
+gdb_test "print &dynamic_cast<VirtualLeftRight &> (*vr) == vlr" " = true"
+gdb_test "print &dynamic_cast<VirtualLeft &> (*vlr) == vl" " = true"
+gdb_test "print &dynamic_cast<VirtualLeft &> (*vl) == vl" " = true"
+gdb_test "print &dynamic_cast<VirtualLeft &> (*vr) == vl" " = true"
+gdb_test "print &dynamic_cast<VirtualRight &> (*vlr) == vr" " = true"
+gdb_test "print &dynamic_cast<VirtualRight &> (*vl) == vr" " = true"
+gdb_test "print &dynamic_cast<VirtualRight &> (*vr) == vr" " = true"
+
+if {[prepare_for_testing "failed to prepare" ${testfile}03 $srcfile2 \
+			 {debug c++ additional_flags=-std=c++03}]} {
+    return -1
+}
+
+if {![runto_main]} {
+   return
+}
+
+# Prevent symbol on address 0x0 being printed.
+gdb_test_no_output "set print symbol off" \
+    "turn of symbol printing for the second time"
+
+gdb_breakpoint [gdb_get_line_number "casts.exp: 1" $srcfile2]
+gdb_continue_to_breakpoint "end of casts03"
+
+# Test that keyword shadowing works.
+
+gdb_test "whatis decltype(5)" " = double"

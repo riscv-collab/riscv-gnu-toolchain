@@ -1,0 +1,149 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test "pause" in DAP.
+
+require allow_dap_tests
+
+load_lib dap-support.exp
+
+standard_testfile
+
+if {[build_executable ${testfile}.exp $testfile $srcfile] == -1} {
+    return
+}
+
+if {[dap_launch $testfile] == ""} {
+    return
+}
+
+# Set a conditional breakpoint that will never fire.  This is done to
+# test the state-tracking in events -- an inferior call from a
+# breakpoint condition should not cause any sort of stop or continue
+# events.
+set line [gdb_get_line_number "STOP"]
+dap_check_request_and_response "set conditional breakpoint" \
+    setBreakpoints \
+    [format {o source [o path [%s]] \
+		 breakpoints [a [o line [i %d] \
+				     condition [s "return_false()"]]]} \
+	 [list s $srcfile] $line]
+
+dap_check_request_and_response "start inferior" configurationDone
+dap_wait_for_event_and_check "process event generated" process \
+    "body startMethod" process
+dap_wait_for_event_and_check "inferior started" thread "body reason" started
+
+set resp [lindex [dap_request_and_response evaluate {o expression [s 23]}] \
+	      0]
+gdb_assert {[dict get $resp success] == "false"} \
+    "evaluate failed while inferior executing"
+gdb_assert {[dict get $resp message] == "notStopped"} \
+    "evaluate issued notStopped"
+
+dap_check_request_and_response pause pause \
+    {o threadId [i 1]}
+
+dap_wait_for_event_and_check "stopped by pause" stopped \
+    "body reason" pause
+
+set result [dap_request_and_response evaluate {o expression [s do_nothing()]}]
+gdb_assert {[dict get [lindex $result 0] body result] == 91} \
+    "check result of evaluation"
+
+set seen fail
+foreach event [lindex $result 1] {
+    if {[dict get $event type] != "event"} {
+	continue
+    }
+    if {[dict get $event event] == "continued"} {
+	set seen pass
+	break
+    }
+}
+gdb_assert {$seen == "pass"} "continue event from inferior call"
+
+#
+# Test that a repl evaluation that causes a continue can be canceled.
+#
+
+set cont_id [dap_send_request evaluate \
+		 {o expression [s continue] context [s repl]}]
+dap_wait_for_event_and_check "continued" continued
+
+set cancel_id [dap_send_request cancel \
+		   [format {o requestId [i %d]} $cont_id]]
+
+# The stop event will come before any responses to the requests.
+dap_wait_for_event_and_check "stopped by cancel" stopped
+
+# Now we can wait for the 'continue' request to complete, and then the
+# 'cancel' request.
+dap_read_response evaluate $cont_id
+dap_read_response cancel $cancel_id
+
+#
+# Test that a repl evaluation of a long-running gdb command (that does
+# not continue the inferior) can be canceled.
+#
+
+proc write_file {suffix contents} {
+    global testfile
+
+    set gdbfile [standard_output_file ${testfile}.$suffix]
+    set ofd [open $gdbfile w]
+    puts $ofd $contents
+    close $ofd
+    return $gdbfile
+}
+
+set gdbfile [write_file gdb "set \$x = 0\nwhile 1\nset \$x = \$x + 1\nend"]
+set cont_id [dap_send_request evaluate \
+		 [format {o expression [s "source %s"] context [s repl]} \
+		      $gdbfile]]
+
+# Wait a little to try to ensure the command is running.
+sleep 0.2
+set cancel_id [dap_send_request cancel \
+		   [format {o requestId [i %d]} $cont_id]]
+
+set info [lindex [dap_read_response evaluate $cont_id] 0]
+gdb_assert {[dict get $info success] == "false"} "gdb command failed"
+gdb_assert {[dict get $info message] == "cancelled"} "gdb command canceled"
+
+dap_read_response cancel $cancel_id
+
+#
+# Test that a repl evaluation of a long-running Python command (that
+# does not continue the inferior) can be canceled.
+#
+
+write_file py "while True:\n  pass"
+set cont_id [dap_send_request evaluate \
+		 [format {o expression [s "source %s"] context [s repl]} \
+		      $gdbfile]]
+
+# Wait a little to try to ensure the command is running.
+sleep 0.2
+set cancel_id [dap_send_request cancel \
+		   [format {o requestId [i %d]} $cont_id]]
+
+set info [lindex [dap_read_response evaluate $cont_id] 0]
+gdb_assert {[dict get $info success] == "false"} "python command failed"
+gdb_assert {[dict get $info message] == "cancelled"} "python command canceled"
+
+dap_read_response cancel $cancel_id
+
+dap_shutdown

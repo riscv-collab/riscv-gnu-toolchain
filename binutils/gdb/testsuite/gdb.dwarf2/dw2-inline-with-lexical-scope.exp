@@ -1,0 +1,137 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that scoped local variables in an inlined function are printed
+# properly.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets that support DWARF-2 and use
+# gas.
+require dwarf2_support
+
+standard_testfile .c .S
+
+# Make some DWARF for the test.  The concrete inlined instance
+# (i.e. the DW_TAG_inlined_subroutine) has a DW_TAG_lexical_block that
+# does not contain a DW_AT_abstract_origin attribute.  This is
+# deliberate.  Bad GDB printed duplicate local variables with
+# "optimized out" values in this case.
+
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    global srcfile srcdir subdir
+    declare_labels int_label func_label num_label value_label lines_label
+
+    get_func_info main
+    set func_call [gdb_get_line_number "func call"]
+
+    set global_num_addr [gdb_target_symbol global_num]
+    set global_value_addr [gdb_target_symbol global_value]
+
+    cu {} {
+	compile_unit {
+	    {language @DW_LANG_C99}
+	    {name $srcfile}
+	    {low_pc $main_start addr}
+	    {high_pc "$main_start + $main_len" addr}
+	    {stmt_list ${lines_label} DW_FORM_sec_offset}
+	} {
+	    int_label: base_type {
+		{name "int"}
+		{byte_size 4 sdata}
+		{encoding @DW_ATE_signed}
+	    }
+
+	    func_label: subprogram {
+		{name func}
+		{inline @DW_INL_declared_inlined}
+	    } {
+		num_label: DW_TAG_variable {
+		    {name num}
+		    {type :$int_label}
+		}
+		lexical_block {
+		} {
+		    value_label: DW_TAG_variable {
+			{name value}
+			{type :$int_label}
+		    }
+		}
+	    }
+
+	    subprogram {
+		{name main}
+		{external 1 flag}
+		{low_pc $main_start addr}
+		{high_pc "$main_start + $main_len" addr}
+	    } {
+		inlined_subroutine {
+		    {abstract_origin %$func_label}
+		    {low_pc main_label addr}
+		    {high_pc main_label2 addr}
+		    {call_file 1 data1}
+		    {call_line $func_call data1}
+		} {
+		    DW_TAG_variable {
+			{abstract_origin %$num_label}
+			{location {addr $global_num_addr} SPECIAL_expr}
+		    }
+		    lexical_block {
+			{low_pc scope_label1 addr}
+			{high_pc scope_label2 addr}
+		    } {
+			DW_TAG_variable {
+			    {abstract_origin %$value_label}
+			    {location {addr $global_value_addr} SPECIAL_expr}
+			}
+		    }
+		}
+	    }
+	}
+    }
+
+    lines {version 2} lines_label {
+	include_dir "${srcdir}/${subdir}"
+	file_name "$srcfile" 1
+
+	program {
+	    DW_LNE_set_address $main_start
+	    line [gdb_get_line_number "main prologue"]
+	    DW_LNS_copy
+	    DW_LNE_set_address main_label
+	    line [gdb_get_line_number "func call"]
+	    DW_LNS_copy
+	    DW_LNE_set_address main_label
+	    line [gdb_get_line_number "func end"]
+	    DW_LNS_copy
+	    DW_LNE_set_address main_label2
+	    line [gdb_get_line_number "main end"]
+	    DW_LNS_copy
+	    DW_LNE_set_address $main_end
+	    DW_LNE_end_sequence
+	}
+    }
+}
+
+if {[prepare_for_testing "failed to prepare" ${testfile} \
+	 [list $srcfile $asm_file] {nodebug}]} {
+    return -1
+}
+
+runto breakpoint_label
+
+# Bad GDB was printing an additional "value = <optimized out>".
+gdb_test "info locals" "value = 42\r\nnum = 42"

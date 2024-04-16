@@ -1,0 +1,283 @@
+# Copyright 1998-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "trace-support.exp"
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile {debug nowarnings nopie}]} {
+    return -1
+}
+
+# Tests:
+# 1) Calculate the size taken by one trace frame.
+# 2) Set up a trace experiment that will collect approximately 10 frames,
+#    requiring more than 512 but less than 1024 bytes of cache buffer.
+#    (most targets should have at least 1024 bytes of cache buffer!)
+#    Run and confirm that it collects all 10 frames.
+# 3) Artificially limit the trace buffer to 4x + a bytes.  Here x is the size
+#    of single trace frame and a is a small constant.  Rerun the
+#    experiment.  Confirm that the frame for the first tracepoint is collected,
+#    but frames for the last several tracepoints are not.
+# 4) Set trace buffer to circular mode, with the buffer size as in
+#    step 3 above.  Rerun the experiment.  Confirm that the frame for the last
+#    tracepoint is collected but not for the first one.
+#
+
+# Set a tracepoint on given func.  The tracepoint is set at entry
+# address and not 'after prologue' address because we use 
+# 'tfind pc func' to find the corresponding trace frame afterwards,
+# and that looks for entry address.
+proc set_a_tracepoint { func } {
+    gdb_test "trace \*$func" "Tracepoint \[0-9\]+ at .*" \
+	"set tracepoint at $func"
+    gdb_trace_setactions "set actions for $func" "" "collect testload" "^$"
+}
+
+# Sets the tracepoints from func0 to func9 using set_a_tracepoint.
+proc setup_tracepoints { } {
+    gdb_delete_tracepoints
+    set_a_tracepoint func0
+    set_a_tracepoint func1
+    set_a_tracepoint func2
+    set_a_tracepoint func3
+    set_a_tracepoint func4
+    set_a_tracepoint func5
+    set_a_tracepoint func6
+    set_a_tracepoint func7
+    set_a_tracepoint func8
+    set_a_tracepoint func9
+}
+
+# Start the trace, run to end and then stop the trace.
+proc run_trace_experiment { } {
+    global decimal
+
+    setup_tracepoints
+    gdb_breakpoint "end" qualified
+    gdb_test "tstart" "\[\r\n\]*" "start trace experiment"
+    gdb_test "continue" "Continuing.*Breakpoint \[0-9\]+, end.*" \
+	"run to end"
+    gdb_test "tstop" "\[\r\n\]*" "stop trace experiment"
+}
+
+if { ![runto_main] } {
+    return -1
+}
+
+if { ![gdb_target_supports_trace] } {
+    unsupported "target does not support trace"
+    return 1
+}
+
+set test "set circular-trace-buffer on"
+gdb_test_multiple "set circular-trace-buffer on" $test {
+    -re ".*Target does not support this command.*$gdb_prompt $" {
+	unsupported "target does not support circular trace buffer"
+	return 1
+    }
+    -re "$gdb_prompt $" {
+	pass $test
+    }
+}
+
+set circular_supported -1
+set test "check whether circular buffer is supported"
+
+gdb_test_multiple "tstatus" $test {
+    -re ".*Trace buffer is circular.*$gdb_prompt $" {
+	set circular_supported 1
+	pass $test
+    }
+    -re "$gdb_prompt $" {
+	pass $test
+    }
+}
+
+if { $circular_supported < 0 } {
+    unsupported "target does not support circular trace buffer"
+    return 1
+}
+
+gdb_test "show circular-trace-buffer" \
+    "Target's use of circular trace buffer is on." \
+    "show circular-trace-buffer (on)"
+
+# Check if changing the trace buffer size is supported.  This step is
+# repeated twice.  This helps in case the trace buffer size is 100.
+set test_size 100
+set test "change buffer size to $test_size"
+gdb_test_multiple "set trace-buffer-size $test_size" $test {
+    -re ".*Target does not support this command.*$gdb_prompt $" {
+	unsupported "target does not support changing trace buffer size"
+	return 1
+    }
+    -re "$gdb_prompt $" {
+	pass $test
+    }
+}
+
+set test "check whether setting trace buffer size is supported"
+gdb_test_multiple "tstatus" $test {
+    -re ".*Trace buffer has ($decimal) bytes of ($decimal) bytes free.*$gdb_prompt $" {
+	set total_size $expect_out(2,string)
+	if { $test_size != $total_size } {
+	    unsupported "target does not support changing trace buffer size"
+	    return 1
+	}
+	pass $test
+    }
+}
+
+set test_size 400
+gdb_test_no_output "set trace-buffer-size $test_size" \
+    "change buffer size to $test_size"
+
+gdb_test_multiple "tstatus" $test {
+    -re ".*Trace buffer has ($decimal) bytes of ($decimal) bytes free.*$gdb_prompt $" {
+	set total_size $expect_out(2,string)
+	if { $test_size != $total_size } {
+	    unsupported "target does not support changing trace buffer size"
+	    return 1
+	}
+	pass $test
+    }
+}
+
+gdb_test_no_output "set circular-trace-buffer off" \
+    "set circular-trace-buffer off"
+
+gdb_test "show circular-trace-buffer" \
+    "Target's use of circular trace buffer is off." \
+    "show circular-trace-buffer (off)"
+
+set total_size -1
+set free_size -1
+set frame_size -1
+
+# Determine the size used by a single frame.  Set a single tracepoint,
+# run and then check the total and free size using the tstatus command.
+# Then subtracting free from total gives us the size of a frame.
+with_test_prefix "frame size" {
+    set_a_tracepoint func0
+
+    gdb_breakpoint "end" qualified
+
+    gdb_test "tstart" "\[\r\n\]*" "start trace"
+
+    gdb_test "continue" "Continuing.*Breakpoint \[0-9\]+, end.*" \
+	"run to end"
+
+    gdb_test "tstop" "\[\r\n\]*" "stop trace"
+
+    set test "get buffer size"
+
+    gdb_test_multiple "tstatus" $test {
+	-re ".*Trace buffer has ($decimal) bytes of ($decimal) bytes free.*$gdb_prompt $" {
+	    set free_size $expect_out(1,string)
+	    set total_size $expect_out(2,string)
+	    pass $test
+	}
+    }
+
+    # Check that we get the total_size and free_size.
+    if { $total_size < 0 } {
+	return 1
+    }
+
+    if { $free_size < 0 } {
+	return 1
+    }
+}
+
+# Calculate the size of a single frame.
+set frame_size "($total_size - $free_size)"
+
+with_test_prefix "normal buffer" {
+    clean_restart $testfile
+
+    if { ![runto_main] } {
+	return 1
+    }
+
+    run_trace_experiment
+
+    # Check that the first frame is actually at func0.
+    gdb_test "tfind start" ".*#0  func0 .*" \
+	"first frame is at func0"
+
+    gdb_test "tfind pc func9" \
+	".*Found trace frame $decimal, tracepoint $decimal\r\n#0  func9 .*" \
+	"find frame for func9"
+}
+
+# Shrink the trace buffer so that it will not hold
+# all ten trace frames.  Verify that the frame for func0 is still
+# collected, but the frame for func9 is not.
+
+set buffer_size "((4 * $frame_size) + 10)"
+with_test_prefix "small buffer" {
+    clean_restart $testfile
+
+    if { ![runto_main] } {
+	return 1
+    }
+
+    gdb_test_no_output "set trace-buffer-size $buffer_size" \
+	"shrink the target trace buffer"
+
+    run_trace_experiment
+
+    gdb_test "tfind start" ".*#0  func0 .*" \
+	"first frame is at func0"
+
+    gdb_test "tfind pc func9" ".* failed to find .*" \
+	"find frame for func9"
+}
+
+# Finally, make the buffer circular.  Now when it runs out of
+# space, it should wrap around and overwrite the earliest frames.
+# This means that:
+# 1) the first frame will be overwritten and therefore unavailable.
+# 2) the earliest frame in the buffer will not be for func0.
+# 3) the frame for func9 will be available (unlike "small buffer" case).
+with_test_prefix "circular buffer" {
+    clean_restart $testfile
+
+    if { ![runto_main] } {
+	return 1
+    }
+
+    gdb_test_no_output "set trace-buffer-size $buffer_size" \
+	"shrink the target trace buffer"
+
+    gdb_test_no_output "set circular-trace-buffer on" \
+	"make the target trace buffer circular"
+
+    run_trace_experiment
+
+    gdb_test "tstatus" \
+	".*Buffer contains $decimal trace frames \\(of $decimal created total\\).*Trace buffer is circular.*" \
+	"trace buffer is circular"
+
+    # The first frame should not be at func0.
+    gdb_test "tfind start" ".*#0  func\[1-9\] .*" \
+	"first frame is NOT at func0"
+
+    gdb_test \
+	"tfind pc func9" \
+	".*Found trace frame $decimal, tracepoint $decimal\r\n#0  func9 .*" \
+	"find frame for func9"
+}

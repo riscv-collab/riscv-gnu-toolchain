@@ -1,0 +1,80 @@
+# Copyright 2010-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+# Check that when GDB connects to a stopped target in either non-stop
+# or all-stop modes, "target remote" does not return with the remote
+# thread marked running.
+
+load_lib gdbserver-support.exp
+load_lib prelink-support.exp
+
+require allow_gdbserver_tests
+
+standard_testfile
+set executable ${testfile}
+
+if {[build_executable "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+proc do_test {nonstop} {
+    global binfile
+    global gdb_prompt
+    global hex
+
+    clean_restart $binfile
+
+    # Make sure we're disconnected, in case we're testing with an
+    # extended-remote board, therefore already connected.
+    gdb_test "disconnect" ".*"
+
+    gdb_test "set non-stop $nonstop"
+
+    set res [gdbserver_spawn ""]
+    set gdbserver_protocol [lindex $res 0]
+    set gdbserver_gdbport [lindex $res 1]
+
+    gdb_test_multiple "define connect" "define user command: connect" {
+	-re "Type commands for definition of \"connect\".\r\nEnd with a line saying just \"end\".\r\n>$" {
+	    gdb_test [join [list \
+				"target $gdbserver_protocol $gdbserver_gdbport" \
+				"info threads" \
+				"p /x \$pc" \
+				"end" \
+			       ] "\n"] \
+		"" \
+		"define user command: connect"
+	}
+    }
+
+    # In non-stop mode, "target remote" used to return before the
+    # already-stopped thread was marked stopped.  Because of that, a
+    # script (or fast user) could see the target as running right
+    # after connection:
+    #
+    # (gdb) connect
+    #   Id   Target Id         Frame
+    # * 1    Thread 31179      (running)
+    # Target is executing.
+    # (gdb)
+    gdb_test "connect" " = $hex" "connect and print pc"
+    gdb_test "print /x \$pc" " = $hex" "print pc again"
+}
+
+foreach nonstop { "off" "on" } {
+    with_test_prefix "non-stop=$nonstop" {
+	do_test $nonstop
+    }
+}

@@ -1,0 +1,139 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check that the unwinder produces consistent frame info, by making
+# sure that "info frame" shows the same result when stopped at a
+# function (level == 0), compared to when we find the same frame in
+# the stack at a level > 0.  Tests both the DWARF stack unwinder, and
+# the fallback heuristic unwinder.
+
+standard_testfile backtrace.c
+
+set flags {}
+lappend flags debug
+lappend_include_file flags $srcdir/lib/attributes.h
+
+if { [build_executable "failed to prepare" $testfile $srcfile $flags] } {
+    return -1
+}
+
+# Unwind to each function in FRAMES, and compare "info frame" output
+# to what was saved in the 'info_frame_before' array.
+proc compare_frames {frames} {
+    foreach_with_prefix compare_frame $frames {
+	if {[gdb_test \
+		 "frame function $compare_frame" \
+		 " $compare_frame .*"] != 0} {
+	    continue
+	}
+	set info_frame_after ""
+	gdb_test_multiple "info frame" "" {
+	    -re "(.*\r\n$::gdb_prompt $)" {
+		set info_frame_after $expect_out(1,string)
+		pass $gdb_test_name
+	    }
+	}
+
+	# Nuke the PC address, since it'll be different.  The
+	# first time it's the actual PC before the call, the
+	# second time it's the resume address after the call
+	# returns.
+	# E.g., on x86-64:
+	#   rip = 0x555555555168 in main (gdb.base/backtrace.c:41); saved rip = 0x7ffff7dd90b3
+	# vs
+	#   rip = 0x555555555172 in main (gdb.base/backtrace.c:41); saved rip = 0x7ffff7dd90b3
+	#
+	set from \
+	    "= $::hex in $compare_frame "
+	set to \
+	    "= \$hex in $compare_frame "
+	regsub $from $::info_frame_before($compare_frame) $to \
+	    ::info_frame_before($compare_frame)
+	regsub $from $info_frame_after $to \
+	    info_frame_after
+
+	# Remove the "caller of frame at" line, which didn't
+	# appear the first time, since the frame hadn't called any
+	# other function yet then.
+	regsub "\r\n caller of frame at $::hex\r\n" \
+	    $info_frame_after "\r\n" \
+	    info_frame_after
+	regsub ", caller of frame at $::hex" \
+	    $info_frame_after "" \
+	    info_frame_after
+
+	# "Stack level 0/1/2/3" -> "Stack level N"
+	set from \
+	    "Stack level $::decimal"
+	set to \
+	    "Stack level N"
+	regsub $from $::info_frame_before($compare_frame) $to \
+	    ::info_frame_before($compare_frame)
+	regsub $from $info_frame_after $to \
+	    info_frame_after
+
+	# For debugging.
+	verbose -log "BEFORE:\n$::info_frame_before($compare_frame)"
+	verbose -log "AFTER:\n$info_frame_after"
+
+	gdb_assert {[string match \
+			 $::info_frame_before($compare_frame)\
+			 $info_frame_after]} \
+	    "info frame before/after match"
+    }
+}
+
+proc test {dwarf_unwinder} {
+
+    clean_restart $::binfile
+
+    gdb_test_no_output "maint set dwarf unwinder $dwarf_unwinder"
+
+    if {![runto_main]} {
+	return 0
+    }
+
+    array unset ::info_frame_before
+
+    # Run to each function, and record "info frame" output in the
+    # 'info_frame_before' array.  At each stop, unwind to each
+    # already-recorded function, and compare "info frame" output to
+    # what was saved in the 'info_frame_before' array.
+    set funcs {"main" "foo" "bar" "baz"}
+    set idx_funcs 0
+    foreach_with_prefix stop_func $funcs {
+	if {$idx_funcs != 0} {
+	    gdb_breakpoint $stop_func
+	    gdb_continue_to_breakpoint ".*$stop_func \(\).*"
+	}
+
+	set ::info_frame_before($stop_func) ""
+	gdb_test_multiple "info frame" "" {
+	    -re "(.*\r\n$::gdb_prompt $)" {
+		set ::info_frame_before($stop_func) $expect_out(1,string)
+		pass $gdb_test_name
+	    }
+	}
+
+	if {$idx_funcs != 0} {
+	    compare_frames [lreverse [lrange $funcs 0 $idx_funcs-1]]
+	}
+	incr idx_funcs
+    }
+}
+
+foreach_with_prefix dwarf {"off" "on"} {
+    test $dwarf
+}

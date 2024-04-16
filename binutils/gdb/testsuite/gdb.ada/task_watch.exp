@@ -1,0 +1,85 @@
+# Copyright 2009-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test task-specific watchpoints.
+
+load_lib "ada.exp"
+
+require allow_ada_tests
+
+require allow_hw_watchpoint_tests
+
+standard_ada_testfile foo
+
+if {[gdb_compile_ada "${srcfile}" "${binfile}" executable {debug}] != ""} {
+  return -1
+}
+
+clean_restart ${testfile}
+
+set bp_location [gdb_get_line_number "STOP_HERE" ${testdir}/foo.adb]
+runto "foo.adb:$bp_location"
+
+# Make sure that all tasks appear in the "info tasks" listing, and
+# that the active task is the environment task.
+gdb_test "info tasks" \
+    [join {" +ID +TID P-ID Pri State +Name" \
+	       "\\* +1 .* main_task" \
+	       " +2 .* task_list\\(1\\)" \
+	       " +3 .* task_list\\(2\\)" \
+	       " +4 .* task_list\\(3\\)"} \
+	 "\r\n"] \
+    "info tasks before inserting breakpoint"
+
+# Insert a watchpoint that should stop only if task 3 stops, and
+# extract its number.
+set bp_number -1
+set test "watch -location value task 3"
+gdb_test_multiple $test $test {
+    -re "atchpoint ($decimal): -location value\r\n$gdb_prompt $" {
+	set bp_number $expect_out(1,string)
+	pass $test
+    }
+}
+
+if {$bp_number < 0} {
+    return
+}
+
+# Continue to that watchpoint.  Task 2 should hit it first, and GDB
+# is expected to ignore that hit and resume the execution.  Only then
+# task 3 will hit our watchpoint, and GDB is expected to stop at that
+# point.  Also make sure that GDB reports the correct watchpoint number.
+gdb_test "continue" \
+    ".* hit .*atchpoint $bp_number: -location value.*Old value = 1.*New value = 2.*" \
+    "continue to watchpoint"
+
+# Check that it is indeed task 3 that hit the watchpoint by checking
+# which is the active task.
+gdb_test "info tasks" \
+    [join {" +ID +TID P-ID Pri State +Name" \
+	       " +1 .* main_task" \
+	       " +2 .* task_list\\(1\\)" \
+	       "\\* +3 .* task_list\\(2\\)" \
+	       " +4 .* task_list\\(3\\)"} \
+	 "\r\n"] \
+    "info tasks after hitting watchpoint"
+
+# Now, resume the execution and make sure that GDB does not stop when
+# task 4 hits the watchpoint. Continuing thus results in our program
+# running to completion.
+set bp_location [gdb_get_line_number "STOP_HERE_2" ${testdir}/foo.adb]
+gdb_breakpoint foo.adb:$bp_location
+gdb_continue_to_breakpoint second ".*foo.adb:$bp_location.*null; -- STOP_HERE_2"

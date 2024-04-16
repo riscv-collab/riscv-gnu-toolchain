@@ -1,0 +1,141 @@
+# Copyright (C) 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.
+# It tests the frame support in Guile.
+
+load_lib gdb-guile.exp
+
+require allow_guile_tests
+
+standard_testfile
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+    return -1
+}
+
+# The following tests require execution.
+
+if ![gdb_guile_runto_main] {
+    return
+}
+
+gdb_breakpoint [gdb_get_line_number "Block break here."]
+gdb_continue_to_breakpoint "Block break here."
+gdb_scm_test_silent_cmd "guile (define bf1 (selected-frame))" \
+    "get frame"
+
+# Test frame-architecture method.
+gdb_scm_test_silent_cmd "guile (define show-arch-str (execute \"show architecture\" #:to-string #t))" \
+    "show arch"
+gdb_test "guile (print (->bool (string-contains show-arch-str (arch-name (frame-arch bf1)))))" \
+    "#t" "test frame-arch"
+
+# First test that read-var is unaffected by PR 11036 changes.
+gdb_test "guile (print (frame-read-var bf1 \"i\"))" \
+    "\"stuff\"" "test i"
+gdb_test "guile (print (frame-read-var bf1 \"f\"))" \
+    "\"foo\"" "test f"
+gdb_test "guile (print (frame-read-var bf1 \"b\"))" \
+    "\"bar\"" "test b"
+
+# Test the read-var function in another block other than the current
+# block (in this case, the super block). Test thar read-var is reading
+# the correct variables of i and f but they are the correct value and type.
+gdb_scm_test_silent_cmd "guile (define sb (block-superblock (frame-block bf1)))" \
+    "get superblock"
+gdb_test "guile (print (frame-read-var bf1 \"i\" #:block sb))" "1.1.*" \
+    "test i = 1.1"
+gdb_test "guile (print (value-type (frame-read-var bf1 \"i\" #:block sb)))" \
+    "double" "test double i"
+gdb_test "guile (print (frame-read-var bf1 \"f\" #:block sb))" \
+    "2.2.*" "test f = 2.2"
+gdb_test "guile (print (value-type (frame-read-var bf1 \"f\" #:block sb)))" \
+    "double" "test double f"
+
+# And again test another outerblock, this time testing "i" is the
+# correct value and type.
+gdb_scm_test_silent_cmd "guile (set! sb (block-superblock sb))" \
+    "get superblock #2"
+gdb_test "guile (print (frame-read-var bf1 \"i\" #:block sb))" \
+    "99" "test i = 99"
+gdb_test "guile (print (value-type (frame-read-var bf1 \"i\" #:block sb)))" \
+    "int" "test int i"
+
+gdb_breakpoint "f2"
+gdb_continue_to_breakpoint "breakpoint at f2"
+gdb_scm_test_silent_cmd "guile (define bframe (selected-frame))" \
+    "get bottom-most frame"
+gdb_test "up" ".*" ""
+
+gdb_scm_test_silent_cmd "guile (define f1 (selected-frame))" \
+"get second frame"
+gdb_scm_test_silent_cmd "guile (define f0 (frame-newer f1))" \
+    "get first frame"
+
+gdb_test "guile (print (eq? f1 (newest-frame)))" \
+    #f "selected frame -vs- newest frame"
+gdb_test "guile (print (eq? bframe (newest-frame)))" \
+    #t "newest frame -vs- newest frame"
+
+gdb_test "guile (print (eq? f0 f1))" \
+    "#f" "test equality comparison (false)"
+gdb_test "guile (print (eq? f0 f0))" \
+    "#t" "test equality comparison (true)"
+gdb_test "guile (print (frame-valid? f0))" \
+    "#t" "test frame-valid?"
+gdb_test "guile (print (frame-name f0))" \
+    "f2" "test frame-name"
+gdb_test "guile (print (= (frame-type f0) NORMAL_FRAME))" \
+    "#t" "test frame-type"
+gdb_test "guile (print (= (frame-unwind-stop-reason f0) FRAME_UNWIND_NO_REASON))" \
+    "#t" "test frame-unwind-stop-reason"
+gdb_test "guile (print (unwind-stop-reason-string FRAME_UNWIND_INNER_ID))" \
+    "previous frame inner to this frame \\(corrupt stack\\?\\)" \
+    "test unwind-stop-reason-string"
+gdb_test "guile (print (format #f \"= ~A\" (frame-pc f0)))" \
+    "= \[0-9\]+" "test frame-pc"
+gdb_test "guile (print (format #f \"= ~A\" (eq? (frame-older f0) f1)))" \
+    "= #t" "test frame-older"
+gdb_test "guile (print (format #f \"= ~A\" (eq? (frame-newer f1) f0)))" \
+    "= #t" "test frame-newer"
+gdb_test "guile (print (frame-read-var f0 \"variable_which_surely_doesnt_exist\"))" \
+  "ERROR: .*: Out of range: variable not found: \"variable_which_surely_doesnt_exist\".*" \
+  "test frame-read-var - error"
+gdb_test "guile (print (format #f \"= ~A\" (frame-read-var f0 \"a\")))" \
+    "= 1" "test frame-read-var - success"
+
+gdb_test "guile (print (format #f \"= ~A\" (eq? (selected-frame) f1)))" \
+    "= #t" "test selected-frame"
+
+# Can read SP register.
+gdb_test "guile (print (equal? (frame-read-register (selected-frame) \"sp\") (parse-and-eval \"\$sp\")))" \
+  "= #t" "test frame-read-register of sp"
+
+# PC value obtained via read_register is as expected.
+gdb_test "guile (print (equal? (value->integer (frame-read-register f0 \"pc\")) (frame-pc f0)))" \
+  "= #t" "test frame-read-register of pc"
+
+# Test arch-specific register name.
+set pc ""
+if {[is_amd64_regs_target]} {
+    set pc "rip"
+} elseif {[is_x86_like_target]} {
+    set pc "eip"
+}
+if { $pc != "" } {
+    gdb_test "guile (print (equal? (frame-read-register f0 \"pc\") (frame-read-register f0 \"$pc\")))" \
+	"= #t" "test frame-read-register of $pc"
+}

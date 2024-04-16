@@ -1,0 +1,107 @@
+# Copyright 2011-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require isnative allow_shlib_tests
+if {![istarget *-linux*]} {
+    return 0
+}
+
+load_lib prelink-support.exp
+
+set testfile "dlopen-libpthread"
+set srcmainfile ${testfile}.c
+set srclibfile ${testfile}-lib.c
+set executable ${testfile}
+set binfile_lib [standard_output_file ${executable}.so]
+set lib_dlopen [shlib_target_file ${executable}.so]
+
+# Use build_executable_own_libs as prelinked libpthread.so can produce false
+# PASS - it is OK if GDB processes it still before relocation.
+
+set relink_args [build_executable_own_libs ${testfile}.exp ${executable}.so $srclibfile {debug shlib_pthreads} no]
+if {$relink_args == "" || ![prelink_no $relink_args]
+    || [prepare_for_testing "failed to prepare" ${executable} ${srcmainfile} {debug shlib_load}] } {
+    return -1
+}
+gdb_load_shlib $binfile_lib
+
+if { ![runto_main] } {
+    return -1
+}
+
+set probe_names {}
+# Fedora 17 name.  There's specific code in
+# svr4_find_and_create_probe_breakpoints to deal with this.
+lappend probe_names rtld_map_complete
+# Upstream name.
+lappend probe_names map_complete
+
+set have_probe 0
+foreach probe_name $probe_names {
+    set cmd "info probes all rtld ^$probe_name$"
+    gdb_test_multiple $cmd "" {
+	-re -wrap "\[ \t\]$probe_name\[ \t\]+0x\[0-9a-f\]+.*" {
+	    set have_probe 1
+	}
+	-re -wrap "No probes matched\\." {
+	}
+    }
+}
+
+if { !$have_probe } {
+    untested "no matching probes"
+    return -1
+}
+
+# We link the exec without -lpthread, but libpthread.so may already be loaded at main
+# due to LD_PRELOAD.
+set libpthread_maybe_preloaded 0
+set binfile [standard_output_file $executable]
+if { [has_dependency $binfile /libpthread\\.so] == 1 } {
+    set libpthread_maybe_preloaded 1
+}
+
+# We link the shlib with -lpthread, but since glibc 2.34 libpthread has been
+# merged with libc, so libpthread.so may not be a dependency.
+set libpthread_missing 0
+if { [has_dependency $binfile_lib /libpthread\\.so] == 0 } {
+    set libpthread_missing 1
+}
+
+set test "libpthread.so not found"
+gdb_test_multiple "info sharedlibrary" $test {
+    -re "/libpthread\\.so.*\r\n$gdb_prompt $" {
+	if { $libpthread_maybe_preloaded } {
+	    unsupported $test
+	} else {
+	    fail $test
+	}
+    }
+    -re "/libc\\.so.*\r\n$gdb_prompt $" {
+	pass $test
+    }
+}
+
+gdb_test "set variable filename=\"$lib_dlopen\""
+
+gdb_breakpoint "notify"
+
+# The error was:
+# Cannot find new threads: generic error
+gdb_continue_to_breakpoint "notify" ".* notify-here .*"
+
+if { !$libpthread_missing } {
+    gdb_test "info sharedlibrary" {/libpthread\.so.*} "libpthread.so found"
+}

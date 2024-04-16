@@ -1,0 +1,69 @@
+# Copyright 2016-2024 Free Software Foundation, Inc.
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require is_amd64_regs_target
+
+load_lib "trace-support.exp"
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile \
+     [list debug additional_flags=-mavx]]} {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+if ![gdb_target_supports_trace] {
+    unsupported "target does not support trace"
+    return -1
+}
+
+gdb_test_multiple "print \$ymm15" "check for AVX support" {
+    -re " = void.*$gdb_prompt $" {
+	verbose "Skipping tfile AVX test (target doesn't support AVX)."
+	return
+    }
+    -re " = \\{.*}.*$gdb_prompt $" {
+	# All is well.
+    }
+}
+
+gdb_test "trace traceme" ".*"
+
+gdb_trace_setactions "set actions for tracepoint" "" \
+	"collect \$ymm15" "^$"
+
+gdb_breakpoint "end"
+
+gdb_test_no_output "tstart"
+
+gdb_test "continue" ".*Breakpoint $decimal, end .*"
+
+set tracefile [standard_output_file ${testfile}]
+
+# Save trace frames to tfile.
+gdb_test "tsave ${tracefile}.tf" \
+    "Trace data saved to file '${tracefile}.tf'.*" \
+    "save tfile trace file"
+
+# Change target to tfile.
+gdb_test "target tfile ${tracefile}.tf" "" "change to tfile target" \
+  "A program is being debugged already.  Kill it. .y or n. $" "y"
+
+gdb_test "tfind 0" "Found trace frame 0, tracepoint .*"
+
+gdb_test "print/x \$ymm15.v8_int32" " = \\{0x12340001, .*, 0x12340008}"

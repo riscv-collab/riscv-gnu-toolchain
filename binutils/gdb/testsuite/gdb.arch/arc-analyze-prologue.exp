@@ -1,0 +1,197 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require {istarget "arc*-*-*"}
+
+standard_testfile .S
+
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile] } {
+    return -1
+}
+
+if ![runto_main] {
+    return 0
+}
+
+# Convert list of saved registers and their offsets to a GDB string.
+proc saved_regs_to_str { savedregs funcname } {
+    set str ""
+    # If blink is stored, that it is present twice in saved regs - as blink and
+    # as pc.
+    set has_blink 0
+    set blink_addr 0
+    foreach r $savedregs {
+	if { [llength $r] == 1 } {
+	    append str ".*$r at.*"
+	} else {
+	    set name [lindex $r 0]
+	    set offset [lindex $r 1]
+	    set addr [get_hexadecimal_valueof "\$sp+$offset" 0 \
+		 "get value of $name@sp+$offset in $funcname"]
+	    append str "\\s*$name at $addr,?"
+	    if { $name == "blink" } {
+		set has_blink 1
+		set blink_addr $addr
+	    }
+	}
+    }
+    if { $has_blink == 1 } {
+	append str "\\s*pc at $blink_addr"
+    }
+    return $str
+}
+
+# Arguments:
+# funcname -	name of function to test
+# savedregs -	list of register saved in the frame.  Each entry can be either
+#		a string, where it is a register name, or it is a list of two
+#		items - name of register and it's offset relatively to SP in
+#		the memory.  SP value is at the moment of prologue end.
+# fp_offset -	if not an empty string, then proc will test that FP register
+#		has a value that is (SP + offset).
+
+proc prologue_test {funcname {savedregs ""} {fp_offset ""} } {
+    global hex
+    gdb_breakpoint $funcname temporary
+    gdb_continue_to_breakpoint $funcname
+    gdb_test "backtrace 10" \
+	"#0\[ \t\]*$hex in $funcname .*\r\n#1\[ \t\]*$hex in main.*" \
+	"backtrace in $funcname"
+    if { $savedregs != "" } {
+	set str [saved_regs_to_str $savedregs $funcname]
+	gdb_test "info frame" \
+	    ".*Saved registers:$str" \
+	    "saved registers in $funcname"
+    }
+    if { $fp_offset != "" } {
+	set sp [get_integer_valueof \$sp -1 "get value of sp in $funcname"]
+	set fp_val [expr $sp + $fp_offset]
+	set fp_real_val \
+	    [get_integer_valueof \$fp 0 "get value of fp in $funcname"]
+	if { $fp_real_val != $fp_val } {
+	    fail "check FP value in $funcname"
+	} else {
+	    pass "check FP value in $funcname"
+	}
+    }
+}
+
+
+prologue_test "standard_prologue" { {r13 0} {r14 4} {r18 8} {blink 12} }
+prologue_test "mini_prologue" { {r13 0} {r14 8} {r15 4} {blink 12} }
+prologue_test "no_subsp_prologue" { {r13 8} {r20 4} {r25 0} {blink 12} }
+prologue_test "leaf_prologue" { {r13 0} {r15 4} }
+prologue_test "pushfp_prologue" { {r13 8} {r14 4} {fp 0} } 0
+prologue_test "fp_prologue_with_store" { {r13 12} {r14 8} {r15 0} {fp 4} } 4
+prologue_test "noncallee_saved_regs_r12_st" { {r12 0} {r13 4} }
+# Register offset is specified relatively to SP at the prologue end, so
+# "push r12" hasn't been executed at this moment.
+prologue_test "noncallee_saved_regs_r12_push" { {r12 0} {r13 4} }
+prologue_test "noncallee_saved_regs_r2_push" { {r2 0} {r13 4} }
+prologue_test "noncallee_saved_regs_gp_push" { {r25 4} {gp 0} }
+prologue_test "noncallee_saved_regs_lp_count" { {r25 4} {lp_count 0} }
+prologue_test "noncallee_saved_regs_blink_out_of_prologue" { {r25 8} {gp 4} \
+    {blink 0}}
+# Argument registers are not reported as "saved" regs.
+prologue_test "arg_regs_fp" { {r0 12} {r1 8} {r7 4} {r8 0} {fp 16} } 16
+prologue_test "arg_regs_fp_mov_s" { {r0 4} {r8 0} {fp 8} } 8
+prologue_test "arg_regs_sp" { {r0 0} {r1 4} {r7 8} {r8 12} {r13 16} {r14 20} }
+prologue_test "enter_s_nop"
+prologue_test "enter_s_blink" { {blink 0} }
+prologue_test "enter_s_fp" { {fp 0} } 0
+# Layout of registers as stored by enter_s doesn't conform to ARC ABI.
+prologue_test "enter_s_r13" { {r13 4} {fp 8} {blink 0} } 0
+prologue_test "enter_s_r15" { {r13 0} {r14 4} {r15 8} } 0
+# This enter_s saves GP, however because it is not a "calle-saved register",
+# GDB will not report it as "saved register" (but maybe it should). GP is at
+# offset 56.
+prologue_test "enter_s_all" { {r13 4} {r14 8} {r15 12} {r16 16} {r17 20} \
+    {r18 24} {r19 28} {r20 32} {r21 36} {r22 40} {r23 44} {r24 48} {r25 52} \
+    {gp 56} {fp 60} {blink 0} } 0
+
+# Test more levels of backtrace.
+gdb_breakpoint nested_prologue_inner temporary
+gdb_continue_to_breakpoint nested_prologue_inner
+gdb_test "backtrace 10" \
+    "#0\[ \t\]*$hex in nested_prologue_inner .*\r\n#1\[ \t\]*$hex in nested_prologue_outer .*\r\n#2\[ \t\]*$hex in main.*" \
+    "backtrace in nested_prologue_inner"
+set regs [saved_regs_to_str {r13 r18} "nested_prologue_inner"]
+gdb_test "info frame" ".*Saved registers:$regs" \
+    "saved registers in nested_prologue_inner"
+set regs [saved_regs_to_str {r14 r15 blink} "nested_prologue_inner"]
+gdb_test "info frame 1" ".*Saved registers:$regs" \
+    "saved registers in nested_prologue_outer"
+
+# sub sp,sp for local variables is part of prologue, hence should be added to
+# all of those offsets.
+prologue_test "max_length_prologue" { {r0 72} {r1 76} {r2 80} {r3 84} {r4 88} \
+    {r5 92} {r6 96} {r7 100} {r13 20} {r14 24} {r15 28} {r16 32} \
+    {r17 36} {r18 40} {r19 44} {r20 48} {r21 52} {r22 56} {r23 60} {r24 64} \
+    {r25 68} {fp 16} {blink 104} }
+
+prologue_test "branch_in_prologue" { {r13 0} }
+prologue_test "cond_branch_in_prologue" { {r13 4} }
+prologue_test "jump_in_prologue" { {r13 0} }
+prologue_test "cond_jump_in_prologue" { {r13 4} }
+prologue_test "predicated_insn" { {r13 8} {r15 0} }
+prologue_test "loop_in_prologue" { {r25 4} {lp_count 0} }
+prologue_test "store_constant" { {r13 8} {r14 4} }
+prologue_test "st_c_limm" { {r15 0} }
+prologue_test "st_ab_writeback" { {r13 8} {r14 4} {r15 0} }
+prologue_test "st_as_writeback" { {r13 8} {r14 4} {r15 0} }
+prologue_test "sth_as_writeback" { {r13 8} {r15 0} }
+prologue_test "std_as_writeback" { {r13 12} {r14 4} {r15 8} {r16 0} }
+prologue_test "st_halfword" { {r13 8} {r15 0} }
+prologue_test "sts_halfword" { {r13 8} {r15 0} }
+prologue_test "st_byte" { {r13 8} {r15 0} }
+prologue_test "sts_byte" { {r13 8} {r15 0} }
+prologue_test "sts_byte_sp" { {r13 8} {r15 0} }
+prologue_test "st_double" { {r14 16} {r15 20} {r18 8} {r19 12}}
+prologue_test "r_relative_store" { {r13 8} {r14 4} {r15 0} }
+prologue_test "r_relative_sub_store" { {r13 8} {r14 4} {r15 0} }
+prologue_test "r_relative_store_st_s" { {r13 8} {r14 0} {r15 4} }
+prologue_test "r_relative_store_unknown" { {r13 8} }
+prologue_test "st_s_r0gp" { {r13 8} }
+prologue_test "push_s_prologue" { {r0 28} {r1 16} {r2 4} {r3 24} {r12 32} \
+    {r13 20} {r14 12} {r15 8} {blink 0}}
+prologue_test "sub_s_cbu3" { {r13 4} {r14 0} }
+prologue_test "sub_s_bbc" { {r1 4} {r13 12} {r14 0} }
+prologue_test "sub_s_bbu5" { {r13 8} {r14 0} }
+prologue_test "sub_0bc" { {r13 4} {r14 0} }
+prologue_test "sub_alimmb" { {r13 4} {r14 0} }
+prologue_test "sub_s_ne_bbb" { {r13 0} }
+prologue_test "mov_limm" { {r13 4} {r14 0} }
+prologue_test "mov0c_limm" { {r13 4} {r14 0} }
+prologue_test "mov_s_hs3" { {r13 4} {r14 0} }
+prologue_test "mov_s_bu8" { {r13 4} {r14 0} }
+prologue_test "mov_s_ne_bh" { {r13 0} }
+prologue_test "unstored_reg" { {r13 0} {r14 4} }
+prologue_test "double_store" { {r14 0} }
+
+# alloca() tests
+gdb_breakpoint alloca_inner temporary
+gdb_continue_to_breakpoint alloca_inner
+gdb_test "backtrace 3" \
+    "#0\[ \t\]*$hex in alloca_inner .*\r\n#1\[ \t\]*$hex in alloca_outer .*\r\n#2\[ \t\]*$hex in main.*" \
+    "backtrace in alloca_inner"
+set regs [saved_regs_to_str {r13 r14} alloca_inner]
+gdb_test "info frame 0" ".*Saved registers:$regs" \
+    "saved registers in alloca_inner"
+set regs [saved_regs_to_str {fp blink} alloca_inner]
+gdb_test "info frame 1" ".*Saved registers:$regs" \
+    "saved registers in alloca_outer"
+

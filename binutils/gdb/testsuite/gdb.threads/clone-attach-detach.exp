@@ -1,0 +1,89 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2016-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test attach / detach from a process that uses raw clone.  We use raw
+# clone as proxy for when libthread_db is not available.
+
+# This only works on targets with the Linux kernel.
+if ![istarget *-*-linux*] {
+    return
+}
+
+require can_spawn_for_attach
+
+standard_testfile
+
+if [prepare_for_testing "failed to prepare" $testfile $srcfile {debug}] {
+    return -1
+}
+
+set test_spawn_id [spawn_wait_for_attach $binfile]
+set testpid [spawn_id_get_pid $test_spawn_id]
+
+# Native/gdbserver.
+set thread_re "(LWP $decimal|Thread )"
+
+# Try attach / detach a few times, in case GDB ends up with stale
+# state after detaching.
+
+set attempts 3
+for {set attempt 1} {$attempt <= $attempts} {incr attempt} {
+    with_test_prefix "fg attach $attempt" {
+
+	gdb_test "attach $testpid" \
+	    "Attaching to program.*process $testpid.*" \
+	    "attach"
+
+	gdb_test "info threads" \
+	    "1.*${thread_re}.*\r\n.*2.*${thread_re}.*" \
+	    "info threads shows two LWPs"
+
+	gdb_test "detach" "Detaching from .*, process $testpid\r\n\\\[Inferior $decimal \\(.*\\) detached\\\]"
+    }
+}
+
+# Same, but use async/background attach.
+
+# If debugging with target remote, check whether the all-stop variant
+# of the RSP is being used.  If so, we can't run the background tests.
+if {[target_info exists gdb_protocol]
+    && ([target_info gdb_protocol] == "remote"
+	|| [target_info gdb_protocol] == "extended-remote")} {
+
+    if {![is_target_non_stop]} {
+	unsupported "bg attach: can't issue info threads while target is running"
+	return 0
+    }
+}
+
+set attempts 3
+for {set attempt 1} {$attempt <= $attempts} {incr attempt} {
+    with_test_prefix "bg attach $attempt" {
+
+	gdb_test "attach $testpid &" \
+	    "Attaching to program.*process $testpid.*" \
+	    "attach"
+
+	gdb_test "info threads" \
+	    "1.*${thread_re}.*\\(running\\)\r\n.*2.*${thread_re}.*\\(running\\)" \
+	    "info threads shows two LWPs"
+
+	gdb_test "detach" "Detaching from .*, process $testpid\r\n\\\[Inferior $decimal \\(.*\\) detached\\\]"
+    }
+}
+
+kill_wait_spawned_process $test_spawn_id

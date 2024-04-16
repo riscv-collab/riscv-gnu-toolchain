@@ -1,0 +1,604 @@
+# Copyright (C) 2010-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.
+# It tests gdb.parameter and gdb.Parameter.
+
+load_lib gdb-python.exp
+
+require allow_python_tests
+
+# Start with a fresh gdb.
+clean_restart
+
+proc py_param_test_maybe_no_output { command pattern args } {
+    if [string length $pattern] {
+	gdb_test $command $pattern $args
+    } else {
+	gdb_test_no_output $command $args
+    }
+}
+
+proc_with_prefix test_directories { } {
+    # We use "." here instead of ":" so that this works on win32 too.
+    if { [is_remote host] } {
+	# Don't match $srcdir/$subdir because proc gdb_reinitialize_dir
+	# doesn't set search directories on remote host.
+	set directories ".*\\\$cdir.\\\$cwd"
+    } else {
+	set escaped_directory [string_to_regexp "$::srcdir/$::subdir"]
+	set directories "$escaped_directory.\\\$cdir.\\\$cwd"
+    }
+    gdb_test "python print (gdb.parameter ('directories'))" $directories
+}
+
+proc_with_prefix test_data_directory { } {
+    clean_restart
+
+    # Check we can correctly read the data-directory parameter.  First,
+    # grab the value as read directly from the GDB CLI.
+    set dd ""
+    gdb_test_multiple "show data-directory" \
+	"find the initial data-directory value" {
+	    -re -wrap "GDB's data directory is \"(\[^\r\n\]+)\"\\." {
+		set dd $expect_out(1,string)
+		pass $gdb_test_name
+	    }
+	}
+
+    # Now print the data-directory from Python.
+    gdb_test "python print (gdb.parameter ('data-directory'))" $dd
+
+    # Next change the data-directory to a relative path.  Internally GDB
+    # will resolve this to an absolute path, which Python should then see.
+    #
+    # GDB is currently running in '...../build/gdb/testsuite/' and the
+    # test output is being written to:
+    #   ...../build/gdb/testsuite/outputs/gdb.python/py-parameter/
+    #
+    # So create the relative path './outputs/gdb.python/py-parameter/' and
+    # set the data-directory to that, we should then see the absolute path.
+
+    set abs_path_to_output_dir [standard_output_file ""]
+    set abs_path_to_cwd $::objdir
+    set rel_path_to_output_dir \
+	[file join "." [string replace ${abs_path_to_output_dir} 0 \
+			    [string length ${abs_path_to_cwd}] ""]]
+    gdb_test_no_output "set data-directory ${rel_path_to_output_dir}" \
+	"set data-directory to relative path"
+
+    gdb_test "python print (gdb.parameter ('data-directory'))" \
+	${abs_path_to_output_dir} \
+	"python sees absolute version of data-directory path"
+
+    # While we're here, check we see the correct path at GDB's CLI.
+    gdb_test "show data-directory" \
+	"GDB's data directory is \"${abs_path_to_output_dir}\"\\." \
+	"check modified data-directory at the CLI"
+
+    # Now lets set the data-directory back to what it was initially.
+    gdb_test_no_output "set data-directory ${dd}" \
+	"set data-directory back to its original value"
+
+    # And check we see the restored value at CLI and from Python.
+    gdb_test "show data-directory" \
+	"GDB's data directory is \"${dd}\"\\." \
+	"check original data-directory was restored at the CLI"
+
+    gdb_test "python print (gdb.parameter ('data-directory'))" ${dd} \
+	"python sees restored data-directory value"
+}
+
+# Test a simple boolean parameter.
+proc_with_prefix test_boolean_parameter { } {
+    clean_restart
+
+    gdb_test_multiline "Simple gdb booleanparameter" \
+	"python" "" \
+	"class TestParam (gdb.Parameter):" "" \
+	"   \"\"\"When enabled, test param does something useful. When disabled, does nothing.\"\"\"" "" \
+	"   show_doc = \"Show the state of the boolean test-param\"" ""\
+	"   set_doc = \"Set the state of the boolean test-param\"" "" \
+	"   def get_show_string (self, pvalue):" ""\
+	"      return \"The state of the Test Parameter is \" + pvalue" ""\
+	"   def get_set_string (self):" ""\
+	"      val = \"on\"" ""\
+	"      if (self.value == False):" ""\
+	"         val = \"off\"" ""\
+	"      return \"Test Parameter has been set to \" + val" ""\
+	"   def __init__ (self, name):" "" \
+	"      super (TestParam, self).__init__ (name, gdb.COMMAND_DATA, gdb.PARAM_BOOLEAN)" "" \
+	"      self.value = True" "" \
+	"test_param = TestParam ('print test-param')" ""\
+	"end"
+
+    gdb_test "python print (test_param.value)" "True" \
+	"test boolean parameter value is True"
+    gdb_test "show print test-param" \
+	"The state of the Test Parameter is on.*" "show parameter on"
+    gdb_test "set print test-param off" \
+	"Test Parameter has been set to off" "turn off parameter"
+    gdb_test "show print test-param" \
+	"The state of the Test Parameter is off.*" "show parameter off"
+    gdb_test "python print (test_param.value)" "False" \
+	"test boolean parameter value is False"
+    gdb_test_no_output "python gdb.set_parameter('print test-param', True)" \
+	"set boolean parameter using set_parameter"
+    gdb_test "python print(gdb.parameter('print test-param'))" "True" \
+	"get boolean parameter using gdb.parameter"
+    gdb_test "help show print test-param" \
+	[multi_line \
+	     "Show the state of the boolean test-param" \
+	     "When enabled, test param does something useful\\. When disabled, does nothing\\."] \
+	"test show help"
+    gdb_test "help set print test-param" \
+	"Set the state of the boolean test-param.*" "test set help"
+    gdb_test "help set print" \
+	"set print test-param -- Set the state of the boolean test-param.*" \
+	"test general help"
+}
+
+# Test an enum parameter.
+proc_with_prefix test_enum_parameter { } {
+    clean_restart
+
+    gdb_test_multiline "enum gdb parameter" \
+	"python" "" \
+	"class TestEnumParam (gdb.Parameter):" "" \
+	"   \"\"\"When set, test param does something useful. When disabled, does nothing.\"\"\"" "" \
+	"   show_doc = \"Show the state of the enum\"" ""\
+	"   set_doc = \"Set the state of the enum\"" "" \
+	"   def get_show_string (self, pvalue):" ""\
+	"      return \"The state of the enum is \" + pvalue" ""\
+	"   def get_set_string (self):" ""\
+	"      return \"The state of the enum has been set to \" + self.value" ""\
+	"   def __init__ (self, name):" "" \
+	"      super (TestEnumParam, self).__init__ (name, gdb.COMMAND_DATA, gdb.PARAM_ENUM, \[\"one\", \"two\"\])" "" \
+	"      self.value = \"one\"" "" \
+	"test_enum_param = TestEnumParam ('print test-enum-param')" ""\
+	"end"
+
+    gdb_test "python print (test_enum_param.value)" "one" \
+	"test enum parameter value is one"
+    gdb_test "show print test-enum-param" \
+	"The state of the enum is one.*" \
+	"show parameter is initial value"
+    gdb_test "set print test-enum-param two" \
+	"The state of the enum has been set to two" "set enum to two"
+    gdb_test "show print test-enum-param" \
+	"The state of the enum is two.*" "show parameter is new value"
+    gdb_test "python print (test_enum_param.value)" "two" \
+	"test enum parameter value is two"
+    gdb_test "set print test-enum-param three" \
+	"Undefined item: \"three\".*" "set invalid enum parameter"
+}
+
+# Test a file parameter.
+proc_with_prefix test_file_parameter { } {
+    clean_restart
+
+    gdb_test_multiline "file gdb parameter" \
+	"python" "" \
+	"class TestFileParam (gdb.Parameter):" "" \
+	"   \"\"\"When set, test param does something useful. When disabled, does nothing.\"\"\"" "" \
+	"   show_doc = \"Show the name of the file\"" ""\
+	"   set_doc = \"Set the name of the file\"" "" \
+	"   def get_show_string (self, pvalue):" ""\
+	"      return \"The name of the file is \" + pvalue" ""\
+	"   def get_set_string (self):" ""\
+	"      return \"The name of the file has been changed to \" + self.value" ""\
+	"   def __init__ (self, name):" "" \
+	"      super (TestFileParam, self).__init__ (name, gdb.COMMAND_FILES, gdb.PARAM_FILENAME)" "" \
+	"      self.value = \"foo.txt\"" "" \
+	"test_file_param = TestFileParam ('test-file-param')" ""\
+	"end"
+
+    gdb_test "python print (test_file_param.value)" "foo.txt" \
+	"test file parameter value"
+    gdb_test "show test-file-param" \
+	"The name of the file is foo.txt.*" "show initial file value"
+    gdb_test "set test-file-param bar.txt" \
+	"The name of the file has been changed to bar.txt" \
+	"set new file parameter"
+    gdb_test "show test-file-param" \
+	"The name of the file is bar.txt.*" "show new file value"
+    gdb_test "python print (test_file_param.value)" \
+	"bar.txt" "test new file parameter value"
+    gdb_test "set test-file-param" "Argument required.*"
+}
+
+# Test a parameter that is not documented.
+proc_with_prefix test_undocumented_parameter { } {
+    clean_restart
+
+    gdb_test_multiline "Simple gdb booleanparameter" \
+	"python" "" \
+	"class TestUndocParam (gdb.Parameter):" "" \
+	"   def get_show_string (self, pvalue):" ""\
+	"      return \"The state of the Test Parameter is \" + pvalue" ""\
+	"   def get_set_string (self):" ""\
+	"      val = \"on\"" ""\
+	"      if (self.value == False):" ""\
+	"         val = \"off\"" ""\
+	"      return \"Test Parameter has been set to \" + val" ""\
+	"   def __init__ (self, name):" "" \
+	"      super (TestUndocParam, self).__init__ (name, gdb.COMMAND_DATA, gdb.PARAM_BOOLEAN)" "" \
+	"      self.value = True" "" \
+	"test_undoc_param = TestUndocParam ('print test-undoc-param')" ""\
+	"end"
+
+    gdb_test "show print test-undoc-param" \
+	"The state of the Test Parameter is on.*" "show parameter on"
+    gdb_test "set print test-undoc-param off" \
+	"Test Parameter has been set to off" "turn off parameter"
+    gdb_test "show print test-undoc-param" \
+	"The state of the Test Parameter is off.*" "show parameter off"
+    gdb_test "python print (test_undoc_param.value)" \
+	"False" "test undocumented parameter value is False"
+    gdb_test "help show print test-undoc-param" \
+	[multi_line \
+	     "Show the current value of 'print test-undoc-param'\\." \
+	     "This command is not documented.*"] \
+	"test show help"
+    gdb_test "help set print test-undoc-param" \
+	"This command is not documented.*" "test set help"
+    gdb_test "help set print" \
+	"set print test-undoc-param -- Set the current value of 'print test-undoc-param'\\..*" \
+	"test general help"
+}
+
+# Test a parameter that is not documented in any way..
+proc_with_prefix test_really_undocumented_parameter { } {
+    clean_restart
+
+    gdb_test_multiline "Simple gdb booleanparameter" \
+	"python" "" \
+	"class TestNodocParam (gdb.Parameter):" "" \
+	"   def __init__ (self, name):" "" \
+	"      super (TestNodocParam, self).__init__ (name, gdb.COMMAND_DATA, gdb.PARAM_BOOLEAN)" "" \
+	"      self.value = True" "" \
+	"test_nodoc_param = TestNodocParam ('print test-nodoc-param')" ""\
+	"end"
+
+    gdb_test "show print test-nodoc-param" \
+	"The current value of 'print test-nodoc-param' is \"on\"\\." \
+	"show parameter on"
+    gdb_test_no_output "set print test-nodoc-param off" \
+	"turn off parameter"
+    gdb_test "show print test-nodoc-param" \
+	"The current value of 'print test-nodoc-param' is \"off\"\\." \
+	"show parameter off"
+    gdb_test "python print (test_nodoc_param.value)" \
+	"False" "test really undocumented parameter value is False"
+    gdb_test "help show print test-nodoc-param" \
+	[multi_line \
+	     "Show the current value of 'print test-nodoc-param'\\." \
+	     "This command is not documented.*"] \
+	"test show help"
+    gdb_test "help set print test-nodoc-param" \
+	"This command is not documented.*" "test set help"
+    gdb_test "help set print" \
+	"set print test-nodoc-param -- Set the current value of 'print test-nodoc-param'\\..*" \
+	"test general help"
+}
+
+# Test deprecated API. Do not use in your own implementations.
+proc_with_prefix test_deprecated_api_parameter { } {
+    clean_restart
+
+    gdb_test_multiline "Simple gdb booleanparameter" \
+	"python" "" \
+	"class TestParam (gdb.Parameter):" "" \
+	"   \"\"\"When enabled, test param does something useful. When disabled, does nothing.\"\"\"" "" \
+	"   show_doc = \"State of the Test Parameter\"" ""\
+	"   set_doc = \"Set the state of the Test Parameter\"" "" \
+	"   def __init__ (self, name):" "" \
+	"      super (TestParam, self).__init__ (name, gdb.COMMAND_DATA, gdb.PARAM_BOOLEAN)" "" \
+	"      self.value = True" "" \
+	"test_param = TestParam ('print test-param')" ""\
+	"end"
+
+    gdb_test "python print (test_param.value)" "True" \
+	"test deprecated API parameter value is True"
+    gdb_test "show print test-param" \
+	"The current value of 'print test-param' is \"on\"\\." \
+	"show parameter on"
+    gdb_test_no_output "set print test-param off" "turn off parameter"
+    gdb_test "show print test-param" \
+	"The current value of 'print test-param' is \"off\"\\." \
+	"show parameter off"
+    gdb_test "python print (test_param.value)" "False" \
+	"test deprecated API parameter value is False"
+    gdb_test "help show print test-param" \
+	[multi_line \
+	     "State of the Test Parameter" \
+	     "When enabled, test param does something useful\\. When disabled, does nothing\\."] \
+	"test show help"
+    gdb_test "help set print test-param" \
+	"Set the state of the Test Parameter.*" "test set help"
+    gdb_test "help set print" \
+	"set print test-param -- Set the state of the Test Parameter.*" \
+	"test general help"
+}
+
+proc_with_prefix test_gdb_parameter { } {
+    foreach_with_prefix param {
+	"listsize"
+	"print elements"
+	"max-completions"
+	"print characters"
+    } {
+	clean_restart
+
+	set param_range_error ".*gdb.error: integer -1 out of range.*"
+	switch -- $param {
+	    "listsize" {
+		set param_get_zero None
+		set param_get_minus_one -1
+		set param_get_none None
+		set param_get_unlimited None
+		set param_set_minus_one ""
+	    }
+	    "print elements" -
+	    "print characters" {
+		set param_get_zero None
+		set param_get_minus_one None
+		set param_get_none None
+		set param_get_unlimited None
+		set param_set_minus_one $param_range_error
+	    }
+	    "max-completions" {
+		set param_get_zero 0
+		set param_get_minus_one -1
+		set param_get_none -1
+		set param_get_unlimited -1
+		set param_set_minus_one ""
+	    }
+	    default {
+		error "invalid param: $param"
+	    }
+	}
+
+	gdb_test_no_output "python gdb.set_parameter('$param', 1)" \
+	    "test set to 1"
+
+	gdb_test "python print(gdb.parameter('$param'))" \
+	    1 "test value of 1"
+
+	gdb_test_no_output "python gdb.set_parameter('$param', 0)" \
+	    "test set to 0"
+
+	gdb_test "python print(gdb.parameter('$param'))" \
+	    $param_get_zero "test value of 0"
+
+	py_param_test_maybe_no_output \
+	    "python gdb.set_parameter('$param', -1)" \
+	    $param_set_minus_one "test set to -1"
+
+	gdb_test "python print(gdb.parameter('$param'))" \
+	    $param_get_minus_one "test value of -1"
+
+	gdb_test_no_output "python gdb.set_parameter('$param', None)" \
+	    "test set to None"
+
+	gdb_test "python print(gdb.parameter('$param'))" \
+	    $param_get_none "test value of None"
+
+	gdb_test_no_output "python gdb.set_parameter('$param', 'unlimited')" \
+	    "test set to 'unlimited'"
+
+	gdb_test "python print(gdb.parameter('$param'))" \
+	    $param_get_unlimited "test value of 'unlimited'"
+
+	if {$param == "print characters"} {
+	    gdb_test_no_output \
+		"python gdb.set_parameter('$param', 'elements')" \
+		"test set to 'elements'"
+
+	    gdb_test "python print(gdb.parameter('$param'))" \
+		elements "test value of 'elements'"
+	}
+    }
+
+    clean_restart
+
+    # This caused a gdb crash.
+    gdb_test "python print(gdb.parameter('endian'))" "auto" \
+	"print endian parameter"
+}
+
+proc_with_prefix test_integer_parameter { } {
+    foreach_with_prefix kind {
+	PARAM_UINTEGER
+	PARAM_INTEGER
+	PARAM_ZINTEGER
+	PARAM_ZUINTEGER
+	PARAM_ZUINTEGER_UNLIMITED
+    } {
+	clean_restart
+
+	gdb_test_multiline "create parameter" \
+	    "python" "" \
+	    "class TestNodocParam (gdb.Parameter):" "" \
+	    "   def __init__ (self, name):" "" \
+	    "      super (TestNodocParam, self).__init__ (name, gdb.COMMAND_DATA, gdb.$kind)" "" \
+	    "      self.value = 0" "" \
+	    "test_param_$kind = TestNodocParam ('test-$kind')" "" \
+	    "end"
+
+	set param_range_error "RuntimeError: Range exceeded.*"
+	set param_integer_error "RuntimeError: The value must be integer.*"
+	switch -- $kind {
+	    PARAM_UINTEGER {
+		set param_get_zero None
+		set param_get_minus_one None
+		set param_get_minus_five 1
+		set param_get_none None
+		set param_get_unlimited None
+		set param_set_minus_one $param_range_error
+		set param_set_minus_five $param_range_error
+		set param_set_none ""
+	    }
+	    PARAM_INTEGER {
+		set param_get_zero None
+		set param_get_minus_one -1
+		set param_get_minus_five -5
+		set param_get_none None
+		set param_get_unlimited None
+		set param_set_minus_one -1
+		set param_set_minus_five -5
+		set param_set_none ""
+	    }
+	    PARAM_ZINTEGER {
+		set param_get_zero 0
+		set param_get_minus_one -1
+		set param_get_minus_five -5
+		set param_get_none 5
+		set param_get_unlimited 0
+		set param_set_minus_one ""
+		set param_set_minus_five ""
+		set param_set_none $param_integer_error
+	    }
+	    PARAM_ZUINTEGER {
+		set param_get_zero 0
+		set param_get_minus_one 0
+		set param_get_minus_five 1
+		set param_get_none 5
+		set param_get_unlimited 0
+		set param_set_minus_one $param_range_error
+		set param_set_minus_five $param_range_error
+		set param_set_none $param_integer_error
+	    }
+	    PARAM_ZUINTEGER_UNLIMITED {
+		set param_get_zero 0
+		set param_get_minus_one -1
+		set param_get_minus_five 1
+		set param_get_none -1
+		set param_get_unlimited -1
+		set param_set_minus_one ""
+		set param_set_minus_five $param_range_error
+		set param_set_none ""
+	    }
+	    default {
+		error "invalid kind: $kind"
+	    }
+	}
+
+	gdb_test "python print(test_param_$kind.value)" \
+	    $param_get_zero "test default value"
+
+	gdb_test "python print(gdb.parameter('test-$kind'))" \
+	    $param_get_zero "test default value via gdb.parameter"
+
+	py_param_test_maybe_no_output "python test_param_$kind.value = -1" \
+	    $param_set_minus_one "test set to -1"
+
+	gdb_test "python print(test_param_$kind.value)" \
+	    $param_get_minus_one "test value of -1"
+
+	gdb_test "python print(gdb.parameter('test-$kind'))" \
+	    $param_get_minus_one "test value of -1 via gdb.parameter"
+
+	gdb_test_no_output "python test_param_$kind.value = 1" "test set to 1"
+
+	gdb_test "python print(test_param_$kind.value)" 1 "test value of 1"
+
+	gdb_test "python print(gdb.parameter('test-$kind'))" \
+	    1 "test value of 1 via gdb.parameter"
+
+	py_param_test_maybe_no_output "python test_param_$kind.value = -5" \
+	    $param_set_minus_five "test set to -5"
+
+	gdb_test "python print(gdb.parameter('test-$kind'))" \
+	    $param_get_minus_five "test value of -5 via gdb.parameter"
+
+	gdb_test_no_output "python test_param_$kind.value = 5" "test set to 5"
+
+	gdb_test "python print(gdb.parameter('test-$kind'))" \
+	    5 "test value of 5 via gdb.parameter"
+
+	py_param_test_maybe_no_output "python test_param_$kind.value = None" \
+	    $param_set_none "test set to None"
+
+	gdb_test "python print(test_param_$kind.value)" \
+	    $param_get_none "test value of None"
+
+	gdb_test "python print(gdb.parameter('test-$kind'))" \
+	    $param_get_none "test value of None via gdb.parameter"
+
+	gdb_test_no_output "python test_param_$kind.value = 0" \
+	    "test set to 0"
+
+	gdb_test "python print(gdb.parameter('test-$kind'))" \
+	    $param_get_zero "test value of 0 via gdb.parameter"
+
+	py_param_test_maybe_no_output \
+	    "python test_param_$kind.value = 'unlimited'" \
+	    $param_set_none "test set to 'unlimited'"
+
+	gdb_test "python print(test_param_$kind.value)" \
+	    $param_get_unlimited "test value of 'unlimited'"
+
+	gdb_test "python print(gdb.parameter('test-$kind'))" \
+	    $param_get_unlimited "test value of 'unlimited' via gdb.parameter"
+    }
+}
+
+proc_with_prefix test_throwing_parameter { } {
+    clean_restart
+
+    gdb_test_multiline "Throwing gdb parameter" \
+	"python" "" \
+	"class TestThrowParam (gdb.Parameter):" "" \
+	"   def __init__ (self, name):" "" \
+	"      super (TestThrowParam, self).__init__ (name, gdb.COMMAND_DATA, gdb.PARAM_STRING)" "" \
+	"      self.value = True" "" \
+	"   def get_set_string (self):" "" \
+	"      raise gdb.GdbError('Ordinary gdb error')" "" \
+	"test_throw_param = TestThrowParam ('print test-throw-param')" ""\
+	"end"
+
+    gdb_test "set print test-throw-param whoops" \
+	"Ordinary gdb error" \
+	"gdb.GdbError does not show Python stack"
+}
+
+proc_with_prefix test_language {} {
+    gdb_test "python print(gdb.parameter('language'))" "auto" \
+	"print language parameter"
+    gdb_test "python print(gdb.current_language())" "c" \
+	"print current language"
+    gdb_test_no_output "set lang rust"
+    gdb_test "python print(gdb.parameter('language'))" "rust" \
+	"print language parameter for rust"
+    gdb_test "python print(gdb.current_language())" "rust" \
+	"print current language for rust"
+    gdb_test_no_output "set lang auto"
+}
+
+test_directories
+test_data_directory
+test_boolean_parameter
+test_enum_parameter
+test_file_parameter
+test_undocumented_parameter
+test_really_undocumented_parameter
+test_deprecated_api_parameter
+test_gdb_parameter
+test_integer_parameter
+test_throwing_parameter
+test_language
+
+rename py_param_test_maybe_no_output ""

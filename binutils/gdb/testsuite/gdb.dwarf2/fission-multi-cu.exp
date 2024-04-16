@@ -1,0 +1,230 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test checks that GDB can load DWARF information from two
+# separate split .DWO files.
+
+load_lib dwarf.exp
+
+# We run objcopy locally to split out the .dwo file.
+require {!is_remote host}
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+# We place the entire source code for the test into a single .c file,
+# but we generate the DWARF in two separate .S files.  Each .S is
+# compiled to a .o, then the DWARF is split into a .dwo file.  Finally
+# the all three .o files are merged into a single executable that will
+# reference the two .dwo files.
+standard_testfile .c -1-dw.S -2-cw.S
+
+# Generate the first .S file.
+set asm_file_1 [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file_1 {
+    global srcfile binfile objdir srcdir subdir
+
+    get_func_info func
+
+    declare_labels int4_type lines_table
+
+    set debug_addr_lbl ".unknown!!"
+
+    # The information that will be split out into the .dwo file.
+    cu {fission 1} {
+
+	# Capture a label to the current start of the .debug_addr
+	# section.  This will be passed to DW_AT_GNU_addr_base in the
+	# non-split CU later.
+	set debug_addr_lbl [debug_addr_label]
+
+	compile_unit {
+            {language @DW_LANG_C}
+            {name ${srcfile}}
+	    {DW_AT_comp_dir ${objdir}}
+	    {DW_AT_GNU_dwo_id 0x1234 DW_FORM_data8}
+        } {
+	    int4_type: DW_TAG_base_type {
+		{DW_AT_byte_size 4 DW_FORM_sdata}
+		{DW_AT_encoding  @DW_ATE_signed}
+		{DW_AT_name      int}
+	    }
+
+	    subprogram {
+		{external 1 flag}
+		{DW_AT_name func DW_FORM_string}
+		{MACRO_AT_func {func}}
+		{DW_AT_type :$int4_type}
+	    } {
+		DW_TAG_formal_parameter {
+		    {DW_AT_name arg}
+		    {DW_AT_type :$int4_type}
+		    {DW_AT_location {
+			DW_OP_GNU_addr_index [gdb_target_symbol global_param]
+		    } SPECIAL_expr}
+		}
+	    }
+	}
+    }
+
+    lines {version 2} lines_table {
+	include_dir "${srcdir}/${subdir}"
+	file_name "$srcfile" 1
+
+	program {
+	    DW_LNE_set_address $func_start
+	    DW_LNS_advance_line 24
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_4
+	    DW_LNS_advance_line 3
+	    DW_LNS_copy
+
+	    DW_LNE_set_address $func_end
+	    DW_LNS_advance_line 1
+	    DW_LNS_copy
+	    DW_LNE_end_sequence
+	}
+    }
+
+    # The information that will remain in the .o file.
+    cu {} {
+	compile_unit {
+            {DW_AT_GNU_dwo_name ${binfile}-1-dw.dwo DW_FORM_strp}
+	    {DW_AT_comp_dir ${objdir}}
+	    {DW_AT_GNU_dwo_id 0x1234 DW_FORM_data8}
+	    {DW_AT_GNU_addr_base $debug_addr_lbl}
+	    {stmt_list $lines_table DW_FORM_sec_offset}
+        } {
+	    # Nothing.
+	}
+    }
+}
+
+# Generate the second .S file.
+set asm_file_2 [standard_output_file $srcfile3]
+Dwarf::assemble $asm_file_2 {
+    global srcfile binfile objdir srcdir subdir
+
+    set debug_addr_lbl ".unknown!!"
+
+    declare_labels int4_type lines_table
+
+    get_func_info main
+
+    # The information that will be split out into the .dwo file.
+    cu {fission 1} {
+
+	# Capture a label to the current start of the .debug_addr
+	# section.  This will be passed to DW_AT_GNU_addr_base in the
+	# non-split CU later.
+	set debug_addr_lbl [debug_addr_label]
+
+	compile_unit {
+            {language @DW_LANG_C}
+            {name ${srcfile}}
+	    {DW_AT_comp_dir ${objdir}}
+	    {DW_AT_GNU_dwo_id 0x4567 DW_FORM_data8}
+        } {
+	    int4_type: DW_TAG_base_type {
+		{DW_AT_byte_size 4 DW_FORM_sdata}
+		{DW_AT_encoding  @DW_ATE_signed}
+		{DW_AT_name      int}
+	    }
+
+	    subprogram {
+		{external 1 flag}
+		{DW_AT_name main DW_FORM_string}
+		{MACRO_AT_func {main}}
+		{DW_AT_type :$int4_type}
+		{DW_AT_decl_file 1 data1}
+		{DW_AT_decl_line 29 data1}
+	    }
+	}
+    }
+
+    lines {version 2} lines_table {
+	include_dir "${srcdir}/${subdir}"
+	file_name "$srcfile" 1
+
+	program {
+	    DW_LNE_set_address $main_start
+	    DW_LNS_advance_line 32
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_1
+	    DW_LNS_advance_line 3
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_2
+	    DW_LNS_advance_line 2
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_3
+	    DW_LNS_advance_line 2
+	    DW_LNS_copy
+
+	    DW_LNE_set_address $main_end
+	    DW_LNS_advance_line 2
+	    DW_LNS_copy
+	    DW_LNE_end_sequence
+	}
+    }
+
+    # The information that will remain in the .o file.
+    cu {} {
+	compile_unit {
+            {DW_AT_GNU_dwo_name ${binfile}-2-dw.dwo DW_FORM_strp}
+	    {DW_AT_comp_dir ${objdir}}
+	    {DW_AT_GNU_dwo_id 0x4567 DW_FORM_data8}
+	    {DW_AT_GNU_addr_base $debug_addr_lbl}
+	    {stmt_list $lines_table DW_FORM_sec_offset}
+        } {
+	    # Nothing.
+	}
+    }
+}
+
+# Compile all of the input files, split the DWARF into the .dwo files.
+set obj1 [standard_output_file "${testfile}-1-dw.o"]
+set obj2 [standard_output_file "${testfile}-2-dw.o"]
+if [build_executable_and_dwo_files "$testfile.exp" "${binfile}" {nodebug} \
+	[list $asm_file_1 [list nodebug split-dwo] $obj1] \
+	[list $asm_file_2 [list nodebug split-dwo] $obj2] \
+	[list $srcfile  [list nodebug]]] {
+    return -1
+}
+
+clean_restart $binfile
+
+if ![runto_main] {
+    return -1
+}
+
+# Do a few basic things to verify we're finding the DWO debug info.
+
+gdb_test "ptype main" "type = int \\(\\)"
+gdb_test "ptype func" "type = int \\(int\\)"
+
+gdb_test "frame" "#0 *main \\(\\) at \[^\r\n\]+${srcfile}:$decimal.*" \
+    "frame in main"
+
+gdb_test "break func" "Breakpoint.*at.* file .*${srcfile}, line .*"
+
+gdb_test "continue" "Breakpoint.* func \\(arg=-1\\).*" \
+    "continue to func"
+
+gdb_test "frame" "#0 *func \\(arg=-1\\) at \[^\r\n\]+${srcfile}:$decimal.*" \
+    "frame in func"

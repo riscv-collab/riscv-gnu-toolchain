@@ -1,0 +1,284 @@
+# Copyright (C) 2011-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It tests the mechanism
+# exposing values to Python.
+
+require allow_shlib_tests allow_python_tests
+
+load_lib gdb-python.exp
+
+set libfile "py-events-shlib"
+set libsrc  $srcdir/$subdir/$libfile.c
+set lib_sl  [standard_output_file $libfile-nodebug.so]
+set lib_opts ""
+
+standard_testfile
+set exec_opts [list debug shlib=$lib_sl]
+
+if { [gdb_compile_shlib $libsrc $lib_sl $lib_opts] != ""
+     || [gdb_compile $srcdir/$subdir/$srcfile $binfile executable $exec_opts] != ""} {
+    untested "failed to compile"
+    return -1
+}
+
+# Start with a fresh gdb.
+clean_restart ${testfile}
+
+#
+# Test FinishBreakpoint in normal conditions
+#
+
+with_test_prefix "normal conditions" {
+    clean_restart ${testfile}
+    gdb_load_shlib ${lib_sl}
+
+    if {![runto_main]} {
+	return 0
+    }
+
+    set python_file [gdb_remote_download host \
+			 ${srcdir}/${subdir}/${testfile}.py]
+
+    gdb_test_no_output "set confirm off" "disable confirmation"
+    gdb_test "source $python_file" "Python script imported.*" \
+	"import python scripts"
+    gdb_breakpoint "increase_1"
+    gdb_test "continue" "Breakpoint .*at.*" "continue to the function to finish"
+
+    # set FinishBreakpoint
+
+    gdb_test "python finishbp_default = gdb.FinishBreakpoint ()" \
+	"Temporary breakpoint.*" "set FinishBreakpoint with default frame value"
+    gdb_test "python finishbp = MyFinishBreakpoint (gdb.parse_and_eval ('a'), gdb.newest_frame ())" \
+	"Temporary breakpoint.*" "set FinishBreakpoint"
+    gdb_test "python print (finishbp.return_value)" "None.*" \
+	"check return_value at init"
+
+    # check normal bp hit
+
+    gdb_test "continue" "MyFinishBreakpoint stop with.*return_value is: -5.*#0.*increase.*" \
+	"check MyFinishBreakpoint hit"
+    gdb_test "python print (finishbp.return_value)" "-5.*" "check return_value"
+
+    gdb_test "python print (finishbp_default.hit_count)" "1.*" "check finishBP on default frame has been hit"
+    gdb_test "python print (finishbp.is_valid())" "False.*"\
+	"ensure that finish bp is invalid afer normal hit"
+
+    # check FinishBreakpoint in main no allowed
+
+    gdb_test "finish" "main.*" "return to main()"
+    gdb_test "python MyFinishBreakpoint (None, gdb.selected_frame ())" \
+	"ValueError: \"FinishBreakpoint\" not meaningful in the outermost frame..*" \
+	"check FinishBP not allowed in main"
+}
+
+#
+# Test FinishBreakpoint returning to an inlined function
+#
+
+with_test_prefix "return to inlined function" {
+    clean_restart ${testfile}
+    gdb_load_shlib ${lib_sl}
+
+    gdb_test "source $python_file" "Python script imported.*" \
+	"import python scripts"
+
+    if {![runto_main]} {
+	return 0
+    }
+
+    gdb_breakpoint "increase_2"
+    gdb_test "continue" "Breakpoint .*at.*" "continue to the function to finish"
+
+    gdb_test "python finishbp_inline = MyFinishBreakpoint (gdb.parse_and_eval ('a'), gdb.newest_frame ())" \
+	"Temporary breakpoint.*" "set FinishBreakpoint returning to inlined frame"
+    gdb_test "continue" "MyFinishBreakpoint stop with.*return_value is: -8.*#0.*increase_inlined.*" \
+	"check MyFinishBreakpoint hit"
+    gdb_test "python print (finishbp_inline.return_value)" "-8.*" "check return_value"
+}
+
+#
+# Test FinishBreakpoint with no debug symbol 
+#
+
+with_test_prefix "no debug symbol" {
+    clean_restart ${testfile}
+    gdb_load_shlib ${lib_sl}
+
+    gdb_test "source $python_file" "Python script imported.*" \
+	"import python scripts"
+    set cond_line [gdb_get_line_number "Condition Break."]
+
+    if {![runto_main]} {
+	return 0
+    }
+
+    gdb_test "print do_nothing" "no debug info.*" "ensure that shared lib has no debug info"
+    gdb_breakpoint "do_nothing" {temporary}
+    gdb_test "continue" "Temporary breakpoint .*in \\.?do_nothing.*" \
+	"continue to do_nothing"
+
+    gdb_test "python finishBP = SimpleFinishBreakpoint(gdb.newest_frame())" \
+	"SimpleFinishBreakpoint init" \
+	"set finish breakpoint for no debug symbol test"
+    gdb_test "continue" "SimpleFinishBreakpoint stop.*" "check FinishBreakpoint hit"
+    gdb_test "python print (finishBP.return_value)" "None" "check return value"
+}
+
+#
+# Test FinishBreakpoint in function returned by longjmp 
+#
+
+with_test_prefix "function returned by longjump" {
+    clean_restart ${testfile}
+    gdb_load_shlib ${lib_sl}
+
+    gdb_test "source $python_file" "Python script imported.*" \
+	"import python scripts"
+
+    if {![runto call_longjmp_1]} {
+	return
+    }
+
+    gdb_test "python finishbp = SimpleFinishBreakpoint(gdb.newest_frame())" \
+	"SimpleFinishBreakpoint init" \
+	"set finish breakpoint for longjmp test"
+    gdb_test "break [gdb_get_line_number "after longjmp."]" "Breakpoint.* at .*" \
+	"set BP after the jump"
+    gdb_test "continue" "SimpleFinishBreakpoint out of scope.*" \
+	"check FinishBP out of scope notification"
+    gdb_test "python print (finishbp.is_valid())" "False.*"\
+	"ensure that finish bp is invalid after out of scope notification"
+}
+
+#
+# Test FinishBreakpoint in BP condition evaluation 
+# (finish in dummy frame)
+#
+
+with_test_prefix "finish in dummy frame" {
+    clean_restart ${testfile}
+    gdb_load_shlib ${lib_sl}
+
+    gdb_test "source $python_file" "Python script imported.*" \
+	"import python scripts"
+
+
+    if {![runto_main]} {
+	return 0
+    }
+
+    gdb_test "break ${cond_line} if test_1(i,8)" "Breakpoint .* at .*" \
+	"set a conditional BP"
+    gdb_test "python TestBreakpoint()" "TestBreakpoint init" \
+	"set FinishBP in a breakpoint condition"
+    gdb_test "continue" \
+	"\"FinishBreakpoint\" cannot be set on a dummy frame.*" \
+	"don't allow FinishBreakpoint on dummy frames"
+    gdb_test "print i" "8" \
+	"check stopped location"
+}
+
+#
+# Test FinishBreakpoint in BP condition evaluation 
+# (finish in normal frame)
+#
+
+with_test_prefix "finish in normal frame" {
+    clean_restart ${testfile}
+    gdb_load_shlib ${lib_sl}
+
+    gdb_test "source $python_file" "Python script imported.*" \
+	"import python scripts"
+
+    if {![runto_main]} {
+	return 0
+    }
+
+    gdb_test "break ${cond_line} if test(i,8)" \
+	"Breakpoint .* at .*" "set conditional BP"
+    gdb_test "python TestBreakpoint()" "TestBreakpoint init" "set BP in condition"
+
+    gdb_test "continue" \
+	"test don't stop: 1.*test don't stop: 2.*test stop.*Error in testing condition for breakpoint ${::decimal}.*The program being debugged stopped while in a function called from GDB.*" \
+	"stop in condition function"
+
+    gdb_test "continue" "Continuing.*" "finish condition evaluation"
+    gdb_test "continue" "Breakpoint.*" "stop at conditional breakpoint"
+    gdb_test "print i" "8" \
+	"check stopped location"
+}
+
+#
+# Test FinishBreakpoint in explicit inferior function call
+#
+
+with_test_prefix "explicit inferior function call" {
+    clean_restart ${testfile}
+    gdb_load_shlib ${lib_sl}
+
+    gdb_test "source $python_file" "Python script imported.*" \
+	"import python scripts"
+
+    if {![runto_main]} {
+	return 0
+    }
+
+    # return address in dummy frame
+
+    gdb_test "python TestExplicitBreakpoint('increase_1')" "Breakpoint.*at.*" \
+	"prepare TestExplicitBreakpoint, return addr in dummy frame"
+    gdb_test "print increase_1(&i)" \
+	"\"FinishBreakpoint\" cannot be set on a dummy frame.*" \
+	"don't allow FinishBreakpoint on dummy frames, return address in dummy frame"
+
+    # return address in normal frame
+
+    delete_breakpoints
+    gdb_test "python TestExplicitBreakpoint(\"increase_1\")" "Breakpoint.*at.*" \
+	"prepare TestExplicitBreakpoint, return addr in normal frame"
+    gdb_test "print increase(&i)" \
+	"SimpleFinishBreakpoint init.*SimpleFinishBreakpoint stop.*The program being debugged stopped while in a function called from GDB.*" \
+	"FinishBP stop"
+}
+
+#
+# Test FinishBreakpoint when inferior exits
+#
+
+with_test_prefix "inferior exit" {
+    if {![runto "test_exec_exit"]} {
+	return 0
+    }
+
+    gdb_test_no_output "set var self_exec = 0" "switch to exit() test"
+    gdb_test "python SimpleFinishBreakpoint(gdb.newest_frame())" "SimpleFinishBreakpoint init" "set FinishBP after the exit()"
+    gdb_test "continue" "SimpleFinishBreakpoint out of scope.*" "catch out of scope after exit"
+}
+
+#
+# Test FinishBreakpoint when inferior execs
+#
+
+with_test_prefix "inferior exec" {
+    if {![runto "test_exec_exit"]} {
+	return 0
+    }
+
+    gdb_test "python SimpleFinishBreakpoint(gdb.newest_frame())" "SimpleFinishBreakpoint init" "set FinishBP after the exec"
+    gdb_test "catch exec" "Catchpoint.*\(exec\).*"
+    gdb_test "continue" "SimpleFinishBreakpoint out of scope.*" "catch out of scope after exec"
+}

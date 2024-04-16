@@ -1,0 +1,100 @@
+# Copyright (C) 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# On decr_pc_after_break targets, GDB used to adjust the PC
+# incorrectly if a background single-step stopped somewhere where
+# PC-$decr_pc had a breakpoint, and the thread was not the current
+# thread, like:
+#
+#   ADDR1 nop <-- breakpoint here
+#   ADDR2 jmp PC
+#
+#  IOW, say thread A is stepping ADDR2's line in the background (an
+#  infinite loop), and the user switches focus to thread B.  GDB's
+#  adjust_pc_after_break logic would confuse the single-step stop of
+#  thread A for a hit of the breakpoint at ADDR1, and thus adjust
+#  thread A's PC to point at ADDR1 when it should not: the thread had
+#  been single-stepped, not continued.
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile {debug pthreads}] == -1} {
+    return -1
+}
+
+if ![runto_main] {
+    return
+}
+
+# Make sure it's GDB's decr_pc logic that's being tested, not the
+# target's.
+gdb_test_no_output "set range-stepping off"
+
+delete_breakpoints
+
+gdb_breakpoint [gdb_get_line_number "set breakpoint here"]
+gdb_continue_to_breakpoint "run to nop breakpoint"
+gdb_test "info threads" "  1 .*\\\* 2 .*" "info threads shows all threads"
+
+gdb_test "next" "while.*" "next over nop"
+
+gdb_test_no_output "next&" "next& over inf loop"
+
+set test "switch to main thread"
+gdb_test_multiple "thread 1" $test {
+    -re "Cannot execute this command while the target is running.*$gdb_prompt $" {
+	
+	# With remote targets, we can't send any other remote packet
+	# until the target stops.  Switching thread wants to ask the
+	# remote side whether the thread is alive.
+	unsupported $gdb_test_name
+
+	# Interrupt running target to allow subsequent "monitor exit" to
+	# succeed.
+	gdb_test_multiple interrupt "" {
+	    -re -wrap "" {
+		exp_continue
+	    }
+	    -re "received signal SIGINT, Interrupt\\.\r\n.*" {
+		pass $gdb_test_name
+	    }
+	}
+	return
+    }
+    -re "Switching to thread 1.*\\(running\\)\r\n$gdb_prompt " {
+	# Prefer to match the prompt without an anchor.  If there's a
+	# bug and output comes after the prompt immediately, it's
+	# faster to handle that in the following test, instead of
+	# waiting for a timeout here.
+	pass $test
+    }
+}
+
+# Wait a bit.  Use gdb_expect instead of sleep so that any (bad) GDB
+# output is visible in the log.
+gdb_expect 4 {}
+
+set test "no output while stepping"
+gdb_test_multiple "" $test {
+    -timeout 1
+    timeout {
+	pass $test
+    }
+    -re "." {
+	# If we see any output, it's a failure.  On the original bug,
+	# this would be a breakpoint hit.
+	fail $test
+    }
+}

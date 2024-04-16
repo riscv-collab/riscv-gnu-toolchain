@@ -1,0 +1,129 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check that watchpoints get propagated to all existing threads when the
+# watchpoint is created.
+
+set NR_THREADS 4
+set X_INCR_COUNT 10
+
+
+# This test verifies that a watchpoint is detected in the proper thread
+# so the test is only meaningful on a system with hardware watchpoints.
+require allow_hw_watchpoint_tests
+
+standard_testfile
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable [list debug "additional_flags=-DNR_THREADS=$NR_THREADS -DX_INCR_COUNT=$X_INCR_COUNT"]] != "" } {
+    return -1
+}
+
+clean_restart ${binfile}
+
+gdb_test_no_output "set can-use-hw-watchpoints 1" ""
+
+#
+# Run to `main' where we begin our tests.
+#
+
+if {![runto_main]} {
+    return 0
+}
+
+gdb_test "break thread_started" \
+         "Breakpoint 2 at .*: file .*${srcfile}, line .*" \
+         "breakpoint on thread_started"
+
+# Run the program until all threads have hit thread_started.
+# We use this as the vehicle to determine when gdb is aware
+# of all threads (i.e. "info threads" would show all threads).
+
+set nr_started 0
+set message "run to thread_started"
+for { set i 0 } { $i < $NR_THREADS } { incr i } {
+    gdb_test_multiple "continue" $message {
+	-re ".*Breakpoint 2, thread_started ().*$gdb_prompt $" {
+	    incr nr_started
+	}
+	timeout {
+	    set i $NR_THREADS
+	}
+    }
+}
+if { $nr_started == $NR_THREADS } {
+    pass "all threads started"
+} else {
+    fail "all threads started"
+    # No point in continuing.
+    return -1
+}
+
+# Check that multiple uses of the 'thread' keyword will give an error.
+gdb_test "watch x thread 1 thread 2" "You can specify only one thread\\."
+
+# Watch X, it will be modified by all threads.
+# We want this watchpoint to be set *after* all threads are running.
+gdb_test "watch x" "Hardware watchpoint 3: x"
+
+# Now that the watchpoint is set, we can let the threads increment X.
+gdb_test_no_output "set var test_ready = 1"
+
+# While debugging.
+#gdb_test_no_output "set debug infrun 1"
+
+set x_inc_line [gdb_get_line_number "X increment"]
+set x_thread_loc "thread_function \\\(arg=.*\\\) at .*watchthreads.c:$x_inc_line"
+
+# X is incremented under a mutex, so we should get NR_THREADS * X_INCR_COUNT
+# hits.
+set limit [expr $NR_THREADS*$X_INCR_COUNT]
+set x_count 0
+set done 0
+
+set message "x watch loop"
+
+for {set i 0} {!$done && $i < $limit} {incr i} {
+    set test_flag 0
+
+    gdb_test_multiple "continue" $message {
+	-re "(.*Hardware watchpoint.*)$gdb_prompt $" {
+	    set string $expect_out(1,string)
+
+	    if [regexp "Hardware watchpoint 3: x\[^\r\]*\r\[^\r\]*\r\[^\r\]*Old value = $x_count\[^\r\]*\r\[^\r\]*New value = [expr $x_count+1]\r" $string] {
+		incr x_count
+		set test_flag 1
+	    } else {
+		# We test for new value = old value + 1 each iteration.
+		# This can fail due to gdb/10116.
+		# This is caught after the loop exits.
+	    }
+	}
+	-re "The program is not being run.*$gdb_prompt $" {
+	    fail "$message (program terminated)"
+	}
+    }
+
+    # If we fail above, don't bother continuing loop.
+    if { $test_flag == 0 } {
+	set done 1
+    }
+}
+
+if { $i == $limit } {
+    pass "all threads incremented x"
+} else {
+    kfail "gdb/10116" "gdb can drop watchpoints in multithreaded app"
+}

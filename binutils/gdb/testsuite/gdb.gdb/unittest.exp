@@ -1,0 +1,141 @@
+# Copyright 2016-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Do not run if gdb debug is enabled as maintenance output will be
+# redirected to the log files.
+require !gdb_debug_enabled
+
+load_lib completion-support.exp
+
+set do_xml_test [allow_xml_test]
+
+standard_testfile
+
+if {[build_executable "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+proc run_selftests_1 {} {
+    global decimal gdb_prompt
+
+    set enabled 1
+    set num_ran 0
+
+    set test "maintenance selftest"
+    gdb_test_multiple $test $test {
+	-re ".*Running selftest \[^\n\r\]+\." {
+	    # The selftests can take some time to complete.  To prevent
+	    # timeout spot the 'Running ...' lines going past, so long as
+	    # these are produced quickly enough then the overall test will
+	    # not timeout.
+	    exp_continue
+	}
+	-re "Ran ($decimal) unit tests, ($decimal) failed\r\n$gdb_prompt $" {
+	    set num_ran $expect_out(1,string)
+	    set num_failed $expect_out(2,string)
+	    gdb_assert "$num_ran > 0" "$test, ran some tests"
+	    gdb_assert "$num_failed == 0" "$test, failed none"
+	}
+	-re "Selftests have been disabled for this build.\r\n$gdb_prompt $" {
+	    unsupported $test
+	    set num_ran 0
+	    set enabled 0
+	}
+    }
+
+    return [list $enabled $num_ran]
+}
+
+proc run_selftests { binfile } {
+    if { $binfile == "" } {
+	gdb_exit
+	gdb_start
+    } else {
+	clean_restart ${binfile}
+    }
+
+    if { [is_remote host] } {
+	return [run_selftests_1]
+    } else {
+	# Some of the selftests create temporary files in GDB's current
+	# directory.  So, while running the selftests, switch to the
+	# test's output directory to avoid leaving clutter in the
+	# gdb/testsuite root directory.
+	set dir [standard_output_file ""]
+	with_gdb_cwd $dir {
+	    return [run_selftests_1]
+	}
+    }
+}
+
+# Test completion of command "maintenance selftest".
+
+proc_with_prefix test_completion {} {
+    global self_tests_enabled
+
+    clean_restart
+
+    if { ![readline_is_used] } {
+	return
+    }
+
+    if { $self_tests_enabled } {
+	test_gdb_complete_tab_multiple "maintenance selftest copy" "_" \
+	    {copy_bitwise copy_integer_to_size}
+	test_gdb_complete_tab_unique "maintenance selftest copy_bit" \
+	    "maintenance selftest copy_bitwise" " "
+    } else {
+	test_gdb_complete_tab_none "maintenance selftest copy_"
+	test_gdb_complete_tab_none "maintenance selftest copy_bit"
+    }
+    test_gdb_complete_tab_unique "maintenance selftest -ver" "maintenance selftest -verbose" " "
+    test_gdb_complete_tab_none "maintenance selftest name_that_does_not_exist"
+}
+
+with_test_prefix "no executable loaded" {
+    set res [run_selftests ""]
+    set self_tests_enabled [lindex $res 0]
+    set num_ran [lindex $res 1]
+}
+
+if { $self_tests_enabled && ![is_remote host] } {
+    # Check that we have the same amount of selftests whatever the
+    # initialization order of GDB.
+    with_test_prefix "reversed initialization" {
+	save_vars { env(GDB_REVERSE_INIT_FUNCTIONS) } {
+	    if [info exists env(GDB_REVERSE_INIT_FUNCTIONS)] {
+		unset env(GDB_REVERSE_INIT_FUNCTIONS)
+	    } else {
+		set env(GDB_REVERSE_INIT_FUNCTIONS) 1
+	    }
+
+	    set res [run_selftests ""]
+	    gdb_assert "$num_ran == [lindex $res 1]" \
+		"selftest not dependent on initialization order"
+	}
+    }
+}
+
+with_test_prefix "executable loaded" {
+    run_selftests ${binfile}
+}
+
+test_completion
+
+if { ![is_remote host] && $do_xml_test } {
+    gdb_test "maintenance check xml-descriptions ${srcdir}/../features" \
+	"Tested $decimal XML files, 0 failed" \
+	"maintenance check xml-descriptions \${srcdir}/../features"
+}

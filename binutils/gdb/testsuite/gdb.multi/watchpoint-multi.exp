@@ -1,0 +1,88 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile
+set executable ${testfile}
+
+# Multiple inferiors are needed, therefore both native and extended gdbserver
+# modes are supported.  Only non-extended gdbserver is not supported.
+require !use_gdb_stub
+
+# Do not use simple hardware watchpoints ("watch") as its false hit may be
+# unnoticed by GDB if it reads it still has the same value.
+require allow_hw_watchpoint_access_tests
+
+if { [gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+clean_restart $executable
+
+# Simulate non-stop which also uses breakpoint always-inserted.
+gdb_test_no_output "set breakpoint always-inserted on"
+# displaced-stepping is also needed as other GDB sometimes still removes the
+# breakpoints, even with always-inserted on.
+# Without the support this test just is not as thorough as it could be.
+if [support_displaced_stepping] {
+    gdb_test_no_output "set displaced-stepping on"
+}
+
+# Debugging of this testcase:
+#gdb_test_no_output "maintenance set show-debug-regs on"
+#gdb_test_no_output "set debug infrun 1"
+
+gdb_breakpoint main {temporary}
+gdb_test "run" "Temporary breakpoint.* main .*" "start to main inferior 1"
+
+gdb_test "add-inferior" "Added inferior 2 on connection .*" "add inferior 2"
+gdb_test "inferior 2" "witching to inferior 2 .*" "switch to inferior 2, first time"
+gdb_load $binfile
+
+gdb_breakpoint main {temporary}
+gdb_test "run" "Temporary breakpoint.* main .*" "start to main inferior 2"
+
+gdb_test "awatch c" \
+    "Hardware access \\(read/write\\) watchpoint \[0-9\]+: c" \
+    "awatch c on inferior 2"
+
+gdb_breakpoint "marker_exit"
+
+gdb_test "inferior 1" "witching to inferior 1 .*" "switch back to inferior 1"
+
+if {![allow_hw_watchpoint_multi_tests]} {
+    # On single hardware watchpoint at least test the watchpoint in inferior
+    # 2 is not hit.
+} else {
+    gdb_test "awatch b" \
+	"Hardware access \\(read/write\\) watchpoint \[0-9\]+: b" \
+	"awatch b on inferior 1"
+
+    gdb_test "inferior 2" "witching to inferior 2 .*" "switch to inferior 2 again"
+
+    # FAIL would be a hit on watchpoint for `b' - that one is for the other
+    # inferior.
+    gdb_test "continue" \
+	"Hardware access \\(read/write\\) watchpoint \[0-9\]+: c\r\n\r\nOld value = 0\r\nNew value = 3\r\n.*" \
+	"catch c on inferior 2"
+
+    gdb_test "continue" "Breakpoint $bkptno_numopt_re, marker_exit .*" "catch marker_exit in inferior 2"
+
+    gdb_test "inferior 1" "witching to inferior 1 .*" "switch back to inferior 1 again"
+
+    gdb_test "continue" "Hardware access \\(read/write\\) watchpoint \[0-9\]+: b\r\n\r\nOld value = 0\r\nNew value = 2\r\n.*" "catch b on inferior 1"
+}
+
+gdb_test "continue" "Breakpoint $bkptno_numopt_re, marker_exit .*" "catch marker_exit in inferior 1"

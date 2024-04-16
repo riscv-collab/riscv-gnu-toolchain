@@ -1,0 +1,429 @@
+#   Copyright 1997-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Various tests of gdb's ability to follow the parent or child of a
+# Unix vfork system call.  A vfork parent is blocked until the child
+# either execs or exits --- since those events take somewhat different
+# code paths in GDB, both variants are exercised.
+
+# Until "set follow-fork-mode" and "catch vfork" are implemented on
+# other targets...
+#
+if {![istarget "*-linux*"]} {
+    continue
+}
+
+standard_testfile .c -exit.c vforked-prog.c
+
+set binfile $testfile
+set binfile2 ${testfile}-exit
+set binfile3 vforked-prog
+
+if {[build_executable "compile $binfile" $binfile $srcfile] == -1} {
+    untested "failed to compile first test binary"
+    return -1
+}
+
+if {[build_executable "compile $binfile2" $binfile2 $srcfile2] == -1} {
+    untested "failed to compile second test binary"
+    return -1
+}
+
+if {[build_executable "compile $binfile3" $binfile3 $srcfile3] == -1} {
+    untested "failed to compile third test binary"
+    return -1
+}
+
+# If required, download the program that we exec after vfork to the
+# remote target.
+if { [is_remote target] } {
+    gdb_remote_download target [standard_output_file $binfile3]
+}
+
+# Start with a fresh GDB, with verbosity enabled, and run to main.  On
+# error, behave as "return", so we don't try to continue testing with
+# a borked session.
+proc setup_gdb { binfile srcfile } {
+    clean_restart $binfile
+
+    if ![runto_main] {
+	return -code return
+    }
+
+    gdb_breakpoint [gdb_get_line_number " VFORK " $srcfile] temporary
+    gdb_continue_to_breakpoint "at VFORK"
+}
+
+proc check_vfork_catchpoints {} {
+  # Because setup_gdb uses 'return -code return' which would return to
+  # our caller we need to wrap this call, spot when setup_gdb failed
+  # (with return code 2), and then issue our own 'return -code return'.
+  set code [catch {setup_gdb $::binfile $::srcfile} string]
+  if { $code == 2 } {
+    unsupported "vfork catchpoints"
+    return -code return
+  }
+
+  # Verify that the system supports "catch vfork".
+  gdb_test "catch vfork" "Catchpoint \[0-9\]* \\(vfork\\)" "insert first vfork catchpoint"
+  set has_vfork_catchpoints 0
+  gdb_test_multiple "continue" "continue to first vfork catchpoint" {
+    -re -wrap ".*Your system does not support this type\r\nof catchpoint.*" {
+      unsupported "continue to first vfork catchpoint"
+    }
+    -re -wrap ".*Catchpoint.*" {
+      set has_vfork_catchpoints 1
+      pass "continue to first vfork catchpoint"
+    }
+  }
+
+  if {$has_vfork_catchpoints == 0} {
+    unsupported "vfork catchpoints"
+    return -code return
+  }
+}
+
+proc_with_prefix vfork_parent_follow_through_step { binfile srcfile } {
+    setup_gdb $binfile $srcfile
+
+    gdb_test_no_output "set follow-fork parent"
+
+    gdb_test_multiple "next" "" {
+	-re -wrap "\\\[Detaching after vfork from.*if \\(pid == 0\\).*" {
+	    pass $gdb_test_name
+	}
+    }
+}
+
+proc_with_prefix vfork_parent_follow_to_bp { binfile srcfile } {
+    setup_gdb $binfile $srcfile
+
+    gdb_test_no_output "set follow-fork parent"
+
+    set bp_location \
+	[gdb_get_line_number "I'm the proud parent of child" $srcfile]
+    gdb_test "break ${srcfile}:${bp_location}" ".*" "break, vfork to bp"
+
+    gdb_test_multiple "continue" "continue to bp" {
+	-re -wrap ".*\\\[Detaching after vfork from child process.*Breakpoint.*${bp_location}.*" {
+	    pass $gdb_test_name
+	}
+    }
+}
+
+proc_with_prefix vfork_child_follow_to_exit { binfile srcfile } {
+    setup_gdb $binfile $srcfile
+
+    gdb_test_no_output "set follow-fork child"
+
+    gdb_test_multiple "continue" "continue to child exit" {
+	-re -wrap "Couldn't get registers.*" {
+	    kfail $gdb_test_name "gdb/14766"
+	}
+	-re -wrap "\\\[Attaching after.* vfork to.*\\\[Detaching vfork parent .* after child exit.*" {
+	    pass $gdb_test_name
+	}
+    }
+}
+
+proc_with_prefix vfork_and_exec_child_follow_to_main_bp { binfile srcfile } {
+    setup_gdb $binfile $srcfile
+
+    gdb_test_no_output "set follow-fork child"
+
+    set linenum [gdb_get_line_number "Hello from vforked-prog" ${::srcfile3}]
+
+    gdb_test_multiple "continue" "continue to bp" {
+	-re -wrap "\\\[Attaching after.* vfork to.*\\\[Detaching vfork parent.*xecuting new program.*Breakpoint.*vforked-prog.c:${linenum}.*" {
+	    pass $gdb_test_name
+	}
+    }
+}
+
+proc_with_prefix vfork_and_exec_child_follow_through_step { binfile srcfile } {
+    setup_gdb $binfile $srcfile
+
+    gdb_test_no_output "set follow-fork child"
+
+    # The ideal support is to be able to debug the child even
+    # before it execs.  Thus, "next" lands on the next line after
+    # the vfork.
+    gdb_test_multiple "next" "next over vfork" {
+	-re -wrap "\\\[Attaching after .* vfork to child.*if \\(pid == 0\\).*" {
+	    pass $gdb_test_name
+	}
+    }
+}
+
+proc continue_to_vfork {} {
+    # A vfork catchpoint may stop in either "vfork" or "_vfork".
+    gdb_test_multiple "continue" "continue to vfork" {
+	-re -wrap "vfork \\(\\) at .*" {
+	    pass $gdb_test_name
+	}
+	-re -wrap "0x\[0-9a-fA-F\]*.*(vfork|__kernel_v?syscall).*" {
+	    pass $gdb_test_name
+	}
+    }
+}
+
+proc_with_prefix tcatch_vfork_then_parent_follow { binfile srcfile } {
+    setup_gdb $binfile $srcfile
+
+    gdb_test_no_output "set follow-fork parent"
+
+    gdb_test "tcatch vfork" "Catchpoint .*(vfork).*"
+
+    continue_to_vfork
+
+    set linenum [gdb_get_line_number "pid = vfork ();" $srcfile]
+    gdb_test_multiple "finish" "" {
+	-re -wrap "Run till exit from.*vfork.*0x\[0-9a-fA-F\]* in main .* at .*${srcfile}:${linenum}.*" {
+	    pass $gdb_test_name
+	}
+	-re -wrap "Run till exit from.*__kernel_v?syscall.*0x\[0-9a-fA-F\]* in vfork .*" {
+	    send_gdb "finish\n"
+	    exp_continue
+	}
+    }
+}
+
+proc_with_prefix tcatch_vfork_then_child_follow_exec { binfile srcfile } {
+    setup_gdb $binfile $srcfile
+
+    gdb_test_no_output "set follow-fork child"
+
+    gdb_test "tcatch vfork" "Catchpoint .*(vfork).*"
+
+    continue_to_vfork
+
+    set linenum1 [gdb_get_line_number "pid = vfork ();" $srcfile]
+    set linenum2 [gdb_get_line_number "Hello from vforked-prog" ${::srcfile3}]
+
+    gdb_test_multiple "finish" "" {
+	-re -wrap "Run till exit from.*vfork.*${srcfile}:${linenum1}.*" {
+	  pass $gdb_test_name
+	}
+	-re -wrap "Run till exit from.*__kernel_v?syscall.*0x\[0-9a-fA-F\]* in vfork .*" {
+	    send_gdb "finish\n"
+	    exp_continue
+	}
+	-re -wrap "Run till exit from.*vfork.*${::srcfile3}:${linenum2}.*" {
+	    pass "$gdb_test_name (followed exec)"
+	}
+    }
+}
+
+proc tcatch_vfork_then_child_follow_exit { binfile srcfile } {
+   setup_gdb $binfile $srcfile
+
+    gdb_test_no_output "set follow-fork child"
+
+    gdb_test "tcatch vfork" "Catchpoint .*(vfork).*"
+
+    continue_to_vfork
+
+    gdb_test_multiple "finish" "" {
+	-re -wrap "Run till exit from.*vfork.*exited normally.*" {
+	    setup_kfail "gdb/14762" *-*-*
+	    fail $gdb_test_name
+	}
+	-re -wrap "Run till exit from.*vfork.*pid = vfork \\(\\).*" {
+	  pass $gdb_test_name
+	}
+	-re -wrap "Run till exit from.*__kernel_v?syscall.*0x\[0-9a-fA-F\]* in vfork .*" {
+	    send_gdb "finish\n"
+	    exp_continue
+	}
+    }
+}
+
+proc_with_prefix vfork_relations_in_info_inferiors { variant binfile srcfile non_stop } {
+    setup_gdb $binfile $srcfile
+
+    gdb_test_no_output "set follow-fork child"
+
+    gdb_test_multiple "next" "next over vfork" {
+	-re -wrap "\\\[Attaching after .* vfork to child.*if \\(pid == 0\\).*" {
+	    pass $gdb_test_name
+	}
+    }
+
+    if { $non_stop } {
+	gdb_test "inferior 2" ".*"
+    }
+
+    gdb_test "info inferiors" \
+	".*is vfork parent of inferior 2.*is vfork child of inferior 1" \
+	"info inferiors shows vfork parent/child relation"
+
+    if { $variant == "exec" } {
+	set linenum [gdb_get_line_number "Hello from vforked-prog" ${::srcfile3}]
+	gdb_test_multiple "continue" "continue to bp" {
+	    -re -wrap ".*xecuting new program.*Breakpoint.*vforked-prog.c:${linenum}.*" {
+		pass $gdb_test_name
+	    }
+	}
+    } else {
+	gdb_continue_to_end "continue until exit" "continue" true
+    }
+
+    gdb_test_multiple "info inferiors" "vfork relation no longer appears in info inferiors" {
+	-re -wrap "is vfork child of inferior 1.*" {
+	   fail $gdb_test_name
+	}
+	-re -wrap "is vfork parent of inferior 2.*" {
+	    fail $gdb_test_name
+	}
+	-re -wrap "" {
+	    pass $gdb_test_name
+	}
+    }
+}
+
+proc do_vfork_and_follow_parent_tests { binfile srcfile } {
+   # Try following the parent process by stepping through a call to
+   # vfork.  Do this without catchpoints.
+   vfork_parent_follow_through_step $binfile $srcfile
+
+   # Try following the parent process by setting a breakpoint on the
+   # other side of a vfork, and running to that point.  Do this
+   # without catchpoints.
+   vfork_parent_follow_to_bp $binfile $srcfile
+
+   # Try catching a vfork, and stepping out to the parent.
+   #
+   tcatch_vfork_then_parent_follow $binfile $srcfile
+}
+
+proc do_vfork_and_follow_child_tests_exec { binfile srcfile non_stop } {
+   # Try following the child process by just continuing through the
+   # vfork, and letting the parent's breakpoint on "main" be auto-
+   # magically reset in the child.
+   #
+   vfork_and_exec_child_follow_to_main_bp $binfile $srcfile
+
+   # Try following the child process by stepping through a call to
+   # vfork.  The child also executes an exec.  Since the child cannot
+   # be debugged until after it has exec'd, and since there's a bp on
+   # "main" in the parent, and since the bp's for the parent are
+   # recomputed in the exec'd child, the step through a vfork should
+   # land us in the "main" for the exec'd child, too.
+   #
+   vfork_and_exec_child_follow_through_step $binfile $srcfile
+
+   # Try catching a vfork, and stepping out to the child.
+   #
+   tcatch_vfork_then_child_follow_exec $binfile $srcfile
+
+   # Test the ability to follow both child and parent of a vfork.  Do
+   # this without catchpoints.
+   # ??rehrauer: NYI.  Will add testpoints here when implemented.
+   #
+
+   # Test the ability to have the debugger ask the user at vfork-time
+   # whether to follow the parent, child or both.  Do this without
+   # catchpoints.
+   # ??rehrauer: NYI.  Will add testpoints here when implemented.
+   #
+
+   # Step over a vfork in the child, do "info inferiors" and check the
+   # parent/child relation is displayed.  Run the child over the exec,
+   # and confirm the relation is no longer displayed in "info
+   # inferiors".
+   #
+   vfork_relations_in_info_inferiors "exec" $binfile $srcfile $non_stop
+}
+
+proc do_vfork_and_follow_child_tests_exit { binfile srcfile non_stop } {
+   # Try following the child process by just continuing through the
+   # vfork, and letting the child exit.
+   #
+   vfork_child_follow_to_exit $binfile $srcfile
+
+   # Try catching a vfork, and stepping out to the child.
+   #
+   tcatch_vfork_then_child_follow_exit $binfile $srcfile
+
+   # Step over a vfork in the child, do "info inferiors" and check the
+   # parent/child relation is displayed.  Run the child to completion,
+   # and confirm the relation is no longer displayed in "info
+   # inferiors".
+   #
+   vfork_relations_in_info_inferiors "exit" $binfile $srcfile $non_stop
+}
+
+with_test_prefix "check vfork support" {
+    # Check that vfork catchpoints are supported, as an indicator for
+    # whether vfork-following is supported.
+    check_vfork_catchpoints
+}
+
+# Follow parent and follow child vfork tests with a child that execs.
+proc_with_prefix exec_tests { binfile srcfile non_stop } {
+    # These are tests of gdb's ability to follow the parent of a Unix
+    # vfork system call.  The child will subsequently call a variant
+    # of the Unix exec system call.
+    do_vfork_and_follow_parent_tests $binfile $srcfile
+
+    # These are tests of gdb's ability to follow the child of a Unix
+    # vfork system call.  The child will subsequently call a variant
+    # of a Unix exec system call.
+    #
+    do_vfork_and_follow_child_tests_exec $binfile $srcfile $non_stop
+}
+
+# Follow parent and follow child vfork tests with a child that exits.
+proc_with_prefix exit_tests { binfile srcfile non_stop } {
+    # These are tests of gdb's ability to follow the parent of a Unix
+    # vfork system call.  The child will subsequently exit.
+    do_vfork_and_follow_parent_tests $binfile $srcfile
+
+    # These are tests of gdb's ability to follow the child of a Unix
+    # vfork system call.  The child will subsequently exit.
+    #
+    do_vfork_and_follow_child_tests_exit $binfile $srcfile $non_stop
+}
+
+# Using the remote protocol with schedule-multiple turned triggers bug
+# gdb/30574, so avoid this for now.
+if {[target_info exists gdb_protocol]
+    && ([target_info gdb_protocol] == "remote"
+	|| [target_info gdb_protocol] == "extended-remote")} {
+    set sm_modes { off }
+} else {
+    set sm_modes { off on }
+}
+
+# A few of these tests require a little more time than the standard timeout
+# allows.
+with_timeout_factor 2 {
+    foreach_with_prefix target-non-stop {auto on off} {
+	foreach_with_prefix non-stop {off on} {
+	    foreach_with_prefix schedule-multiple $sm_modes {
+		save_vars { ::GDBFLAGS } {
+		    # These flags will be picked up by the call to
+		    # clean_restart inside setup_gdb.
+		    append ::GDBFLAGS " -ex \"maintenance set target-non-stop ${target-non-stop}\""
+		    append ::GDBFLAGS " -ex \"set non-stop ${non-stop}\""
+		    append ::GDBFLAGS " -ex \"set schedule-multiple ${schedule-multiple}\""
+
+		    exec_tests $binfile $srcfile ${non-stop}
+		    exit_tests $binfile2 $srcfile2 ${non-stop}
+		}
+	    }
+	}
+    }
+}

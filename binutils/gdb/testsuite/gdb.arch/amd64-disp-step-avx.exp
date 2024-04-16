@@ -1,0 +1,144 @@
+# Copyright 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the gdb testsuite.
+
+# Test displaced stepping over VEX-encoded RIP-relative AVX
+# instructions.
+
+require is_x86_64_m64_target have_avx
+
+standard_testfile .S
+
+set options [list debug nopie]
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile} $options] } {
+    return -1
+}
+
+# Get things started.
+
+gdb_test "set displaced-stepping on" ""
+gdb_test "show displaced-stepping" ".* displaced stepping .* is on.*"
+
+if {![runto_main]} {
+    return 0
+}
+
+# GDB picks a spare register from this list to hold the RIP-relative
+# address.
+set rip_regs { "rax" "rbx" "rcx" "rdx" "rbp" "rsi" "rdi" }
+
+# Assign VAL to all the RIP_REGS.
+
+proc set_regs { val } {
+    global gdb_prompt
+    global rip_regs
+
+    foreach reg ${rip_regs} {
+	gdb_test_no_output "set \$${reg} = ${val}"
+    }
+}
+
+# Verify all RIP_REGS print as HEX_VAL_RE in hex.
+
+proc verify_regs { hex_val_re } {
+    global rip_regs
+
+    foreach reg ${rip_regs} {
+	gdb_test "p /x \$${reg}" " = ${hex_val_re}" "${reg} expected value"
+    }
+}
+
+# Set a break at FUNC, which starts with a RIP-relative instruction
+# that we want to displaced-step over, and then continue over the
+# breakpoint, forcing a displaced-stepping sequence.
+
+proc disp_step_func { func } {
+    global srcfile
+
+    set test_start_label "${func}"
+    set test_end_label "${func}_end"
+
+    gdb_test "break ${test_start_label}" \
+	"Breakpoint.*at.* file .*$srcfile, line.*"
+    gdb_test "break ${test_end_label}" \
+	"Breakpoint.*at.* file .*$srcfile, line.*"
+
+    gdb_test "continue" \
+	"Continuing.*Breakpoint.*, ${test_start_label} ().*" \
+	"continue to ${test_start_label}"
+
+    # GDB picks a spare register to hold the RIP-relative address.
+    # Ensure the spare register value is restored properly (rax-rdi,
+    # sans rsp).
+    set value "0xdeadbeefd3adb33f"
+    set_regs $value
+
+    # Turn "debug displaced" on to make sure a displaced step is actually
+    # executed, not an inline step.
+    gdb_test_no_output "set debug displaced on"
+
+    gdb_test "continue" \
+	"Continuing.*prepared successfully .*Breakpoint.*, ${test_end_label} ().*" \
+	"continue to ${test_end_label}"
+
+    gdb_test_no_output "set debug displaced off"
+
+    verify_regs $value
+}
+
+# Test a VEX2-encoded RIP-relative instruction.
+with_test_prefix "vex2" {
+    # Initialize all XMM registers to 0.
+    for {set i 0 } { $i < 16 } { incr i } {
+	gdb_test_no_output "set \$xmm${i}.uint128 = 0" \
+	    "xmm${i} set to zero"
+    }
+
+    disp_step_func "test_rip_vex2"
+
+    # Confirm the instruction's expected side effects.  It should have
+    # modified xmm0.
+    gdb_test "p /x \$xmm0.uint128" " = 0x1122334455667788" \
+	"xmm0 has expected value after"
+
+    # And all of the other XMM register should still be 0.
+    for {set i 1 } { $i < 16 } { incr i } {
+	gdb_test "p /x \$xmm${i}.uint128" " = 0x0" \
+	    "xmm${i} has expected value after"
+    }
+}
+
+# Test a VEX3-encoded RIP-relative instruction.
+with_test_prefix "vex3" {
+    # This case writes to the 'var128' variable.  Confirm the
+    # variable's value is what we believe it is before the AVX
+    # instruction runs.
+    gdb_test "p /x (unsigned long long \[2\]) var128" \
+	" = \\{0xaa55aa55aa55aa55, 0x55aa55aa55aa55aa\\}" \
+	"var128 has expected value before"
+
+    # Run the AVX instruction.
+    disp_step_func "test_rip_vex3"
+
+    # Confirm the instruction's expected side effects.  It should have
+    # modifed the 'var128' variable.
+    gdb_test "p /x (unsigned long long \[2\]) var128" \
+	" = \\{0x1122334455667788, 0x0\\}" \
+	"var128 has expected value after"
+}
+
+# Done, run program to exit.
+gdb_continue_to_end "amd64-disp-step-avx"

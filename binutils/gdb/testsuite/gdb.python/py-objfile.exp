@@ -1,0 +1,175 @@
+# Copyright (C) 2011-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It tests the program space
+# support in Python.
+
+load_lib gdb-python.exp
+
+require allow_python_tests
+
+standard_testfile
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+    return -1
+}
+
+if {![runto_main]} {
+    return 0
+}
+
+set python_error_text "Error while executing Python code\\."
+
+gdb_py_test_silent_cmd "python sym = gdb.lookup_symbol(\"some_var\")" \
+    "Find a symbol in objfile" 1
+gdb_py_test_silent_cmd "python objfile = sym\[0\].symtab.objfile" \
+    "Get backing object file" 1
+
+gdb_test "python print (objfile.filename)" "${testfile}" \
+  "Get objfile file name"
+
+gdb_test "python print (objfile.username)" "${testfile}" \
+  "Get objfile user name"
+
+gdb_test "python print (objfile)" \
+    "<gdb.Objfile filename=.*${testfile}.*>"
+
+gdb_test_no_output "python dir(objfile)"
+
+gdb_test "python print (gdb.lookup_objfile (\"${testfile}\").filename)" \
+    "${testfile}" "print lookup_objfile filename"
+gdb_test "python print (gdb.lookup_objfile (\"junk\"))" \
+    "Objfile not found\\.\r\n${python_error_text}"
+
+gdb_test "python print (gdb.lookup_objfile (\"${testfile}\").lookup_global_symbol (\"global_var\").name)" \
+    "global_var" "lookup_global_symbol finds a valid symbol"
+gdb_test "python print (gdb.lookup_objfile (\"${testfile}\").lookup_global_symbol (\"static_var\") is None)" \
+    "True" "lookup_global_symbol does not find static symbol"
+gdb_test "python print (gdb.lookup_objfile (\"${testfile}\").lookup_global_symbol (\"stdout\"))" \
+    "None" "lookup_global_symbol doesn't find symbol in other objfile"
+
+gdb_test "python print (gdb.lookup_objfile (\"${testfile}\").lookup_static_symbol (\"static_var\").name)" \
+    "static_var" "lookup_static_symbol finds a valid symbol"
+gdb_test "python print (gdb.lookup_objfile (\"${testfile}\").lookup_static_symbol (\"global_var\") is None)" \
+    "True" "lookup_static_symbol does not find global symbol"
+gdb_test "python print (gdb.lookup_objfile (\"${testfile}\").lookup_static_symbol (\"nonexistent\"))" \
+    "None" "lookup_static_symbol can handle nonexistent symbol"
+
+set binfile_build_id [get_build_id $binfile]
+if [string compare $binfile_build_id ""] {
+    verbose -log "binfile_build_id = $binfile_build_id"
+    gdb_test "python print (objfile.build_id)" "$binfile_build_id" \
+    "Get objfile build id"
+    gdb_test "python print (gdb.lookup_objfile (\"$binfile_build_id\", by_build_id=True).filename)" \
+	"${testfile}" "print lookup_objfile filename by build-id"
+} else {
+    unsupported "build-id is not supported by the compiler"
+}
+
+# Other lookup_objfile_by_build_id tests we can do, even if compiler doesn't
+# support them.
+gdb_test "python print (gdb.lookup_objfile (\"foo\", by_build_id=True))" \
+    "Not a valid build id\\.\r\n${python_error_text}" \
+    "print invalid file lookup_objfile by build-id"
+gdb_test "python print (gdb.lookup_objfile (\"1234abcdef\", by_build_id=True))" \
+    "Objfile not found\\.\r\n${python_error_text}" \
+    "print invalid file lookup_objfile by build-id 2"
+
+gdb_test "python print (objfile.progspace)" "<gdb\.Progspace object at .*>" \
+  "Get objfile program space"
+gdb_test "python print (objfile.is_valid())" "True" \
+  "Get objfile validity"
+
+gdb_unload "unload 1"
+
+gdb_test "python print (objfile.is_valid())" "False" \
+  "Get objfile validity after unload"
+
+gdb_py_test_silent_cmd "python objfile.random_attribute = 42" \
+    "Set random attribute in objfile" 1
+gdb_test "python print (objfile.random_attribute)" "42" \
+    "Verify set of random attribute in objfile"
+
+# Verify invalid objfile handling.
+
+if { [gdb_unload "unload 2"] != 0 } {
+    return
+}
+
+gdb_test "python print(objfile.filename)" "None" \
+    "objfile.filename after objfile is unloaded"
+gdb_test "python print(objfile.username)" "None" \
+    "objfile.username after objfile is unloaded"
+
+# Now build another copy of the testcase, this time without debug info.
+
+if { [prepare_for_testing "failed to prepare" ${testfile}2 ${srcfile} {nodebug ldflags=-Wl,--strip-debug}] } {
+    return -1
+}
+
+if ![runto_main] {
+    return 0
+}
+
+gdb_py_test_silent_cmd "python objfile = gdb.objfiles()\[0\]" \
+    "Get no-debug objfile file" 1
+
+gdb_test "python print (objfile.owner)" "None" \
+    "Test owner of real objfile."
+
+gdb_test "p main" "= {<text variable, no debug info>} $hex <main>" \
+    "print main without debug info"
+
+gdb_py_test_silent_cmd "python objfile.add_separate_debug_file(\"${binfile}\")" \
+    "Add separate debug file file" 1
+
+gdb_py_test_silent_cmd "python sep_objfile = gdb.objfiles()\[0\]" \
+    "Get separate debug info objfile" 1
+
+gdb_test "python print (sep_objfile.owner.filename)" "${testfile}2" \
+    "Test owner of separate debug file"
+
+gdb_test "python print (sep_objfile.owner.username)" "${testfile}2" \
+    "Test user-name of owner of separate debug file"
+
+gdb_test "p main" "= {int \\(\\)} $hex <main>" \
+    "print main with debug info"
+
+# Separate debug files are not findable.
+if { [get_python_valueof "sep_objfile.build_id" "None"] != "None" } {
+    gdb_test "python print (gdb.lookup_objfile (sep_objfile.build_id, by_build_id=True))" \
+	"Objfile not found\\.\r\n${python_error_text}" \
+	"print lookup_objfile of separate debug file"
+}
+
+# An objfile that was a symlink to a differently named file is still
+# findable with its original name.
+# On Windows we don't have proper symlinks, so skip this.
+if ![ishost *-*-mingw*] {
+    set symlink_binary [standard_output_file "symlink-binary"]
+    remote_exec host "rm -f ${symlink_binary}"
+    remote_exec host "ln -sf ${testfile} ${symlink_binary}"
+    if [remote_file host exists "${symlink_binary}"] {
+	clean_restart "${symlink_binary}"
+	gdb_test "python print (gdb.lookup_objfile (\"${symlink_binary}\").filename)" \
+	    "${testfile}" "gdb.lookup_objfile of symlinked binary"
+    }
+}
+
+# Test printing an Objfile object that is no longer valid.
+gdb_py_test_silent_cmd "python objfile = gdb.objfiles()\[0\]" \
+    "get first objfile" 1
+gdb_file_cmd ${binfile}
+gdb_test "python print(objfile)" "<gdb.Objfile \\\(invalid\\\)>"

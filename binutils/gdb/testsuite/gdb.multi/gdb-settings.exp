@@ -1,0 +1,123 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test per-inferior settings in a multi-inferior debug session.  Check
+# that the settings really are per-inferior.
+
+load_lib gdb-python.exp
+load_lib gdb-guile.exp
+
+standard_testfile
+
+if {[build_executable "failed to prepare" $testfile $srcfile]} {
+    return -1
+}
+
+# Cache whether we can run Python and/or Guile tests.
+set run_python_tests [allow_python_tests]
+set run_guile_tests [allow_guile_tests]
+
+# The $_gdb_setting/$_gdb_setting_str tests require running inferiors,
+# because they allocate memory in the inferiors for the produced
+# values.  Since we need two inferiors for this test, we can't run
+# them with stub boards (e.g. gdbserver with non-extended remote
+# protocol), since they can only run one inferior at a time.  We can
+# still run the other tests with multiple inferiors, they just won't
+# be running inferiors.
+set run [expr {![use_gdb_stub]}]
+
+# List of inferior numbers to run tests for.
+set inferiors {1 2}
+
+# Start all the inferiors.
+clean_restart $binfile
+foreach_with_prefix inf $inferiors {
+    if { $inf > 1 } {
+	gdb_test "add-inferior -exec $binfile" "Added inferior 2.*" \
+	    "add second inferior"
+    }
+
+    if { $run } {
+	if { ![runto_main] } {
+	    return -1
+	}
+    }
+}
+
+# Setup some guile helpers -- if we plan to run the guile tests.
+if { $run_guile_tests } {
+    gdb_install_guile_utils
+    gdb_install_guile_module
+}
+
+# Update the settings for each inferior.
+foreach_with_prefix inf $inferiors {
+    gdb_test "inferior ${inf}" "Switching to inferior ${inf}.*" \
+	"switch to inferior ${inf} before set"
+    gdb_test_no_output "set args inf${inf}-args"
+    gdb_test_no_output "set cwd /inf${inf}-cwd"
+    gdb_test_no_output "set inferior-tty /inf${inf}-tty"
+}
+
+# Check settings are still correct for each inferior.
+foreach_with_prefix inf $inferiors {
+    gdb_test "inferior ${inf}" "Switching to inferior ${inf}.*" \
+	"switch back to inferior ${inf}"
+
+    # Check that using 'with' doesn't corrupt the setting value.
+    gdb_test "with args tmp-value -- print 1" " = 1"
+    gdb_test "show args" "inf${inf}-args.*"
+
+    gdb_test "with cwd tmp-value -- print 1" " = 1"
+    gdb_test "show cwd" "/inf${inf}-cwd.*"
+
+    gdb_test "with inferior-tty tmp-value -- print 1" " = 1"
+    gdb_test "show inferior-tty" "/inf${inf}-tty.*"
+
+    # If the inferiors are running check $_gdb_setting_str and
+    # $_gdb_setting return the correct values.
+    if { $run } {
+	gdb_test {print $_gdb_setting_str("args")} "\"inf${inf}-args\""
+	gdb_test {print $_gdb_setting("args")} "\"inf${inf}-args\""
+
+	gdb_test {print $_gdb_setting_str("cwd")} "\"/inf${inf}-cwd\""
+	gdb_test {print $_gdb_setting("cwd")} "\"/inf${inf}-cwd\""
+
+	gdb_test {print $_gdb_setting_str("inferior-tty")} \
+	    "\"/inf${inf}-tty\""
+	gdb_test {print $_gdb_setting("inferior-tty")} \
+	    "\"/inf${inf}-tty\""
+    }
+
+    # Check the settings can be read from Python.
+    if { $run_python_tests } {
+	gdb_test "python print(gdb.parameter('args'))" "inf${inf}-args"
+	gdb_test "python print(gdb.parameter('cwd'))" "/inf${inf}-cwd"
+	gdb_test "python print(gdb.parameter('inferior-tty'))" \
+	    "/inf${inf}-tty"
+    }
+
+    # Check the settings can be read from Guile.
+    if { $run_guile_tests } {
+	gdb_test "guile (print (parameter-value \"args\"))" \
+	    "inf${inf}-args"
+	gdb_test "guile (print (parameter-value \"cwd\"))" \
+	    "/inf${inf}-cwd"
+	gdb_test "guile (print (parameter-value \"inferior-tty\"))" \
+	    "/inf${inf}-tty"
+    }
+}

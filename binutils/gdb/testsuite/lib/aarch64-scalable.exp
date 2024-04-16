@@ -1,0 +1,283 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+# Support routines for aarch64 scalable extension tests
+
+# Load generic aarch64 test dependencies.
+load_lib aarch64.exp
+
+#
+# Return a regular expression that matches what gdb would print for a
+# SVE Z register of length VL in state STATE.  The Z register should be filled
+# with BYTE_SVE and the FPSIMD registers should be filled with BYTE_FPSIMD.
+#
+# The pattern is of the form
+#
+# {BYTE_FPSIMD <repeats 16 times>}
+#
+# or
+#
+# {BYTE_FPSIMD <repeats 16 times>, 0 <repeats ... times>}
+#
+# or
+#
+# {BYTE_SVE <repeats VL times>}
+#
+proc sve_value_pattern { state vl byte_fpsimd byte_sve } {
+    set brace_open "{"
+    set brace_close "}"
+
+    append data $brace_open
+    if { $state == "fpsimd" || $state == "za" } {
+	if { $vl > 16 } {
+	    set sve_repeat_count [expr $vl - 16]
+	    append data "$byte_fpsimd <repeats 16 times>, 0 <repeats $sve_repeat_count times>"
+	} else {
+	    append data "$byte_fpsimd <repeats 16 times>"
+	}
+    } else {
+	append data "$byte_sve <repeats $vl times>"
+    }
+    append data $brace_close
+
+    verbose -log "sve_value_pattern pattern string is..."
+    verbose -log $data
+    return $data
+}
+
+#
+# Return the SVCR value based on STATE.
+# SVCR is only available when SME is available.
+#
+proc get_svcr_value { state } {
+    if { $state == "ssve" } {
+      return "= \\\[ SM \\\]"
+    } elseif { $state == "za" } {
+      return "= \\\[ ZA \\\]"
+    } elseif { $state == "za_ssve" } {
+      return "= \\\[ SM ZA \\\]"
+    }
+
+  return "= \\\[ \\\]"
+}
+
+#
+# Return the state string based on STATE
+#
+proc state_id_to_state_string { state } {
+  if {$state == 0} {
+    return "fpsimd"
+  } elseif {$state == 1} {
+    return "sve"
+  } elseif {$state == 2} {
+    return "ssve"
+  } elseif {$state == 3} {
+    return "za"
+  } elseif {$state == 4} {
+    return "za_ssve"
+  }
+}
+
+#
+# Given a test ID, return the string representing the register state.
+# The state is one of fpsimd, sve, ssve, za and za_ssve.
+#
+proc test_id_to_state { id } {
+  set state [expr $id / 25]
+
+  return [state_id_to_state_string $state]
+}
+
+#
+# Given a test ID, return the associated vector length.
+#
+proc test_id_to_vl { id } {
+  return [expr 16 << (($id / 5) % 5)]
+}
+
+#
+# Given a test ID, return the associated streaming vector length.
+#
+proc test_id_to_svl { id } {
+  return [expr 16 << ($id % 5)]
+}
+
+#
+# Validate the values of the SVE registers.
+#
+proc check_sve_regs { byte state vl svl } {
+
+    # If streaming mode is enabled, the vector length is the streaming
+    # vector length.
+    set z_pattern ""
+    set z_size 0
+    if {$state == "ssve" || $state == "za_ssve"} {
+	set z_pattern [string_to_regexp [1d_array_value_pattern $byte $svl]]
+	set z_size $svl
+    } else {
+	set z_size $vl
+
+	if {$state == "fpsimd" || $state == "za"} {
+	    # If there is no SVE/SSVE state, the contents of the Z/P/FFR registers
+	    # are zero.
+	    if {$vl == 16} {
+		set z_pattern [string_to_regexp [1d_array_value_pattern $byte $vl]]
+	    } else {
+		set z_repeats [expr $vl - 16]
+		set z_pattern [string_to_regexp "{$byte <repeats 16 times>, 0 <repeats $z_repeats times>}"]
+	      }
+	} else {
+	    set z_pattern [string_to_regexp [1d_array_value_pattern $byte $vl]]
+	}
+    }
+    set p_size [expr $z_size / 8]
+
+    # If there is no SVE/SSVE state, the contents of the Z/P/FFR registers
+    # are zero.
+    set p_byte $byte
+    if {$state == "fpsimd" || $state == "za"} {
+	set p_byte 0
+    }
+    set p_pattern [string_to_regexp [1d_array_value_pattern $p_byte $p_size]]
+
+    for {set number 0} {$number < 32} {incr number} {
+	set register_name "\$z${number}\.b\.u"
+	gdb_test "print sizeof $register_name" " = $z_size"
+	gdb_test "print $register_name" $z_pattern
+    }
+
+    for {set number 0} {$number < 16} {incr number} {
+	set register_name "\$p${number}"
+	gdb_test "print sizeof $register_name" " = $p_size"
+	gdb_test "print $register_name" $p_pattern
+    }
+
+    gdb_test "print \$ffr" $p_pattern
+}
+
+#
+# Validate the values of the SME registers.
+#
+proc check_sme_regs { byte state svl } {
+    # ZA contents are only available when the ZA state is enabled.  Otherwise
+    # the ZA contents are unavailable (zeroed out).
+    set za_pattern ""
+    set expected_za_size [expr $svl * $svl]
+
+    if {$state != "za" && $state != "za_ssve"} {
+	set byte 0
+    }
+
+    set za_pattern [string_to_regexp [2d_array_value_pattern $byte $svl $svl]]
+
+    gdb_test "print sizeof \$za" " = $expected_za_size"
+    gdb_test "print \$za" $za_pattern
+}
+
+#
+# Validate the values of the SME2 registers.
+#
+proc check_sme2_regs { byte } {
+    # The size of the ZT registers should always be fixed to 64 bytes.
+    set zt_size 64
+    gdb_test "print sizeof \$zt0" " = $zt_size"
+    # Check that we have the expected pattern of bytes for the ZT registers.
+    set zt_pattern [string_to_regexp [1d_array_value_pattern $byte $zt_size]]
+    gdb_test "print \$zt0" $zt_pattern
+}
+
+#
+# With register STATE, vector length VL and streaming vector length SVL,
+# run some register state checks to make sure the values are the expected
+# ones
+#
+proc check_state { state vl svl } {
+    # The FPSIMD registers are initialized with a value of 0x55 (85)
+    # for each byte.
+    #
+    # The SVE registers are initialized with a value of 0xff (255) for each
+    # byte, including the predicate registers and FFR.
+    #
+    # The SME (ZA) register is initialized with a value of 0xaa (170) for
+    # each byte.
+    #
+    # The SME2 (ZT) registers are initialized with a value of 0xff (255) for
+    # each byte.
+
+    # Check VG to make sure it is correct
+    set expected_vg [expr $vl / 8]
+    # If streaming mode is enabled, then vg is actually svg.
+    if {$state == "ssve" || $state == "za_ssve"} {
+	set expected_vg [expr $svl / 8]
+    }
+    gdb_test "print \$vg" " = ${expected_vg}"
+
+    # Check SVG to make sure it is correct
+    set expected_svg [expr $svl / 8]
+    gdb_test "print \$svg" " = ${expected_svg}"
+
+    # Check the value of SVCR.
+    gdb_test "print \$svcr" [get_svcr_value $state]
+
+    # When we have any SVE or SSVE state, the FPSIMD registers will have
+    # the same values as the SVE/SSVE Z registers.
+    set fpsimd_byte 85
+    if {$state == "sve" || $state == "ssve" || $state == "za_ssve"} {
+	set fpsimd_byte 255
+    }
+
+    set sve_byte 255
+    if {$state == "fpsimd" || $state == "za"} {
+	set sve_byte 85
+    }
+
+    # Check FPSIMD registers
+    check_fpsimd_regs $fpsimd_byte $state $vl $svl
+    # Check SVE registers
+    check_sve_regs $sve_byte $state $vl $svl
+    # Check SME registers
+    check_sme_regs 170 $state $svl
+
+    # Check SME2 registers
+    if [is_sme2_available] {
+	# The SME2 ZT0 register will always be zero, except when ZA is active.
+	set sme2_byte 0
+	if {$state == "za" || $state == "za_ssve"} {
+	    set sme2_byte 255
+	}
+
+	# The target supports SME2, so check the ZT register values.
+	check_sme2_regs $sme2_byte
+    }
+}
+
+#
+# Return 1 if SME2 is available (meaning the ZT0 register exists).
+# Return 0 otherwise.
+#
+proc is_sme2_available { } {
+
+    # Does the ZT0 register exist?
+    gdb_test_multiple "print \$zt0" "" {
+	-re " = void.*${::gdb_prompt} $" {
+	    # SME2 is not available.
+	    return 0
+	}
+	-re " = {.*}\r\n${::gdb_prompt} $" {
+	    # SME2 is available.
+	    return 1
+	}
+    }
+}

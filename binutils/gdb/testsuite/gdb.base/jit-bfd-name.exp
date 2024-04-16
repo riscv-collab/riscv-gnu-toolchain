@@ -1,0 +1,159 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check the BFD filename (as used in the symfile name) that is
+# automatically generated for in-memory BFD files, as used by the JIT
+# system within GDB.
+#
+# Additionally, check that GDB cau use 'dump binary memory' to write
+# out the in-memory JIT files.
+
+require allow_shlib_tests
+
+load_lib jit-elf-helpers.exp
+
+# The main code that loads and registers JIT objects.
+set main_basename "jit-elf-main"
+set main_srcfile ${srcdir}/${subdir}/${main_basename}.c
+set main_binfile [standard_output_file ${main_basename}]
+
+# The shared library that gets loaded as JIT objects.
+set jit_solib_basename jit-elf-solib
+set jit_solib_srcfile ${srcdir}/${subdir}/${jit_solib_basename}.c
+
+# Compile two shared libraries to use as JIT objects.
+set jit_solibs_target [compile_and_download_n_jit_so \
+			   $jit_solib_basename $jit_solib_srcfile 2 \
+			   {debug}]
+if { $jit_solibs_target == -1 } {
+    return
+}
+
+# Compile the main code (which loads the JIT objects).
+if { [compile_jit_main ${main_srcfile} ${main_binfile} {}] != 0 } {
+    return
+}
+
+clean_restart $::main_binfile
+if { ![runto_main] } {
+    return
+}
+
+# Poke desired values directly into inferior instead of using "set
+# args" because "set args" does not work under gdbserver.
+set count [expr [llength $jit_solibs_target] + 1]
+gdb_test_no_output "set var argc=$count" "forging argc"
+gdb_test_no_output "set var argv=fake_argv" "forging argv"
+for {set i 1} {$i < $count} {incr i} {
+    set jit_solib_target [lindex $jit_solibs_target [expr $i-1]]
+    gdb_test_no_output "set var argv\[$i\]=\"${jit_solib_target}\"" \
+	"forging argv\[$i\]"
+}
+
+# Run until the JIT libraries are loaded.
+gdb_breakpoint [gdb_get_line_number "break here 1" $::main_srcfile]
+gdb_continue_to_breakpoint "break here 1"
+
+# Confirm that the two expected functions are available.
+gdb_test "info function ^jit_function" \
+    [multi_line \
+	 "File \[^\r\n\]+jit-elf-solib.c:" \
+	 "${decimal}:\\s+int jit_function_0001\\(\\);" \
+	 "${decimal}:\\s+int jit_function_0002\\(\\);"]
+
+# Capture the addresses of each JIT symfile.
+set symfile_addrs {}
+set symfile_lengths {}
+gdb_test_multiple "maint info jit" "" {
+    -re "^maint info jit\r\n" {
+	exp_continue
+    }
+    -re "^jit_code_entry address\\s+symfile address\\s+symfile size\\s*\r\n" {
+	exp_continue
+    }
+    -re "^${hex}\\s+(${hex})\\s+(${decimal})\\s*\r\n" {
+	lappend symfile_addrs $expect_out(1,string)
+	lappend symfile_lengths $expect_out(2,string)
+	exp_continue
+    }
+    -re "^$gdb_prompt $" {
+    }
+}
+
+# Now check the 'maint info symtabs' output to ensure that each
+# symfile is mentioned, and that the names are as expected.
+set bfd_name_addrs {}
+gdb_test_multiple "maint info symtabs" "" {
+    -re "^maint info symtabs\r\n" {
+	exp_continue
+    }
+    -re "^\\\}\\s*\r\n" {
+	exp_continue
+    }
+    -re "^\\\{ objfile <in-memory@($hex-$hex)>\\s+\[^\r\n\]+\r\n" {
+	lappend bfd_name_addrs $expect_out(1,string)
+	exp_continue
+    }
+    -re "^\\\{ objfile (\\S+)\\s+\[^\r\n\]+\r\n" {
+	exp_continue
+    }
+    -re "^\\s+\[^\r\n\]+\r\n" {
+	exp_continue
+    }
+    -re "^$gdb_prompt $" {
+    }
+}
+
+# Now dump each JIT solib using the 'dump binary memory' command.
+set count 0
+foreach addr $symfile_addrs len $symfile_lengths {
+    incr count
+    set output [standard_output_file "dump-elf-solib.${count}.so"]
+    set end [expr $addr + $len]
+    gdb_test_no_output "dump binary memory $output $addr $end" \
+	"dump jit solib $count"
+
+    gdb_assert { [cmp_binary_files $output [standard_output_file "jit-elf-solib.${count}.so"]] == 0} \
+	"check dump of jit solib $count is as expected"
+}
+
+
+# Check that each of the expected jit symfile addresses was mentioned
+# in an in-memory BFD filename.
+set count 1
+foreach addr $symfile_addrs len $symfile_lengths {
+    # Drop any loading zeros from the symfile address.
+    set start [format 0x%x $addr]
+
+    # Calculate the end address.
+    set end [format 0x%x [expr $addr + $len]]
+
+    # This is what we expect the address range to look like in the BFD
+    # filename.
+    set rng "$start-$end"
+
+    # Check there was a BFD with the expected address in its name.
+    gdb_assert { [expr [lsearch -exact $bfd_name_addrs $rng] != -1] } \
+	"check for in-memory bfd $count"
+    incr count
+}
+
+# Continue until the JIT libraries are unloaded.
+gdb_breakpoint [gdb_get_line_number "break here 2" $::main_srcfile]
+gdb_continue_to_breakpoint "break here 2"
+
+# All jit librares must have been unregistered.
+gdb_test "info function jit_function" \
+    "All functions matching regular expression \"jit_function\":"

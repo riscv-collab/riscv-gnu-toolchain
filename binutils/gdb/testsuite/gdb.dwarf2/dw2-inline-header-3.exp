@@ -1,0 +1,186 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Setup a line table where:
+#
+# | Addr | File | Line | Stmt | Inline |
+# |------|------|------|------|--------|
+# | 1    | 1    | 16   | Y    |        |
+# | 2    | 1    | 17   | Y    |        |
+# | 3    | 2    | 21   | Y    | X      |
+# | 4    | 2    | 22   | Y    | X      |
+# | 4    | 1    | 18   | N    |        |
+# | 5    | 1    | 19   | N    |        |
+# | 6    | 1    | 20   | Y    |        |
+# | 7    | 1    | END  | Y    |        |
+# |------|------|------|------|--------|
+#
+# Break at file 2, line 22, then single instruction step forward.  We
+# should pass through line 19 and then encounter line 20.
+#
+# Currently we don't expect GDB to see file 1, line 18, as this is a
+# non-stmt line in a different file at the same address as the
+# previous is-stmt line.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+# The .c files use __attribute__.
+require is_c_compiler_gcc
+
+standard_testfile dw2-inline-header-lbls.c dw2-inline-header.S \
+    dw2-inline-header.c dw2-inline-header.h
+
+set build_options {nodebug optimize=-O1}
+
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    global srcdir subdir srcfile srcfile3 srcfile4
+    global build_options
+    declare_labels lines_label callee_subprog_label
+
+    get_func_info main $build_options
+
+    cu {} {
+	compile_unit {
+	    {producer "gcc" }
+	    {language @DW_LANG_C}
+	    {name ${srcfile3}}
+	    {low_pc 0 addr}
+	    {stmt_list ${lines_label} DW_FORM_sec_offset}
+	} {
+	    callee_subprog_label: subprogram {
+		{external 1 flag}
+		{name callee}
+		{inline 3 data1}
+	    }
+	    subprogram {
+		{external 1 flag}
+		{name main}
+		{low_pc $main_start addr}
+		{high_pc "$main_start + $main_len" addr}
+	    } {
+		inlined_subroutine {
+		    {abstract_origin %$callee_subprog_label}
+		    {low_pc line_label_3 addr}
+		    {high_pc line_label_5 addr}
+		    {call_file 1 data1}
+		    {call_line 18 data1}
+		}
+	    }
+	}
+    }
+
+    lines {version 2 default_is_stmt 1} lines_label {
+	include_dir "${srcdir}/${subdir}"
+	file_name "$srcfile3" 1
+	file_name "$srcfile4" 1
+
+	program {
+	    DW_LNE_set_address line_label_1
+	    DW_LNS_advance_line 15
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_2
+	    DW_LNS_advance_line 1
+	    DW_LNS_copy
+
+	    DW_LNS_set_file 2
+	    DW_LNE_set_address line_label_3
+	    DW_LNS_advance_line 4
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_4
+	    DW_LNS_advance_line 1
+	    DW_LNS_copy
+
+	    DW_LNS_advance_line -4
+	    DW_LNS_set_file 1
+	    DW_LNS_negate_stmt
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_5
+	    DW_LNS_advance_line 1
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_6
+	    DW_LNS_advance_line 1
+	    DW_LNS_negate_stmt
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_7
+	    DW_LNE_end_sequence
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	  [list $srcfile $asm_file] $build_options] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+# Delete all breakpoints so that the output of "info breakpoints"
+# below will only contain a single breakpoint.
+delete_breakpoints
+
+# Place a breakpoint within the function in the header file.
+gdb_breakpoint "${srcfile4}:22"
+
+# Check that the breakpoint was placed where we expected.  It should
+# appear at the requested line.  When the bug in GDB was present the
+# breakpoint would be placed on one of the following lines instead.
+gdb_test "info breakpoints" \
+    ".* in callee at \[^\r\n\]+${srcfile4}:22\\y.*"
+
+gdb_continue_to_breakpoint "${srcfile4}:22" \
+    ".* ${srcfile4} : 22 .*"
+
+# Now single instruction step forward.  Eventually we should hit
+# ${srcfile3}:20, but before we do we should hit the non-statement
+# line ${srcfile3}:19.
+#
+# We don't know how many instructions we'll need to step, but 100
+# should be enough for everyone (surely), and this stops us looping
+# forever if something goes wrong.
+set found_line_19 0
+set found_line_20 0
+set keep_going 1
+for { set i 0 } { $i < 100 && $keep_going } { incr i } {
+    set keep_going 0
+    gdb_test_multiple "stepi" "stepi ${i}" {
+	-re "${srcfile3} : 19 .*${gdb_prompt} " {
+	    set found_line_19 1
+	    set keep_going 1
+	}
+
+	-re "${srcfile3} : 20 .*${gdb_prompt} " {
+	    set found_line_20 1
+	}
+
+	-re "${srcfile4} : 22 .*${gdb_prompt} " {
+	    # Not left line 22 yet.
+	    set keep_going 1
+	}
+    }
+}
+
+gdb_assert { $found_line_19 && $found_line_20 } \
+    "found line 19 and 20"

@@ -1,0 +1,249 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the gdb testsuite.
+
+# Test the enable/disable commands with breakpoint location ranges.
+
+# Note: more tests involving involving disable/enable commands on
+# multiple locations and breakpoints are found in
+# gdb.base/ena-dis-br.exp.
+
+require allow_cplus_tests
+
+standard_testfile .cc
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile {debug c++}]} {
+    return -1
+}
+
+if {![runto 'marker']} {
+    return -1
+}
+
+# Returns a buffer corresponding to what GDB replies when asking for
+# 'info breakpoint'.  The parameters are all the existing breakpoints
+# enabled/disable value: 'n' or 'y'.
+
+proc make_info_breakpoint_reply_re {b1 b2 b21 b22 b23 b24} {
+    set ws "\[\t \]+"
+    return [multi_line \
+		"Num     Type${ws}Disp Enb Address${ws}What.*" \
+		"1${ws}breakpoint     keep ${b1}${ws}.* in marker\\(\\) at .*" \
+		"${ws}breakpoint already hit 1 time.*" \
+		"2${ws}breakpoint${ws}keep${ws}${b2}${ws}<MULTIPLE>.*" \
+		"2.1${ws}${b21}${ws}.*" \
+		"2.2${ws}${b22}${ws}.*" \
+		"2.3${ws}${b23}${ws}.*" \
+		"2.4${ws}${b24}${ws}.*" \
+	       ]
+}
+
+gdb_test "break foo::overload" \
+    "Breakpoint \[0-9\]+ at $hex: foo::overload. .4 locations." \
+    "set breakpoint at overload"
+
+gdb_test "info break" [make_info_breakpoint_reply_re y y y y y y] \
+    "breakpoint info"
+
+# Test the enable/disable commands, and check the enable/disable state
+# of the breakpoints/locations in the "info break" output.  CMD is the
+# actual disable/enable command. The bNN parameters are the same as
+# make_info_breakpoint_reply_re's.
+proc test_enable_disable {cmd b1 b2 b21 b22 b23 b24} {
+    gdb_test_no_output $cmd
+
+    set re [make_info_breakpoint_reply_re $b1 $b2 $b21 $b22 $b23 $b24]
+    gdb_test "info break" $re "breakpoint info $cmd"
+}
+
+# Check that we can disable/enable a breakpoint with a single
+# location.
+test_enable_disable "disable 1" n y y y y y
+test_enable_disable "enable  1" y y y y y y
+
+# Check that we can disable/enable a breakpoint with multiple
+# locations.
+test_enable_disable "disable 2" y n y- y- y- y-
+test_enable_disable "enable  2" y y y  y  y  y
+
+# Check that we can disable/enable a range of breakpoints.
+test_enable_disable "disable 1-2" n n y- y- y- y-
+test_enable_disable "enable 1-2"  y y y  y  y  y
+
+# Check that we can disable/enable a list of breakpoints.
+test_enable_disable "disable 1 2" n n y- y- y- y-
+test_enable_disable "enable 1 2"  y y y  y  y  y
+
+# Check that we can disable/enable a single location breakpoint.
+test_enable_disable "disable 2.2" y y y n y y
+test_enable_disable "enable  2.2" y y y y y y
+
+# Check that we can disable/enable a range of breakpoint locations.
+test_enable_disable "disable 2.2-3" y y y n n y
+test_enable_disable "enable  2.2-3" y y y y y y
+
+# Check that we can disable/enable a breakpoint location range with
+# START==END.
+test_enable_disable "disable 2.2-2" y y y n y y
+test_enable_disable "enable  2.2-2" y y y y y y
+
+# Check that we can disable/enable a list of breakpoints that
+# includes some elements with location ranges and others without.
+test_enable_disable "disable 1 2.1 2.3-4" n y n y n n
+test_enable_disable "enable  1 2.1 2.3-4" y y y y y y
+
+# Check that we can disable a location breakpoint range with max >
+# existing breakpoint location.
+gdb_test "disable 2.3-5" "Bad breakpoint location number '5'" \
+    "disable location breakpoint range with max > existing"
+
+gdb_test "info break" [make_info_breakpoint_reply_re y y y y n n] \
+    "breakpoint info disable 2.3 to 2.5"
+
+# Check that we can enable a location breakpoint range with max >
+# existing breakpoint location.
+gdb_test "enable 2.3-5" "Bad breakpoint location number '5'" \
+    "enable location breakpoint range with max > existing"
+
+gdb_test "info break" [make_info_breakpoint_reply_re y y y y y y] \
+    "breakpoint info enable 2.3 to 2.5"
+
+# Check that disabling an inverted breakpoint location range does not
+# work.
+gdb_test "disable 2.3-2" "Inverted breakpoint location range at '3-2'"
+
+gdb_test "info break" [make_info_breakpoint_reply_re y y y y y y] \
+    "breakpoint info disable 2.3-2"
+
+# Check that disabling an invalid breakpoint location range does not
+# cause unexpected behavior.
+gdb_test "disable 2.6-7" "Bad breakpoint location number '6'" \
+    "disable an unvalid location breakpoint range"
+
+gdb_test "info break" [make_info_breakpoint_reply_re y y y y y y] \
+    "breakpoint info disable 2.6-7"
+
+# Check that disabling an invalid breakpoint location range does not
+# cause trouble.
+gdb_test "disable 2.8-6" "Inverted breakpoint location range at '8-6'"
+
+gdb_test "info break" [make_info_breakpoint_reply_re y y y y y y] \
+    "breakpoint info disable 2.8-6"
+
+# Check that invalid/open ranges are handled correctly.
+with_test_prefix "open range" {
+    gdb_test "disable -" "Bad breakpoint number at or near: '-'"
+    gdb_test "disable -1" "Negative breakpoint number '-1'"
+    gdb_test "disable 1-" "Bad breakpoint number at or near: '1-'"
+    gdb_test "disable 1.-2" "Negative breakpoint location number '-2'"
+    gdb_test "disable 1.2-" "Bad breakpoint location number at or near: '2-'"
+    gdb_test "disable 1.-2-3" "Negative breakpoint location number '-2'"
+    gdb_test "disable 1-2-3" "Bad breakpoint number '2-3'"
+}
+
+with_test_prefix "dangling period" {
+    gdb_test "disable 2." "Bad breakpoint number at or near: '2.'"
+    gdb_test "disable .2" "Bad breakpoint number at or near: '.2'"
+    gdb_test "disable 2.3.4" "Bad breakpoint location number '3.4'"
+}
+
+# Check that 0s are handled correctly.
+with_test_prefix "zero" {
+    gdb_test "disable 0" "Bad breakpoint number '0'"
+    gdb_test "disable 0.0" "Bad breakpoint number '0'"
+    gdb_test "disable 0.1" "Bad breakpoint number '0'"
+    gdb_test "disable 0.1-2" "Bad breakpoint number '0'"
+    gdb_test "disable 2.0" "Bad breakpoint location number '0'"
+    gdb_test "disable 2.0-0" "Bad breakpoint location number '0'"
+    gdb_test "disable 2.0-1" "Bad breakpoint location number '0'"
+    gdb_test "disable 2.1-0" "Bad breakpoint location number '0'"
+}
+
+# Test "disable BPLIST" with an invalid breakpoint/location BPLIST.
+# PREFIX and SUFFIX are concatenated to form BPLIST.  The invalid part
+# is always in SUFFIX.
+
+proc disable_invalid {prefix suffix} {
+    set bad_re [string_to_regexp $suffix]
+
+    if {$prefix == ""} {
+	gdb_test \
+	    "disable $suffix" \
+	    "Bad breakpoint number '${bad_re}'"
+    } else {
+	gdb_test \
+	    "disable ${prefix}$suffix" \
+	    "Bad breakpoint location number '${bad_re}'"
+    }
+}
+
+# Like disable_invalid, but expects an "inverted range" error.
+
+proc disable_inverted {prefix suffix} {
+    set bad_re [string_to_regexp $suffix]
+
+    if {$prefix == ""} {
+	gdb_test \
+	    "disable $suffix" \
+	    "Inverted breakpoint range at '${bad_re}'"
+    } else {
+	gdb_test \
+	    "disable ${prefix}$suffix" \
+	    "Inverted breakpoint location range at '${bad_re}'"
+    }
+}
+
+# Like disable_invalid, but expects a "negative number" error.
+
+proc disable_negative {prefix suffix} {
+    set bad_re [string_to_regexp $suffix]
+
+    if {$prefix == ""} {
+	gdb_test \
+	    "disable $suffix" \
+	    "Negative breakpoint number '${bad_re}'"
+    } else {
+	gdb_test \
+	    "disable ${prefix}$suffix" \
+	    "Negative breakpoint location number '${bad_re}'"
+    }
+}
+
+with_test_prefix "bad numbers" {
+    gdb_test "p \$zero = 0" " = 0"
+    gdb_test "p \$one = 1" " = 1"
+    gdb_test "p \$two = 2" " = 2"
+    gdb_test "p \$minus_one = -1" " = -1"
+    foreach prefix {"" "1." "$one."} {
+	set prefix_re [string_to_regexp $prefix]
+
+	disable_invalid $prefix "foo"
+	disable_invalid $prefix "1foo"
+	disable_invalid $prefix "foo1"
+
+	disable_inverted $prefix "2-1"
+	disable_inverted $prefix "2-\$one"
+	disable_inverted $prefix "\$two-1"
+	disable_inverted $prefix "\$two-\$one"
+
+	disable_negative $prefix "-1"
+	disable_negative $prefix "-\$one"
+	disable_negative $prefix "\$minus_one"
+    }
+}
+
+gdb_test "info break" [make_info_breakpoint_reply_re y y y y y y] \
+    "breakpoint info after invalids"

@@ -1,0 +1,699 @@
+#   Copyright 1988-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Based on break.exp, written by Rob Savoye. (rob@cygnus.com)
+# Modified to test gdb's handling of separate debug info files.
+# Modified to test gdb's handling of a debug-id retrieval.
+
+# This file has two parts. The first is testing that gdb behaves
+# normally after reading in an executable and its corresponding
+# separate debug file. The second moves the .debug file to a different
+# location and tests the "set debug-file-directory" command.
+# The third is for testing build-id retrievel by finding the separate
+# ".debug-id/ab/cdef.debug" file.
+
+
+#
+# test running programs
+#
+
+standard_testfile .c
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug nowarnings}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+# Note: the procedure gdb_gnu_strip_debug will produce an executable called
+# ${binfile}, which is just like the executable ($binfile) but without
+# the debuginfo. Instead $binfile has a .gnu_debuglink section which contains
+# the name of a debuginfo only file. This file will be stored in the
+# gdb.base/ subdirectory.
+
+if [gdb_gnu_strip_debug $binfile$EXEEXT] {
+    # check that you have a recent version of strip and objcopy installed
+    unsupported "cannot produce separate debug info files"
+    return -1
+}
+
+#
+# PR gdb/9538.  Verify that symlinked executable still finds the separate
+# debuginfo.
+#
+set old_subdir $subdir
+set subdir [file join ${old_subdir} pr9538]
+
+# Cleanup any stale state.
+set new_name [standard_output_file ${testfile}${EXEEXT}]
+remote_exec build "rm -rf [file dirname $new_name]"
+
+remote_exec build "mkdir [file dirname $new_name]"
+remote_exec build "ln -s ${binfile}${EXEEXT} $new_name"
+clean_restart ${testfile}${EXEEXT}
+if {$gdb_file_cmd_debug_info != "debug"} {
+    fail "no debug information found."
+}
+
+# Restore subdir
+set subdir ${old_subdir}
+
+clean_restart ${testfile}${EXEEXT}
+if {$gdb_file_cmd_debug_info != "debug"} {
+    fail "no debug information found."
+}
+
+#
+# test simple breakpoint setting commands
+#
+
+#
+# test break at function
+#
+gdb_test "break -q main" \
+    "Breakpoint.*at.* file .*$srcfile, line.*" \
+    "breakpoint function"
+
+#
+# test break at quoted function
+#
+gdb_test "break -q \"marker2\"" \
+    "Breakpoint.*at.* file .*$srcfile, line.*" \
+    "breakpoint quoted function"
+
+#
+# test break at function in file
+#
+gdb_test "break $srcfile:factorial" \
+    "Breakpoint.*at.* file .*$srcfile, line.*" \
+    "breakpoint function in file"
+
+set bp_location1 [gdb_get_line_number "set breakpoint 1 here"]
+
+#
+# test break at line number
+#
+# Note that the default source file is the last one whose source text
+# was printed.  For native debugging, before we've executed the
+# program, this is the file containing main, but for remote debugging,
+# it's wherever the processor was stopped when we connected to the
+# board.  So, to be sure, we do a list command.
+#
+gdb_test "list -q main" \
+    ".*main \\(int argc, char \\*\\*argv, char \\*\\*envp\\).*" \
+    "use `list' to establish default source file"
+gdb_test "break $bp_location1" \
+    "Breakpoint.*at.* file .*$srcfile, line $bp_location1\\." \
+    "breakpoint line number"
+
+#
+# test duplicate breakpoint
+#
+gdb_test "break $bp_location1" \
+    "Note: breakpoint \[0-9\]+ also set at pc.*Breakpoint \[0-9\]+ at.* file .*$srcfile, line $bp_location1\\." \
+    "breakpoint duplicate"
+
+set bp_location2 [gdb_get_line_number "set breakpoint 2 here"]
+
+#
+# test break at line number in file
+#
+gdb_test "break $srcfile:$bp_location2" \
+    "Breakpoint.*at.* file .*$srcfile, line $bp_location2\\." \
+    "breakpoint line number in file"
+
+set bp_location3 [gdb_get_line_number "set breakpoint 3 here"]
+set bp_location4 [gdb_get_line_number "set breakpoint 4 here"]
+
+#
+# Test putting a break at the start of a multi-line if conditional.
+# Verify the breakpoint was put at the start of the conditional.
+#
+gdb_test "break multi_line_if_conditional" \
+    "Breakpoint.*at.* file .*$srcfile, line $bp_location3\\." \
+    "breakpoint at start of multi line if conditional"
+
+gdb_test "break multi_line_while_conditional" \
+    "Breakpoint.*at.* file .*$srcfile, line $bp_location4\\." \
+    "breakpoint at start of multi line while conditional"
+
+set bp_location6 [gdb_get_line_number "set breakpoint 6 here"]
+
+set main_line $bp_location6
+
+set bp_location7 [gdb_get_line_number "set breakpoint 7 here"]
+set bp_location8 [gdb_get_line_number "set breakpoint 8 here"]
+
+gdb_test "info break" \
+    "Num     Type\[ \]+Disp Enb Address\[ \]+What.*
+\[0-9\]+\[\t \]+breakpoint     keep y.* in main at .*$srcfile:$main_line.*
+\[0-9\]+\[\t \]+breakpoint     keep y.* in marker2 at .*$srcfile:$bp_location8.*
+\[0-9\]+\[\t \]+breakpoint     keep y.* in factorial at .*$srcfile:$bp_location7.*
+\[0-9\]+\[\t \]+breakpoint     keep y.* in main at .*$srcfile:$bp_location1.*
+\[0-9\]+\[\t \]+breakpoint     keep y.* in main at .*$srcfile:$bp_location1.*
+\[0-9\]+\[\t \]+breakpoint     keep y.* in main at .*$srcfile:$bp_location2.*
+\[0-9\]+\[\t \]+breakpoint     keep y.* in multi_line_if_conditional at .*$srcfile:$bp_location3.*
+\[0-9\]+\[\t \]+breakpoint     keep y.* in multi_line_while_conditional at .*$srcfile:$bp_location4" \
+    "breakpoint info"
+
+# FIXME: The rest of this test doesn't work with anything that can't
+# handle arguments.
+# Huh? There doesn't *appear* to be anything that passes arguments
+# below.
+
+#
+# run until the breakpoint at main is hit. For non-stubs-using targets.
+#
+gdb_run_cmd
+gdb_test "" \
+    "Breakpoint \[0-9\]+,.*main .*argc.*argv.* at .*$srcfile:$bp_location6.*$bp_location6\[\t \]+if .argc.* \{.*" \
+    "run until function breakpoint"
+
+#
+# run until the breakpoint at a line number
+#
+gdb_test continue "Continuing\\..*Breakpoint \[0-9\]+, main \\(argc=.*, argv=.*, envp=.*\\) at .*$srcfile:$bp_location1.*$bp_location1\[\t \]+printf.*factorial.*" \
+			"run until breakpoint set at a line number"
+
+#
+# Run until the breakpoint set in a function in a file
+#
+for {set i 6} {$i >= 1} {incr i -1} {
+	gdb_test continue "Continuing\\..*Breakpoint \[0-9\]+, factorial \\(value=$i\\) at .*$srcfile:$bp_location7.*$bp_location7\[\t \]+.*if .value > 1. \{.*" \
+			"run until file:function($i) breakpoint"
+}
+
+#
+# Run until the breakpoint set at a quoted function
+#
+gdb_test continue "Continuing\\..*Breakpoint \[0-9\]+, (0x\[0-9a-f\]+ in )?marker2 \\(a=43\\) at .*$srcfile:$bp_location8.*" \
+		"run until quoted breakpoint"
+#
+# run until the file:function breakpoint at a line number in a file
+#
+gdb_test continue "Continuing\\..*Breakpoint \[0-9\]+, main \\(argc=.*, argv=.*, envp=.*\\) at .*$srcfile:$bp_location2.*$bp_location2\[\t \]+argc = \\(argc == 12345\\);.*" \
+		"run until file:linenum breakpoint"
+
+# Test break at offset +1
+set bp_location10 [gdb_get_line_number "set breakpoint 10 here"]
+
+gdb_test "break +1" \
+    "Breakpoint.*at.* file .*$srcfile, line $bp_location10\\." \
+    "breakpoint offset +1"
+
+# Check to see if breakpoint is hit when stepped onto
+
+gdb_test "step" \
+    ".*Breakpoint \[0-9\]+, main \\(argc=.*, argv=.*, envp=.*\\) at .*$srcfile:$bp_location10.*$bp_location10\[\t \]+return argc;.*breakpoint 10 here.*" \
+    "step onto breakpoint"
+
+#
+# delete all breakpoints so we can start over, course this can be a test too
+#
+delete_breakpoints
+
+#
+# test temporary breakpoint at function
+#
+
+gdb_test "tbreak -q main" "Temporary breakpoint.*at.* file .*$srcfile, line.*" "temporary breakpoint function"
+
+#
+# test break at function in file
+#
+
+gdb_test "tbreak $srcfile:factorial" "Temporary breakpoint.*at.* file .*$srcfile, line.*" \
+	"Temporary breakpoint function in file"
+
+#
+# test break at line number
+#
+
+gdb_test "tbreak $bp_location1" \
+    "Temporary breakpoint.*at.* file .*$srcfile, line $bp_location1.*" \
+    "temporary breakpoint line number #1"
+
+gdb_test "tbreak $bp_location6" \
+    "Temporary breakpoint.*at.* file .*$srcfile, line $bp_location6.*" \
+    "temporary breakpoint line number #2"
+
+#
+# test break at line number in file
+#
+
+gdb_test "tbreak $srcfile:$bp_location2" \
+    "Temporary breakpoint.*at.* file .*$srcfile, line $bp_location2.*" \
+    "temporary breakpoint line number in file #1"
+
+set bp_location11 [gdb_get_line_number "set breakpoint 11 here"]
+gdb_test  "tbreak $srcfile:$bp_location11" "Temporary breakpoint.*at.* file .*$srcfile, line $bp_location11.*" "Temporary breakpoint line number in file #2"
+
+#
+# check to see what breakpoints are set (temporary this time)
+#
+gdb_test "info break" "Num     Type.*Disp Enb Address.*What.*\[\r\n\]
+\[0-9\]+\[\t \]+breakpoint     del.*y.*in main at .*$srcfile:$main_line.*\[\r\n\]
+\[0-9\]+\[\t \]+breakpoint     del.*y.*in factorial at .*$srcfile:$bp_location7.*\[\r\n\]
+\[0-9\]+\[\t \]+breakpoint     del.*y.*in main at .*$srcfile:$bp_location1.*\[\r\n\]
+\[0-9\]+\[\t \]+breakpoint     del.*y.*in main at .*$srcfile:$bp_location6.*\[\r\n\]
+\[0-9\]+\[\t \]+breakpoint     del.*y.*in main at .*$srcfile:$bp_location2.*\[\r\n\]
+\[0-9\]+\[\t \]+breakpoint     del.*y.*in main at .*$srcfile:$bp_location11.*" \
+    "Temporary breakpoint info"
+
+
+#***********
+
+# Verify that catchpoints for fork, vfork and exec don't trigger
+# inappropriately.  (There are no calls to those system functions
+# in this test program.)
+#
+if {![runto_main]} {
+    return
+}
+
+gdb_test "catch fork" "Catchpoint \[0-9\]+ \\(fork\\)" \
+    "set catch fork, never expected to trigger"
+
+gdb_test "catch vfork" "Catchpoint \[0-9\]+ \\(vfork\\)" \
+    "set catch vfork, never expected to trigger"
+
+gdb_test "catch exec" "Catchpoint \[0-9\]+ \\(exec\\)" \
+    "set catch exec, never expected to trigger"
+
+# Verify that GDB responds gracefully when asked to set a breakpoint
+# on a nonexistent source line.
+#
+
+gdb_test_no_output "set breakpoint pending off"
+gdb_test "break 999" "No line 999 in the current file." \
+    "break on non-existent source line"
+
+# Run to the desired default location. If not positioned here, the
+# tests below don't work.
+#
+gdb_test "until $bp_location1" "main .* at .*:$bp_location1.*" "until bp_location1"
+
+
+# Verify that GDB allows one to just say "break", which is treated
+# as the "default" breakpoint.  Note that GDB gets cute when printing
+# the informational message about other breakpoints at the same
+# location.  We'll hit that bird with this stone too.
+#
+
+gdb_test "break" "Breakpoint \[0-9\]*.*" \
+    "break on default location, 1st time"
+
+gdb_test "break" \
+    "Note: breakpoint \[0-9\]* also set at .*Breakpoint \[0-9\]*.*" \
+    "break on default location, 2nd time"
+
+gdb_test "break" \
+    "Note: breakpoints \[0-9\]* and \[0-9\]* also set at .*Breakpoint \[0-9\]*.*" \
+    "break on default location, 3rd time"
+
+gdb_test "break" \
+    "Note: breakpoints \[0-9\]*, \[0-9\]* and \[0-9\]* also set at .*Breakpoint \[0-9\]*.*" \
+    "break on default location, 4th time"
+
+# Verify that a "silent" breakpoint can be set, and that GDB is indeed
+# "silent" about its triggering.
+#
+if {![runto_main]} {
+    return
+}
+
+gdb_test_multiple "break $bp_location1" \
+    "set to-be-silent break bp_location1" {
+	-re "Breakpoint (\[0-9\]*) at .*, line $bp_location1.*$gdb_prompt $" {
+	    pass "set to-be-silent break bp_location1"
+	}
+}
+
+gdb_test "commands $expect_out(1,string)\nsilent\nend" ">end" "set silent break bp_location1"
+
+gdb_test "info break $expect_out(1,string)" \
+    "\[0-9\]*\[ \t\]*breakpoint.*:$bp_location1\r\n\[ \t\]*silent.*" \
+    "info silent break bp_location1"
+
+gdb_test "continue" "Continuing.*" "hit silent break bp_location1"
+
+gdb_test "bt" "#0  main .* at .*:$bp_location1.*" \
+    "stopped for silent break bp_location1"
+
+# Verify that GDB can at least parse a breakpoint with the
+# "thread" keyword.  (We won't attempt to test here that a
+# thread-specific breakpoint really triggers appropriately.
+# The gdb.threads subdirectory contains tests for that.)
+#
+set bp_location12 [gdb_get_line_number "set breakpoint 12 here"]
+
+gdb_test "break $bp_location12 thread 999" "Unknown thread 999.*" \
+    "thread-specific breakpoint on non-existent thread disallowed"
+
+gdb_test "break $bp_location12 thread foo" \
+    "Invalid thread ID: foo" \
+    "thread-specific breakpoint on bogus thread ID disallowed"
+
+# Verify that GDB responds gracefully to a breakpoint command with
+# trailing garbage.
+#
+
+gdb_test "break $bp_location12 foo" \
+    "malformed linespec error: unexpected string, \"foo\".*" \
+    "breakpoint with trailing garbage disallowed"
+
+# Verify that GDB responds gracefully to a "clear" command that has
+# no matching breakpoint.  (First, get us off the current source line,
+# which we know has a breakpoint.)
+#
+
+gdb_test "next" "marker1.*" "step over breakpoint"
+
+gdb_test "clear 81" "No breakpoint at 81.*" \
+    "clear line has no breakpoint disallowed"
+
+gdb_test "clear" "No breakpoint at this line.*" \
+    "clear current line has no breakpoint disallowed"
+
+# Verify that we can set and clear multiple breakpoints.
+#
+# We don't test that it deletes the correct breakpoints.  We do at
+# least test that it deletes more than one breakpoint.
+#
+gdb_test "break marker3" "Breakpoint.*at.*" "break marker3 #1"
+gdb_test "break marker3" "Breakpoint.*at.*" "break marker3 #2"
+gdb_test "clear marker3" {Deleted breakpoints [0-9]+ [0-9]+.*}
+
+# Verify that a breakpoint can be set via a convenience variable.
+#
+
+gdb_test_no_output "set \$foo=$bp_location11" \
+    "set convenience variable \$foo to bp_location11"
+
+gdb_test "break \$foo" \
+    "Breakpoint (\[0-9\]*) at .*, line $bp_location11.*" \
+    "set breakpoint via convenience variable"
+
+# Verify that GDB responds gracefully to an attempt to set a
+# breakpoint via a convenience variable whose type is not integer.
+#
+
+gdb_test_no_output "set \$foo=81.5" \
+    "set convenience variable \$foo to 81.5"
+
+gdb_test "break \$foo" \
+    "Convenience variables used in line specs must have integer values.*" \
+    "set breakpoint via non-integer convenience variable disallowed"
+
+# Verify that we can set and trigger a breakpoint in a user-called function.
+#
+
+gdb_test "break marker2" \
+    "Breakpoint (\[0-9\]*) at .*, line $bp_location8.*" \
+    "set breakpoint on to-be-called function"
+
+gdb_test "print marker2(99)" \
+    "The program being debugged stopped while in a function called from GDB.\r\nEvaluation of the expression containing the function\r\n.marker2. will be abandoned.\r\nWhen the function is done executing, GDB will silently stop.*" \
+    "hit breakpoint on called function"
+
+# As long as we're stopped (breakpointed) in a called function,
+# verify that we can successfully backtrace & such from here.
+
+gdb_test "bt" \
+    "#0\[ \t\]*($hex in )?marker2.*:$bp_location8\r\n#1\[ \t\]*<function called from gdb>.*" \
+    "backtrace while in called function"
+
+# Return from the called function.  For remote targets, it's important to do
+# this before runto_main, which otherwise may silently stop on the dummy
+# breakpoint inserted by GDB at the program's entry point.
+#
+
+gdb_test_multiple "finish" "finish from called function" {
+    -re "Run till exit from .*marker2.* at .*$bp_location8\r\n.*function called from gdb.*$gdb_prompt $" {
+	pass "finish from called function"
+    }
+    -re "Run till exit from .*marker2.* at .*$bp_location8\r\n.*Value returned.*$gdb_prompt $" {
+	pass "finish from called function"
+    }
+}
+
+# Verify that GDB responds gracefully to a "finish" command with
+# arguments.
+#
+if {![runto_main]} {
+    return
+}
+
+gdb_test "finish 123" \
+    "The \"finish\" command does not take any arguments.*" \
+    "finish with arguments disallowed"
+
+# Verify that GDB responds gracefully to a request to "finish" from
+# the outermost frame.  On a stub that never exits, this will just
+# run to the stubs routine, so we don't get this error...  Thus the 
+# second condition.
+#
+
+gdb_test_multiple "finish" "finish from outermost frame disallowed" {
+    -re "\"finish\" not meaningful in the outermost frame.*$gdb_prompt $" {
+	pass "finish from outermost frame disallowed"
+    }
+    -re "Run till exit from.*$gdb_prompt $" {
+	pass "finish from outermost frame disallowed"
+    }
+}
+
+#
+# Test "next" over recursive function call.
+#
+
+proc test_next_with_recursion {} { 
+    global gdb_prompt
+    global decimal
+    global binfile
+
+    gdb_test "kill" "" "kill program" "Kill the program being debugged.*y or n. $" "y"
+    delete_breakpoints
+
+    gdb_test "break factorial" "Breakpoint $decimal at .*" "break at factorial"
+
+    # Run until we call factorial with 6
+
+    gdb_run_cmd
+    gdb_test "" "Break.* factorial .value=6. .*" "run to factorial(6)"
+
+    # Continue until we call factorial recursively with 5.
+
+    gdb_test "continue" \
+	"Continuing.*Break.* factorial .value=5. .*" \
+	"continue to factorial(5)"
+
+    # Do a backtrace just to confirm how many levels deep we are.
+
+    gdb_test "backtrace" \
+	"#0\[ \t\]+ factorial .value=5..*" \
+	"backtrace from factorial(5)"
+
+    # Now a "next" should position us at the recursive call, which
+    # we will be performing with 4.
+
+    gdb_test "next" \
+	".* factorial .value - 1.;.*" \
+	"next to recursive call"
+
+    # Disable the breakpoint at the entry to factorial by deleting them all.
+    # The "next" should run until we return to the next line from this
+    # recursive call to factorial with 4.
+    # Buggy versions of gdb will stop instead at the innermost frame on
+    # the line where we are trying to "next" to.
+
+    delete_breakpoints
+
+    if [istarget "mips*tx39-*"] {
+	set timeout 60
+    }
+    # We used to set timeout here for all other targets as well.  This
+    # is almost certainly wrong.  The proper timeout depends on the
+    # target system in use, and how we communicate with it, so there
+    # is no single value appropriate for all targets.  The timeout
+    # should be established by the Dejagnu config file(s) for the
+    # board, and respected by the test suite.
+    #
+    # For example, if I'm running GDB over an SSH tunnel talking to a
+    # portmaster in California talking to an ancient 68k board running
+    # a crummy ROM monitor (a situation I can only wish were
+    # hypothetical), then I need a large timeout.  But that's not the
+    # kind of knowledge that belongs in this file.
+
+    gdb_test next "\[0-9\]*\[\t \]+return \\(value\\);.*" \
+	    "next over recursive call"
+
+    # OK, we should be back in the same stack frame we started from.
+    # Do a backtrace just to confirm.
+
+    gdb_test "backtrace" \
+	    "#0\[ \t\]+ factorial .value=120.*\r\n#1\[ \t\]+ \[0-9a-fx\]+ in factorial .value=6..*" \
+	    "backtrace from factorial(5.1)"
+
+    if { ![target_info exists gdb,noresults] } {
+	gdb_continue_to_end "recursive next test"
+    }
+}
+
+test_next_with_recursion
+
+
+#********
+
+proc test_different_dir {type test_different_dir xfail} {
+    with_test_prefix "$type" {
+	global srcdir subdir binfile srcfile timeout gdb_prompt
+	global bp_location6 decimal hex
+
+	clean_restart
+	gdb_test_no_output "set debug-file-directory ${test_different_dir}" \
+	    "set separate debug location"
+	gdb_load ${binfile}
+
+	#
+	# test break at function
+	#
+	if {$xfail} {
+	    setup_xfail "*-*-*"
+	}
+	gdb_test "break -q main" \
+	    "Breakpoint.*at.* file .*$srcfile, line.*" \
+	    "breakpoint function, optimized file"
+
+	#
+	# test break at function
+	#
+	if {$xfail} {
+	    setup_xfail "*-*-*"
+	}
+	gdb_test "break marker4" \
+	    "Breakpoint.*at.* file .*$srcfile, line.*" \
+	    "breakpoint small function, optimized file"
+
+	#
+	# run until the breakpoint at main is hit. For non-stubs-using targets.
+	#
+	gdb_run_cmd
+	if {$xfail} {
+	    setup_xfail "*-*-*"
+	}
+	set test "run until function breakpoint, optimized file"
+	gdb_test_multiple "" $test {
+	    -re "Breakpoint \[0-9\]+,.*main .*argc.*argv.* at .*$srcfile:$bp_location6.*$bp_location6\[\t \]+if .argc.* \{.*$gdb_prompt $" {
+		pass $test
+	    }
+	    -re "Breakpoint \[0-9\]+,.*main .*argc.*argv.* at .*$gdb_prompt $" {
+		pass "$test (code motion)"
+	    }
+	}
+
+	#
+	# run until the breakpoint at a small function
+	#
+
+	#
+	# Add a second pass pattern.  The behavior differs here between stabs
+	# and dwarf for one-line functions.  Stabs preserves two line symbols
+	# (one before the prologue and one after) with the same line number, 
+	# but dwarf regards these as duplicates and discards one of them.
+	# Therefore the address after the prologue (where the breakpoint is)
+	# has no exactly matching line symbol, and GDB reports the breakpoint
+	# as if it were in the middle of a line rather than at the beginning.
+
+	set bp_location14 [gdb_get_line_number "set breakpoint 14 here"]
+	if {$xfail} {
+	    setup_xfail "*-*-*"
+	}
+
+	gdb_test_multiple "continue" "run until breakpoint set at small function, optimized file" {
+	    -re "Breakpoint $decimal, marker4 \\(d=177601976\\) at .*$srcfile:$bp_location14\[\r\n\]+$bp_location14\[\t \]+void marker4.*$gdb_prompt $" {
+		pass "run until breakpoint set at small function, optimized file (line bp_location14)"
+	    }
+	    -re "Breakpoint $decimal, $hex in marker4 \\(d=177601976\\) at .*$srcfile:$bp_location14\[\r\n\]+$bp_location14\[\t \]+void marker4.*$gdb_prompt $" {
+		pass "run until breakpoint set at small function, optimized file (line bp_location14)"
+	    }
+	}
+
+	# proc test_different_dir
+    }
+}
+
+
+# now move the .debug file to a different location so that we can test
+# the "set debug-file-directory" command.
+
+set different_dir [standard_output_file ${testfile}.dir]
+set debugfile "${different_dir}/[standard_output_file ${testfile}${EXEEXT}.debug]"
+remote_exec build "rm -rf $different_dir"
+remote_exec build "mkdir -p [file dirname $debugfile]"
+remote_exec build "mv -f [standard_output_file ${testfile}${EXEEXT}.debug] $debugfile"
+
+test_different_dir debuglink $different_dir 0
+
+
+# Test CRC mismatch is reported.
+
+if {[build_executable sepdebug.exp sepdebug2 sepdebug2.c debug] != -1
+    && ![gdb_gnu_strip_debug [standard_output_file sepdebug2]$EXEEXT]} {
+
+    remote_exec build "cp ${debugfile} [standard_output_file sepdebug2.debug]"
+
+    clean_restart
+
+    set escapedobjdirsubdir [string_to_regexp [standard_output_file {}]]
+
+    gdb_test "file [standard_output_file sepdebug2]" "warning: the debug information found in \"${escapedobjdirsubdir}/sepdebug2\\.debug\" does not match \"${escapedobjdirsubdir}/sepdebug2\" \\(CRC mismatch\\)\\..*\\(No debugging symbols found in .*\\).*" "CRC mismatch is reported"
+}
+
+
+# NT_GNU_BUILD_ID / .note.gnu.build-id test:
+
+set build_id_debug_filename [build_id_debug_filename_get $binfile$EXEEXT]
+if {![string compare $build_id_debug_filename ""]} {
+    unsupported "build-id is not supported by the compiler"
+
+    # Spare debug files may confuse testsuite runs in the future.
+    remote_exec build "rm -f $debugfile"
+} else {
+    set build_id_debugself_filename [build_id_debug_filename_get $debugfile]
+    set test "build-id support by binutils"
+    set xfail 0
+    if {![string compare $build_id_debugself_filename ""]} {
+	unsupported $test
+	set xfail 1
+    } elseif {[string compare $build_id_debugself_filename $build_id_debug_filename] != 0} {
+	fail $test
+    } else {
+	pass $test
+    }
+
+    file mkdir [file dirname [standard_output_file ${build_id_debug_filename}]]
+    remote_exec build "mv $debugfile [standard_output_file ${build_id_debug_filename}]"
+
+    test_different_dir build-id [standard_output_file {}] $xfail
+
+    # Test also multiple directories can be specified.  Without the build-id
+    # reference GDB would find the separate debug info just at the same
+    # location as the executable file.
+
+    test_different_dir multiple-dirs "/doesnotexist:[standard_output_file {}]" $xfail
+
+    # Spare debug files may confuse testsuite runs in the future.
+    remote_exec build "rm -f [standard_output_file ${build_id_debug_filename}]"
+}

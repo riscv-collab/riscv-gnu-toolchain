@@ -1,0 +1,150 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+set nl		"\[\r\n\]+"
+
+require allow_cplus_tests
+
+load_lib "cp-support.exp"
+
+standard_testfile .cc
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile {debug c++}]} {
+    return -1
+}
+
+if {![runto_main]} {
+    return
+}
+
+if {[test_compiler_info {clang-*-*} c++]} {
+    set using_clang true
+} else {
+    set using_clang false
+}
+
+gdb_test_no_output "set language c++" ""
+gdb_test_no_output "set width 0" ""
+
+proc do_check_holder {name {flags ""} {show_typedefs 1} {show_methods 1}
+		      {raw 0}} {
+    global using_clang
+
+    set contents {
+	{ base "public Base<T>" }
+	{ field public "Simple<T> t;" }
+	{ field public "Simple<T*> tstar;" }
+    }
+
+    if {$raw} {
+	lappend contents { field public "Holder<int>::Z z;" }
+    } else {
+	lappend contents { field public "Z z;" }
+    }
+
+    if {$show_typedefs} {
+	# Clang does not add accessibility information for typedefs:
+	# https://github.com/llvm/llvm-project/issues/57608
+	if {$using_clang} {
+	    setup_xfail "clang 57608" *-*-*
+	}
+	lappend contents { typedef public "typedef Simple<Simple<T> > Z;" }
+    }
+
+    if {$show_methods} {
+	lappend contents { method public "double method();" }
+    }
+
+    if {$raw} {
+	regsub -all -- "T" $contents "int" contents
+    }
+
+    cp_test_ptype_class value $name "class" "Holder<int>" $contents \
+	"" {} $flags
+}
+
+proc do_check_typedef_holder {name {flags ""} {show_typedefs 1} {show_methods 1}
+			      {raw 0}} {
+
+    set contents {
+	{ field public "double a;" }
+	{ field public "ns::scoped_double b;" }
+	{ field public "global_double c;" }
+    }
+
+    if {$show_typedefs} {
+	lappend contents { typedef private "typedef double class_double;" }
+    }
+
+    if {$show_methods} {
+	lappend contents { method private "double method1(ns::scoped_double);" }
+	lappend contents { method private "double method2(global_double);" }
+    }
+
+    if {$raw} {
+	lappend contents { field private "TypedefHolder::class_double d;" }
+    } else {
+	lappend contents { field private "class_double d;" }
+    }
+
+    cp_test_ptype_class value2 $name "class" "TypedefHolder" $contents \
+	"" {} $flags
+}
+
+do_check_holder "basic test"
+do_check_holder "no methods" "/m" 1 0
+do_check_holder "no typedefs" "/t" 0 1
+do_check_holder "no methods or typedefs" "/mt" 0 0
+do_check_typedef_holder "typdefs class: basic test"
+do_check_typedef_holder "typdefs class: no methods" "/m" 1 0
+do_check_typedef_holder "typdefs class: no typedefs" "/t" 0 1 0
+do_check_typedef_holder "typdefs class:no methods or typedefs" "/mt" 0 0
+
+do_check_holder "raw" "/r" 1 1 1
+do_check_holder "raw no methods" "/rm" 1 0 1
+do_check_holder "raw no typedefs" "/rt" 0 1 1
+do_check_holder "raw no methods or typedefs" "/rmt" 0 0 1
+do_check_typedef_holder "typedef class: raw" "/r" 1 1 1
+do_check_typedef_holder "typedef class: raw no methods" "/rm" 1 0 1
+do_check_typedef_holder "typedef class: raw no typedefs" "/rt" 0 1 1
+do_check_typedef_holder "typedef class: raw no methods or typedefs" "/rmt" 0 0 1
+
+gdb_test_no_output "set print type methods off"
+do_check_holder "basic test, default methods off" "" 1 0
+do_check_holder "methods, default methods off" "/M" 1 1
+do_check_holder "no typedefs, default methods off" "/t" 0 0
+do_check_holder "methods, no typedefs, default methods off" "/Mt" 0 1
+do_check_typedef_holder \
+    "typedef class: basic test, default methods off" "" 1 0
+do_check_typedef_holder \
+    "typedef class: methods, default methods off" "/M" 1 1
+do_check_typedef_holder \
+    "typedef class: no typedefs, default methods off" "/t" 0 0
+do_check_typedef_holder \
+    "typedef class: methods, no typedefs, default methods off" "/Mt" 0 1
+
+gdb_test_no_output "set print type typedefs off"
+do_check_holder "basic test, default methods+typedefs off" "" 0 0
+do_check_holder "methods, default methods+typedefs off" "/M" 0 1
+do_check_holder "typedefs, default methods+typedefs off" "/T" 1 0
+do_check_holder "methods typedefs, default methods+typedefs off" "/MT" 1 1
+do_check_typedef_holder \
+    "typedef class: basic test, default methods+typedefs off" "" 0 0
+do_check_typedef_holder \
+    "typedef class: methods, default methods+typedefs off" "/M" 0 1
+do_check_typedef_holder \
+    "typedef class: typedefs, default methods+typedefs off" "/T" 1 0
+do_check_typedef_holder \
+    "typedef class: methods typedefs, default methods+typedefs off" "/MT" 1 1

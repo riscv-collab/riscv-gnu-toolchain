@@ -1,0 +1,152 @@
+# Copyright (C) 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Then, test that if we detach an inferior with a pending fork child, that
+# child is correctly detached and resumes execution normally.  There are two
+# kinds of "pending fork child" we test:
+#
+#   - resulting of a fork catchpoint: we stop at a fork catchpoint and detach.
+#   - resulting of an all-stop stop on top of a non-stop target, where a fork
+#     event is saved as a pending wait status.  To test this, we stepi a thread
+#     while another one forks.  The stepi generally completes at least as fast
+#     as the fork, so we have a chance that the stop due to the stepi being
+#     complete is shown to the user while the fork event is saved for later.
+#
+# To verify that the child process is detached and resumes execution, we have
+# it write a file on the filesystem.  If we don't see the file after a certain
+# delay, it means the child was likely not detached, and the test fails.
+#
+# At the same time, this tests that having this pending fork event does not
+# cause other problems in general.  For example, a buggy GDB / GDBserver combo
+# would notice the thread of the child process of the (still unprocessed) fork
+# event, and erroneously create a new inferior for it.  Once fixed, the child
+# process' thread is hidden by whoever holds the pending fork event.
+
+standard_testfile .c -touch-file.c
+
+set touch_file_bin $binfile-touch-file
+
+if { [is_remote target] } {
+    # If the target is remote, write the file in whatever the current working
+    # directory is, with a somewhat unique name.
+    set touch_file_path ${testfile}-flag
+
+    # Now get the remote name, by creating the file on build and copying it to
+    # target.
+    remote_exec build touch $touch_file_path
+    set target_touch_file_path [remote_download target $touch_file_path]
+
+    # Clean up.
+    remote_file build delete $touch_file_path
+    remote_file target delete $target_touch_file_path
+
+    set touch_file_path $target_touch_file_path
+} else {
+    set touch_file_path [standard_output_file flag]
+}
+
+set opts [list debug "additional_flags=-DTOUCH_FILE_PATH=\"$touch_file_path\""]
+if { [gdb_compile "$srcdir/$subdir/$srcfile2" $touch_file_bin executable $opts] != "" } {
+    return
+}
+
+set target_touch_file_bin [gdb_remote_download target $touch_file_bin]
+
+proc do_test { target-non-stop who_forks fork_function stop_mode } {
+    set opts [list \
+	debug \
+	"additional_flags=-DFORK_FUNCTION=$fork_function" \
+	"additional_flags=-DTOUCH_FILE_BIN=\"$::target_touch_file_bin\""]
+
+    # WHO_FORKS says which of the main or other thread calls (v)fork.  The
+    # thread that does not call (v)fork is the one who tries to step.
+    if { $who_forks == "main" } {
+	lappend opts "additional_flags=-DMAIN_THREAD_FORKS"
+	set this_binfile ${::binfile}-main-${fork_function}
+    } elseif { $who_forks == "other" } {
+	lappend opts "additional_flags=-DOTHER_THREAD_FORKS"
+	set this_binfile ${::binfile}-other-${fork_function}
+    } else {
+	error "invalid who_forks value: $who_forks"
+    }
+
+    if { [gdb_compile_pthreads "$::srcdir/$::subdir/$::srcfile" $this_binfile executable $opts] != "" } {
+	return
+    }
+
+    remote_file target delete $::touch_file_path
+    gdb_assert { ![remote_file target exists $::touch_file_path] } "file does not exist before test"
+
+    save_vars { ::GDBFLAGS } {
+	append ::GDBFLAGS " -ex \"maintenance set target-non-stop ${target-non-stop}\""
+	clean_restart $this_binfile
+    }
+
+    if {![runto_main]} {
+	fail "could not run to main"
+	return
+    }
+
+    # Run until breakpoint in the second thread.
+    gdb_test "break break_here" "Breakpoint $::decimal.*"
+    gdb_continue_to_breakpoint "thread started"
+
+    # Delete the breakpoint so the thread doesn't do a step-over.
+    delete_breakpoints
+
+    # Let the forking thread make progress during the step.
+    gdb_test "p release_forking_thread = 1" " = 1"
+
+    # There are two "pending fork child" modes we can test here:
+    #
+    #   - catch: set up a "catch fork" / "catch vfork" and run to it.
+    #   - stepi: stepi the non-forking thread while the forking thread,
+    #     well, forks.
+    if { $stop_mode == "catch" } {
+	gdb_test "catch fork"
+	gdb_test "catch vfork"
+	gdb_test "continue" "hit Catchpoint $::decimal.*fork.*"
+    } elseif { $stop_mode == "stepi" } {
+	# stepi the non-forking thread.
+	gdb_test "stepi"
+    } else {
+	error "invalid stop_mode value: $stop_mode"
+    }
+
+    # Make sure there's still a single inferior.
+    gdb_test "info inferior" {\* 1 [^\r\n]+}
+
+    gdb_test "detach"
+
+    # After being detached, the fork child creates file ::TOUCH_FILE_PATH.
+    # Seeing this file tells us the fork child was detached and executed
+    # successfully.
+    gdb_assert { [target_file_exists_with_timeout $::touch_file_path] } "file exists after detach"
+
+    # Don't leave random files on the target system.
+    if { [is_remote target] } {
+	remote_file target delete $::touch_file_path
+    }
+}
+
+foreach_with_prefix target-non-stop { auto on off } {
+    foreach_with_prefix who_forks { main other } {
+	foreach_with_prefix fork_function { fork vfork } {
+	    foreach_with_prefix stop_mode { stepi catch } {
+		do_test ${target-non-stop} $who_forks $fork_function $stop_mode
+	    }
+	}
+    }
+}

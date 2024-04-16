@@ -1,0 +1,474 @@
+# Copyright (C) 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib gdb-python.exp
+
+require allow_python_tests
+
+standard_testfile
+
+if {[build_executable "failed to prepare" ${testfile} ${srcfile}]} {
+    return -1
+}
+
+# Remove debug information from BINFILE and place it into
+# BINFILE.debug.
+if {[gdb_gnu_strip_debug $binfile]} {
+    unsupported "cannot produce separate debug info files"
+    return -1
+}
+
+set remote_python_file \
+    [gdb_remote_download host ${srcdir}/${subdir}/${testfile}.py]
+
+set debug_filename ${binfile}.debug
+set hidden_filename ${binfile}.hidden
+
+# Start GDB.
+clean_restart
+
+# Some initial sanity checks; initially, we can find the debug information
+# (this will use the .gnu_debuglink), then after we move the debug
+# information, reload the executable, now the debug can't be found.
+with_test_prefix "initial checks" {
+    # Load BINFILE, we should find the separate debug information.
+    gdb_file_cmd $binfile
+    gdb_assert {$gdb_file_cmd_debug_info == "debug"} \
+	"debug info is found"
+
+    # Rename the debug information file, re-load BINFILE, GDB should fail
+    # to find the debug information
+    remote_exec build "mv $debug_filename $hidden_filename"
+    gdb_file_cmd $binfile
+    gdb_assert {$gdb_file_cmd_debug_info == "nodebug"} \
+	"debug info no longer found"
+}
+
+# Load the Python script into GDB.
+gdb_test "source $remote_python_file" "^Success" \
+    "source python script"
+
+# Setup the separate debug info directory.  This isn't actually needed until
+# some of the later tests, but might as well get this done now.
+set debug_directory [standard_output_file "debug-dir"]
+remote_exec build "mkdir -p $debug_directory"
+gdb_test_no_output "set debug-file-directory $debug_directory" \
+    "set debug-file-directory"
+
+# Initially the missing debug handler we install is in a mode where it
+# returns None, indicating that it can't help locate the debug information.
+# Check this works as expected.
+with_test_prefix "handler returning None" {
+    gdb_test_no_output \
+	"python gdb.missing_debug.register_handler(None, handler_obj)" \
+	"register the initial handler"
+
+    gdb_file_cmd $binfile
+    gdb_assert {$gdb_file_cmd_debug_info == "nodebug"} \
+	"debug info not found"
+
+    # Check the handler was only called once.
+    gdb_test "python print(handler_obj.call_count)" "^1" \
+	"check handler was only called once"
+}
+
+# Now configure the handler to move the debug file back to the
+# .gnu_debuglink location and then return True, this will cause GDB to
+# recheck, at which point it should find the debug info.
+with_test_prefix "handler in gnu_debuglink mode" {
+    gdb_test_no_output "python handler_obj.set_mode(Mode.RETURN_TRUE, \
+						    \"$hidden_filename\", \
+						    \"$debug_filename\")" \
+	"confirgure handler"
+    gdb_file_cmd $binfile
+    gdb_assert {$gdb_file_cmd_debug_info == "debug"} "debug info found"
+
+    # Check the handler was only called once.
+    gdb_test "python print(handler_obj.call_count)" "^1" \
+	"check handler was only called once"
+}
+
+# Setup a directory structure based on the build-id of BINFILE, but don't
+# move the debug information into place just yet.
+#
+# Instead, configure the handler to move the debug info into the build-id
+# directory.
+#
+# Reload BINFILE, at which point the handler will move the debug info into
+# the build-id directory and return True, GDB will then recheck for the
+# debug information, and should find it.
+with_test_prefix "handler in build-id mode" {
+    # Move the debug file out of the way once more.
+    remote_exec build "mv $debug_filename $hidden_filename"
+
+    # Create the build-id based directory in which the debug information
+    # will be placed.
+    set build_id_filename \
+	$debug_directory/[build_id_debug_filename_get $binfile]
+    remote_exec build "mkdir -p [file dirname $build_id_filename]"
+
+    # Configure the handler to move the debug info into the build-id dir.
+    gdb_test_no_output "python handler_obj.set_mode(Mode.RETURN_TRUE, \
+						    \"$hidden_filename\", \
+						    \"$build_id_filename\")" \
+	"confirgure handler"
+
+    # Reload the binary and check the debug information is found.
+    gdb_file_cmd $binfile
+    gdb_assert {$gdb_file_cmd_debug_info == "debug"} "debug info found"
+
+    # Check the handler was only called once.
+    gdb_test "python print(handler_obj.call_count)" "^1" \
+	"check handler was only called once"
+}
+
+# Move the debug information back to a hidden location and configure the
+# handler to return the filename of the hidden debug info location.  GDB
+# should immediately use this file as the debug information.
+with_test_prefix "handler returning a string" {
+    remote_exec build "mv $build_id_filename $hidden_filename"
+
+    # Configure the handler return a filename string.
+    gdb_test_no_output "python handler_obj.set_mode(Mode.RETURN_STRING, \
+						    \"$hidden_filename\")" \
+	"confirgure handler"
+
+    # Reload the binary and check the debug information is found.
+    gdb_file_cmd $binfile
+    gdb_assert {$gdb_file_cmd_debug_info == "debug"} "debug info found"
+
+    # Check the handler was only called once.
+    gdb_test "python print(handler_obj.call_count)" "^1" \
+	"check handler was only called once"
+}
+
+# Register another global handler, this one raises an exception.  Reload the
+# debug information, the bad handler should be invoked first, which raises
+# an excetption, at which point GDB should skip further Python handlers.
+with_test_prefix "handler raises an exception" {
+    gdb_test_no_output \
+	"python gdb.missing_debug.register_handler(None, rhandler)"
+
+    foreach_with_prefix exception_type {gdb.GdbError TypeError} {
+	gdb_test_no_output \
+	    "python rhandler.exception_type = $exception_type"
+
+	gdb_file_cmd $binfile
+	gdb_assert {$gdb_file_cmd_debug_info == "nodebug"} \
+	    "debug info not found"
+
+	set re [string_to_regexp \
+		    "Python Exception <class '$exception_type'>: message"]
+	gdb_assert {[regexp $re $gdb_file_cmd_msg]} \
+	    "check for exception in file command output"
+
+	# Our original handler is still registered, but should not have been
+	# called again (as the exception occurs first).
+	gdb_test "python print(handler_obj.call_count)" "^1" \
+	    "check good handler hasn't been called again"
+    }
+}
+
+gdb_test "info missing-debug-handlers" \
+    [multi_line \
+	 "Global:" \
+	 "  exception_handler" \
+	 "  handler"] \
+    "check both handlers are visible"
+
+# Re-start GDB.
+clean_restart
+
+# Load the Python script into GDB.
+gdb_test "source $remote_python_file" "^Success" \
+    "source python script for bad handler name checks"
+
+# Attempt to register a missing-debug-handler with NAME.  The expectation is
+# that this should fail as NAME contains some invalid characters.
+proc check_bad_name {name} {
+    set name_re [string_to_regexp $name]
+    set re \
+	[multi_line \
+	     "ValueError: invalid character '.' in handler name: $name_re" \
+	     "Error while executing Python code\\."]
+
+    gdb_test "python register(\"$name\")" $re \
+	"check that '$name' is not accepted"
+}
+
+# We don't attempt to be exhaustive here, just check a few random examples
+# of invalid names.
+check_bad_name "!! Bad Name"
+check_bad_name "Bad Name"
+check_bad_name "(Bad Name)"
+check_bad_name "Bad \[Name\]"
+check_bad_name "Bad,Name"
+check_bad_name "Bad;Name"
+
+# Check that there are no handlers registered.
+gdb_test_no_output "info missing-debug-handlers" \
+    "check no handlers are registered"
+
+# Check we can use the enable/disable commands where there are no handlers
+# registered.
+gdb_test "enable missing-debug-handler foo" \
+    "^0 missing debug handlers enabled"
+gdb_test "disable missing-debug-handler foo" \
+    "^0 missing debug handlers disabled"
+
+# Grab the current program space object, used for registering handler later.
+gdb_test_no_output "python pspace = gdb.selected_inferior().progspace"
+
+# Now register some handlers.
+foreach hspec {{\"Foo\" None}
+    {\"-bar\" None}
+    {\"baz-\" pspace}
+    {\"abc-def\" pspace}} {
+    lassign $hspec name locus
+    gdb_test "python register($name, $locus)"
+}
+
+with_test_prefix "all handlers enabled" {
+    gdb_test "info missing-debug-handlers" \
+	[multi_line \
+	     "Current Progspace:" \
+	     "  abc-def" \
+	     "  baz-" \
+	     "Global:" \
+	     "  -bar" \
+	     "  Foo"]
+
+    gdb_file_cmd $binfile
+    gdb_test "python print(handler_call_log)" \
+	[string_to_regexp {['abc-def', 'baz-', '-bar', 'Foo']}]
+    gdb_test_no_output "python handler_call_log = \[\]" \
+	"reset call log"
+}
+
+with_test_prefix "disable 'baz-'" {
+    gdb_test "disable missing-debug-handler progspace baz-" \
+	"^1 missing debug handler disabled"
+
+    gdb_test "info missing-debug-handlers" \
+	[multi_line \
+	     "Progspace \[^\r\n\]+:" \
+	     "  abc-def" \
+	     "  baz- \\\[disabled\\\]" \
+	     "Global:" \
+	     "  -bar" \
+	     "  Foo"]
+
+    gdb_file_cmd $binfile
+    gdb_test "python print(handler_call_log)" \
+	[string_to_regexp {['abc-def', '-bar', 'Foo']}]
+    gdb_test_no_output "python handler_call_log = \[\]" \
+	"reset call log"
+}
+
+with_test_prefix "disable 'Foo'" {
+    gdb_test "disable missing-debug-handler .* Foo" \
+	"^1 missing debug handler disabled"
+
+    gdb_test "info missing-debug-handlers" \
+	[multi_line \
+	     "Progspace \[^\r\n\]+:" \
+	     "  abc-def" \
+	     "  baz- \\\[disabled\\\]" \
+	     "Global:" \
+	     "  -bar" \
+	     "  Foo \\\[disabled\\\]"]
+
+    gdb_file_cmd $binfile
+    gdb_test "python print(handler_call_log)" \
+	[string_to_regexp {['abc-def', '-bar']}]
+    gdb_test_no_output "python handler_call_log = \[\]" \
+	"reset call log"
+}
+
+with_test_prefix "disable everything" {
+    gdb_test "disable missing-debug-handler .* .*" \
+	"^2 missing debug handlers disabled"
+
+    gdb_test "info missing-debug-handlers" \
+	[multi_line \
+	     "Progspace \[^\r\n\]+:" \
+	     "  abc-def \\\[disabled\\\]" \
+	     "  baz- \\\[disabled\\\]" \
+	     "Global:" \
+	     "  -bar \\\[disabled\\\]" \
+	     "  Foo \\\[disabled\\\]"]
+
+    gdb_file_cmd $binfile
+    gdb_test "python print(handler_call_log)" \
+	[string_to_regexp {[]}]
+    gdb_test_no_output "python handler_call_log = \[\]" \
+	"reset call log"
+}
+
+with_test_prefix "enable 'abc-def'" {
+    set re [string_to_regexp $binfile]
+
+    gdb_test "enable missing-debug-handler \"$re\" abc-def" \
+	"^1 missing debug handler enabled" \
+	"enable missing-debug-handler"
+
+    gdb_test "info missing-debug-handlers" \
+	[multi_line \
+	     "Progspace \[^\r\n\]+:" \
+	     "  abc-def" \
+	     "  baz- \\\[disabled\\\]" \
+	     "Global:" \
+	     "  -bar \\\[disabled\\\]" \
+	     "  Foo \\\[disabled\\\]"]
+
+    gdb_file_cmd $binfile
+    gdb_test "python print(handler_call_log)" \
+	[string_to_regexp {['abc-def']}]
+    gdb_test_no_output "python handler_call_log = \[\]" \
+	"reset call log"
+}
+
+with_test_prefix "enable global handlers" {
+    set re [string_to_regexp $binfile]
+
+    gdb_test "enable missing-debug-handler global" \
+	"^2 missing debug handlers enabled"
+
+    gdb_test "info missing-debug-handlers" \
+	[multi_line \
+	     "Progspace \[^\r\n\]+:" \
+	     "  abc-def" \
+	     "  baz- \\\[disabled\\\]" \
+	     "Global:" \
+	     "  -bar" \
+	     "  Foo"]
+
+    gdb_file_cmd $binfile
+    gdb_test "python print(handler_call_log)" \
+	[string_to_regexp {['abc-def', '-bar', 'Foo']}]
+    gdb_test_no_output "python handler_call_log = \[\]" \
+	"reset call log"
+}
+
+# Add handler_obj to the global handler list, and configure it to
+# return False.  We should call all of the program space specific
+# handlers (which return None), and then call handler_obj from the
+# global list, which returns False, at which point we shouldn't call
+# anyone else.
+with_test_prefix "return False handler in progspace list" {
+    gdb_test "enable missing-debug-handler progspace" \
+	"^1 missing debug handler enabled"
+
+    gdb_test_no_output \
+	"python gdb.missing_debug.register_handler(None, handler_obj)" \
+	"register the initial handler"
+
+    gdb_test "info missing-debug-handlers" \
+	[multi_line \
+	     "Progspace \[^\r\n\]+:" \
+	     "  abc-def" \
+	     "  baz-" \
+	     "Global:" \
+	     "  handler" \
+	     "  -bar" \
+	     "  Foo"]
+
+    gdb_test_no_output "python handler_obj.set_mode(Mode.RETURN_FALSE)" \
+	"confirgure handler"
+
+    gdb_file_cmd $binfile
+    gdb_test "python print(handler_call_log)" \
+	[string_to_regexp {['abc-def', 'baz-', 'handler']}]
+    gdb_test_no_output "python handler_call_log = \[\]" \
+	"reset call log"
+}
+
+# Now add handler_obj to the current program space's handler list.  We
+# use the same handler object here, that's fine.  We should only see a
+# call to the first handler object in the call log.
+with_test_prefix "return False handler in global list" {
+    gdb_test_no_output \
+	"python gdb.missing_debug.register_handler(pspace, handler_obj)" \
+	"register the initial handler"
+
+    gdb_test "info missing-debug-handlers" \
+	[multi_line \
+	     "Progspace \[^\r\n\]+:" \
+	     "  handler" \
+	     "  abc-def" \
+	     "  baz-" \
+	     "Global:" \
+	     "  handler" \
+	     "  -bar" \
+	     "  Foo"]
+
+    gdb_file_cmd $binfile
+    gdb_test "python print(handler_call_log)" \
+	[string_to_regexp {['handler']}]
+    gdb_test_no_output "python handler_call_log = \[\]" \
+	"reset call log"
+}
+
+with_test_prefix "check handler replacement" {
+    # First, check we can have the same name appear in both program
+    # space and global lists without giving an error.
+    gdb_test_no_output "python register(\"Foo\", pspace)"
+
+    gdb_test "info missing-debug-handlers" \
+	[multi_line \
+	     "Progspace \[^\r\n\]+:" \
+	     "  Foo" \
+	     "  handler" \
+	     "  abc-def" \
+	     "  baz-" \
+	     "Global:" \
+	     "  handler" \
+	     "  -bar" \
+	     "  Foo"]
+
+    # Now check that we get an error if we try to add a handler with
+    # the same name.
+    gdb_test "python gdb.missing_debug.register_handler(pspace, log_handler(\"Foo\"))" \
+	[multi_line \
+	     "RuntimeError: Handler Foo already exists\\." \
+	     "Error while executing Python code\\."]
+
+    gdb_test "python gdb.missing_debug.register_handler(handler=log_handler(\"Foo\"), locus=pspace)" \
+	[multi_line \
+	     "RuntimeError: Handler Foo already exists\\." \
+	     "Error while executing Python code\\."]
+
+    # And now try again, but this time with 'replace=True', we
+    # shouldn't get an error in this case.
+    gdb_test_no_output \
+	"python gdb.missing_debug.register_handler(pspace, log_handler(\"Foo\"), replace=True)"
+
+    gdb_test_no_output \
+	"python gdb.missing_debug.register_handler(handler=log_handler(\"Foo\"), locus=None, replace=True)"
+
+    # Now disable a handler and check we still need to use 'replace=True'.
+    gdb_test "disable missing-debug-handler progspace Foo" \
+	"^1 missing debug handler disabled"
+
+    gdb_test "python gdb.missing_debug.register_handler(pspace, log_handler(\"Foo\"))" \
+	[multi_line \
+	     "RuntimeError: Handler Foo already exists\\." \
+	     "Error while executing Python code\\."] \
+	"still get an error when handler is disabled"
+
+    gdb_test_no_output \
+	"python gdb.missing_debug.register_handler(pspace, log_handler(\"Foo\"), replace=True)" \
+	"can replace a disabled handler"
+}

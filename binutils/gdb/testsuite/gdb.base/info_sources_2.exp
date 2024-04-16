@@ -1,0 +1,187 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test 'info sources' when the test file makes use of a shared
+# library.
+
+require allow_shlib_tests
+
+set is_remote_target [is_remote target]
+
+standard_testfile -test.c -lib.c
+set solib_name [standard_output_file ${testfile}-lib.so]
+
+if { [gdb_compile_shlib ${srcdir}/${subdir}/${srcfile2} ${solib_name} \
+      {debug}] != "" } {
+    untested "failed to compile shared library"
+    return -1
+}
+
+if {[gdb_compile ${srcdir}/${subdir}/${srcfile} ${binfile} executable \
+     [list debug shlib=${solib_name} ]] != ""} {
+    untested "failed to compile executable"
+    return -1
+}
+
+clean_restart ${binfile}
+
+set solib_name [gdb_load_shlib $solib_name]
+
+if ![runto foo] {
+    untested "failed to run to function foo"
+    return -1
+}
+
+# Invoke 'info sources EXTRA_ARGS' and extract the results.
+# The results are then compared to the list ARGS.
+#
+# The list ARGS should consist of pairs of values, the first item being the
+# path to an object file, and the second item being the name of a source file.
+# This proc checks that source file was listed as being a source file for the
+# given object file.
+#
+# If the name of the source file starts with the character "!" (exclamation
+# character, without the quotes) then the check is inverted, that the source
+# file is NOT listed for the given object file.
+proc run_info_sources { extra_args args } {
+    global gdb_prompt srcdir subdir
+    global is_remote_target
+
+    with_test_prefix "args: ${extra_args}" {
+
+	# The results of running info sources will be placed into this local.
+	array set info_sources {}
+
+	# The command we are going to run.
+	set cmd "info sources ${extra_args}"
+	set command_regex [string_to_regexp $cmd]
+
+	# Run the command and extract the results into INFO_SOURCES.
+	set objfile_name ""
+	set source_files {}
+	set files {}
+	gdb_test_multiple $cmd "" {
+	    -re "${command_regex}\r\n" {
+		exp_continue
+	    }
+
+	    -re "^(\[^\r\n\]+):\r\n" {
+		set objfile_name $expect_out(1,string)
+		if { $is_remote_target } {
+		    set objfile_name [file tail $objfile_name]
+		}
+		exp_continue
+	    }
+
+	    -re "^\\(Full debug information has not yet been read for this file\\.\\)\r\n" {
+		exp_continue
+	    }
+	    -re "^\\(Objfile has no debug information\\.\\)\r\n" {
+		exp_continue
+	    }
+
+	    -re "^\r\n" {
+		exp_continue
+	    }
+
+	    -re "^$gdb_prompt $" {
+		pass $gdb_test_name
+	    }
+
+	    -re "^(\[^,\r\n\]+), " {
+		set f $expect_out(1,string)
+		lappend files $f
+		exp_continue
+	    }
+	    -re "^(\[^\r\n\]+)\r\n" {
+		if { $objfile_name == "" } {
+		    fail "${gdb_test_name} (no objfile name)"
+		    return
+		}
+
+		set f $expect_out(1,string)
+		lappend files $f
+		set info_sources($objfile_name) $files
+		set $objfile_name ""
+		set files {}
+		exp_continue
+	    }
+	}
+
+	# Now check ARGS agaisnt the values held in INFO_SOURCES map.
+	foreach {objfile sourcefile} $args {
+	    # First, figure out if we're expecting SOURCEFILE to be present,
+	    # or not.
+	    set present True
+	    set match_type "is"
+	    if {[string index $sourcefile 0] == "!"} {
+		set present False
+		set match_type "is not"
+		set sourcefile [string range $sourcefile 1 end]
+	    }
+
+	    # Figure out the path for SOURCEFILE that we're looking for.
+	    set sourcepath [file normalize ${srcdir}/${subdir}/${sourcefile}]
+
+	    if { $is_remote_target } {
+		set objfile [file tail $objfile]
+	    }
+
+	    # Make sure we handle the case where there are no source files
+	    # associated with a particular objfile.
+	    set source_list {}
+	    if [info exists info_sources($objfile)] {
+		set source_list $info_sources($objfile)
+	    }
+
+	    # Now perform the search, and check the results.
+	    set idx [lsearch -exact $source_list $sourcepath]
+	    gdb_assert {($present && $idx >= 0) || (!$present && $idx == -1)} \
+		"source file '$sourcefile' ${match_type} present for '[file tail $objfile]'"
+	}
+    }
+}
+
+# The actual tests.
+
+run_info_sources "" \
+    ${binfile} ${srcfile} \
+    ${binfile} ${testfile}-header.h \
+    ${solib_name} ${srcfile2} \
+    ${solib_name} ${testfile}-header.h
+
+run_info_sources "-basename info_sources_2" \
+    ${binfile} ${srcfile} \
+    ${binfile} ${testfile}-header.h \
+    ${solib_name} ${srcfile2} \
+    ${solib_name} ${testfile}-header.h
+
+run_info_sources "-basename \\.c" \
+    ${binfile} ${srcfile} \
+    ${binfile} !${testfile}-header.h \
+    ${solib_name} ${srcfile2} \
+    ${solib_name} !${testfile}-header.h
+
+run_info_sources "-basename -- -test\\.c" \
+    ${binfile} ${srcfile} \
+    ${binfile} !${testfile}-header.h \
+    ${solib_name} !${srcfile2} \
+    ${solib_name} !${testfile}-header.h
+
+run_info_sources "-basename -- -lib\\.c" \
+    ${binfile} !${srcfile} \
+    ${binfile} !${testfile}-header.h \
+    ${solib_name} ${srcfile2} \
+    ${solib_name} !${testfile}-header.h

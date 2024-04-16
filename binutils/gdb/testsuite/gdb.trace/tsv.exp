@@ -1,0 +1,214 @@
+#   Copyright 2009-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "trace-support.exp"
+
+standard_testfile actions.c
+require gdb_trace_common_supports_arch
+if { [gdb_compile "$srcdir/$subdir/$srcfile" $binfile \
+	  executable {debug nowarnings}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+clean_restart $binfile
+
+# PR gdb/21352: Command tsave does not support -r argument
+gdb_test "tsave -r" "Argument required \\\(file in which to save trace data\\\)\." \
+    "tsave command properly supports -r argument"
+
+gdb_test "tvariable \$tvar1" \
+  "Trace state variable \\\$tvar1 created, with initial value 0." \
+  "create a trace state variable"
+
+gdb_test "tvariable \$tvar2 = 45" \
+  "Trace state variable \\\$tvar2 created, with initial value 45." \
+  "create a trace state variable with initial value"
+
+gdb_test "tvariable \$tvar2 = -92" \
+  "Trace state variable \\\$tvar2 now has initial value -92." \
+  "change initial value of a trace state variable"
+
+gdb_test "tvariable \$tvar3 = 2 + 3" \
+  "Trace state variable \\\$tvar3 created, with initial value 5." \
+  "create a trace state variable with expression"
+
+gdb_test "tvariable \$tvar3 = 1234567000000" \
+  "Trace state variable \\\$tvar3 now has initial value 1234567000000." \
+  "init trace state variable to a 64-bit value"
+
+gdb_test "tvariable $" \
+  "Must supply a non-empty variable name" \
+  "tvariable syntax error, not empty variable name"
+
+gdb_test "tvariable main" \
+  "Name of trace variable should start with '\\\$'" \
+  "tvariable syntax error, bad name"
+
+gdb_test "tvariable \$\$" \
+  "Syntax must be \\\$NAME \\\[ = EXPR \\\]" \
+  "tvariable syntax error, bad name 2"
+
+gdb_test "tvariable \$123" \
+  "\\\$123 is not a valid trace state variable name" \
+  "tvariable syntax error, bad name 3"
+
+gdb_test "tvariable \$tvar1 - 93" \
+  "Syntax must be \\\$NAME \\\[ = EXPR \\\]" \
+  "tvariable syntax error, not an assignment"
+
+gdb_test "tvariable \$tvar0 = 1 = 1" \
+  "Left operand of assignment is not an lvalue\." \
+  "tvariable creation fails with invalid expression"
+
+gdb_test "info tvariables" \
+    "Name\[\t \]+Initial\[\t \]+Current.*
+\\\$tvar1\[\t \]+0\[\t \]+<undefined>.*
+\\\$tvar2\[\t \]+-92\[\t \]+<undefined>.*
+\\\$tvar3\[\t \]+1234567000000\[\t \]+.*<undefined>.*" \
+  "List tvariables"
+
+gdb_test "print \$tvar2" " = void" \
+    "Print a trace state variable before run"
+
+gdb_test_no_output "delete tvariable \$tvar2" \
+  "delete trace state variable"
+
+gdb_test "info tvariables" \
+    "Name\[\t \]+Initial\[\t \]+Current.*
+\\\$tvar1\[\t \]+0\[\t \]+<undefined>.*
+\\\$tvar3\[\t \]+1234567000000\[\t \]+.*<undefined>.*" \
+  "List tvariables after deletion"
+
+gdb_test "delete tvariable" \
+    "" \
+    "Delete all trace state variables" \
+    "Delete all trace state variables.*y or n.*$" \
+    "y"
+
+gdb_test "info tvariables" \
+  "No trace state variables.*" \
+  "list tvariables after deleting all"
+
+# Now try running a trace.
+
+runto_main
+gdb_reinitialize_dir $srcdir/$subdir
+
+# The rest of the testing needs actual tracing to work.
+if {![gdb_target_supports_trace]} {
+    unsupported "current target does not support trace"
+    return 1
+}
+
+gdb_delete_tracepoints
+set trcpt1 [gdb_gettpnum gdb_c_test]
+
+if {$trcpt1 <= 0} {
+    fail "setting tracepoints"
+    return
+}
+
+gdb_test "tvariable \$tvar5 = 15" \
+  "Trace state variable \\\$tvar5 created, with initial value 15." \
+  "create a trace state variable tvar5"
+
+gdb_trace_setactions "collect tsv for first tracepoint" \
+	"$trcpt1" \
+	"collect \$tvar5 += 1" "^$"
+
+gdb_test_no_output "tstart" ""
+
+gdb_test "print \$tvar5" " = 15" \
+    "Print a trace state variable at start of run"
+
+# Be sure not to fall off the end of the program.
+gdb_breakpoint "end" qualified
+gdb_test "continue" \
+    "Continuing.*Breakpoint $decimal, end.*" \
+    "run trace experiment"
+
+gdb_test "print \$tvar5" " = 16" \
+    "Print a trace state variable during run"
+
+gdb_test_no_output "tstop" ""
+
+# Save trace frames to tfile.
+set tracefile [standard_output_file ${testfile}]
+gdb_test "tsave ${tracefile}.tf" \
+    "Trace data saved to file '${tracefile}.tf'.*" \
+    "save tfile trace file"
+# Save trace frames to ctf.
+gdb_test "tsave -ctf ${tracefile}.ctf" \
+    "Trace data saved to directory '${tracefile}.ctf'.*" \
+    "save ctf trace file"
+
+proc check_tsv { data_source } {
+    with_test_prefix "${data_source}" {
+	gdb_test "tfind 0"
+	gdb_test "print \$tvar5" " = 16" \
+	    "Print a trace state variable"
+	gdb_test "tfind" \
+	    "Target failed to find requested trace frame.*"
+    }
+}
+
+# Check the tsv from the live inferior.
+check_tsv "live"
+
+# Change target to tfile.
+set test "change to tfile target"
+gdb_test_multiple "target tfile ${tracefile}.tf" "$test" {
+    -re "A program is being debugged already.  Kill it. .y or n. " {
+	send_gdb "y\n"
+	exp_continue
+    }
+    -re "$gdb_prompt $" {
+	pass "$test"
+    }
+}
+
+# Check the tsv from tfile.
+
+check_tsv "tfile"
+# Try to read ctf data if GDB supports.
+gdb_test_multiple "target ctf ${tracefile}.ctf" "" {
+    -re "Undefined target command: \"ctf ${tracefile}.ctf\"\.  Try \"help target\"\.\r\n$gdb_prompt $" {
+    }
+    -re ".*\r\n$gdb_prompt $" {
+	check_tsv "ctf"
+    }
+}
+
+# Restart.
+clean_restart ${binfile}
+
+if {![runto_main]} {
+    return
+}
+
+# If there are predefined TSVs, test these predefined TSVs are correctly
+# uploaded.
+if [target_info exists gdb,predefined_tsv] {
+    set tsv [target_info gdb,predefined_tsv]
+
+    # Test predefined TSVs are uploaded.
+    gdb_test "info tvariables" ".*${tsv}.*" "predefined tsvs are uploaded"
+} else {
+    # Otherwise (the predefined TSVs are not defined in the board file),
+    # test there is no TSVs in GDB.
+    gdb_test "info tvariables" "No trace state variables\." \
+	"no predefined tsvs"
+}

@@ -1,0 +1,116 @@
+# Copyright 1999-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that annotations support doesn't leave GDB's terminal settings
+# into effect when we run a foreground command.
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile debug] == -1} {
+    return -1
+}
+
+# Because runto_main doesn't know how to handle the prompt with annotations,
+# run to main before we set the annotation level.
+if {![runto_main]} {
+   return 1
+}
+
+# NOTE: this prompt is OK only when the annotation level is > 1
+# NOTE: When this prompt is in use the gdb_test procedure cannot be
+# used because it assumes that the last char after the gdb_prompt is a
+# white space.  This is not true with this annotated prompt.  So we
+# must use the gdb_annota_test replacement below, or
+# gdb_test_multiple.
+
+set old_gdb_prompt $gdb_prompt
+set gdb_prompt "\r\n\032\032pre-prompt\r\n$gdb_prompt \r\n\032\032prompt\r\n"
+
+# Like gdb_test, but cope with the annotation prompt.
+proc gdb_annota_test {command pattern message} {
+    global gdb_prompt
+
+    gdb_test_multiple $command $message {
+	-re "$pattern$gdb_prompt$" {
+	    pass "$message"
+	}
+	-re "$gdb_prompt$" {
+	    fail "$message"
+	}
+    }
+}
+
+# Set the annotation level to 2.
+gdb_annota_test "set annotate 2" ".*" "annotation set at level 2"
+
+set test "delete breakpoints"
+gdb_test_multiple "delete" $test {
+    -re "Delete all breakpoints. .y or n." {
+	send_gdb "y\n"
+	exp_continue
+    }
+    -re "$gdb_prompt$" {
+	pass $test
+    }
+}
+
+# Set the target running, and then type something.  GDB used to have a
+# bug where it'd be accepting input even though the target was
+# supposedly resumed in the foreground.  This ultimately resulted in
+# readline aborting.
+
+set linenum [gdb_get_line_number "set break here"]
+
+gdb_annota_test "break $linenum" \
+    "Breakpoint .*$srcfile, line .*" \
+    "break after sleep"
+
+# Continue, and wait a bit to make sure the inferior really starts
+# running.  Wait less than much the program sleeps, which is 5
+# seconds, though.
+set saw_continuing 0
+set test "continue"
+gdb_test_multiple $test $test {
+    -timeout 2
+    -re "Continuing\\." {
+	set saw_continuing 1
+	exp_continue
+    }
+    timeout {
+	gdb_assert $saw_continuing $test
+    }
+}
+
+# Type something.
+send_gdb "print 1\n"
+
+# Poor buggy GDB would crash before the breakpoint was hit.
+set test "breakpoint hit"
+gdb_test_multiple "" $test {
+    -re "stopped\r\n$gdb_prompt" {
+	pass $test
+    }
+}
+
+set test "print command result"
+gdb_test_multiple "" $test {
+    -re "\r\n1\r\n\r\n\032\032value-history-end\r\n$gdb_prompt" {
+	pass $test
+    }
+}
+
+# Restore the original prompt for the rest of the testsuite.
+
+set gdb_prompt $old_gdb_prompt

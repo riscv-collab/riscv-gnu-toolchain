@@ -1,0 +1,626 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the gdb testsuite.
+
+# Any variable or procedure in the namespace whose name starts with
+# "_" is private to the module.  Do not use these.
+
+namespace eval completion {
+    variable bell_re "\\\x07"
+
+    # List of all quote chars.
+    variable all_quotes_list {"'" "\""}
+
+    # List of all quote chars, including no-quote at all.
+    variable maybe_quoted_list {"" "'" "\""}
+
+    variable keyword_list {"-force-condition" "if" "inferior" "task" "thread"}
+
+    variable explicit_opts_list \
+	{"-function" "-label" "-line" "-qualified" "-source"}
+}
+
+# Make a regular expression that matches a TAB completion list.
+
+proc make_tab_completion_list_re { completion_list } {
+    # readline separates the completion columns that fit on the same
+    # line with whitespace.  Since we're testing under "set width
+    # unlimited", all completions will be printed on the same line.
+    # The amount of whitespace depends on the length of the widest
+    # completion.  We could compute that here and expect the exact
+    # number of ws characters between each completion match, but to
+    # keep it simple, we accept any number of characters.
+    set ws " +"
+
+    set completion_list_re ""
+    foreach c $completion_list {
+	append completion_list_re [string_to_regexp $c]
+	append completion_list_re $ws
+    }
+
+    return $completion_list_re
+}
+
+# Make a regular expression that matches a "complete" command
+# completion list.  CMD_PREFIX is the command prefix added to each
+# completion match.
+
+proc make_cmd_completion_list_re { cmd_prefix completion_list start_quote_char end_quote_char } {
+
+    set completion_list_re ""
+    foreach c $completion_list {
+	# The command prefix is included in all completion matches.
+	append completion_list_re [string_to_regexp $cmd_prefix$start_quote_char$c$end_quote_char]
+	append completion_list_re "\r\n"
+    }
+
+    return $completion_list_re
+}
+
+# Clear the input line.
+
+proc clear_input_line { test } {
+    global gdb_prompt
+
+    send_gdb "\003"
+    gdb_test_multiple "" "$test (clearing input line)" {
+	-re "Quit\r\n$gdb_prompt $" {
+	}
+    }
+}
+
+# Test that completing LINE with TAB completes to nothing.
+
+proc test_gdb_complete_tab_none { line { testname "" } } {
+    set line_re [string_to_regexp $line]
+
+    if { $testname eq "" } {
+	set testname "tab complete \"$line\""
+    } else {
+	set testname "tab complete: $testname"
+    }
+    send_gdb "$line\t"
+    gdb_test_multiple "" "$testname" {
+	-re "^$line_re$completion::bell_re$" {
+	    pass $gdb_test_name
+	}
+	-re "$line_re\[^ \]+ $" {
+	    fail $gdb_test_name
+	}
+    }
+
+    clear_input_line $testname
+}
+
+# Test that completing INPUT_LINE with TAB completes to
+# COMPLETE_LINE_RE.  APPEND_CHAR_RE is the character expected to be
+# appended after EXPECTED_OUTPUT.  Normally that's a whitespace, but
+# in some cases it's some other character, like a colon.
+
+proc test_gdb_complete_tab_unique { input_line complete_line_re append_char_re {testname ""} } {
+
+    if { $testname eq "" } {
+	set testname "tab complete \"$input_line\""
+    } else {
+	set testname "tab complete: $testname"
+    }
+    send_gdb "$input_line\t"
+    set res 1
+    gdb_test_multiple "" "$testname" {
+	-re "^$complete_line_re$append_char_re$" {
+	    pass $gdb_test_name
+	}
+	timeout {
+	    fail "$gdb_test_name (timeout)"
+	    set res -1
+	}
+    }
+
+    clear_input_line $testname
+    return $res
+}
+
+# Test that completing INPUT_LINE with TAB completes to "INPUT_LINE +
+# ADD_COMPLETED_LINE" and that it displays the completion matches in
+# COMPLETION_LIST.  If MAX_COMPLETIONS then we expect the completion
+# to hit the max-completions limit.
+
+proc test_gdb_complete_tab_multiple { input_line add_completed_line \
+					  completion_list {max_completions false} \
+					  {testname ""} } {
+    global gdb_prompt
+
+    set input_line_re [string_to_regexp $input_line]
+    set add_completed_line_re [string_to_regexp $add_completed_line]
+
+    set expected_re [make_tab_completion_list_re $completion_list]
+
+    if {$max_completions} {
+	append expected_re "\r\n"
+	append expected_re \
+	    "\\*\\*\\* List may be truncated, max-completions reached\\. \\*\\*\\*"
+    }
+
+    if { $testname eq "" } {
+	set testname "tab complete \"$input_line\""
+    } else {
+	set testname "tab complete: $testname"
+    }
+    send_gdb "$input_line\t"
+    gdb_test_multiple "" "$testname (first tab)" {
+	-re "^${input_line_re}${completion::bell_re}$add_completed_line_re$" {
+	    send_gdb "\t"
+	    # If we auto-completed to an ambiguous prefix, we need an
+	    # extra tab to show the matches list.
+	    if {$add_completed_line != ""} {
+		send_gdb "\t"
+		set maybe_bell ${completion::bell_re}
+	    } else {
+		set maybe_bell ""
+	    }
+	    gdb_test_multiple "" "$testname (second tab)" {
+		-re "^${maybe_bell}\r\n$expected_re\r\n$gdb_prompt " {
+		    gdb_test_multiple "" "$testname (second tab)" {
+			-re "^$input_line_re$add_completed_line_re$" {
+			    pass $gdb_test_name
+			}
+		    }
+		}
+		-re "${maybe_bell}\r\n.+\r\n$gdb_prompt $" {
+		    fail $gdb_test_name
+		}
+	    }
+	}
+    }
+
+    clear_input_line $testname
+}
+
+# Test that completing LINE with the complete command completes to
+# nothing.
+
+proc test_gdb_complete_cmd_none { line { testname "" } } {
+    if { $testname eq "" } {
+	set testname "cmd complete \"$line\""
+    } else {
+	set testname "cmd complete: $testname"
+    }
+    gdb_test_no_output "complete $line" $testname
+}
+
+# Test that completing LINE with the complete command completes to
+# COMPLETE_LINE_RE.
+# Returns 1 if the test passed, 0 if it failed, -1 if it timed out.
+
+proc test_gdb_complete_cmd_unique { input_line complete_line_re {testname ""} } {
+    global gdb_prompt
+
+    set res 0
+    set cmd "complete $input_line"
+    set cmd_re [string_to_regexp $cmd]
+    if { $testname eq "" } {
+	set testname "cmd complete \"$input_line\""
+    } else {
+	set testname "cmd complete: $testname"
+    }
+    gdb_test_multiple $cmd $testname {
+	-re "^$cmd_re\r\n$complete_line_re\r\n$gdb_prompt $" {
+	    pass $gdb_test_name
+	    set res 1
+	}
+	-re "$gdb_prompt $" {
+	    fail $gdb_test_name
+	}
+	timeout {
+	    fail "$gdb_test_name (timeout)"
+	    set res -1
+	}
+    }
+    return $res
+}
+
+# Test that completing "CMD_PREFIX + COMPLETION_WORD" with the
+# complete command displays the COMPLETION_LIST completion list.  Each
+# entry in the list should be prefixed by CMD_PREFIX.  If
+# MAX_COMPLETIONS then we expect the completion to hit the
+# max-completions limit.
+
+proc test_gdb_complete_cmd_multiple { cmd_prefix completion_word completion_list {start_quote_char ""} {end_quote_char ""} {max_completions false} {testname ""} } {
+    global gdb_prompt
+
+    set expected_re [make_cmd_completion_list_re $cmd_prefix $completion_list $start_quote_char $end_quote_char]
+
+    if {$max_completions} {
+	set cmd_prefix_re [string_to_regexp $cmd_prefix]
+	append expected_re \
+	    "$cmd_prefix_re \\*\\*\\* List may be truncated, max-completions reached\\. \\*\\*\\*.*\r\n"
+    }
+
+    set cmd_re [string_to_regexp "complete $cmd_prefix$completion_word"]
+    if { $testname eq "" } {
+	set testname "cmd complete \"$cmd_prefix$completion_word\""
+    } else {
+	set testname "cmd complete: $testname"
+    }
+    gdb_test_multiple "complete $cmd_prefix$completion_word" $testname {
+	-re "^$cmd_re\r\n$expected_re$gdb_prompt $" {
+	    pass $gdb_test_name
+	}
+	-re "$gdb_prompt $" {
+	    fail $gdb_test_name
+	}
+    }
+}
+
+# Test that completing LINE completes to nothing.
+
+proc test_gdb_complete_none { input_line { testname "" } } {
+    if { [readline_is_used] } {
+	test_gdb_complete_tab_none $input_line $testname
+    }
+    test_gdb_complete_cmd_none $input_line $testname
+}
+
+# Test that completing INPUT_LINE completes to COMPLETE_LINE_RE.
+#
+# APPEND_CHAR is the character expected to be appended after
+# EXPECTED_OUTPUT when TAB completing.  Normally that's a whitespace,
+# but in some cases it's some other character, like a colon.
+#
+# If MAX_COMPLETIONS is true, then we expect the completion to hit the
+# max-completions limit.  Since we're expecting a unique completion
+# match, this will only be visible in the "complete" command output.
+# Tab completion will just auto-complete the only match and won't
+# display a match list.
+#
+# Note: usually it's more convenient to pass a literal string instead
+# of a regular expression (as COMPLETE_LINE_RE).  See
+# test_gdb_complete_unique below.
+
+proc test_gdb_complete_unique_re { input_line complete_line_re {append_char " "} {max_completions false} {testname ""} } {
+    set append_char_re [string_to_regexp $append_char]
+
+    # Trim COMPLETE LINE, for the case we're completing a command with leading
+    # whitespace.  Leading command whitespace is discarded by GDB.
+    set expected_output_re [string trimleft $complete_line_re]
+    if {$append_char_re != " "} {
+	append expected_output_re $append_char_re
+    }
+    if {$max_completions} {
+	set max_completion_reached_msg \
+	    "*** List may be truncated, max-completions reached. ***"
+	set input_line_re \
+	    [string_to_regexp [string trimleft $input_line]]
+	set max_completion_reached_msg_re \
+	    [string_to_regexp $max_completion_reached_msg]
+
+	append expected_output_re \
+	    "\r\n$input_line_re $max_completion_reached_msg_re"
+    }
+
+    # First test completion with the command, then with tab.
+    # It is done in this order because cmd_complete knows when the output
+    # from GDB is over, so it can fail without requiring a timeout, which
+    # speeds up testing if necessary.
+
+    set test_result [test_gdb_complete_cmd_unique $input_line\
+		$expected_output_re $testname]
+    if { $test_result != 1 } {
+	return $test_result
+    }
+
+    if { [readline_is_used] } {
+	set test_result [test_gdb_complete_tab_unique $input_line \
+		$complete_line_re $append_char_re $testname]
+    }
+    return $test_result
+}
+
+# Like TEST_GDB_COMPLETE_UNIQUE_RE, but COMPLETE_LINE is a string, not
+# a regular expression.
+
+proc test_gdb_complete_unique { input_line complete_line {append_char " "} {max_completions false} {testname ""} } {
+    set complete_line_re [string_to_regexp $complete_line]
+    test_gdb_complete_unique_re $input_line $complete_line_re $append_char $max_completions $testname
+}
+
+# Test that completing "CMD_PREFIX + COMPLETION_WORD" adds
+# ADD_COMPLETED_LINE to the input line, and that it displays
+# COMPLETION_LIST as completion match list.  COMPLETION_WORD is the
+# completion word.  If MAX_COMPLETIONS then we expect the completion
+# to hit the max-completions limit.
+
+proc test_gdb_complete_multiple {
+  cmd_prefix completion_word add_completed_line completion_list
+  {start_quote_char ""} {end_quote_char ""} {max_completions false}
+  {testname ""}
+} {
+    if { [readline_is_used] } {
+      test_gdb_complete_tab_multiple "$cmd_prefix$completion_word" $add_completed_line $completion_list $max_completions $testname
+    }
+    test_gdb_complete_cmd_multiple $cmd_prefix $completion_word $completion_list $start_quote_char $end_quote_char $max_completions $testname
+}
+
+# Test that all the substring prefixes of INPUT from [0..START) to
+# [0..END) complete to COMPLETION_RE (a regular expression).  If END
+# is omitted, default to the length of INPUT.
+
+proc test_complete_prefix_range_re {input completion_re start {end -1}} {
+    if {$end == -1} {
+	set end [string length $input]
+    }
+
+    set timeouts 0
+    set max_timeouts 3
+    for {set i $start} {$i < $end} {incr i} {
+	set line [string range $input 0 $i]
+	set res [test_gdb_complete_unique_re "$line" $completion_re]
+	if { $res == -1 } {
+	    incr timeouts
+	} else {
+	    if { $timeouts > 0 } {
+		set timeouts 0
+	    }
+	}
+	if { $timeouts == $max_timeouts } {
+	    verbose -log "Consecutive timeouts in test_complete_prefix_range_re, giving up"
+	    break
+	}
+    }
+}
+
+# Test that all the substring prefixes of COMPLETION from [0..START)
+# to [0..END) complete to COMPLETION.  If END is omitted, default to
+# the length of COMPLETION.
+
+proc test_complete_prefix_range {completion start {end -1}} {
+    set completion_re [string_to_regexp $completion]
+    test_complete_prefix_range_re $completion $completion_re $start $end
+}
+
+# Find NEEDLE in HAYSTACK and return the index _after_ NEEDLE.  E.g.,
+# searching for "(" in "foo(int)" returns 4, which would be useful if
+# you want to find the "(" to try completing "foo(".
+
+proc index_after {needle haystack} {
+    set start [string first $needle $haystack]
+    if {$start == -1} {
+	error "could not find \"$needle\" in \"$haystack\""
+    }
+    return [expr $start + [string length $needle]]
+}
+
+# Create a breakpoint using BREAK_COMMAND, and return the number
+# of locations found.
+
+proc completion::_create_bp {break_command} {
+    global gdb_prompt
+    global decimal hex
+
+    set found_locations -1
+
+    set test "set breakpoint"
+    gdb_test_multiple "$break_command" $test {
+	-re "\\\(\($decimal\) locations\\\)\r\n$gdb_prompt $" {
+	    set found_locations "$expect_out(1,string)"
+	}
+	-re "Breakpoint $decimal at $hex: file .*, line .*$gdb_prompt $" {
+	    set found_locations 1
+	}
+	-re "Make breakpoint pending on future shared library load.*y or .n.. $" {
+	    send_gdb "n\n"
+	    gdb_test_multiple "" "$test (prompt)" {
+		-re "$gdb_prompt $" {
+		}
+	    }
+	    set found_locations 0
+	}
+	-re "invalid explicit location argument, \[^\r\n\]*\r\n$gdb_prompt $" {
+	    set found_locations 0
+	}
+	-re "Function \[^\r\n\]* not defined in \[^\r\n\]*\r\n$gdb_prompt $" {
+	    set found_locations 0
+	}
+    }
+    return $found_locations
+}
+
+# Return true if lists A and B have the same elements.  Order of
+# elements does not matter.
+
+proc completion::_leq {a b} {
+    return [expr {[lsort $a] eq [lsort $b]}]
+}
+
+# Check that trying to create a breakpoint using BREAK_COMMAND fails.
+
+proc check_setting_bp_fails {break_command} {
+    with_test_prefix "\"$break_command\" creates no bp locations" {
+	set found_locations [completion::_create_bp $break_command]
+	gdb_assert {$found_locations == 0} "matches"
+	if {$found_locations != 0} {
+	    delete_breakpoints
+	}
+    }
+}
+
+# Check that creating the breakpoint using BREAK_COMMAND finds the
+# same breakpoint locations as completing BREAK_COMMAND.
+# COMPLETION_LIST is the expected completion match list.
+
+proc check_bp_locations_match_list {break_command completion_list} {
+    global gdb_prompt
+    global hex
+
+    with_test_prefix "compare \"$break_command\" completion list with bp location list" {
+	set num_locations [completion::_create_bp $break_command]
+
+	set found_list ""
+
+	set any "\[^\r\n\]*"
+
+	gdb_test_multiple "info breakpoint \$bpnum" "info breakpoint" {
+	    -re "in \(\[^\r\n\]*\) at " {
+		# A function location.
+		set found_location "$expect_out(1,string)"
+		lappend found_list $found_location
+		exp_continue
+	    }
+	    -re "breakpoint${any}keep${any}y${any}$hex\[ \t]*\(${any}\)\r\n" {
+		# A label location.
+		set found_location "$expect_out(1,string)"
+		lappend found_list $found_location
+		exp_continue
+	    }
+	    -re "$gdb_prompt $" {
+	    }
+	}
+
+	gdb_assert {[completion::_leq $found_list $completion_list]} "matches"
+
+	delete_breakpoints
+    }
+}
+
+# Build linespec and explicit locations out of all the combinations of
+# SOURCES, FUNCTIONS and LABELS, with all combinations of possible
+# quoting and whitespace around separators, and run BODY_LINESPEC and
+# BODY_EXPLICIT in the context of the caller for each combination.  A
+# variable named "location" is set in the callers context with the
+# currently iterated location.
+
+proc foreach_location_functions { sources functions body_linespec body_explicit } {
+    upvar source source
+    upvar function function
+    upvar source_sep source_sep
+    upvar location location
+
+    foreach source $sources {
+	# Test with and without source quoting.
+	foreach sqc $completion::maybe_quoted_list {
+	    if {$source == "" && $sqc != ""} {
+		# Invalid combination.
+		continue
+	    }
+
+	    # Test with and without function quoting.
+	    foreach fqc $completion::maybe_quoted_list {
+		# Test known and unknown functions.
+		foreach function $functions {
+		    # Linespec version.  Test with and without spacing
+		    # after the source/colon colon separator.
+		    foreach source_sep {"" ":" ": "} {
+			# Skip invalid combinations.
+			if {$source == "" && $source_sep != ""} {
+			    continue
+			}
+			if {$source != "" && $source_sep == ""} {
+			    continue
+			}
+
+			set location "${sqc}${source}${sqc}${source_sep}${fqc}$function${fqc}"
+			uplevel 1 $body_linespec
+		    }
+
+		    # Explicit locations version.
+		    if {$source != ""} {
+			set loc_src "-source ${sqc}${source}${sqc} "
+		    } else {
+			set loc_src ""
+		    }
+
+		    set location "${loc_src}-function ${fqc}$function${fqc}"
+		    uplevel 1 $body_explicit
+		}
+	    }
+	}
+    }
+}
+
+# Same as foreach_locations_functions, but also iterate over
+# combinations of labels.
+proc foreach_location_labels { sources functions labels body_linespec body_explicit } {
+    upvar source source
+    upvar function function
+    upvar label label
+    upvar source_sep source_sep
+    upvar label_sep label_sep
+    upvar location location
+
+    # Test both with a known source file and without a source file
+    # component.
+    foreach_location_functions \
+	$sources \
+	$functions \
+	{
+	    # Linespec version.  Test various spacing around the label
+	    # colon separator.
+	    set saved_location ${location}
+	    foreach label_sep {":" " :" ": " " : "} {
+		# Test both known and unknown label.
+		foreach label $labels {
+		    set location "${saved_location}${label_sep}$label"
+		    uplevel 1 $body_linespec
+		}
+	    }
+	} \
+	{
+	    # Explicit locations version.
+	    set saved_location ${location}
+	    foreach label $labels {
+		set location "${saved_location} -label $label"
+		uplevel 1 $body_explicit
+	    }
+	}
+}
+
+# Check that completion of INPUT_LINE results in GDB completing on all
+# command names.
+proc test_gdb_completion_offers_commands {input_line} {
+    global gdb_prompt
+
+    # There are two many commands to usefully check here.  So we force
+    # max-completions to 2, and check if those 2 come out.
+
+    # Save current max-completions.
+    set max_completions 0
+    set test "show max-completions"
+    gdb_test_multiple $test $test {
+	-re "Maximum number of completion candidates is (.*)\\.\r\n$gdb_prompt $" {
+	    set max_completions $expect_out(1,string)
+	}
+    }
+
+    # Force showing two commands.
+    gdb_test_no_output -nopass "set max-completions 2"
+
+    # TUI adds additional commands to the possible completions, so we
+    # need different patterns depending on whether or not it is enabled.
+    if { ![allow_tui_tests] } {
+	test_gdb_complete_multiple $input_line "" "" {
+	    "!"
+	    "actions"
+	} "" "" 1
+    } else {
+	test_gdb_complete_multiple $input_line "" "" {
+	    "!"
+	    "+"
+	} "" "" 1
+    }
+
+    # Restore.
+    gdb_test_no_output -nopass "set max-completions $max_completions"
+}

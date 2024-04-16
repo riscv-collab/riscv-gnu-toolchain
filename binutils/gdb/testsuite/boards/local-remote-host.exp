@@ -1,0 +1,82 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is a dejagnu "board file" and is used to run the testsuite
+# against local host, in remote host mode.
+#
+# To use this file:
+# bash$ cd ${build_dir}/gdb
+# bash$ make check RUNTESTFLAGS="--host_board=local-remote-host"
+
+# Like local-remote-host-notty, but with readline/editing enabled.
+
+set GDB [file normalize [file join [pwd] "../gdb"]]
+
+set_board_info hostname localhost
+
+if { [info exists REMOTE_HOST_USERNAME] } {
+    set_board_info username $REMOTE_HOST_USERNAME
+} else {
+    set_board_info username $env(USER)
+}
+
+# The ssh key should be correctly set up that you ssh to localhost
+# without having to type password.
+set_board_info rsh_prog /usr/bin/ssh
+set_board_info rcp_prog /usr/bin/scp
+set_board_info file_transfer "rsh"
+
+save_vars {rsh_cmd res} {
+    set rsh_cmd \
+	[join \
+	     [list \
+		  [board_info $board rsh_prog] \
+		  -l [board_info $board username] \
+		  [board_info $board hostname]]]
+
+    # Handle separate test account.
+    if { [board_info $board username] != $env(USER) } {
+	# We're pretending that some local user account is remote host.
+	# Make things a bit more realistic by restricting file permissions.
+
+	# Make sure remote host can't see files on build.
+	set res [remote_exec build "chmod go-rx $objdir"]
+	if { [lindex $res 0] != 0 } {
+	    error "Couldn't remove permissions for $objdir on build"
+	}
+
+	# Make sure build can't see files on remote host.
+	set res [remote_exec build $rsh_cmd "chmod go-rx ."]
+	if { [lindex $res 0] != 0 } {
+	    error "Couldn't remove permissions for . on host"
+	}
+    }
+}
+
+# Like standard_spawn, but force pseudo-tty allocation, with 'ssh -t'.
+
+proc ${board}_spawn { board cmd } {
+    global board_info
+
+    set remote [board_info $board hostname]
+    set username [board_info $board username]
+    set RSH [board_info $board rsh_prog]
+
+    spawn $RSH -t -l $username $remote $cmd
+    set board_info($board,fileid) $spawn_id
+    return $spawn_id
+}
+
+set GDBFLAGS "${GDBFLAGS} -iex \"set style enabled off\""

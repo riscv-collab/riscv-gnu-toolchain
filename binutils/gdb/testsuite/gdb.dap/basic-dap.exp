@@ -1,0 +1,215 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Basic DAP test.
+
+require allow_dap_tests
+
+load_lib dap-support.exp
+
+standard_testfile
+
+if {[build_executable ${testfile}.exp $testfile] == -1} {
+    return
+}
+
+if {[dap_launch $testfile] == ""} {
+    return
+}
+
+set obj [dap_check_request_and_response "set breakpoint on two functions" \
+	     setFunctionBreakpoints \
+	     {o breakpoints [a [o name [s function_breakpoint_here]] \
+				 [o name [s do_not_stop_here]]]}]
+set fn_bpno [dap_get_breakpoint_number $obj]
+
+# This also tests that the previous do_not_stop_here breakpoint is
+# cleared.
+set obj [dap_check_request_and_response "set breakpoint on function" \
+	     setFunctionBreakpoints \
+	     {o breakpoints [a [o name [s function_breakpoint_here]]]}]
+set fn_bpno [dap_get_breakpoint_number $obj]
+
+set obj [dap_check_request_and_response "set breakpoint with invalid filename" \
+	     setBreakpoints \
+	     [format {o source [o path [s nosuchfilename.c]] breakpoints [a [o line [i 29]]]}]]
+
+set line [gdb_get_line_number "BREAK"]
+set obj [dap_check_request_and_response "set breakpoint by line number" \
+	     setBreakpoints \
+	     [format {o source [o path [%s]] breakpoints [a [o line [i %d]]]} \
+		  [list s $srcfile] $line]]
+set line_bpno [dap_get_breakpoint_number $obj]
+
+# Check the new breakpoint event.
+set ok 1
+foreach d [lindex $obj 1] {
+    if {[dict get $d type] != "event"
+	|| [dict get $d event] != "breakpoint"} {
+	continue
+    }
+    if {[dict get $d body reason] == "new"
+	&& [dict get $d body breakpoint verified] == "true"} {
+	set ok 0
+	break
+    }
+}
+if {$ok} {
+    pass "check lack of new breakpoint event"
+} else {
+    fail "check lack of new breakpoint event"
+}
+
+# Check that there are breakpoint locations on each line between FIRST
+# and BREAK.
+set first_line [gdb_get_line_number "FIRST"]
+set last_line [expr {$line - 1}]
+set obj [dap_check_request_and_response "breakpoint locations" \
+	     breakpointLocations \
+	     [format {o source [o path [%s]] line [i %d] endLine [i %d]} \
+		  [list s $srcfile] $first_line $last_line]]
+# We know gdb returns the lines in sorted order.
+foreach entry [dict get [lindex $obj 0] body breakpoints] {
+    gdb_assert {[dict get $entry line] == $first_line} \
+	"line $first_line in result"
+    incr first_line
+}
+
+# Note that in this request, we add a 'source' field to the
+# SourceBreakpoint object.  This isn't in the spec but it once caused
+# an incorrect exception in the Python code.  See PR dap/30820.
+set obj [dap_check_request_and_response "reset breakpoint by line number" \
+	     setBreakpoints \
+	     [format {o source [o path [%s]] \
+			  breakpoints [a [o source [o path [%s]] \
+					      line [i %d]]]} \
+		  [list s $srcfile] [list s $srcfile] $line]]
+set new_line_bpno [dap_get_breakpoint_number $obj]
+gdb_assert {$new_line_bpno == $line_bpno} "re-setting kept same breakpoint number"
+
+# This uses "&address_breakpoint_here" as the address -- this is a
+# hack because we know how this is implemented under the hood.
+set obj [dap_check_request_and_response "set breakpoint by address" \
+	     setInstructionBreakpoints \
+	     {o breakpoints [a [o instructionReference [s &address_breakpoint_here]]]}]
+set insn_bpno [dap_get_breakpoint_number $obj]
+
+set response [lindex $obj 0]
+set bplist [dict get $response body breakpoints]
+set insn_pc [dict get [lindex $bplist 0] instructionReference]
+
+dap_check_request_and_response "start inferior" configurationDone
+dap_wait_for_event_and_check "inferior started" thread "body reason" started
+
+# While waiting for the stopped event, we might receive breakpoint changed
+# events indicating some breakpoint addresses were relocated.  Update INSN_PC
+# if necessary.
+lassign [dap_wait_for_event_and_check "stopped at function breakpoint" stopped \
+	    "body reason" breakpoint \
+	    "body hitBreakpointIds" $fn_bpno] unused objs
+foreach obj $objs {
+    if { [dict get $obj "type"] != "event" } {
+	continue
+    }
+
+    if { [dict get $obj "event"] != "breakpoint" } {
+	continue
+    }
+
+    set body [dict get $obj "body"]
+
+    if { [dict get $body "reason"] != "changed" } {
+	continue
+    }
+
+    set breakpoint [dict get $body "breakpoint"]
+    set breakpoint_id [dict get $breakpoint "id"]
+
+    if { $breakpoint_id != $insn_bpno } {
+	continue
+    }
+
+    set insn_pc [dict get $breakpoint "instructionReference"]
+}
+
+set obj [dap_check_request_and_response "evaluate global in function" \
+	     evaluate {o expression [s global_variable]}]
+dap_match_values "global value in function" [lindex $obj 0] \
+    "body result" 23
+
+dap_check_request_and_response step stepIn {o threadId [i 1]}
+dap_wait_for_event_and_check "stopped after step" stopped "body reason" step
+
+set obj [dap_check_request_and_response "evaluate global second time" \
+	     evaluate {o expression [s global_variable]}]
+dap_match_values "global value after step" [lindex $obj 0] \
+    "body result" 24
+
+dap_check_request_and_response "continue to address" continue \
+    {o threadId [i 1]}
+dap_wait_for_event_and_check "stopped at address breakpoint" stopped \
+    "body reason" breakpoint \
+    "body hitBreakpointIds" $insn_bpno
+
+dap_check_request_and_response "continue to line" continue \
+    {o threadId [i 1]}
+dap_wait_for_event_and_check "stopped at line breakpoint" stopped \
+    "body reason" breakpoint \
+    "body hitBreakpointIds" $line_bpno \
+    "body allThreadsStopped" true
+
+dap_check_request_and_response "return from function" stepOut \
+    {o threadId [i 1]}
+dap_wait_for_event_and_check "stopped after return" stopped \
+    "body reason" step
+
+set obj [dap_check_request_and_response "evaluate global in main" \
+	     evaluate {o expression [s global_variable]}]
+dap_match_values "global value in main" [lindex $obj 0] \
+    "body result" 25
+
+set obj [dap_check_request_and_response "set global in main" \
+	     setExpression {o expression [s global_variable] value [s 23]}]
+dap_match_values "global value in main after set" [lindex $obj 0] \
+    "body value" 23 \
+    "body type" int
+
+set obj [dap_request_and_response \
+	     evaluate {o expression [s nosuchvariable]}]
+set response [lindex $obj 0]
+gdb_assert { [dict get $response success] == "false" } "result of invalid request"
+
+set obj [dap_check_request_and_response "disassemble one instruction" \
+	     disassemble \
+	     [format {o memoryReference [s %s] instructionCount [i 1]} \
+		  $insn_pc]]
+set response [lindex $obj 0]
+gdb_assert { [dict exists $response body instructions] } "instructions in disassemble output"
+foreach insn [dict get $response body instructions] {
+    gdb_assert {[dict exists $insn instructionBytes]} \
+	"instruction bytes in disassemble output"
+    set bytes [dict get $insn instructionBytes]
+    gdb_assert {[string length $bytes] % 2 == 0} \
+	"even number of digits"
+    gdb_assert {[regexp "^\[0-9A-Fa-f\]+\$" $bytes]} \
+	"instructionBytes is hex"
+}
+
+set obj [dap_check_request_and_response "command repl" \
+	     evaluate {o expression [s {output 23}] context [s repl]}]
+set response [lindex $obj 0]
+gdb_assert {[dict get $response body result] == 23}
+
+dap_shutdown

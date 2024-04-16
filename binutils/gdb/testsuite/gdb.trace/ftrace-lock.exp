@@ -1,0 +1,89 @@
+# Copyright 2015-2024 Free Software Foundation, Inc.
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "trace-support.exp"
+
+require allow_shlib_tests
+
+standard_testfile
+set executable $testfile
+set expfile $testfile.exp
+
+# make check RUNTESTFLAGS='gdb.trace/ftrace-lock.exp NUM_THREADS=2'
+if ![info exists NUM_THREADS] {
+    set NUM_THREADS 2
+}
+
+# Some targets have leading underscores on assembly symbols.
+set additional_flags [gdb_target_symbol_prefix_flags]
+set options [list debug [gdb_target_symbol_prefix_flags] \
+	     additional_flags=-DNUM_THREADS=$NUM_THREADS]
+
+# Check that the target supports trace.
+require gdb_trace_common_supports_arch
+if { [gdb_compile_pthreads "$srcdir/$subdir/$srcfile" $binfile executable $options] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+clean_restart ${testfile}
+
+if ![runto_main] {
+    return -1
+}
+
+if ![gdb_target_supports_trace] {
+    unsupported "target does not support trace"
+    return -1
+}
+
+# Compile the test case with the in-process agent library.
+set libipa [get_in_proc_agent]
+set remote_libipa [gdb_load_shlib $libipa]
+
+lappend options shlib=$libipa
+
+if { [gdb_compile_pthreads "$srcdir/$subdir/$srcfile" $binfile executable $options] != "" } {
+    untested "failed to compile with in-process agent library"
+    return -1
+}
+
+clean_restart ${executable}
+
+if ![runto_main] {
+    return -1
+}
+
+if { [gdb_test "info sharedlibrary" ".*${remote_libipa}.*" "IPA loaded"] != 0 } {
+    untested "could not find IPA lib loaded"
+    return 1
+}
+
+gdb_breakpoint "end" qualified
+gdb_breakpoint "fail" qualified
+
+gdb_test "ftrace set_point" "Fast tracepoint .*" \
+    "fast tracepoint at a long insn"
+
+gdb_test "tstart" ""
+
+# If NUM_THREADS is high then this test case may timeout.  Increase the
+# timeout temporarily.
+with_timeout_factor $NUM_THREADS {
+    # If the fail function is hit, then the testcase will fail.
+    gdb_test "continue" ".*Breakpoint \[0-9\]+, end \(\).*" \
+	"do not hit the fail function"
+}
+
+gdb_test "tstop" ""

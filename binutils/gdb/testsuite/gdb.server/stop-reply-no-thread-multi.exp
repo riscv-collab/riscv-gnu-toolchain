@@ -1,0 +1,156 @@
+# This testcase is part of GDB, the GNU debugger.
+#
+# Copyright 2021-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test how GDB handles the case where a target either doesn't use 'T'
+# packets at all or doesn't include a thread-id in a 'T' packet, AND,
+# where the test program contains multiple threads.
+#
+# In general if multiple threads are executing and the target doesn't
+# include a thread-id in its stop response then GDB will not be able
+# to correctly figure out which thread the stop applies to.
+#
+# However, this test covers a very specific case, there are multiple
+# threads but only a single thread is actually executing.  So, when
+# the stop comes from the target, without a thread-id, GDB should be
+# able to correctly figure out which thread has stopped.
+
+load_lib gdbserver-support.exp
+
+require allow_gdbserver_tests
+
+standard_testfile
+if { [build_executable "failed to prepare" $testfile $srcfile {debug pthreads}] == -1 } {
+    return -1
+}
+
+set target_binfile [gdb_remote_download target $binfile]
+
+# Run the tests with different features of GDBserver disabled.
+# TARGET_NON_STOP is passed to "maint set target-non-stop".
+proc run_test { target_non_stop disable_feature } {
+    global binfile gdb_prompt decimal hex
+    global GDBFLAGS
+
+    save_vars { GDBFLAGS } {
+	append GDBFLAGS " -ex \"maint set target-non-stop $target_non_stop\""
+
+	# If GDB and GDBserver are both running locally, set the sysroot to avoid
+	# reading files via the remote protocol.
+	if { ![is_remote host] && ![is_remote target] } {
+	    set GDBFLAGS "$GDBFLAGS -ex \"set sysroot\""
+	}
+
+	clean_restart ${binfile}
+    }
+
+    # Make sure we're disconnected, in case we're testing with an
+    # extended-remote board, therefore already connected.
+    gdb_test "disconnect" ".*"
+
+    set packet_arg ""
+    if { $disable_feature != "" } {
+	set packet_arg "--disable-packet=${disable_feature}"
+    }
+    set res [gdbserver_start $packet_arg $::target_binfile]
+    set gdbserver_protocol [lindex $res 0]
+    set gdbserver_gdbport [lindex $res 1]
+
+    # Disable XML-based thread listing, and multi-process extensions.
+    gdb_test \
+	"set remote threads-packet off" \
+	"Support for the 'qXfer:threads:read' packet on future remote targets is set to \"off\"."
+    gdb_test \
+	"set remote multiprocess-feature-packet off" \
+	"Support for the 'multiprocess-feature' packet on future remote targets is set to \"off\"."
+
+    set res [gdb_target_cmd $gdbserver_protocol $gdbserver_gdbport]
+    if ![gdb_assert {$res == 0} "connect"] {
+	return
+    }
+
+    # There should be only one thread listed at this point.
+    gdb_test_multiple "info threads" "" {
+	-re "2 Thread.*$gdb_prompt $" {
+	    fail $gdb_test_name
+	}
+	-re "has terminated.*$gdb_prompt $" {
+	    fail $gdb_test_name
+	}
+	-re "\\\* 1\[\t \]*Thread\[^\r\n\]*\r\n$gdb_prompt $" {
+	    pass $gdb_test_name
+	}
+    }
+
+    gdb_breakpoint "unlock_worker"
+    gdb_continue_to_breakpoint "run to unlock_worker"
+
+    # There should be two threads at this point with thread 1 selected.
+    gdb_test "info threads" \
+	"\\\* 1\[\t \]*Thread\[^\r\n\]*\r\n  2\[\t \]*Thread\[^\r\n\]*" \
+	"second thread should now exist"
+
+    # Switch threads.
+    gdb_test "thread 2" ".*" "switch to second thread"
+
+    # Now turn on scheduler-locking so that when we step thread 2 only
+    # that one thread will be set running.
+    gdb_test_no_output "set scheduler-locking on"
+
+    # Single step thread 2.  Only the one thread will step.  When the
+    # thread stops, if the stop packet doesn't include a thread-id
+    # then GDB should still understand which thread stopped.
+    gdb_test_multiple "stepi" "" {
+	-re -wrap "Thread 1 received signal SIGTRAP.*" {
+	    fail $gdb_test_name
+	}
+	-re -wrap "$hex.*$decimal.*while \\(worker_blocked\\).*" {
+	    pass $gdb_test_name
+	}
+    }
+
+    # Check that thread 2 is still selected.
+    gdb_test "info threads" \
+	"  1\[\t \]*Thread\[^\r\n\]*\r\n\\\* 2\[\t \]*Thread\[^\r\n\]*" \
+	"second thread should still be selected after stepi"
+
+    # Turn scheduler locking off again so that when we continue all
+    # threads will be set running.
+    gdb_test_no_output "set scheduler-locking off"
+
+    # Continue until exit.  The server sends a 'W' with no PID.
+    # Bad GDB gave an error like below when target is nonstop:
+    #  (gdb) c
+    #  Continuing.
+    #  No process or thread specified in stop reply: W00
+    gdb_continue_to_end "" continue 1
+}
+
+# Disable different features within gdbserver:
+#
+# Tthread: Start GDBserver, with ";thread:NNN" in T stop replies disabled,
+#          emulating old gdbservers when debugging single-threaded programs.
+#
+# T: Start GDBserver with the entire 'T' stop reply packet disabled,
+#    GDBserver will instead send the 'S' stop reply.
+#
+# Also test both all-stop and non-stop variants of the remote
+# protocol.
+foreach_with_prefix target-non-stop {"off" "on"} {
+    foreach_with_prefix to_disable { "" Tthread T } {
+	run_test ${target-non-stop} $to_disable
+    }
+}

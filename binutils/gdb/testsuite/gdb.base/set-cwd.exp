@@ -1,0 +1,190 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require !use_gdb_stub
+
+standard_testfile
+
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile debug] } {
+    return -1
+}
+
+# Test that tilde expansion works fine.
+
+proc_with_prefix test_tilde_expansion { } {
+    global decimal gdb_prompt hex
+
+    gdb_test_no_output "set cwd ~/" "set inferior cwd to ~/ dir"
+
+    if { ![runto_main] } {
+	return -1
+    }
+
+    gdb_breakpoint [gdb_get_line_number "break-here"]
+    gdb_continue_to_breakpoint "break-here" ".* break-here .*"
+
+    set home ""
+    set test "print home var"
+    gdb_test_multiple "print home" $test {
+	-re "\\\$$decimal = $hex \"\(.+\)\"\r\n$gdb_prompt $" {
+	    set home $expect_out(1,string)
+	    pass $test
+	}
+    }
+
+    if { $home == "" } {
+	untested "could not retrieve home var"
+	return
+    }
+
+    set curdir ""
+    set test "print dir var"
+    gdb_test_multiple "print dir" $test {
+	-re "\\\$$decimal = \"\(.+\)\"\(, .*repeats.*\)?\r\n$gdb_prompt $" {
+	    set curdir $expect_out(1,string)
+	    pass $test
+	}
+    }
+
+    if { $curdir == "" } {
+	untested "could not retrieve dir var"
+	return
+    }
+
+    gdb_assert [string equal $curdir $home] \
+	"successfully chdir'd into home"
+}
+
+# The temporary directory that we will use to start the inferior.
+set tmpdir [standard_output_file ""]
+
+# Test that when we "set cwd" the inferior will be started under the
+# correct working directory and GDB will not be affected by this.
+
+proc_with_prefix test_cd_into_dir { } {
+    global decimal gdb_prompt tmpdir
+
+    set gdb_cwd_before_run ""
+    set test "pwd before run"
+    gdb_test_multiple "pwd" $test {
+	-re "Working directory \(.*\)\.\r\n$gdb_prompt $" {
+	    set gdb_cwd_before_run $expect_out(1,string)
+	    pass $test
+	}
+    }
+
+    if { $gdb_cwd_before_run == "" } {
+	untested "could not obtain GDB cwd before run"
+	return
+    }
+
+    # This test only makes sense if $tmpdir != $gdb_cwd_before_run
+    if { ![gdb_assert ![string equal $tmpdir $gdb_cwd_before_run] \
+	       "make sure that tmpdir and GDB's cwd are different"] } {
+	return -1
+    }
+
+    gdb_test_no_output "set cwd $tmpdir" "set inferior cwd to temp dir"
+
+    if { ![runto_main] } {
+	return -1
+    }
+
+    gdb_breakpoint [gdb_get_line_number "break-here"]
+    gdb_continue_to_breakpoint "break-here" ".* break-here .*"
+
+    gdb_test "print dir" "\\\$$decimal = \"$tmpdir\", .*" \
+	"inferior cwd is correctly set"
+
+    set gdb_cwd_after_run ""
+    set test "pwd after run"
+    gdb_test_multiple "pwd" $test {
+	-re "Working directory \(.*\)\.\r\n$gdb_prompt $" {
+	    set gdb_cwd_after_run $expect_out(1,string)
+	    pass $test
+	}
+    }
+
+    if { $gdb_cwd_after_run == "" } {
+	untested "could not obtain GDB cwd after run"
+	return
+    }
+
+    gdb_assert [string equal $gdb_cwd_before_run $gdb_cwd_after_run] \
+	"GDB cwd is unchanged after running inferior"
+}
+
+# Test that executing "set cwd" without arguments will reset the
+# inferior's cwd setting to its previous state.
+
+proc_with_prefix test_cwd_reset { } {
+    global decimal gdb_prompt tmpdir
+
+    set gdb_cwd ""
+    set test "GDB cwd"
+    gdb_test_multiple "pwd" $test {
+	-re "Working directory \(.*\)\.\r\n$gdb_prompt $" {
+	    set gdb_cwd $expect_out(1,string)
+	}
+    }
+
+    if { $gdb_cwd == "" } {
+	untested "could not obtain GDB cwd"
+	return
+    }
+
+    # This test only makes sense if $tmpdir != $gdb_cwd.
+    if { ![gdb_assert ![string equal $tmpdir $gdb_cwd] \
+	       "make sure that tmpdir and GDB's cwd are different"] } {
+	return -1
+    }
+
+    gdb_test_no_output "set cwd $tmpdir" "set inferior cwd to temp dir"
+
+    with_test_prefix "running with set cwd" {
+	if { ![runto_main] } {
+	    return -1
+	}
+    }
+
+    gdb_breakpoint [gdb_get_line_number "break-here"]
+    gdb_continue_to_breakpoint "break-here" ".* break-here .*"
+
+    gdb_test "print dir" "\\\$$decimal = \"$tmpdir\", .*" \
+	"inferior cwd is correctly set"
+
+    # Reset the inferior's cwd.
+    gdb_test_no_output "set cwd" "resetting inferior cwd"
+
+    with_test_prefix "running without set cwd" {
+	if { ![runto_main] } {
+	    return -1
+	}
+
+	gdb_breakpoint [gdb_get_line_number "break-here"]
+	gdb_continue_to_breakpoint "break-here" ".* break-here .*"
+
+	gdb_test "print dir" "\\\$$decimal = \"$gdb_cwd\", .*" \
+	    "inferior cwd got reset correctly"
+    }
+}
+
+test_cd_into_dir
+clean_restart $binfile
+test_tilde_expansion
+clean_restart $binfile
+test_cwd_reset

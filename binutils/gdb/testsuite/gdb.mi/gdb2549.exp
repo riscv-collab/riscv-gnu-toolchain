@@ -1,0 +1,105 @@
+# Copyright 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test essential Machine interface (MI) operations
+#
+# Verify that, using the MI, we can run a simple program and look at registers.
+#
+# The goal is not to test gdb functionality, which is done by other tests,
+# but to verify the correct output response to MI operations.
+#
+
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+standard_testfile basics.c
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug}] != "" } {
+     untested "failed to compile"
+     return -1
+}
+
+proc register_tests_no_exec { } {
+	# Test the generic IDT chip.
+	mi_gdb_test "111-data-list-register-values" \
+	    ".*111\\^error,msg=\"-data-list-register-values: Usage: -data-list-register-values \\\[--skip-unavailable\\\] <format> \\\[<regnum1>...<regnumN>\\\]\"" \
+		"wrong arguments"
+
+	mi_gdb_test "111-data-list-register-values x" \
+		".*111\\^error,msg=\"No registers\.\"" \
+		"no executable"
+}
+
+proc register_test { n arg format } {
+    global mi_gdb_prompt
+    global decimal
+
+    set cmd "$n-data-list-register-values $arg"
+    set test "register values $arg"
+
+    set state 0
+    gdb_test_multiple $cmd $test -prompt "$mi_gdb_prompt$" {
+	-re "$n\\^done,register-values=\\\[" {
+	    if { $state == 0 } {
+		set state 1
+		exp_continue
+	    }
+	    fail $gdb_test_name
+	}
+	-re "\{number=\"$decimal\",value=\"$format\"\}" {
+	    if { $state != 0 } {
+		set state 2
+		exp_continue
+	    }
+	    fail $gdb_test_name
+	}
+	-re "\{number=\"$decimal\",value=\"\[^\"\]*\"\}" {
+	    exp_continue
+	}
+	-re "\]\r\n$mi_gdb_prompt$" {
+	    if { $state == 2 } {
+		pass $gdb_test_name
+	    } else {
+		fail $gdb_test_name
+	    }
+	}
+    }
+}
+
+proc register_tests { } {
+    global hex
+    global decimal
+    set octal "\[0-7\]+"
+    set binary "\[0-1\]+"
+    set float \
+	"\\-?((\[0-9\]+(\\.\[0-9\]+)?(e\[-+\]\[0-9\]+)?)|(nan\\($hex\\)))"
+
+    register_test 222 x $hex
+    register_test 333 f $float
+    register_test 444 d -?$decimal
+    register_test 555 o $octal
+    register_test 666 t $binary
+}
+
+mi_clean_restart $binfile
+
+register_tests_no_exec
+
+mi_runto_main
+
+register_tests
+
+mi_gdb_exit

@@ -1,0 +1,115 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test stepping over an exec syscall instruction in a multi-threaded program.
+
+standard_testfile .c -execd.c
+
+set syscalls_src $srcdir/lib/my-syscalls.S
+
+# EXECR_THREAD is "leader" or "other", and decides which thread does the exec.
+#
+# If DIFFERENT_TEXT_SEGMENTS is true, the exec'er and exec'd program are
+# compiled with different, explicit text segment addresses.  This makes it so
+# the address of the displaced stepping buffer in the old executable is likely
+# not accessible in the new executable.  This might catch cases where GDB tries
+# (wrongfully) to restore the bytes saved from the old executable in the new
+# executable.
+#
+# DISPLACED_STEPPING is "auto" or "off" and controls the value of "set
+# displaced-stepping".
+
+proc do_test { execr_thread different_text_segments displaced_stepping } {
+    global srcdir subdir srcfile srcfile2 binfile
+    global syscalls_src
+    global decimal hex
+
+    set execr_srcs [list $srcdir/$subdir/$srcfile $syscalls_src]
+    set execd_srcs [list $srcdir/$subdir/$srcfile2]
+
+    # Generate unique filenames for each case.
+    set execr_binfile $binfile-execr-thread-$execr_thread-diff-text-segs-$different_text_segments
+    set execd_binfile $execr_binfile-execd
+
+    set execr_opts [list debug]
+    set execd_opts [list debug]
+
+    lappend_include_file execr_opts $::srcdir/lib/my-syscalls.h
+
+    if { $different_text_segments } {
+	lappend execr_opts "text_segment=0x600000"
+	lappend execd_opts "text_segment=0x800000"
+    }
+
+    if { $execr_thread == "leader" } {
+	lappend execr_opts "additional_flags=-DLEADER_DOES_EXEC"
+    } elseif { $execr_thread == "other" } {
+	lappend execr_opts "additional_flags=-DOTHER_DOES_EXEC"
+    } else {
+	error "Invalid execr_thread value: $execr_thread."
+    }
+
+    # Compile execr binary (the one that does the exec).
+    if {[gdb_compile_pthreads $execr_srcs $execr_binfile executable $execr_opts] != "" } {
+	return -1
+    }
+
+    # Compile the second binary (the one that gets exec'd).
+    if {[gdb_compile $execd_srcs $execd_binfile executable $execd_opts] != "" } {
+	return -1
+    }
+
+    clean_restart ${execr_binfile}
+
+    gdb_test_no_output "set displaced-stepping $displaced_stepping"
+
+    if ![runto_main] {
+	return
+    }
+
+    # Leave breakpoint main inserted, we expect to hit it after exec.
+
+    # This breakpoint will be stepped by whatever thread does the exec.
+    gdb_test "break my_execve_syscall if 0" "Breakpoint $decimal at $hex.*"
+
+    # Continue across exec to main.
+    if { [target_is_gdbserver] } {
+	setup_kfail gdb/27020 "*-*-*"
+    }
+    set failed [gdb_test "continue" \
+		    "process $decimal is executing new program: .* hit Breakpoint $decimal, main .*" \
+		    "continue across exec"]
+    if { $failed } {
+	return
+    }
+
+    # Just to confirm we are indeed in the execd program.
+    gdb_test "print a_variable_in_execd" " = 1212"
+
+    # Continue execution to make sure we can step over the breakpoint on main.
+    # It would be nice to use gdb_continue_to_end to ensure the program can
+    # exit properly, but it hangs due to PR gdb/26995.
+    gdb_breakpoint foo
+    gdb_test "continue" "Breakpoint $decimal, foo .*" \
+	"continue to foo"
+}
+
+foreach_with_prefix displaced_stepping {auto off} {
+    foreach_with_prefix different_text_segments {true false} {
+	foreach_with_prefix execr_thread {leader other} {
+	    do_test $execr_thread $different_text_segments $displaced_stepping
+	}
+    }
+}

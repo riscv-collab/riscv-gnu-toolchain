@@ -1,0 +1,93 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that handling of Ada thick pointers does not rewrite other
+# similar types.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+standard_testfile main.c -debug.S
+
+# Set up the DWARF for the test.
+
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    global srcdir subdir srcfile
+
+    cu {} {
+	DW_TAG_compile_unit {
+                {DW_AT_language @DW_LANG_Ada95}
+                {DW_AT_name     $srcfile}
+        } {
+	    declare_labels integer array array_pointer bounds_pointer
+
+            integer: DW_TAG_base_type {
+                {DW_AT_byte_size 8 DW_FORM_sdata}
+                {DW_AT_encoding  @DW_ATE_signed}
+                {DW_AT_name      integer}
+            }
+
+	    array: DW_TAG_array_type {
+		{DW_AT_name array_type}
+		{DW_AT_type :$integer}
+	    } {
+		DW_TAG_subrange_type {
+		    {DW_AT_type        :$integer}
+		    {DW_AT_lower_bound 1 DW_FORM_data1}
+		    {DW_AT_upper_bound 7 DW_FORM_data1}
+		}
+	    }
+
+	    array_pointer: DW_TAG_pointer_type {
+		{DW_AT_type :$array}
+		{DW_AT_byte_size 8 DW_FORM_sdata}
+	    }
+
+	    # This isn't exactly what GNAT emits, but it doesn't
+	    # matter.
+	    bounds_pointer: DW_TAG_pointer_type {
+		{DW_AT_type :$integer}
+		{DW_AT_byte_size 8 DW_FORM_sdata}
+	    }
+
+	    DW_TAG_structure_type {
+		{DW_AT_name thick_pointer_type}
+		{DW_AT_byte_size 8 DW_FORM_sdata}
+	    } {
+		DW_TAG_member {
+		    {DW_AT_name P_ARRAY}
+		    {DW_AT_type :$array_pointer}
+		    {DW_AT_data_member_location 0 DW_FORM_sdata}
+		}
+		DW_TAG_member {
+		    {DW_AT_name P_BOUNDS}
+		    {DW_AT_type :$bounds_pointer}
+		    {DW_AT_data_member_location 8 DW_FORM_sdata}
+		}
+	    }
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	  [list $srcfile $asm_file] {nodebug}] } {
+    return -1
+}
+
+gdb_test_no_output "set language ada"
+gdb_test "ptype array_type" "type = array \\(1 \\.\\. 7\\) of integer"

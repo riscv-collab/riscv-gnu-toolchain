@@ -1,0 +1,88 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test is equivalent to amd64-pseudo-unwind, but specific to AArch64.  We
+# use the raw register x19 which is 64 bits long and pseudo register w19, which
+# is the bottom half of x19.
+
+if { ![istarget aarch64-*-* ] } {
+    verbose "Skipping aarch64 pseudo register unwind."
+    return
+}
+
+standard_testfile aarch64-pseudo-unwind.c aarch64-pseudo-unwind-asm.S
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	"${srcfile} ${srcfile2}" {debug}] } {
+    return -1
+}
+
+clean_restart ${binfile}
+
+if ![runto_main] then {
+    fail "could not run to main"
+}
+
+gdb_breakpoint break_here_asm temporary
+gdb_continue_to_breakpoint "continue to callee"
+
+# Verify the value of x19/w19 in the inner frame (callee).
+with_test_prefix "callee, before change" {
+    gdb_test "p/x \$x19" " = 0x2021222324252627"
+    gdb_test "p/x \$w19" " = 0x24252627"
+}
+
+# Verify that we can change the value of the pseudo register (w19) in the inner
+# frame (callee).
+gdb_test_no_output "set \$w19 = 0x34353637"
+
+# Verify the value of x19/w19 in the inner frame (callee) after the change.
+with_test_prefix "callee, after change" {
+    gdb_test "p/x \$x19" " = 0x34353637"
+    gdb_test "p/x \$w19" " = 0x34353637"
+}
+
+# Go up one frame (to caller) and do the same.
+gdb_test "up"
+
+# Verify the value of x19/w19 in the outer frame (caller).
+with_test_prefix "caller, before change" {
+    gdb_test "p/x \$x19" " = 0x1011121314151617"
+    gdb_test "p/x \$w19" " = 0x14151617"
+}
+
+# Verify that we can change the value of the pseudo register (w19) in the outer
+# frame (caller).
+gdb_test_no_output "set \$w19 = 0x44454647"
+
+# Verify the value of x19/w19 in the outer frame (caller) after the change.
+with_test_prefix "caller, after change" {
+    gdb_test "p/x \$x19" " = 0x44454647"
+    gdb_test "p/x \$w19" " = 0x44454647"
+}
+
+# Go back to frame 0 (callee), check that the change to the outer frame didn't
+# mess up anything there.
+gdb_test "down"
+with_test_prefix "callee, after change in caller" {
+    gdb_test "p/x \$x19" " = 0x34353637"
+    gdb_test "p/x \$w19" " = 0x34353637"
+}
+
+# Verify that the value of the saved x19 we changed is correctly seen by the
+# inferior.
+gdb_breakpoint break_here_c temporary
+gdb_continue_to_breakpoint "continue to break_here_c"
+gdb_test "p/x value" " = 0x44454647"

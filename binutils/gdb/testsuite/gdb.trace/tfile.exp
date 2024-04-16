@@ -1,0 +1,153 @@
+#   Copyright 2010-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test of trace file support.
+
+# Note that unlike most of the tracing tests, this can be run on
+# targets lacking tracepoint support; the program tfile.c has the
+# ability to generate synthetic trace files directly, and the tfile
+# target is available to all GDB configs.
+
+load_lib "trace-support.exp"
+
+if {![is_remote host] && ![is_remote target]} {
+    set tfile_basic [standard_output_file tfile-basic.tf]
+    set tfile_error [standard_output_file tfile-error.tf]
+    set tfile_dir [file dirname $tfile_basic]/
+    set purely_local 1
+} else {
+    set tfile_basic tfile-basic.tf
+    set tfile_error tfile-error.tf
+    set tfile_dir ""
+    set purely_local 0
+}
+
+standard_testfile
+if { [gdb_compile "$srcdir/$subdir/$srcfile" $binfile \
+	  executable \
+	  [list debug nopie\
+	       "additional_flags=-DTFILE_DIR=\"$tfile_dir\""]] \
+	 != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+# Make sure we are starting fresh.
+remote_file host delete $tfile_basic
+remote_file host delete $tfile_error
+remote_file target delete $tfile_basic
+remote_file target delete $tfile_error
+
+if { ![generate_tracefile $binfile] } {
+    unsupported "unable to generate trace file"
+    return -1
+}
+
+if {!$purely_local} {
+    # Copy tracefile from target to host through build.
+    remote_download host [remote_upload target tfile-basic.tf] tfile-basic.tf
+    remote_download host [remote_upload target tfile-error.tf] tfile-error.tf
+}
+
+clean_restart $binfile
+
+# Program has presumably exited, now target a trace file it created.
+
+gdb_test "target tfile $tfile_basic" "Created tracepoint.*" \
+    "target tfile [file tail $tfile_basic]"
+
+gdb_test "info trace" ".*tracepoint.*in write_basic_trace_file.*" \
+    "info tracepoints on trace file"
+
+gdb_test "tfind 0" \
+    "Found trace frame 0, tracepoint \[0-9\]+.
+\#0  write_basic_trace_file ().*" \
+    "tfind 0 on trace file"
+
+# Note that there is no tracepoint collecting these globals, we
+# just happen to know they are covered by the trace frame.
+
+gdb_test "print testglob" " = 31415" "print testglob on trace file"
+
+gdb_test "print testglob2" " = 271828" "print testglob2 on trace file"
+
+# This global is not covered by the trace frame, but since it's const,
+# we should be able to read it from the executable.
+
+gdb_test "print constglob" " = 10000" "print constglob on trace file"
+
+# Similarly, disassembly should find the read-only pieces in the executable.
+gdb_test "disassemble main" \
+    "Dump of assembler code for function main:.*   $hex <\\+0\\>:.*End of assembler dump\."
+
+# This global is also not covered by the trace frame, and since it's
+# non-const, we should _not_ read it from the executable, as that
+# would show the variable's initial value, not the current at time the
+# trace frame was created.
+
+gdb_test "print nonconstglob" \
+    " = <unavailable>" "print nonconstglob on trace file"
+
+gdb_test "tfind" "Target failed to find requested trace frame." \
+    "tfind does not find a second frame in trace file"
+
+gdb_test "tstatus" \
+    "Using a trace file.*
+Trace stopped by a tstop command.*
+Collected 1 trace frame.*
+Trace buffer has 256 bytes of 4096 bytes free \\(93% full\\).*
+Looking at trace frame 0, tracepoint .*" \
+    "tstatus on trace file"
+
+gdb_test "tfind end" "No longer looking at any trace frame" "leave tfind mode"
+
+gdb_test "backtrace" "No stack\." \
+    "no stack if no traceframe selected"
+
+gdb_test "info registers" "The program has no registers now\." \
+    "no registers if no traceframe selected"
+
+# Now start afresh, using only a trace file.
+
+clean_restart $binfile
+
+gdb_test "target tfile $tfile_error" "Created tracepoint.*" \
+    "target tfile [file tail $tfile_error]"
+
+gdb_test "tstatus" \
+    "Using a trace file.*
+Trace stopped by an error \\(made-up error, tracepoint 1\\).*
+Collected 0 trace frame.*
+Trace buffer has 256 bytes of 4096 bytes free \\(93% full\\).*
+Not looking at any trace frame.*" \
+    "tstatus on error trace file"
+
+# Make sure we can reopen without error.
+gdb_test \
+    "interpreter-exec mi \"-target-select tfile $tfile_basic\"" \
+    "\\^connected.*" \
+    "interpreter-exec mi \"-target-select tfile tfile-basic.tf\""
+
+gdb_test "interpreter-exec mi \"-trace-status\"" \
+    "\\^done,supported=\"file\",trace-file=\".*$tfile_basic\",running=\"0\",stop-reason=\"request\",frames=\"${decimal}\",frames-created=\"${decimal}\",buffer-size=\"${decimal}\",buffer-free=\"${decimal}\",disconnected=\".*\",circular=\".*\",user-name=\"\",notes=\"\",start-time=\".*\",stop-time=\".*\"" \
+    "-trace-status"
+
+# Test completion works well.
+
+if { [readline_is_used] } {
+    gdb_test "target tfile [file rootname $tfile_basic]\t" \
+	"Assuming tracepoint.*" \
+	"complete-command 'target tfile'"
+}

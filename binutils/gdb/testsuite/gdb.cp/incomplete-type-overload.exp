@@ -1,0 +1,176 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of GDB's testsuite.
+
+# This test intends to check the error message that GDB emits when unable
+# to determine the correct overloaded function due to incomplete types.
+
+load_lib dwarf.exp
+
+require dwarf2_support allow_cplus_tests
+
+standard_testfile .cc .S
+set asm_file [standard_output_file ${srcfile2}]
+
+if [prepare_for_testing "failed to prepare" $testfile $srcfile {debug c++}] {
+    return
+}
+
+if ![runto_main] {
+    return
+}
+
+# Get important sizes to create fake dwarf for the test
+set int_size [get_sizeof "int" -1]
+set addr_size [get_sizeof "void *" -1]
+set struct_base_size [get_sizeof "base" 4]
+set struct_complete_size [get_sizeof "complete" 4]
+get_func_info foo
+
+# Create fake DWARF for the .cc file.
+# This is the best way to ensure we have an incomplete type.
+Dwarf::assemble ${asm_file} {
+    global srcdir subdir srcfile srcfile2 foo_start foo_end
+    global int_size addr_size struct_base_size struct_complete_size
+    declare_labels L
+
+    cu {} {
+	DW_TAG_compile_unit {
+	    {DW_AT_language @DW_LANG_C_plus_plus}
+	    {name $srcfile}
+	    {stmt_list $L DW_FORM_sec_offset}
+	} {
+	    declare_labels int_label base_label complete_label incomplete_label
+	    declare_labels ptr_base_label ptr_inc_label ptr_comp_label ptr_int_label
+
+	    int_label: DW_TAG_base_type {
+		{DW_AT_byte_size $int_size DW_FORM_sdata}
+		{DW_AT_encoding @DW_ATE_signed}
+		{DW_AT_name "int"}
+	    }
+
+	    base_label: DW_TAG_class_type {
+		{DW_AT_byte_size $struct_base_size DW_FORM_sdata}
+		{DW_AT_name "base"}
+	    } {
+		DW_TAG_member {
+		    {DW_AT_name "member"}
+		    {DW_AT_type :$int_label}
+		    {DW_AT_data_member_location 0 DW_FORM_sdata}
+		}
+	    }
+
+	    complete_label: DW_TAG_class_type {
+		{DW_AT_byte_size $struct_complete_size DW_FORM_sdata}
+		{DW_AT_name "complete"}
+	    } {
+		DW_TAG_inheritance {
+		    {DW_AT_type :$base_label}
+		    {DW_AT_data_member_location 0 DW_FORM_sdata}
+		    {DW_AT_accessibility 1 DW_FORM_data1}
+		}
+	    }
+
+	    incomplete_label: DW_TAG_class_type {
+		{DW_AT_name "incomplete"}
+		{DW_AT_declaration 1 DW_FORM_flag_present}
+	    }
+
+	    ptr_base_label: DW_TAG_pointer_type {
+		{DW_AT_byte_size $addr_size DW_FORM_udata}
+		{DW_AT_type :$base_label}
+	    }
+
+	    ptr_inc_label: DW_TAG_pointer_type {
+		{DW_AT_byte_size $addr_size DW_FORM_udata}
+		{DW_AT_type :$incomplete_label}
+	    }
+
+	    ptr_comp_label: DW_TAG_pointer_type {
+		{DW_AT_byte_size $addr_size DW_FORM_udata}
+		{DW_AT_type :$complete_label}
+	    }
+
+	    ptr_int_label: DW_TAG_pointer_type {
+		{DW_AT_byte_size $addr_size DW_FORM_udata}
+		{DW_AT_type :$int_label}
+	    }
+
+	DW_TAG_variable {
+	    {DW_AT_name "comp"}
+	    {DW_AT_type :$complete_label}
+	    {DW_AT_location {DW_OP_addr [gdb_target_symbol "comp"]} SPECIAL_expr}
+	    {DW_AT_external 1 DW_FORM_flag}
+	}
+
+	DW_TAG_variable {
+	    {DW_AT_name "cp"}
+	    {DW_AT_type :$ptr_comp_label}
+	    {DW_AT_location {DW_OP_addr [gdb_target_symbol "cp"]} SPECIAL_expr}
+	    {DW_AT_external 1 DW_FORM_flag}
+	}
+
+	DW_TAG_variable {
+	    {DW_AT_name "inc"}
+	    {DW_AT_type :$ptr_inc_label}
+	    {DW_AT_location {DW_OP_addr [gdb_target_symbol "inc"]} SPECIAL_expr}
+	    {DW_AT_external 1 DW_FORM_flag}
+	}
+
+	DW_TAG_variable {
+	    {DW_AT_name "ip"}
+	    {DW_AT_type :$ptr_int_label}
+	    {DW_AT_location {DW_OP_addr [gdb_target_symbol "ip"]} SPECIAL_expr}
+	    {DW_AT_external 1 DW_FORM_flag}
+	}
+
+	    DW_TAG_subprogram {
+		{MACRO_AT_func {"main"}}
+		{DW_AT_external 1 flag}
+	    }
+	    DW_TAG_subprogram {
+		{MACRO_AT_func {"foo"}}
+		{DW_AT_type :$int_label}
+		{DW_AT_external 1 flag}
+	    } { formal_parameter {
+		    {DW_AT_name "b"}
+		    {DW_AT_type :$ptr_base_label}
+		}
+	    }
+	}
+    }
+
+    lines {version 2} L {
+	include_dir "$srcdir/$subdir"
+	file_name $srcfile 1
+    }
+}
+
+if [prepare_for_testing "failed to prepare" $testfile [list $asm_file $srcfile] {}] {
+    return
+}
+
+if ![runto_main] {
+    return
+}
+
+gdb_test "print foo(cp)" "= 1" "successful invocation"
+gdb_test "print foo(inc)"\
+	 "The type. 'incomplete .' isn't fully known to GDB.*"\
+	 "unsuccessful because declaration"
+gdb_test "print foo(ip)"\
+	 "Cannot resolve function foo to any overloaded instance"\
+	 "unsuccessful because incorrect"

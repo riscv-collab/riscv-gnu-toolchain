@@ -1,0 +1,246 @@
+# Copyright 2005-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "ada.exp"
+
+require allow_ada_tests
+
+standard_ada_testfile foo
+
+if {[gdb_compile_ada "${srcfile}" "${binfile}" executable [list debug ]] != "" } {
+  return -1
+}
+
+clean_restart ${testfile}
+
+set bp_location [gdb_get_line_number "START" ${testdir}/foo.adb]
+runto "foo.adb:$bp_location"
+
+set eol "\r\n"
+
+# A convenience function that verifies that the "complete EXPR" command
+# returns the EXPECTED_OUTPUT.
+
+proc test_gdb_complete { expr expected_output {msg ""} } {
+    set cmd "complete p $expr"
+    if {$msg == ""} {
+	set msg $cmd
+    }
+    gdb_test "complete p $expr" \
+             "$expected_output" $msg
+}
+
+# A convenience function that verifies that the "complete EXPR" command
+# does not generate any output.
+
+proc test_gdb_no_completion { expr } {
+    gdb_test_no_output "complete p $expr"
+}
+
+# Try a global variable, only one match should be found:
+
+test_gdb_complete "my_glob" \
+                  "p my_global_variable"
+
+# A global variable, inside a nested package:
+
+test_gdb_complete "insi" \
+                  "p inside_variable"
+
+# A global variable inside a nested package, but only giving part of
+# the fully qualified name (top level package name missing):
+
+test_gdb_no_completion "inner.insi"
+
+# An incomplete nested package name, were lies a single symbol:
+test_gdb_complete "pck.inne" \
+                  "p pck.inner.inside_variable" \
+                  "complete nested package name"
+
+# A fully qualified symbol name, mangled...
+test_gdb_complete "pck__inner__ins" \
+                  "p pck__inner__inside_variable"
+
+# A fully qualified symbol name...
+test_gdb_complete "pck.inner.ins" \
+                  "p pck.inner.inside_variable"
+
+# Make sure that "inside" is not returned as a possible completion
+# for "side"...
+test_gdb_no_completion "side"
+
+# Verify that "Exported_Capitalized" is not returned as a match for
+# "exported", since its symbol name contains capital letters.
+test_gdb_no_completion "exported"
+
+# check the "<...>" notation.
+test_gdb_complete "<Exported" \
+                  "p <Exported_Capitalized>"
+
+# While at it, make sure we can print the symbol too, using the '<'
+# notation.
+gdb_test "p <Exported_Capitalized>" " = 2"
+
+# Confirm that we can't print the symbol without the '<' notation.
+gdb_test "p Exported_Capitalized" \
+    "No definition of \"exported_capitalized\" in current context."
+gdb_test "p exported_capitalized" \
+    "No definition of \"exported_capitalized\" in current context."
+
+# A global symbol, created by the binder, that starts with __gnat...
+test_gdb_complete "__gnat_ada_main_progra" \
+                  "p __gnat_ada_main_program_name"
+
+# A global symbol, created by the binder, that starts with __gnat,
+# and using the '<' notation.
+test_gdb_complete "<__gnat_ada_main_prog" \
+                  "p <__gnat_ada_main_program_name>"
+
+# A local variable
+test_gdb_complete "some" \
+                  "p some_local_variable"
+
+# A local variable variable, but in a different procedure. No match
+# should be returned.
+test_gdb_no_completion "not_in_sco"
+
+# A fully qualified variable name that doesn't exist...
+test_gdb_no_completion "pck.ins"
+
+# A fully qualified variable name that does exist...
+test_gdb_complete "pck.my" \
+                  "p pck.my_global_variable"
+
+# A fully qualified package name
+test_gdb_complete "pck.inne" \
+    "p pck.inner.inside_variable" \
+    "complete fully qualified package name"
+
+# A fully qualified package name, with a dot at the end
+test_gdb_complete "pck.inner." \
+                  "p pck.inner.inside_variable"
+
+# Two matches, from the global scope:
+test_gdb_complete "local_ident" \
+                  [multi_line "p local_identical_one" \
+                              "p local_identical_two" ]
+
+# Two matches, from the global scope, but using fully qualified names:
+test_gdb_complete "pck.local_ident" \
+                  [multi_line "p pck.local_identical_one" \
+                              "p pck.local_identical_two" ]
+
+# Two matches, from the global scope, but using mangled fully qualified
+# names:
+test_gdb_complete "pck__local_ident" \
+                  [multi_line "p pck__local_identical_one" \
+                              "p pck__local_identical_two" ]
+
+# Two matches, one from the global scope, the other from the local scope:
+test_gdb_complete "external_ident" \
+                  [multi_line "p external_identical_one" \
+                              "p external_identical_two" ]
+
+# Complete on the name of package. 
+test_gdb_complete "pck" \
+                  [multi_line "(p pck\\.ad\[sb\])?" \
+                              "(p pck\\.ad\[sb\])?" \
+                              "p pck.ambiguous_func" \
+                              "p pck.external_identical_one" \
+                              "p pck.inner.inside_variable" \
+			      "p pck.internal_capitalized" \
+                              "p pck.local_identical_one" \
+                              "p pck.local_identical_two" \
+                              "p pck.my_global_variable" \
+                              "p pck.proc" ]
+
+# Complete on the name of a package followed by a dot:
+test_gdb_complete "pck." \
+                  [multi_line "(p pck\\.ad\[sb\])?" \
+                              "(p pck\\.ad\[sb\])?" \
+                              "p pck.ambiguous_func" \
+                              "p pck.external_identical_one" \
+                              "p pck.inner.inside_variable" \
+			      "p pck.internal_capitalized" \
+                              "p pck.local_identical_one" \
+                              "p pck.local_identical_two" \
+                              "p pck.my_global_variable" \
+                              "p pck.proc" ]
+
+# Complete a mangled symbol name, but using the '<...>' notation.
+test_gdb_complete "<pck__my" \
+                  "p <pck__my_global_variable>"
+
+# Very simple completion, but using the interactive form, this time.
+# The verification we are trying to make involves the event loop,
+# and using the "complete" command is not sufficient to reproduce
+# the original problem.
+
+if { [readline_is_used] } {
+    set test "interactive complete 'print some'"
+    send_gdb "print some\t"
+    gdb_test_multiple "" "$test" {
+	-re "^print some_local_variable $" {
+	    send_gdb "\n"
+	    gdb_test_multiple "" "$test" {
+		-re " = 1$eol$gdb_prompt $" {
+		    pass "$test"
+		}
+	    }
+	}
+    }
+}
+
+# Usually, parsing a function name that is ambiguous yields a menu through
+# which users can select a specific function.  This should not happen during
+# completion, though.
+test_gdb_complete "ambig" \
+                  [multi_line "p ambiguous_func" \
+                              "p ambiguous_proc" ]
+test_gdb_complete "ambiguous_f" \
+                  "p ambiguous_func"
+test_gdb_complete "ambiguous_func" \
+                  "p ambiguous_func"
+
+# Perform a test intented to verify the behavior where the number
+# of possible completions is very large.  The goal is not to verify
+# precisely the list returned by the complete command (this depends
+# on too many parameters -- targets, compiler version, runtime, etc).
+# However, we want to sanity-check each one of them, knowing that
+# each result should start with "break ada" and that the proposed
+# completion should look like a valid symbol name (in particular,
+# no uppercase letters...).  See gdb/22670.  File names are OK as
+# well, which is why "/" and "-" appear in the regexp.
+
+gdb_test_no_output "set max-completions unlimited"
+
+set test "complete break ada"
+gdb_test_multiple $test "" {
+    -re "^($test$eol)" {
+	exp_continue
+    }
+
+    -re "^(break ada\[\]\[a-z0-9._@/-\]*$eol)" {
+	exp_continue
+    }
+
+    -re "^$gdb_prompt $" {
+	pass $gdb_test_name
+    }
+
+    -re "\[A-Z\].*$gdb_prompt $" {
+	fail "$gdb_test_name (gdb/22670)"
+    }
+}

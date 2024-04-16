@@ -1,0 +1,147 @@
+# Copyright (C) 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that GDB doesn't get confused in the following scenario
+# (PR breakpoints/17000).  Say, we have this program:
+#
+#  =>  0xff000001  INSN1
+#      0xff000002  INSN2
+#
+# The PC currently points at INSN1.
+#
+# 1 - User sets a breakpoint at 0xff000002 (INSN2).
+#
+# 2 - User steps.  On software single-step archs, this sets a software
+#     single-step breakpoint at 0xff000002 (INSN2) too.
+#
+# 3 - User deletes breakpoint (INSN2) before the single-step finishes.
+#
+# 4 - The single-step finishes, and GDB removes the single-step
+#     breakpoint.
+
+# Test relies on checking gdb debug output. Do not run if gdb debug is
+# enabled as any debug will be redirected to the log.
+require !gdb_debug_enabled
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+if ![runto_main] {
+    return 0
+}
+
+delete_breakpoints
+
+# With the all-stop RSP, we can't talk to the target while it's
+# running, until we get back the stop reply.  If not using single-step
+# breakpoints, then the "del" in stepi_del_break below will try to
+# delete the user breakpoint from the target, which will fail, with
+# "Cannot execute this command while the target is running.".  On
+# software single-step targets, that del shouldn't trigger any RSP
+# traffic.  Hardware-step targets that can't access memory while the
+# target is running, either remote or native, are likewise affected.
+# So we just skip the test if not using software single-stepping.  We
+# detect that by looking for 'to_resume (..., step)' in "debug
+# target" output.
+
+# Probe for software single-step breakpoint use.
+
+gdb_test_no_output "set debug target 1"
+set hardware_step 0
+set test "probe target hardware step"
+gdb_test_multiple "si" $test {
+    -re "resume \\(\[^\r\n\]+, step, .*$gdb_prompt $" {
+	set hardware_step 1
+	pass $test
+    }
+    -re "$gdb_prompt $" {
+	pass $test
+    }
+}
+
+if { $hardware_step } {
+    unsupported "target doesn't use software single-stepping"
+    return
+}
+
+gdb_test "set debug target 0" "->log_command.*\\)"
+
+set line_re "\[^\r\n\]*"
+
+gdb_test "b test:label" "Breakpoint .*"
+gdb_continue_to_breakpoint "run past setup"
+delete_breakpoints
+
+# So we can precisely control breakpoint insertion order.
+gdb_test_no_output "set breakpoint always-inserted on"
+
+# Capture disassembly output.  PREFIX is used as test prefix.  The
+# current instruction indicator (=>) is stripped away.
+proc disassemble { prefix } {
+    with_test_prefix "$prefix" {
+	set output [capture_command_output "disassemble test" ""]
+	return [string map {"=>" "  "} $output]
+    }
+}
+
+# Issue a stepi and immediately delete the user breakpoint that is set
+# at the same address as the software single-step breakpoint.  Do this
+# in a user defined command, so that the stepi's trap doesn't have a
+# chance to be handled before further input is processed.  We then
+# compare before/after disassembly.  GDB should be able to handle
+# deleting the user breakpoint before deleting the single-step
+# breakpoint.  E.g., we shouldn't see breakpoint instructions in the
+# disassembly.
+
+set disasm_before [disassemble "before"]
+
+gdb_test "b test:label2" ".*" "set breakpoint where si will land"
+
+set test "define stepi_del_break"
+gdb_test_multiple $test $test {
+    -re "Type commands for definition of \"stepi_del_break\".\r\nEnd with a line saying just \"end\".\r\n>$" {
+	gdb_test "si&\ndel \$bpnum\nend" "" $test
+    }
+}
+
+set command "stepi_del_break"
+set test $command
+gdb_test_multiple $command $test {
+    -re "^$command\r\n$gdb_prompt " {
+	# Note no end anchor, because "si&" finishes and prints the
+	# current frame/line after the prompt is printed.
+	pass $test
+    }
+}
+
+# Now consume the output of the finished "si&".
+set test "si& finished"
+gdb_test_multiple "" $test {
+    -re "must be a single line \\\*/\r\n" {
+	pass $test
+    }
+}
+
+set disasm_after [disassemble "after"]
+
+set test "before/after disassembly matches"
+if ![string compare $disasm_before $disasm_after]  {
+    pass $test
+} else {
+    fail $test
+}

@@ -1,0 +1,342 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test reading/writing variables with non-trivial DWARF locations.  In
+# particular the test uses register- and memory locations as well as
+# composite locations with register- and memory pieces.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+# Choose suitable integer registers for the test.
+
+set dwarf_regnum {0 1}
+
+if { [is_aarch64_target] } {
+    set regname {x0 x1}
+} elseif { [is_aarch32_target]
+	   || [istarget "s390*-*-*" ]
+	   || [istarget "powerpc*-*-*"]
+	   || [istarget "rs6000*-*-aix*"] } {
+    set regname {r0 r1}
+} elseif { [is_x86_like_target] } {
+    set regname {eax ecx}
+} elseif { [is_amd64_regs_target] } {
+    set regname {rax rdx}
+} else {
+    verbose "Skipping $gdb_test_file_name."
+    return
+}
+
+standard_testfile .c -dw.S
+
+# Make some DWARF for the test.
+
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    global dwarf_regnum regname srcfile
+
+    set buf_var [gdb_target_symbol buf]
+
+    cu {} {
+	DW_TAG_compile_unit {
+		{DW_AT_name $srcfile}
+		{DW_AT_comp_dir /tmp}
+	} {
+	    declare_labels char_type_label
+	    declare_labels int_type_label short_type_label
+	    declare_labels array_a8_label struct_s_label struct_t_label
+	    declare_labels struct_st_label
+
+	    # char
+	    char_type_label: base_type {
+		{name "char"}
+		{encoding @DW_ATE_unsigned_char}
+		{byte_size 1 DW_FORM_sdata}
+	    }
+
+	    # int
+	    int_type_label: base_type {
+		{name "int"}
+		{encoding @DW_ATE_signed}
+		{byte_size 4 DW_FORM_sdata}
+	    }
+
+	    # char [8]
+	    array_a8_label: array_type {
+		{type :$char_type_label}
+	    } {
+		subrange_type {
+		    {type :$int_type_label}
+		    {upper_bound 7 DW_FORM_udata}
+		}
+	    }
+
+	    # struct s { char a, b, c, d; };
+	    struct_s_label: structure_type {
+		{name "s"}
+		{byte_size 4 DW_FORM_sdata}
+	    } {
+		member {
+		    {name "a"}
+		    {type :$char_type_label}
+		    {data_member_location 0 DW_FORM_udata}
+		}
+		member {
+		    {name "b"}
+		    {type :$char_type_label}
+		    {data_member_location 1 DW_FORM_udata}
+		}
+		member {
+		    {name "c"}
+		    {type :$char_type_label}
+		    {data_member_location 2 DW_FORM_udata}
+		}
+		member {
+		    {name "d"}
+		    {type :$char_type_label}
+		    {data_member_location 3 DW_FORM_udata}
+		}
+	    }
+
+	    # struct t { int u, x:9, y:13, z:10; };
+	    struct_t_label: structure_type {
+		{name "t"}
+		{byte_size 8 DW_FORM_sdata}
+	    } {
+		member {
+		    {name "u"}
+		    {type :$int_type_label}
+		}
+		member {
+		    {name "x"}
+		    {type :$int_type_label}
+		    {data_member_location 4 DW_FORM_udata}
+		    {bit_size 9 DW_FORM_udata}
+		}
+		member {
+		    {name "y"}
+		    {type :$int_type_label}
+		    {data_bit_offset 41 DW_FORM_udata}
+		    {bit_size 13 DW_FORM_udata}
+		}
+		member {
+		    {name "z"}
+		    {type :$int_type_label}
+		    {data_bit_offset 54 DW_FORM_udata}
+		    {bit_size 10 DW_FORM_udata}
+		}
+	    }
+
+	    # struct st { struct s s; struct t t; };
+	    struct_st_label: structure_type {
+		{name "st"}
+		{byte_size 12 DW_FORM_udata}
+	    } {
+		member {
+		    {name "s"}
+		    {type :$struct_s_label}
+		}
+		member {
+		    {name "t"}
+		    {type :$struct_t_label}
+		    {data_member_location 4 DW_FORM_udata}
+		}
+	    }
+
+	    DW_TAG_subprogram {
+		{MACRO_AT_func { main }}
+		{DW_AT_external 1 flag}
+	    } {
+		# Simple memory location.
+		DW_TAG_variable {
+		    {name "a"}
+		    {type :$array_a8_label}
+		    {location {
+			addr $buf_var
+		    } SPECIAL_expr}
+		}
+		# Memory pieces: two bytes from &buf[2], and two bytes
+		# from &buf[0].
+		DW_TAG_variable {
+		    {name "s1"}
+		    {type :$struct_s_label}
+		    {location {
+			addr $buf_var
+			plus_uconst 2
+			piece 2
+			addr $buf_var
+			piece 2
+		    } SPECIAL_expr}
+		}
+		# Register- and memory pieces: one byte each from r0,
+		# &buf[4], r1, and &buf[5].
+		DW_TAG_variable {
+		    {name "s2"}
+		    {type :$struct_s_label}
+		    {location {
+			regx [lindex $dwarf_regnum 0]
+			piece 1
+			addr "$buf_var + 4"
+			piece 1
+			regx [lindex $dwarf_regnum 1]
+			piece 1
+			addr "$buf_var + 5"
+			piece 1
+		    } SPECIAL_expr}
+		}
+		# Memory pieces for bitfield access: 8 bytes optimized
+		# out, 3 bytes from &buf[3], and 1 byte from &buf[1].
+		DW_TAG_variable {
+		    {name "st1"}
+		    {type :$struct_st_label}
+		    {location {
+			piece 8
+			addr "$buf_var + 3"
+			piece 3
+			addr "$buf_var + 1"
+			piece 1
+		    } SPECIAL_expr}
+		}
+		# Register pieces for bitfield access: 4 bytes optimized
+		# out, 3 bytes from r0, and 1 byte from r1.
+		DW_TAG_variable {
+		    {name "t2"}
+		    {type :$struct_t_label}
+		    {location {
+			piece 4
+			regx [lindex $dwarf_regnum 0]
+			piece 3
+			regx [lindex $dwarf_regnum 1]
+			piece 1
+		    } SPECIAL_expr}
+		}
+		# One piece per bitfield, using piece offsets: 32 bits of
+		# an implicit value, 9 bits of a stack value, 13 bits of
+		# r0, and 10 bits of buf.
+		DW_TAG_variable {
+		    {name "t3"}
+		    {type :$struct_t_label}
+		    {location {
+			implicit_value 0x12 0x34 0x56 0x78 0x9a
+			bit_piece 32 4
+			const2s -280
+			stack_value
+			bit_piece 9 2
+			regx [lindex $dwarf_regnum 0]
+			bit_piece 13 14
+			addr $buf_var
+			bit_piece 10 42
+		    } SPECIAL_expr}
+		}
+	    }
+	}
+    }
+}
+
+if { [prepare_for_testing ${testfile}.exp ${testfile} \
+	  [list $srcfile $asm_file] {nodebug}] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+# Determine byte order.
+set endian [get_endianness]
+
+# Byte-aligned memory pieces.
+gdb_test "print/d s1" " = \\{a = 2, b = 3, c = 0, d = 1\\}" \
+    "s1 == re-ordered buf"
+gdb_test_no_output "set var s1.a = 63"
+gdb_test "print/d s1" " = \\{a = 63, b = 3, c = 0, d = 1\\}" \
+    "verify s1.a"
+gdb_test "print/d a" " = \\{0, 1, 63, 3, 4, 5, 6, 7\\}" \
+    "verify s1.a through a"
+gdb_test_no_output "set var s1.b = 42"
+gdb_test "print/d s1" " = \\{a = 63, b = 42, c = 0, d = 1\\}" \
+    "verify s1.b"
+gdb_test "print/d a" " = \\{0, 1, 63, 42, 4, 5, 6, 7\\}" \
+    "verify s1.b through a"
+
+# Byte-aligned register- and memory pieces.
+gdb_test_no_output "set var \$[lindex $regname 0] = 81" \
+    "init reg for s2.a"
+gdb_test_no_output "set var \$[lindex $regname 1] = 28" \
+    "init reg for s2.c"
+gdb_test "print/u s2" " = \\{a = 81, b = 4, c = 28, d = 5\\}" \
+    "initialized s2 from mem and regs"
+gdb_test_no_output "set var s2.c += s2.a + s2.b - s2.d"
+gdb_test "print/u s2" " = \\{a = 81, b = 4, c = 108, d = 5\\}" \
+    "verify s2.c"
+gdb_test "print/u \$[lindex $regname 1]" " = 108" \
+    "verify s2.c through reg"
+gdb_test_no_output "set var s2 = {191, 73, 231, 123}" \
+    "re-initialize s2"
+gdb_test "print/u s2"  " = \\{a = 191, b = 73, c = 231, d = 123\\}" \
+    "verify re-initialized s2"
+
+# Unaligned bitfield access through byte-aligned pieces.
+gdb_test_no_output "set var a = { 0 }"
+gdb_test_no_output "set var st1.t.x = -7"
+gdb_test_no_output "set var st1.t.z = 340"
+gdb_test_no_output "set var st1.t.y = 1234"
+gdb_test "print st1.t" " = \\{u = <optimized out>, x = -7, y = 1234, z = 340\\}" \
+    "verify st1.t"
+switch $endian {
+    little {set val "0x55, 0x0, 0xf9, 0xa5, 0x9"}
+    big {set val "0x54, 0x0, 0xfc, 0x93, 0x49"}
+}
+# | -- | z:2-9 | -- | x:0-7 | x:8 y:0-6 | y:7-12 z:0-1 | -- | -- |
+#      \_______________________________________________/
+#                             val
+gdb_test "print/x a" " = \\{0x0, ${val}, 0x0, 0x0\\}" \
+    "verify st1 through a"
+
+switch $endian { big {set val 0x7ffc} little {set val 0x3ffe00} }
+gdb_test_no_output "set var \$[lindex $regname 0] = $val" \
+    "init t2, first piece"
+gdb_test_no_output "set var \$[lindex $regname 1] = 0" \
+    "init t2, second piece"
+gdb_test "print/d t2" " = \\{u = <optimized out>, x = 0, y = -1, z = 0\\}" \
+    "initialized t2 from regs"
+gdb_test_no_output "set var t2.y = 2641"
+gdb_test_no_output "set var t2.z = -400"
+gdb_test_no_output "set var t2.x = 200"
+gdb_test "print t2.x + t2.y + t2.z" " = 2441"
+
+# Bitfield access through pieces with nonzero piece offsets.
+gdb_test_no_output "set var \$[lindex $regname 0] = 0xa8000" \
+    "init reg for t3.y"
+gdb_test_no_output "set var *(char \[2\] *) (a + 5) = { 70, 82 }" \
+    "init mem for t3.z"
+switch $endian {
+    little {set val "u = -1484430527, x = -70, y = 42, z = 145"}
+    big {set val "u = 591751049, x = -70, y = 42, z = 101"}
+}
+gdb_test "print t3" " = \\{$val\\}" \
+    "initialized t3 from reg and mem"
+gdb_test_no_output "set var t3.y = -1" \
+    "overwrite t3.y"
+gdb_test "print/x \$[lindex $regname 0]" " = 0x7ffc000" \
+    "verify t3.y through reg"
+gdb_test_no_output "set var t3.z = -614" \
+    "overwrite t3.z"
+switch $endian {big {set val "0x59, 0xa2"} little {set val "0x6a, 0x56"}}
+gdb_test "print/x *(char \[2\] *) (a + 5)" " = \\{$val\\}" \
+    "verify t3.z through mem"

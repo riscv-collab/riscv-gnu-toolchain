@@ -1,0 +1,430 @@
+# Copyright 2007-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check that GDB can call C++ functions whose parameters have
+# object type, and are either passed by value or implicitly by reference.
+#
+# Suppose F is a function that has a call-by-value parameter whose
+# type is class C.  When calling F with an argument A, a copy of A should
+# be created and passed to F.  If C is a trivially-copyable type, A can
+# be copied by a straightforward memory copy.  However, roughly speaking,
+# if C has a user-defined copy constructor and/or a user-defined
+# destructor, the copy ctor should be used to initialize the copy of A
+# before calling F, and a reference to that copy is passed to F.  After
+# the function returns, the destructor should be called to destruct the
+# copy.  In this case, C is said to be a 'pass-by-reference' type.
+# Determining whether C is pass-by-ref depends on
+# how the copy ctor, destructor, and the move ctor of C are defined.
+# First of all, C is not copy constructible if its copy constructor is
+# explicitly or implicitly deleted.  In this case, it would be illegal
+# to pass values of type C to a function.  C is pass-by-value, if all of
+# its copy ctor, dtor, and move ctor are trivially defined.
+# Otherwise, it is pass-by-ref.
+#
+# To cover the many possible combinations, this test generates classes
+# that contain three special functions:
+#   (1) a copy constructor,
+#   (2) a destructor, and
+#   (3) a move constructor.
+# A special function is in one of the following states:
+#  * explicit: The function is explicitly defined by the user.
+#  * defaultedIn: The function is defaulted inside the class decl,
+#      using the 'default' keyword.
+#  * defaultedOut: The function is declared inside the class decl,
+#      and defaulted outside using the 'default' keyword.
+#  * deleted: The function is explicitly deleted by the user,
+#      using the 'delete' keyword.
+#  * absent: The function is not declared by the user (i.e. it does not
+#      exist in the source.  The compiler generates (or deletes) the
+#      definition in this case.
+#
+# The C++ ABI decides if a class is pass-by-value or pass-by-ref
+# (i.e.  trivially copyable or not) first at the language level, based
+# on the state of the special functions.  Then, at the target level, a
+# class may be determined to be pass-by-ref because of its size
+# (e.g.  if it is too large to fit on registers).  For this reason, this
+# test generates both a small and a large version for the same
+# combination of special function states.
+#
+# A class is not trivially-copyable if a base class or a field is not
+# trivially-copyable, even though the class definition itself seems
+# trivial.  To test these cases, we also generate derived classes and
+# container classes.
+#
+# The generated code is placed in the test output directory.
+#
+# The companion test file pass-by-ref-2.exp also contains
+# manually-written cases.
+
+require allow_cplus_tests
+
+# The program source is generated in the output directory.
+# We use standard_testfile here to set convenience variables.
+standard_testfile .cc
+
+# Some constant values used when generating the source
+
+set SMALL    2
+set LARGE    150
+set ORIGINAL 2
+set CUSTOM   3
+set ADDED    4
+set TRACE    5
+
+
+# Return 1 if the class whose special function states are STATES
+# is copyable.  Otherwise return 0.
+
+proc is_copy_constructible { states } {
+    set cctor [lindex $states 0]
+    set dtor  [lindex $states 1]
+    set mctor [lindex $states 2]
+
+    if {$cctor == "deleted" || ($cctor == "absent" && $mctor != "absent")} {
+	return 0
+    }
+    return 1
+}
+
+# Generate a declaration and an out-of-class definition for a function
+# with the provided signature.  The STATE should be one of the following:
+# - explicit, defaultedIn, defaultedOut, deleted, absent
+
+proc generate_member_function { classname signature length state } {
+    set declaration ""
+    set definition ""
+
+    global CUSTOM
+    global TRACE
+
+    switch $state {
+	explicit {
+	    set declaration "$signature;\n"
+	    set definition "$classname\:\:$signature
+                            {
+                              data\[0\] = $CUSTOM;
+                              data\[[expr $length - 1]\] = $CUSTOM;
+                              tracer = $TRACE;
+                            }\n"
+	}
+	defaultedIn {
+	    set declaration "$signature = default;\n"
+	}
+	defaultedOut {
+	    set declaration "$signature;\n"
+	    set definition "$classname\:\:$signature = default;\n"
+	}
+	deleted {
+	    set declaration "$signature = delete;\n"
+	}
+	default {
+	    # function is not user-defined in this case
+	}
+    }
+
+    return [list $declaration $definition]
+}
+
+# Generate a C++ class with the given CLASSNAME and LENGTH-many
+# integer elements.  The STATES is an array of 3 items
+# containing the desired state of the special functions
+# in this order:
+# copy constructor, destructor, move constructor
+
+proc generate_class { classname length states } {
+    set declarations ""
+    set definitions ""
+    set classname "${classname}_[join $states _]"
+
+    for {set i 0} {$i < [llength $states]} {incr i} {
+	set sig ""
+	switch $i {
+	    0 {set sig "$classname (const $classname \&rhs)"}
+	    1 {set sig "\~$classname (void)"}
+	    2 {set sig "$classname ($classname \&\&rhs)"}
+	}
+
+	set state [lindex $states $i]
+	set code [generate_member_function $classname $sig $length $state]
+	append declarations [lindex $code 0]
+	append definitions [lindex $code 1]
+    }
+
+    global ORIGINAL
+
+    return "
+    /*** C++ class $classname ***/
+    class ${classname} {
+    public:
+        $classname (void);
+        $declarations
+
+        int data\[$length\];
+    };
+
+    $classname\:\:$classname (void)
+    {
+        data\[0\] = $ORIGINAL;
+        data\[[expr $length - 1]\] = $ORIGINAL;
+    }
+
+    $definitions
+
+    $classname ${classname}_var; /* global var */
+
+    template int cbv<$classname> ($classname arg);"
+}
+
+# Generate a small C++ class
+
+proc generate_small_class { states } {
+    global SMALL
+    return [generate_class Small $SMALL $states];
+}
+
+# Generate a large C++ class
+
+proc generate_large_class { states } {
+    global LARGE
+    return [generate_class Large $LARGE $states];
+}
+
+# Generate a class that derives from a small class
+
+proc generate_derived_class { states } {
+    set base "Small_[join $states _]"
+    set classname "Derived_[join $states _]"
+
+    return "
+    /*** Class derived from $base ***/
+    class $classname : public $base {
+    public:
+    };
+
+    $classname ${classname}_var; /* global var */
+
+    template int cbv<$classname> ($classname arg);"
+}
+
+# Generate a class that contains a small class item
+
+proc generate_container_class { states } {
+    set contained "Small_[join $states _]"
+    set classname "Container_[join $states _]"
+
+    return "
+    /*** Class that contains $contained ***/
+    class $classname {
+    public:
+        $contained item;
+    };
+
+    $classname ${classname}_var; /* global var */
+
+    template int cbv_container<$classname> ($classname arg);"
+}
+
+# Generate useful statements that use a class in the debugee program
+
+proc generate_stmts { classprefix states {cbvfun "cbv"}} {
+    set classname "${classprefix}_[join $states _]"
+
+    # Having an explicit call to the cbv function in the debugee program
+    # ensures that the compiler will emit necessary function in the binary.
+    if {[is_copy_constructible $states]} {
+	set cbvcall "$cbvfun<$classname> (${classname}_var);\n"
+    } else {
+	set cbvcall ""
+    }
+
+    return "$cbvcall"
+}
+
+# Generate the complete debugee program
+
+proc generate_program { classes stmts } {
+    global ADDED
+
+    return "
+    /*** THIS FILE IS GENERATED BY THE TEST.  ***/
+
+    static int tracer = 0;
+
+    /* The call-by-value function.  */
+    template <class T>
+    int
+    cbv (T arg)
+    {
+      arg.data\[0\] += $ADDED; // intentionally modify the arg
+      return arg.data\[0\];
+    }
+
+    template <class T>
+    int
+    cbv_container (T arg)
+    {
+      arg.item.data\[0\] += $ADDED;  // intentionally modify
+      return arg.item.data\[0\];
+    }
+
+    $classes
+
+    int
+    main (void)
+    {
+      $stmts
+
+      /* stop here */
+
+      return 0;
+    }"
+}
+
+# Compute all the combinations of special function states.
+# We do not contain the 'deleted' state for the destructor,
+# because it is illegal to have stack-allocated objects
+# whose destructor have been deleted.  This case is covered
+# in pass-by-ref-2 via heap-allocated objects.
+
+set options_nodelete [list absent explicit defaultedIn defaultedOut]
+set options [concat $options_nodelete {deleted}]
+set all_combinations {}
+
+foreach cctor $options {
+    foreach dtor $options_nodelete {
+	foreach mctor $options {
+	    lappend all_combinations [list $cctor $dtor $mctor]
+	}
+    }
+}
+
+# Generate the classes.
+
+set classes ""
+set stmts ""
+
+foreach state $all_combinations {
+    append classes [generate_small_class $state]
+    append stmts [generate_stmts "Small" $state]
+
+    append classes [generate_large_class $state]
+    append stmts [generate_stmts "Large" $state]
+
+    append classes [generate_derived_class $state]
+    append stmts [generate_stmts "Derived" $state]
+
+    append classes [generate_container_class $state]
+    append stmts [generate_stmts "Container" $state "cbv_container"]
+}
+
+# Generate the program code and compile
+set program [generate_program $classes $stmts]
+set srcfile [standard_output_file ${srcfile}]
+gdb_produce_source $srcfile $program
+
+set options {debug c++ additional_flags=-std=c++11}
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile $options]} {
+    return -1
+}
+
+if {![runto_main]} {
+    return -1
+}
+
+set bp_location [gdb_get_line_number "stop here"]
+gdb_breakpoint $bp_location
+gdb_continue_to_breakpoint "end of main" ".*return .*;"
+
+# Do the checks for a given class whose name is prefixed with PREFIX,
+# and whose special functions have the states given in STATES.
+# The name of the call-by-value function and the expression to access
+# the data field can be specified explicitly if the default values
+# do not work.
+
+proc test_for_class { prefix states cbvfun data_field length} {
+    set name "${prefix}_[join $states _]"
+
+    set cctor [lindex $states 0]
+    set dtor  [lindex $states 1]
+    set mctor [lindex $states 2]
+
+    global ORIGINAL
+    global CUSTOM
+    global ADDED
+    global TRACE
+
+    # GCC version <= 6 and Clang do not emit DW_AT_defaulted and DW_AT_deleted.
+    set is_gcc_6_or_older [test_compiler_info {gcc-[0-6]-*}]
+    set is_clang [test_compiler_info {clang-*}]
+    # But Clang version >= 7 emits DW_AT_calling_convention for types.
+    set is_clang_6_or_older [test_compiler_info {clang-[0-6]-*}]
+
+    with_test_prefix $name {
+	if {[is_copy_constructible $states]} {
+	    set expected [expr {$ORIGINAL + $ADDED}]
+	    if {$cctor == "explicit"} {
+		set expected [expr {$CUSTOM + $ADDED}]
+	    }
+	    if {$dtor == "explicit"} {
+		gdb_test "print tracer = 0" " = 0" "reset the tracer"
+	    }
+
+	    if {$cctor == "defaultedIn" || $dtor == "defaultedIn"} {
+		if {$is_gcc_6_or_older || $is_clang_6_or_older} {
+		    setup_xfail "*-*-*"
+		} elseif {$is_clang} {
+		    # If this is a pass-by-value case, Clang >= 7's
+		    # DW_AT_calling_convention leads to the right decision.
+		    # Otherwise, it is expected to fail.
+		    if {"defaultedOut" in $states || "explicit" in $states} {
+			setup_xfail "*-*-*"
+		    }
+		}
+	    }
+	    gdb_test "print ${cbvfun}<$name> (${name}_var)" " = $expected" \
+		"call '$cbvfun'"
+	    gdb_test "print ${name}_var.${data_field}\[0\]" " = $ORIGINAL" \
+		"cbv argument should not change (item 0)"
+	    if {$length > 1} {
+		set last_index [expr $length - 1]
+		gdb_test "print ${name}_var.${data_field}\[$last_index\]" \
+		    " = $ORIGINAL" \
+		    "cbv argument should not change (item $last_index)"
+	    }
+	    if {$dtor == "explicit"} {
+		if {$cctor == "defaultedIn"
+		    && ($is_gcc_6_or_older || $is_clang)} {
+		    setup_xfail "*-*-*"
+		}
+		gdb_test "print tracer" " = $TRACE" \
+		    "destructor should be called"
+	    }
+	} else {
+	    if {$cctor == "deleted" && ($is_gcc_6_or_older || $is_clang)} {
+		setup_xfail "*-*-*"
+	    }
+	    gdb_test "print ${cbvfun}<$name> (${name}_var)" \
+		".* cannot be evaluated .* '${name}' is not copy constructible" \
+		"calling '$cbvfun' should be refused"
+	}
+    }
+}
+
+foreach state $all_combinations {
+    test_for_class "Small"     $state "cbv"           "data"      $SMALL
+    test_for_class "Large"     $state "cbv"           "data"      $LARGE
+    test_for_class "Derived"   $state "cbv"           "data"      1
+    test_for_class "Container" $state "cbv_container" "item.data" 1
+}

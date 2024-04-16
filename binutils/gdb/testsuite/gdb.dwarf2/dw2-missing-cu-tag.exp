@@ -1,0 +1,77 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test creates some invalid DWARF, compiles this into an
+# executable, then tries to load the executable using the 'file'
+# command.  We expect to see an error from the DWARF parser.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use
+# gas.
+require dwarf2_support
+
+standard_testfile .c -dw.S
+
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    cu {} {
+	# We should have either one of DW_TAG_compile_unit,
+	# DW_TAG_partial_unit, or DW_TAG_type_unit here.
+	subprogram {
+	    {external 1 flag}
+	    {MACRO_AT_func {main}}
+	}
+    }
+}
+
+# Don't use prepare_for_testing here as we want to manually run the
+# file command (so we can check its output).
+if {[build_executable "failed to build executable" $testfile \
+	 [list $srcfile $asm_file] {nodebug quiet}]} {
+    return -1
+}
+
+set host_binfile [gdb_remote_download host $binfile]
+
+# Restart with no executable.
+clean_restart
+
+gdb_test_no_output "maint set dwarf synchronous on"
+
+# This pattern is hit when GDB does not use -readnow (i.e. the default
+# behaviour).
+set pattern1 \
+    [multi_line \
+	 "Reading symbols from \[^\r\n\]+" \
+	 "Dwarf Error: unexpected tag 'DW_TAG_subprogram' at offset $hex"]
+
+# This pattern is hit when GDB does use -readnow (e.g. running with
+# --target_board=readnow).
+set pattern2 \
+    [multi_line \
+	 "Reading symbols from \[^\r\n\]+" \
+	 "Expanding full symbols from \[^\r\n\]+" \
+	 "Dwarf Error: unexpected tag 'DW_TAG_subprogram' at offset $hex"]
+
+# Load the executable, we expect an error from the DWARF parser.
+gdb_test_multiple "file $host_binfile" "file $testfile" {
+    -wrap -re $pattern1 {
+	pass $gdb_test_name
+    }
+    -re -wrap "$pattern2" {
+	pass $gdb_test_name
+    }
+}

@@ -1,0 +1,247 @@
+# Copyright 1998-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test just for the 'maintenance info sections' command and the
+# 'maintenance info target-sections' command.
+
+load_lib completion-support.exp
+
+standard_testfile break.c break1.c
+
+if {[prepare_for_testing "failed to prepare" $testfile \
+	 [list $srcfile $srcfile2] {debug nowarnings}]} {
+    return -1
+}
+
+if {![runto_main]} {
+    return -1
+}
+
+# Check the output of 'maint info target-sections' command.
+proc check_maint_info_target_sections_output {prefix} {
+    global hex gdb_prompt
+
+    with_test_prefix $prefix {
+	# Check the output of the 'maint info target-sections' command.
+	# Ensures that all the lines have the expected format, and that we see
+	# an auxiliary information line after every section information line.
+	#
+	# We also check that every bfd section has the ALLOC flag.
+	set seen_header false
+	set seen_a_section false
+	set seen_aux_info false
+	set expecting_aux_info false
+	gdb_test_multiple "maint info target-sections" "" {
+	    -re "^maint info target-sections\r\n" {
+		# Consume the command we sent to GDB that the terminal echo'd
+		# back.
+		exp_continue
+	    }
+	    -re "^From '\[^\r\n\]+', file type \[^\r\n\]+:\r\n" {
+		# There might be more than one header, but there should be at
+		# least one.
+		set seen_header true
+		if { $expecting_aux_info } {
+		    fail $gdb_test_name
+		} else {
+		    exp_continue
+		}
+	    }
+	    -re "^ \\\[\[0-9\]+\\\]\\s+$hex->$hex at $hex: \[^*\r\]+\\yALLOC\\y\[^*\r\]*\r\n" {
+		# A bfd section description line.
+		set seen_a_section true
+		if { $expecting_aux_info } {
+		    fail $gdb_test_name
+		} else {
+		    set expecting_aux_info true
+		    exp_continue
+		}
+	    }
+	    -re "^\\s+Start: $hex, End: $hex, Owner token: $hex\r\n" {
+		# A target section auxiliary information line.
+		set seen_aux_info true
+		if { !$expecting_aux_info } {
+		    fail $gdb_test_name
+		} else {
+		    set expecting_aux_info false
+		    exp_continue
+		}
+	    }
+	    -re "^$gdb_prompt $" {
+		gdb_assert { $seen_header && $seen_a_section && $seen_aux_info }
+		gdb_assert { !$expecting_aux_info }
+		pass $gdb_test_name
+	    }
+	}
+    }
+}
+
+# Check that 'maint info sections' output looks correct.  When
+# checking the lines for each section we reject section names starting
+# with a '*' character, the internal *COM*, *UND*, *ABS*, and *IND*
+# sections should not be displayed in this output.
+set seen_header false
+set seen_a_section false
+gdb_test_multiple "maint info sections" "general output check" {
+    -re "Exec file: `\[^'\]+', file type \[^.\]+\.\r\n" {
+	set seen_header true
+	exp_continue
+    }
+    -re "^ \\\[\[0-9\]+\\\]\[\t \]+$hex->$hex at $hex: \[^*\r\]+\r\n" {
+	set seen_a_section true
+	exp_continue
+    }
+    -re "^$gdb_prompt $" {
+	gdb_assert { $seen_header && $seen_a_section }
+	pass $gdb_test_name
+    }
+}
+
+# It'd be nice to check for every possible section.  However, that's
+# problematic, since the relative ordering wanders from release to
+# release of the compilers.  Instead, we'll just check for two
+# sections which appear to always come out in the same relative
+# order.  (If that changes, then we should just check for one
+# section.)
+#
+# And by the way: This testpoint will break for PA64, where a.out's
+# are ELF files.
+
+# Standard GNU names.
+set text_section ".text"
+set data_section ".data"
+
+gdb_test_multiple "maint info sections" "" {
+    -re -wrap "Exec file: .*${binfile}., file type.*ER_RO.*" {
+	# Looks like RealView which uses different section names.
+	set text_section ER_RO
+	set data_section ER_RW
+	pass "maint info sections"
+    }
+    -re -wrap "Exec file: .*${binfile}., file type.*neardata.*" {
+	# c6x doesn't have .data section.  It has .neardata and .fardata section.
+	set data_section ".neardata"
+	pass "maint info sections"
+    }
+    -re -wrap "Exec file: .*${binfile}., file type.*" {
+	pass "maint info sections"
+    }
+}
+
+# Test for new option: maint info sections <section name>
+# If you don't have a .text section, this will require tweaking.
+
+gdb_test_multiple "maint info sections $text_section" "" {
+    -re -wrap " \\.bss .*" {
+	fail $gdb_test_name
+    }
+    -re -wrap " $data_section .*" {
+	fail $gdb_test_name
+    }
+    -re -wrap " $text_section .*" {
+	pass $gdb_test_name
+    }
+}
+
+# Test for new option: CODE section flag
+# If your data section is tagged CODE, xfail this test.
+
+gdb_test_multiple "maint info sections CODE" "" {
+    -re -wrap " $data_section .*" {
+	fail $gdb_test_name
+    }
+    -re -wrap " $text_section .*" {
+	pass $gdb_test_name
+    }
+}
+
+# Test for new option: DATA section flag
+# If your text section is tagged DATA, xfail this test.
+#
+# The "maint info sections DATA" test is marked for XFAIL on Windows,
+# because Windows has text sections marked DATA.
+setup_xfail "*-*-*cygwin*"
+setup_xfail "*-*-*mingw*"
+
+gdb_test_multiple "maint info sections DATA" "" {
+    -re -wrap " $text_section .*" {
+	fail $gdb_test_name
+    }
+    -re -wrap " $data_section .*" {
+	pass $gdb_test_name
+    }
+    -re -wrap " .rodata .*" {
+	pass $gdb_test_name
+    }
+}
+
+check_maint_info_target_sections_output "with executable"
+
+# Restart GDB, but don't load the executable.
+clean_restart
+
+# Now load the executable in as a symbol file.
+gdb_test "add-symbol-file ${binfile}" ".*" \
+    "load the executable as a symbol file" \
+    "add symbol table from file \"${binfile}\"\r\n\\(y or n\\) " \
+    "y"
+
+# As we have no object file 'maint info sections' will print nothing.
+gdb_test_no_output "maint info sections" \
+    "no output when no executable is set"
+
+# Check that the executable shows up as an object file when
+# -all-objects is used.
+set seen_header false
+set seen_a_section false
+gdb_test_multiple "maint info sections -all-objects" "" {
+    -re "Object file: `${binfile}', file type \[^.\]+\.\r\n" {
+	set seen_header true
+	exp_continue
+    }
+    -re "^ \\\[\[0-9\]+\\\]\[\t \]+$hex->$hex at $hex: \[^*\r\]+\r\n" {
+	set seen_a_section true
+	exp_continue
+    }
+    -re "^$gdb_prompt $" {
+	gdb_assert { $seen_header && $seen_a_section } \
+	    "ensure header and section seen in -all-objects case"
+	pass $gdb_test_name
+    }
+}
+
+check_maint_info_target_sections_output "with loaded symbol file"
+
+# Test the command line completion on 'maint info sections'.  First
+# the command line flag.
+test_gdb_complete_unique \
+    "maintenance info sections -" \
+    "maintenance info sections -all-objects"
+
+# Now check the section flags complete.
+test_gdb_complete_multiple "maintenance info sections " "" "" {
+    "ALLOC"
+    "CODE"
+    "COFF_SHARED_LIBRARY"
+    "CONSTRUCTOR"
+    "DATA"
+    "HAS_CONTENTS"
+    "IS_COMMON"
+    "LOAD"
+    "NEVER_LOAD"
+    "READONLY"
+    "RELOC"
+    "ROM"
+}

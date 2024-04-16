@@ -1,0 +1,570 @@
+# Copyright 2002-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file was written by Michael Snyder (msnyder@redhat.com)
+# This is a test for the gdb command "dump".
+
+
+standard_testfile
+
+set options  {debug}
+
+set is64bitonly "no"
+set endian "auto"
+
+set formats {binary ihex srec tekhex  verilog}
+
+if {[istarget "alpha*-*-*"]} {
+    # SREC etc cannot handle 64-bit addresses.  Force the test
+    # program into the low 31 bits of the address space.
+    lappend options "ldflags=-Wl,-taso"
+}
+
+# Runs the command 'print zero_all ()'.  Uses the PRINT_ZERO_ALL_COUNT
+# global to ensure the test names are unique.
+set print_zero_all_count 0
+proc print_zero_all { } {
+    global print_zero_all_count
+
+    incr print_zero_all_count
+    gdb_test "print zero_all ()" " = void" \
+	"call ${print_zero_all_count} to zero_all function"
+}
+
+# Debian9/Ubuntu16.10 onwards default to PIE enabled. Ensure it is disabled as
+# this causes addresses to be out of range for IHEX.
+lappend options {nopie}
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable ${options}] != "" } {
+     untested "failed to compile"
+     return -1
+}
+
+clean_restart $binfile
+
+gdb_test "dump mem /dev/null 0x10 0x20" "Cannot access memory at address 0x10" \
+	 "inaccessible memory is reported"
+
+gdb_load ${binfile}
+
+# Check the address of a variable.  If it is bigger than 32-bit,
+# assume our target has 64-bit addresses that are not supported by SREC,
+# IHEX and TEKHEX.  We skip those tests then.
+set max_32bit_address "0xffffffff"
+set data_address [get_hexadecimal_valueof "&intarray" 0x100000000]
+if {${data_address} > ${max_32bit_address}} {
+    set is64bitonly "yes"
+}
+
+# Clean up any stale output files from previous test runs
+
+set filenames {}
+set all_files {
+    intarr1.bin intarr1b.bin intarr1.ihex
+    intarr1.srec intarr1.tekhex intarr1.verilog
+    intarr2.bin intarr2b.bin intarr2.ihex
+    intarr2.srec intarr2.tekhex intarr2.verilog
+    intstr1.bin intstr1b.bin intstr1.ihex
+    intstr1.srec intstr1.tekhex intstr1.verilog
+    intstr2.bin intstr2b.bin intstr2.ihex
+    intstr2.srec intstr2.tekhex intstr2.verilog
+    intarr3.srec
+}
+
+# This loop sets variables dynamically -- each name listed in
+# $ALL_FILES is both a file name and a variable name.
+foreach file $all_files {
+    if {[is_remote host]} {
+	set this_name $file
+    } else {
+	set this_name [standard_output_file $file]
+    }
+
+    lappend filenames [set ${file} $this_name]
+}
+
+remote_exec host "rm -f $filenames"
+
+# Test help (FIXME:)
+
+# Run target program until data structs are initialized.
+
+if {![runto checkpoint1]} {
+    untested "couldn't run to checkpoint"
+    return -1
+}
+
+# Get the endianness for the later use with endianless formats.
+
+set endian [get_endianness]
+
+# Now generate some dump files.
+
+proc make_dump_file { command msg } {
+  global gdb_prompt
+
+    gdb_test_multiple "${command}" "$msg" {
+	-re ".*\[Ee\]rror.*$gdb_prompt $"      { fail $msg }
+	-re ".*\[Ww\]arning.*$gdb_prompt $"    { fail $msg }
+	-re ".*\[Uu\]ndefined .*$gdb_prompt $" { fail $msg }
+	-re ".*$gdb_prompt $"                  { pass $msg }
+    }
+}
+
+make_dump_file "dump val [set intarr1.bin] intarray" \
+	"dump array as value, default"
+
+make_dump_file "dump val [set intstr1.bin] intstruct" \
+	"dump struct as value, default"
+
+make_dump_file "dump bin val [set intarr1b.bin] intarray" \
+	"dump array as value, binary"
+
+make_dump_file "dump bin val [set intstr1b.bin] intstruct" \
+	"dump struct as value, binary"
+
+make_dump_file "dump srec val [set intarr1.srec] intarray" \
+	"dump array as value, srec"
+
+make_dump_file "dump srec val [set intstr1.srec] intstruct" \
+	"dump struct as value, srec"
+
+# 64-bit address out of range for Intel Hex file
+if {![string compare $is64bitonly "no"]} {
+    make_dump_file "dump ihex val [set intarr1.ihex] intarray" \
+	    "dump array as value, intel hex"
+
+    make_dump_file "dump ihex val [set intstr1.ihex] intstruct" \
+	    "dump struct as value, intel hex"
+}
+
+make_dump_file "dump tekhex val [set intarr1.tekhex] intarray" \
+	"dump array as value, tekhex"
+
+make_dump_file "dump tekhex val [set intstr1.tekhex] intstruct" \
+	"dump struct as value, tekhex"
+
+make_dump_file "dump verilog val [set intarr1.verilog] intarray" \
+	"dump array as value, verilog"
+
+make_dump_file "dump verilog val [set intstr1.verilog] intstruct" \
+	"dump struct as value, verilog"
+
+proc capture_value { expression args } {
+    global gdb_prompt
+    global expect_out
+
+    set output_string ""
+    if {[llength $args] > 0} {
+	# Convert $args into a simple string and don't use EXPRESSION
+	# in the test name.
+	set test "[join $args]; capture"
+    } {
+	set test "capture $expression"
+    }
+    gdb_test_multiple "print ${expression}" "$test" {
+	-re "\\$\[0-9\]+ = (\[^\r\n\]+).*$gdb_prompt $" {
+	    set output_string "$expect_out(1,string)"
+	    pass "$test"
+	}
+	-re "(Cannot access memory at address \[^\r\n\]+).*$gdb_prompt $" {
+	    # Even a failed value is valid
+	    set output_string "$expect_out(1,string)"
+	    pass "$test"
+	}
+    }
+    return $output_string
+}
+
+# POINTER is a pointer and this proc captures the value of POINTER along
+# with POINTER's type.  For example, POINTER is "&intarray", this proc will
+# call "p &intarray", capture "(int (*)[32]) 0x804a0e0", and return this
+# string.
+
+proc capture_pointer_with_type { pointer } {
+    global gdb_prompt
+    global expect_out
+
+    set test "capture type of pointer $pointer"
+    set output_string ""
+    gdb_test_multiple "p ${pointer}" $test {
+	-re "\\$\[0-9\]+ = .*$gdb_prompt $" {
+	    # Expected output of "p ${pointer}" is like "$7 = (int (*)[32]) 0x804a0e0",
+	    # and we want to extract "(int (*)[32]) 0x804a0e0" from it via
+	    # following regexp.
+	    if [regexp " \\(.*\\).* 0x\[0-9a-fA-F\]+" $expect_out(0,string) output_string] {
+		# OUTPUT_STRING is expected to be like "(int (*)[32]) 0x804a0e0".
+		pass "$test"
+	    } else {
+		fail "$test"
+	    }
+	}
+    }
+
+    return $output_string
+}
+
+set array_start  [capture_value "/x &intarray\[0\]"]
+set array_end    [capture_value "/x &intarray\[32\]"]
+set struct_start [capture_value "/x &intstruct"]
+set struct_end   [capture_value "/x &intstruct + 1"]
+
+set array_val    [capture_value "intarray"]
+set struct_val   [capture_value "intstruct"]
+
+set array_ptr_type [capture_pointer_with_type "&intarray"]
+set struct_ptr_type [capture_pointer_with_type "&intstruct"]
+
+make_dump_file "dump mem [set intarr2.bin] $array_start $array_end" \
+	"dump array as memory, default"
+
+make_dump_file "dump  mem [set intstr2.bin] $struct_start $struct_end" \
+	"dump struct as memory, default"
+
+make_dump_file "dump bin mem [set intarr2b.bin] $array_start $array_end" \
+	"dump array as memory, binary"
+
+make_dump_file "dump bin mem [set intstr2b.bin] $struct_start $struct_end" \
+	"dump struct as memory, binary"
+
+make_dump_file "dump srec mem [set intarr2.srec] $array_start $array_end" \
+	"dump array as memory, srec"
+
+make_dump_file "dump srec mem [set intstr2.srec] $struct_start $struct_end" \
+	"dump struct as memory, srec"
+
+# 64-bit address out of range for Intel Hex file
+if {![string compare $is64bitonly "no"]} {
+    make_dump_file "dump ihex mem [set intarr2.ihex] $array_start $array_end" \
+	    "dump array as memory, ihex"
+
+    make_dump_file "dump ihex mem [set intstr2.ihex] $struct_start $struct_end" \
+	    "dump struct as memory, ihex"
+}
+
+make_dump_file "dump tekhex mem [set intarr2.tekhex] $array_start $array_end" \
+	"dump array as memory, tekhex"
+
+make_dump_file "dump tekhex mem [set intstr2.tekhex] $struct_start $struct_end" \
+	"dump struct as memory, tekhex"
+
+make_dump_file "dump verilog mem [set intarr2.verilog] $array_start $array_end" \
+	"dump array as memory, verilog"
+
+make_dump_file "dump verilog mem [set intstr2.verilog] $struct_start $struct_end" \
+	"dump struct as memory, verilog"
+
+# test complex expressions
+make_dump_file \
+    "dump srec mem [set intarr3.srec] &intarray \(char *\) &intarray + sizeof intarray" \
+	"dump array as mem, srec, expressions"
+
+proc test_restore_saved_value { restore_args msg oldval newval } {
+    global gdb_prompt
+    
+    gdb_test "restore $restore_args" \
+	"Restoring .*" \
+	"$msg; file restored ok"
+    if { ![string compare $oldval \
+	       [capture_value $newval "$msg"]] } then { 
+	pass "$msg; value restored ok"
+    } else {
+	fail "$msg; value restored ok"
+    }
+}
+
+if {![string compare $is64bitonly "no"]} {
+
+
+  test_restore_saved_value "[set intarr1.srec]" "array as value, srec" \
+	$array_val "intarray"
+
+  test_restore_saved_value "[set intstr1.srec]" "struct as value, srec" \
+	$struct_val "intstruct"
+
+  print_zero_all
+
+  test_restore_saved_value "[set intarr2.srec]" "array as memory, srec" \
+	$array_val "intarray"
+
+  test_restore_saved_value "[set intstr2.srec]" "struct as memory, srec" \
+	$struct_val "intstruct"
+
+  print_zero_all
+
+  test_restore_saved_value "[set intarr1.ihex]" "array as value, ihex" \
+	$array_val "intarray"
+
+  test_restore_saved_value "[set intstr1.ihex]" "struct as value, ihex" \
+	$struct_val "intstruct"
+
+  print_zero_all
+
+  test_restore_saved_value "[set intarr2.ihex]" "array as memory, ihex" \
+	$array_val "intarray"
+
+  test_restore_saved_value "[set intstr2.ihex]" "struct as memory, ihex" \
+	$struct_val "intstruct"
+
+  print_zero_all
+
+  test_restore_saved_value "[set intarr1.tekhex]" "array as value, tekhex" \
+	$array_val "intarray"
+
+  test_restore_saved_value "[set intstr1.tekhex]" "struct as value, tekhex" \
+	$struct_val "intstruct"
+
+  print_zero_all
+
+  test_restore_saved_value "[set intarr2.tekhex]" "array as memory, tekhex" \
+	$array_val "intarray"
+
+  test_restore_saved_value "[set intstr2.tekhex]" "struct as memory, tekhex" \
+	$struct_val "intstruct"
+}
+
+print_zero_all
+
+test_restore_saved_value "[set intarr1.bin] binary $array_start" \
+	"array as value, binary" \
+	$array_val "intarray"
+
+test_restore_saved_value "[set intstr1.bin] binary $struct_start" \
+	"struct as value, binary" \
+	$struct_val "intstruct"
+
+print_zero_all
+
+test_restore_saved_value "[set intarr2.bin] binary $array_start" \
+	"array as memory, binary" \
+	$array_val "intarray"
+
+test_restore_saved_value "[set intstr2.bin] binary $struct_start" \
+	"struct as memory, binary" \
+	$struct_val "intstruct"
+
+# test restore with offset.
+
+set array2_start   [capture_value "/x &intarray2\[0\]"]
+set struct2_start  [capture_value "/x &intstruct2"]
+set array2_offset  \
+	[capture_value "(char *) &intarray2 - (char *) &intarray"]
+set struct2_offset \
+	[capture_value "(char *) &intstruct2 - (char *) &intstruct"]
+
+print_zero_all
+
+
+if {![string compare $is64bitonly "no"]} {
+  test_restore_saved_value "[set intarr1.srec] $array2_offset" \
+	"array copy, srec" \
+	$array_val "intarray2"
+
+  test_restore_saved_value "[set intstr1.srec] $struct2_offset" \
+	"struct copy, srec" \
+	$struct_val "intstruct2"
+
+  print_zero_all
+
+  test_restore_saved_value "[set intarr1.ihex] $array2_offset" \
+	"array copy, ihex" \
+	$array_val "intarray2"
+
+  test_restore_saved_value "[set intstr1.ihex] $struct2_offset" \
+	"struct copy, ihex" \
+	$struct_val "intstruct2"
+
+  print_zero_all
+
+  test_restore_saved_value "[set intarr1.tekhex] $array2_offset" \
+	"array copy, tekhex" \
+	$array_val "intarray2"
+
+  test_restore_saved_value "[set intstr1.tekhex] $struct2_offset" \
+	"struct copy, tekhex" \
+	$struct_val "intstruct2"
+}
+
+print_zero_all
+
+test_restore_saved_value "[set intarr1.bin] binary $array2_start" \
+	"array copy, binary" \
+	$array_val "intarray2"
+
+test_restore_saved_value "[set intstr1.bin] binary $struct2_start" \
+	"struct copy, binary" \
+	$struct_val "intstruct2"
+
+#
+# test restore with start/stop addresses.
+#
+# For this purpose, we will restore just the third element of the array, 
+# and check to see that adjacent elements are not modified.
+#
+# We will need the address and offset of the third and fourth elements.
+#
+
+set element3_start  [capture_value "/x &intarray\[3\]"]
+set element4_start  [capture_value "/x &intarray\[4\]"]
+set element3_offset \
+	[capture_value "/x (char *) &intarray\[3\] - (char *) &intarray\[0\]"]
+set element4_offset \
+	[capture_value "/x (char *) &intarray\[4\] - (char *) &intarray\[0\]"]
+
+if {![string compare $is64bitonly "no"]} {
+  print_zero_all
+
+  test_restore_saved_value "[set intarr1.srec] 0 $element3_start $element4_start" \
+	"array partial, srec" 4 "intarray\[3\]"
+
+  gdb_test "print intarray\[2\] == 0" " = 1" "element 2 not changed - 1"
+  gdb_test "print intarray\[4\] == 0" " = 1" "element 4 not changed - 1"
+
+  print_zero_all
+
+  test_restore_saved_value "[set intarr1.ihex] 0 $element3_start $element4_start" \
+	"array partial, ihex" 4 "intarray\[3\]"
+
+  gdb_test "print intarray\[2\] == 0" " = 1" "element 2 not changed - 2"
+  gdb_test "print intarray\[4\] == 0" " = 1" "element 4 not changed - 2"
+
+  print_zero_all
+
+  test_restore_saved_value "[set intarr1.tekhex] 0 $element3_start $element4_start" \
+	"array partial, tekhex" 4 "intarray\[3\]"
+
+  gdb_test "print intarray\[2\] == 0" " = 1" "element 2 not changed - 3"
+  gdb_test "print intarray\[4\] == 0" " = 1" "element 4 not changed - 3"
+}
+
+print_zero_all
+
+test_restore_saved_value \
+    "[set intarr1.bin] binary $array_start $element3_offset $element4_offset" \
+    "array partial, binary" 4 "intarray\[3\]"
+
+gdb_test "print intarray\[2\] == 0" " = 1" "element 2 not changed - 4"
+gdb_test "print intarray\[4\] == 0" " = 1" "element 4 not changed - 4"
+
+if {![string compare $is64bitonly "no"]} {
+  print_zero_all
+
+  # restore with expressions 
+  test_restore_saved_value \
+	"[set intarr3.srec] (char*)${array2_start}-(char*)${array_start} &intarray\[3\] &intarray\[4\]" \
+	"array partial with expressions" 4 "intarray2\[3\]"
+
+  gdb_test "print intarray2\[2\] == 0" " = 1" "element 2 not changed, == 4"
+  gdb_test "print intarray2\[4\] == 0" " = 1" "element 4 not changed, == 4"
+}
+
+
+# Test writing a file of each format to a directory that does not exist.
+
+foreach_with_prefix format $formats {
+    gdb_test "dump $format memory /tmp/non/existent/directory/file $array_start $array_end" \
+	"/tmp/non/existent/directory/file: No such file or directory." \
+	"dump to non-existent directory"
+}
+
+# Now start a fresh gdb session, and reload the saved value files.
+
+clean_restart
+gdb_file_cmd ${binfile}
+
+# Now fix the endianness at the correct state.
+
+gdb_test_multiple "set endian $endian" "set endianness" {
+    -re ".* (big|little) endian.*$gdb_prompt $" { 
+	pass "setting $endian endianness"
+    }
+}
+
+# Reload saved values one by one, and compare.
+
+if { ![string compare $array_val \
+	   [capture_value "intarray" "file binfile; intarray"]] } then {
+    fail "start with intarray un-initialized"
+} else {
+    pass "start with intarray un-initialized"
+}
+
+if { ![string compare $struct_val \
+	   [capture_value "intstruct" "file binfile; intstruct"]] } then {
+    fail "start with intstruct un-initialized"
+} else {
+    pass "start with intstruct un-initialized"
+}
+
+proc test_reload_saved_value { filename msg oldval newval } {
+    global gdb_prompt
+    
+    gdb_file_cmd $filename
+    if { ![string compare $oldval \
+	       [capture_value $newval "$msg"]] } then { 
+	pass "$msg; value restored ok"
+    } else {
+	fail "$msg; value restored ok"
+    }
+}
+
+# srec format can not be loaded for 64-bit-only platforms
+if {![string compare $is64bitonly "no"]} {
+  test_reload_saved_value "[set intarr1.srec]" "reload array as value, srec" \
+	$array_val "\*$array_ptr_type"
+  test_reload_saved_value "[set intstr1.srec]" "reload struct as value, srec" \
+	$struct_val "\*$struct_ptr_type"
+  test_reload_saved_value "[set intarr2.srec]" "reload array as memory, srec" \
+	$array_val "\*$array_ptr_type"
+  test_reload_saved_value "[set intstr2.srec]" "reload struct as memory, srec" \
+	$struct_val "\*$struct_ptr_type"
+}
+
+# ihex format can not be loaded for 64-bit-only platforms
+if {![string compare $is64bitonly "no"]} {
+
+  test_reload_saved_value "[set intarr1.ihex]" \
+      "reload array as value, intel hex" \
+	$array_val "\*$array_ptr_type"
+  test_reload_saved_value "[set intstr1.ihex]" \
+      "reload struct as value, intel hex" \
+	$struct_val "\*$struct_ptr_type"
+  test_reload_saved_value "[set intarr2.ihex]" \
+      "reload array as memory, intel hex" \
+	$array_val "\*$array_ptr_type"
+  test_reload_saved_value "[set intstr2.ihex]" \
+      "reload struct as memory, intel hex" \
+	$struct_val "\*$struct_ptr_type"
+}
+
+# tekhex format can not be loaded for 64-bit-only platforms
+if {![string compare $is64bitonly "no"]} {
+  test_reload_saved_value "[set intarr1.tekhex]" \
+      "reload array as value, tekhex" \
+	$array_val "\*$array_ptr_type"
+  test_reload_saved_value "[set intstr1.tekhex]" \
+      "reload struct as value, tekhex" \
+	$struct_val "\*$struct_ptr_type"
+  test_reload_saved_value "[set intarr2.tekhex]" \
+      "reload array as memory, tekhex" \
+	$array_val "\*$array_ptr_type"
+  test_reload_saved_value "[set intstr2.tekhex]" \
+      "reload struct as memory, tekhex" \
+	$struct_val "\*$struct_ptr_type"
+}
+
+# clean up files
+
+remote_exec host "rm -f $filenames"

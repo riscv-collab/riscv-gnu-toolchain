@@ -1,0 +1,175 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check that the $_inferior_thread_count convenience variable will
+# correctly update its value without passing through a normal stop
+# event.
+#
+# When GDB is using a remote (or extended-remote) target, GDB only
+# learns about changes to the thread list be explicitly querying the
+# target.  This is done as part of a normal stop, but there are some
+# situations where the thread list can change, but GDB doesn't pass
+# through a normal stop.
+#
+# For example, when the target is running asynchronously in non-stop
+# mode; in this case GDB can query the thread list without the target
+# ever stopping.
+#
+# Or after an inferior function call.
+#
+# The solution is to ensure that $_inferior_thread_count explicitly
+# queries the target to update the thread list.  This test checks that
+# this is done.
+
+standard_testfile
+
+if {[build_executable "failed to prepare" $testfile $srcfile \
+	 {debug pthreads}] == -1} {
+    return -1
+}
+
+# Start GDB.  Ensure we are in non-stop mode as we need to read from
+# the inferior while it is running.
+save_vars {GDBFLAGS} {
+    append GDBFLAGS " -ex \"set non-stop on\""
+    clean_restart $binfile
+}
+
+if ![runto_main] {
+    return -1
+}
+
+gdb_breakpoint breakpt
+gdb_continue_to_breakpoint "first breakpt call"
+
+# Check we can see a single thread to begin with.
+gdb_test "p \$_inferior_thread_count" \
+    "^\\\$$::decimal = 1" \
+    "only one thread in \$_inferior_thread_count"
+
+# We don't want thread events, it makes it harder to match GDB's
+# output.
+gdb_test_no_output "set print thread-events off"
+
+# Continue the program in the background.
+set test "continue&"
+gdb_test_multiple "continue&" $test {
+    -re "Continuing\\.\r\n$gdb_prompt " {
+	pass $test
+    }
+}
+
+# Read the 'stage' flag from the inferior.  This is initially 0, but
+# will be set to 1 once the extra thread has been created, and then 2
+# once the extra thread has exited.
+#
+# We catch the case where we can't read from the inferior while the
+# inferior is running, this happens if the target hasn't entered
+# non-stop mode like we asked.  In this case we interrupt the inferior
+# and bail.
+#
+# Otherwise, if we can read from the inferior we try at most 10 times
+# to read the flag (with a 1 second delay after each read).  If the
+# flag isn't set after this then we bail.  The inferior is either very
+# slow, or the thread hasn't started for some reason.
+proc wait_for_stage { num } {
+    set failure_count 0
+    set cmd "print /d stage"
+    set stage_flag 0
+    gdb_test_multiple "$cmd" "wait for 'stage' flag to be $num" {
+	-re -wrap "^Cannot execute this command while the target is running\\.\r\nUse the \"interrupt\" command to stop the target\r\nand then try again\\." {
+	    fail "$gdb_test_name (can't read asynchronously)"
+	    gdb_test_no_output "interrupt"
+
+	    gdb_test_multiple "" "wait for thread to stop" {
+		-re "Thread .* received signal .*" {
+		    pass $gdb_test_name
+		    gdb_test "p 1 + 2" " = 3"
+		}
+	    }
+	}
+
+	-re -wrap "^\\$\[0-9\]* = (\[-\]*\[0-9\]*).*" {
+	    set stage_flag $expect_out(1,string)
+	    if {$stage_flag != $num} {
+		set stage_flag 0
+		incr failure_count
+		if { $failure_count < 10 } {
+		    sleep 1
+		    send_gdb "$cmd\n"
+		    exp_continue
+		}
+		fail $gdb_test_name
+	    } else {
+		pass $gdb_test_name
+	    }
+	}
+    }
+
+    return $stage_flag
+}
+
+# Wait until we can see that the extra thread has been created.
+if {![wait_for_stage 1]} {
+    unresolved "failed to see thread start"
+    return -1
+}
+
+
+if {[target_info exists gdb_protocol]
+    && ([target_info gdb_protocol] == "remote"
+	|| [target_info gdb_protocol] == "extended-remote")} {
+    set new_thread_re "\\\[New Thread \[^\r\n\]+\\\]\r\n"
+    set exit_thread_re "\\\[Thread \[^\r\n\]+ exited\\\]\r\n"
+} else {
+    set new_thread_re ""
+    set exit_thread_re ""
+}
+
+# This is the test we actually care about.  Check that the
+# $_inferior_thread_count convenience variable shows the correct
+# thread count; the new thread should be visible.
+gdb_test "with print thread-events on -- p \$_inferior_thread_count" \
+    "^${new_thread_re}\\\$$::decimal = 2" \
+    "second thread visible in \$_inferior_thread_count"
+
+# Set a variable in the inferior, this will cause the second thread to
+# exit.
+gdb_test_no_output "set variable spin = 0" \
+    "set 'spin' flag to allow worker thread to exit"
+
+# Wait until the extra thread has exited.
+if {![wait_for_stage 2]} {
+    unresolved "failed to see thread start"
+    return -1
+}
+
+# Check that the second thread has gone away.
+gdb_test "with print thread-events on -- p \$_inferior_thread_count" \
+    "^${exit_thread_re}\\\$$::decimal = 1" \
+    "back to one thread visible in \$_inferior_thread_count"
+
+# Set a variable in the inferior, this will cause the second thread to
+# exit.
+gdb_test_no_output "set variable spin = 0" \
+    "set 'spin' flag to allow main thread to exit"
+
+# When the second thread exits, the main thread joins with it, and
+# then proceeds to hit the breakpt function again.
+gdb_test_multiple "" "wait for main thread to stop" {
+    -re "Thread 1 \[^\r\n\]+ hit Breakpoint $decimal, breakpt \\(\\)\[^\r\n\]+\r\n\[^\r\n\]+\r\n" {
+	pass $gdb_test_name
+    }
+}

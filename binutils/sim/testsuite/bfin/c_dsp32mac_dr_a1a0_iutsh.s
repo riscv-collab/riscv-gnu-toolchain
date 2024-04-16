@@ -1,0 +1,157 @@
+//Original:/proj/frio/dv/testcases/core/c_dsp32mac_dr_a1a0_iutsh/c_dsp32mac_dr_a1a0_iutsh.dsp
+// Spec Reference: dsp32mac dr_a1a0 iutsh
+# mach: bfin
+
+.include "testutils.inc"
+	start
+
+	A1 = A0 = 0;
+	R0 = 0;
+	ASTAT = R0;
+
+// The result accumulated in A       , and stored to a reg half
+	imm32 r0, 0x13545abd;
+	imm32 r1, 0xb2bcfec7;
+	imm32 r2, 0xc1348679;
+	imm32 r3, 0xd0049007;
+	imm32 r4, 0x2efbc556;
+	imm32 r5, 0xcd35560b;
+	imm32 r6, 0xe00c807d;
+	imm32 r7, 0xf78e9008;
+	A1 = A0 = 0;
+	R6.H = (A1 += R0.L * R0.L), R6.L = (A0 = R0.L * R0.L) (IS);
+	P1 = A1.w;
+	P2 = A0.w;
+	R1.H = (A1 += R2.L * R3.L), R1.L = (A0 -= R2.H * R3.L) (FU);
+	P3 = A1.w;
+	P4 = A0.w;
+	R2.H = (A1 = R4.L * R5.L) (M), R2.L = (A0 += R4.H * R5.H) (T);
+	P5 = A1.w;
+	FP = A0.w;
+	R3.H = (A1 += R0.L * R7.L), R3.L = (A0 += R0.L * R7.H) (S2RND);
+	R4 = A1.w;
+	R5 = A0.w;
+	CHECKREG r0, 0x13545ABD;
+	CHECKREG r1, 0x6BD10000;
+	CHECKREG r2, 0xEC48ED5B;
+	CHECKREG r3, 0x8000CEBE;
+	CHECKREG r4, 0x9CE8AA82;
+	CHECKREG r5, 0xE75ED19A;
+	CHECKREG r6, 0x7FFF7FFF;
+	CHECKREG r7, 0xF78E9008;
+	CHECKREG p1, 0x20296F89;
+	CHECKREG p2, 0x20296F89;
+	CHECKREG p3, 0x6BD12CD8;
+	CHECKREG p4, 0x00000000;
+	CHECKREG p5, 0xEC485EB2;
+	CHECKREG fp, 0xED5B71EE;
+
+	imm32 r0, 0x13545abd;
+	imm32 r1, 0x22bcfec7;
+	imm32 r2, 0x43348679;
+	imm32 r3, 0x50049007;
+	imm32 r4, 0x6fbc5569;
+	imm32 r5, 0x7d35560b;
+	imm32 r6, 0x800c807d;
+	imm32 r7, 0xf98e9008;
+	A1 = A0 = 0;
+	R0.H = (A1 += R1.L * R0.H), R0.L = (A0 = R1.L * R0.L) (IU);
+	P1 = A1.w;
+	P2 = A0.w;
+	R6.H = (A1 += R2.L * R2.H), R6.L = (A0 = R2.H * R2.L) (TFU);
+	P3 = A1.w;
+	P4 = A0.w;
+	R2.H = (A1 -= R4.L * R5.H), R2.L = (A0 += R4.H * R5.H) (ISS2);
+	P5 = A1.w;
+	FP = A0.w;
+	R3.H = (A1 += R3.L * R7.H), R3.L = (A0 -= R3.L * R7.H) (IH);
+	R4 = A1.w;
+	R5 = A0.w;
+	CHECKREG r0, 0xFFFFFFFF;
+	CHECKREG r1, 0x22BCFEC7;
+	CHECKREG r2, 0x7FFF7FFF;
+	CHECKREG r3, 0x0F955721;
+	CHECKREG r4, 0x0F951905;
+	CHECKREG r5, 0x5721369E;
+	CHECKREG r6, 0x3689234C;
+	CHECKREG r7, 0xF98E9008;
+	CHECKREG p1, 0x133C5E4C;
+	CHECKREG p2, 0x5A4E0EEB;
+	CHECKREG p3, 0x368959E0;
+	CHECKREG p4, 0x234CFB94;
+	CHECKREG p5, 0x0CC36623;
+	CHECKREG fp, 0x59F2E980;
+
+	imm32 r0, 0x13545abd;
+	imm32 r1, 0x42bcfec7;
+	imm32 r2, 0x51348679;
+	imm32 r3, 0x60049007;
+	imm32 r4, 0x7fbc5569;
+	imm32 r5, 0x8d35560b;
+	imm32 r6, 0x900c807d;
+	imm32 r7, 0xa78e9008;
+	A1 = A0 = 0;
+	R0.H = (A1 += R1.H * R0.L), R0.L = (A0 = R1.L * R0.L) (IS);
+	P1 = A1.w;
+	P2 = A0.w;
+	R1.H = (A1 += R2.H * R3.L) (M), R1.L = (A0 -= R2.H * R3.L) (IU);
+	P3 = A1.w;
+	P4 = A0.w;
+	R2.H = (A1 = R4.H * R5.L), R2.L = (A0 += R4.H * R5.H) (ISS2);
+	P5 = A1.w;
+	FP = A0.w;
+	R3.H = (A1 -= R6.H * R7.L) (M), R3.L = (A0 += R6.L * R7.H) (IH);
+	R4 = A1.w;
+	R5 = A0.w;
+	CHECKREG r0, 0x7FFF8000;
+	CHECKREG r1, 0x7FFFFFFF;
+	CHECKREG r2, 0x7FFF8000;
+	CHECKREG r3, 0x69EBC4A8;
+	CHECKREG r4, 0x69EB64B4;
+	CHECKREG r5, 0xC4A864C1;
+	CHECKREG r6, 0x900C807D;
+	CHECKREG r7, 0xA78E9008;
+	CHECKREG p1, 0x17A75CCC;
+	CHECKREG p2, 0xFF910EEB;
+	CHECKREG p3, 0x4556D538;
+	CHECKREG p4, 0xD1E1967F;
+	CHECKREG p5, 0x2AEEA514;
+	CHECKREG fp, 0x989A946B;
+
+	imm32 r0, 0x03545abd;
+	imm32 r1, 0xb3bcfec7;
+	imm32 r2, 0x24348679;
+	imm32 r3, 0x60049007;
+	imm32 r4, 0x7fbc5569;
+	imm32 r5, 0x9d35560b;
+	imm32 r6, 0xa00c807d;
+	imm32 r7, 0x078e9008;
+	A1 = A0 = 0;
+	R0.H = (A1 += R1.H * R0.H), R0.L = (A0 -= R1.L * R0.L) (FU);
+	P1 = A1.w;
+	P2 = A0.w;
+	R1.H = (A1 += R2.H * R3.H), R1.L = (A0 = R2.H * R3.L) (TFU);
+	P3 = A1.w;
+	P4 = A0.w;
+	R2.H = (A1 = R4.H * R5.H), R2.L = (A0 += R4.H * R5.H) (IU);
+	P5 = A1.w;
+	FP = A0.w;
+	R3.H = (A1 -= R6.H * R7.H) (M), R3.L = (A0 += R6.L * R7.H) (S2RND);
+	R4 = A1.w;
+	R5 = A0.w;
+	CHECKREG r0, 0x02560000;
+	CHECKREG r1, 0x0FEA145E;
+	CHECKREG r2, 0xFFFFFFFF;
+	CHECKREG r3, 0x7FFF7FFF;
+	CHECKREG r4, 0x5145A344;
+	CHECKREG r5, 0x5B485C04;
+	CHECKREG r6, 0xA00C807D;
+	CHECKREG r7, 0x078E9008;
+	CHECKREG p1, 0x02562DB0;
+	CHECKREG p2, 0x00000000;
+	CHECKREG p3, 0x0FEA3E80;
+	CHECKREG p4, 0x145E3D6C;
+	CHECKREG p5, 0x4E70BDEC;
+	CHECKREG fp, 0x62CEFB58;
+
+	pass

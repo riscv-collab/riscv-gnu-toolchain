@@ -1,0 +1,98 @@
+# Copyright (C) 2018-2024 Free Software Foundation, Inc.
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Tests whether -var-info-path-expression fails as documented when
+# invoked on a dynamic varobj.
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+require allow_python_tests
+
+#
+# Start here
+#
+standard_testfile
+
+if {[gdb_compile "$srcdir/$subdir/$srcfile" $binfile executable {debug}] != "" } {
+    return -1
+}
+
+mi_clean_restart $binfile
+
+set pyfile [gdb_remote_download host ${srcdir}/${subdir}/${testfile}.py]
+mi_gdb_test "source ${pyfile}" \
+  ".*\\^done" \
+  "load python file"
+
+mi_gdb_test "-enable-pretty-printing" \
+  "\\^done" \
+  "-enable-pretty-printing"
+
+mi_gdb_test "set python print-stack full" \
+  ".*\\^done" \
+  "set python print-stack full"
+
+mi_runto_main
+
+mi_continue_to_line [gdb_get_line_number "next line" ${srcfile}] \
+  "step to breakpoint"
+
+mi_gdb_test "-var-create c1 * &c1" \
+   "\\^done.*" \
+   "-var-create c1 * &c1"
+
+mi_gdb_test "-var-info-path-expression c1" \
+  "\\^done,path_expr=\"&c1\"" \
+  "-var-info-path-expression c1"
+
+mi_gdb_test "-var-list-children c1" \
+  "\\^done,numchild=\"2\",children=.child=\{name=\"c1.car\".*child=\{name=\"c1.cdr\".*" \
+  "-var-list-children c1"
+
+mi_gdb_test "-var-info-path-expression c1.cdr" \
+  "\\^error,msg=\".*\"" \
+  "-var-info-path-expression c1.cdr"
+
+mi_gdb_test "-var-list-children c1.cdr" \
+  "\\^done,numchild=\"2\",children=.child=\{name=\"c1.cdr.car\".*child=\{name=\"c1.cdr.cdr\".*" \
+  "-var-list-children c1.cdr"
+
+mi_gdb_test "-var-info-path-expression c1.cdr.cdr" \
+  "\\^error,msg=\".*\"" \
+  "-var-info-path-expression c1.cdr.cdr"
+
+mi_gdb_test "-var-list-children c1.car" \
+  "\\^done,numchild=\"1\",children=.child=\{name=\"c1.car.atom\".*" \
+  "-var-list-children c1.car"
+
+mi_gdb_test "-var-list-children c1.car.atom" \
+  "\\^done,numchild=\"1\",children=.child=\{name=\"c1.car.atom.ival\".*" \
+  "-var-list-children c1.car.atom"
+
+mi_gdb_test "-var-info-path-expression c1.car.atom.ival" \
+  "\\^error,msg=\".*\"" \
+  "-var-info-path-expression c1.car.atom.ival"
+
+
+# Regression test for a crasher that would occur when deleting a
+# varobj that held an iterator that hadn't yet been completed.
+# See PR varobj/28131.
+mi_gdb_test "-var-create c1_again * &c1" \
+   "\\^done.*" \
+   "-var-create c1_again * &c1"
+mi_gdb_test "-var-list-children c1_again 0 1" \
+  "\\^done,numchild=\"1\",children=.child=\{name=\"c1_again.car\".*" \
+  "-var-list-children c1_again"
+mi_delete_varobj c1_again "delete c1_again"

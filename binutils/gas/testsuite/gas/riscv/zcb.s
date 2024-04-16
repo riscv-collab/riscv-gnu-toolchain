@@ -1,0 +1,25 @@
+target:
+	lbu x8,2(x8)
+	c.lbu x8,(x15)
+	lhu x8,2(x8)
+	c.lhu x8,(x15)
+	lh x8,2(x8)
+	c.lh x8,(x15)
+	sb x8,2(x8)
+	c.sb x8,(x15)
+	sh x8,2(x8)
+	c.sh x8,(x15)
+	zext.b x8,x8
+	c.zext.b x15
+	sext.b x8,x8
+	c.sext.b x15
+	zext.h x8,x8
+	c.zext.h x15
+	sext.h x8,x8
+	c.sext.h x15
+	zext.w x8,x8
+	c.zext.w x15
+	not x8,x8
+	c.not x15
+	mul x8,x8,x15
+	c.mul x9,x12

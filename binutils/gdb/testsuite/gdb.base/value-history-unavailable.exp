@@ -1,0 +1,73 @@
+# Copyright (C) 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test GDB's value availability ranges.
+
+standard_testfile
+
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile] } {
+    return -1
+}
+
+if ![runto_main] then {
+    perror "couldn't run to breakpoint"
+    continue
+}
+
+set target_char_mask [get_valueof "/u" "a.x\[0]" "255" "get target char mask"]
+set target_char_bit 0
+for {set i $target_char_mask} {$i > 0} {set i [expr $i >> 1]} {
+    incr target_char_bit
+}
+set target_char_rank -1
+for {set i $target_char_bit} {$i > 0} {set i [expr $i >> 1]} {
+    incr target_char_rank
+}
+
+# Verify accesses to original inferior data.
+gdb_test "print a.a" "\\\$2 = '\\\\000' <repeats 1023 times>"
+gdb_test "print a.a\[-1\]" "\\\$3 = 0 '\\\\000'"
+gdb_test "print a.a\[1024\]" "\\\$4 = 0 '\\\\000'"
+
+# Verify in-range value history accesses.
+gdb_test "print \$2" "\\\$5 = '\\\\000' <repeats 1023 times>"
+gdb_test "print \$2\[0\]" "\\\$6 = 0 '\\\\000'"
+gdb_test "print \$2\[1023\]" "\\\$7 = 0 '\\\\000'"
+
+# Values outside the array recorded will have not been retrieved.
+gdb_test "print \$2\[-1\]" "\\\$8 = <unavailable>"
+gdb_test "print \$2\[1024\]" "\\\$9 = <unavailable>"
+gdb_test "print \$2\[-1LL << 63 - $target_char_rank\]" \
+	"\\\$10 = <unavailable>"
+gdb_test "print \$2\[(1LL << 63 - $target_char_rank) - 1\]" \
+	"\\\$11 = <unavailable>"
+
+# Accesses through pointers in history go straight to the inferior though.
+gdb_test "print \$2\[0\]@1" "\\\$12 = \"\""
+gdb_test "print \$2\[-1\]@1" "\\\$13 = \"\""
+gdb_test "print \$2\[1024\]@1" "\\\$14 = \"\""
+
+# Verify out-of-range value history accesses.
+gdb_test "print \$2\[(-1LL << 63 - $target_char_rank) - 1\]" \
+    "Integer overflow in data location calculation"
+gdb_test "print \$2\[(1LL << 63 - $target_char_rank)\]" \
+    "Integer overflow in data location calculation"
+gdb_test "print \$2\[-1LL << 63\]" \
+    "Integer overflow in data location calculation"
+gdb_test "print \$2\[(1ULL << 63) - 1\]" \
+    "Integer overflow in data location calculation"
+
+# Sanity-check a copy of an unavailable value.
+gdb_test "print \$11" "\\\$15 = <unavailable>"

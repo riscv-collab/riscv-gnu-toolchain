@@ -1,0 +1,153 @@
+# Copyright (C) 2016-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Regression test for PR threads/19461 (strange "info thread" behavior
+# in non-stop).  GDB used to miss updating the parent/child running
+# states after a fork.
+
+standard_testfile
+
+# The test proper.
+
+proc do_test { detach_on_fork follow_fork non_stop schedule_multiple } {
+    global GDBFLAGS
+    global srcfile testfile
+    global gdb_prompt
+
+    save_vars { GDBFLAGS } {
+	append GDBFLAGS " -ex \"set non-stop $non_stop\""
+
+	if {[prepare_for_testing "failed to prepare" \
+		 $testfile $srcfile {debug}] == -1} {
+	    return -1
+	}
+    }
+
+    if {![runto_main]} {
+	return 0
+    }
+
+    # If debugging with target remote, check whether the all-stop
+    # variant of the RSP is being used.  If so, we can't run the
+    # all-stop tests.
+    if { [target_info exists gdb_protocol]
+	 && ([target_info gdb_protocol] == "remote"
+	     || [target_info gdb_protocol] == "extended-remote")} {
+
+	if {![is_target_non_stop]} {
+	    unsupported "can't issue info threads while target is running"
+	    return 0
+	}
+    }
+
+    # We want to catch "[New inferior ...]" below, to avoid sleeping.
+    if {$detach_on_fork == "off" || $follow_fork == "child"} {
+	gdb_test_no_output "set print inferior-events on"
+    }
+
+    gdb_test_no_output "set detach-on-fork $detach_on_fork"
+
+    gdb_test_no_output "set follow-fork $follow_fork"
+    if {$non_stop == "off"} {
+	gdb_test_no_output "set schedule-multiple $schedule_multiple"
+    }
+
+    # If we're detaching from the parent (or child), then tell it to
+    # exit itself when its child (or parent) exits.  If we stay
+    # attached, we take care of killing it.
+    if {$detach_on_fork == "on"} {
+	gdb_test "print exit_if_relative_exits = 1" " = 1"
+    }
+
+    set test "continue &"
+    gdb_test_multiple $test $test {
+	-re "$gdb_prompt " {
+	    pass $test
+	}
+    }
+
+    if {$detach_on_fork == "off" || $follow_fork == "child"} {
+	set test "fork child appears"
+	gdb_test_multiple "" $test {
+	    -re "\\\[New inferior " {
+		pass $test
+	    }
+	}
+    } else {
+	# All we can do is wait a little bit for the parent to fork.
+	sleep 1
+    }
+
+    set not_nl "\[^\r\n\]*"
+
+    if {$detach_on_fork == "on" && $follow_fork == "child"} {
+	gdb_test "info threads" \
+	    "  2.1 ${not_nl}\\\(running\\\).*No selected thread.*"
+    } elseif {$detach_on_fork == "on"} {
+	gdb_test "info threads" \
+	    "\\\* 1 ${not_nl}\\\(running\\\)"
+    } elseif {$non_stop == "on" || $schedule_multiple == "on"} {
+	# Both parent and child should be marked running, and the
+	# parent should be selected.
+	gdb_test "info threads" \
+	    [multi_line \
+		 "\\\* 1.1 ${not_nl} \\\(running\\\)${not_nl}" \
+		 "  2.1 ${not_nl} \\\(running\\\)"]
+    } else {
+	set test "only $follow_fork marked running"
+	gdb_test_multiple "info threads" $test {
+	    -re "\\\(running\\\)${not_nl}\\\(running\\\)\r\n$gdb_prompt $" {
+		fail $test
+	    }
+	    -re "\\\* 1.1 ${not_nl}\\\(running\\\)\r\n  2.1 ${not_nl}\r\n$gdb_prompt $" {
+		gdb_assert [string eq $follow_fork "parent"] $test
+	    }
+	    -re "\\\* 1.1 ${not_nl}\r\n  2.1 ${not_nl}\\\(running\\\)\r\n$gdb_prompt $" {
+		gdb_assert [string eq $follow_fork "child"] $test
+	    }
+	}
+    }
+
+    # We don't want to see "Inferior exited" in reaction to the kills.
+    gdb_test_no_output "set print inferior-events off"
+
+    # Kill both parent and child.
+    if {$detach_on_fork == "off" || $follow_fork == "parent"} {
+	gdb_test_no_output "kill inferior 1" "kill parent"
+    }
+    if {$detach_on_fork == "off" || $follow_fork == "child"} {
+	gdb_test_no_output "kill inferior 2" "kill child"
+    }
+}
+
+# Exercise all permutations of:
+#
+#  set detach-on-fork off|on
+#  set follow-fork parent|child
+#  set non-stop on|off
+#  set schedule-multiple on|off
+
+foreach_with_prefix detach-on-fork {"off" "on"} {
+    foreach_with_prefix follow-fork {"parent" "child"} {
+	with_test_prefix "non-stop" {
+	    do_test ${detach-on-fork} ${follow-fork} "on" "-"
+	}
+	with_test_prefix "all-stop" {
+	    foreach_with_prefix schedule-multiple {"on" "off"} {
+		do_test ${detach-on-fork} ${follow-fork} "off" ${schedule-multiple}
+	    }
+	}
+    }
+}

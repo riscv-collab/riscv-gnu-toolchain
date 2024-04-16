@@ -1,0 +1,100 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test to reproduce the crash described in PR 26813.
+#
+# When reading a list in any table in the .debug_rnglists section, GDB would
+# read the header at offset 0 in the section (the header of the first table).
+# When the index of the list we read was greater than the number of lists of
+# the first table, GDB would erroneously report that the index is invalid.
+#
+# So this test creates a .debug_rnglists section with two tables.  The second
+# table has more lists than the first one and we try to read a high index in
+# the second table.
+
+load_lib dwarf.exp
+
+require dwarf2_support
+
+# Test with 32-bit and 64-bit DWARF.
+foreach_with_prefix is_64 {false true} {
+    if { $is_64 } {
+	standard_testfile main.c -dw64.S
+	set testfile ${testfile}-dw64
+    } else {
+	standard_testfile main.c -dw32.S
+	set testfile ${testfile}-dw32
+    }
+
+    set asm_file [standard_output_file $srcfile2]
+    Dwarf::assemble $asm_file {
+	global is_64
+
+	# The CU uses the DW_FORM_rnglistx form to refer to the .debug_rnglists
+	# section.
+	cu {
+	    version 5
+	    is_64 $is_64
+	} {
+	    DW_TAG_compile_unit {
+		{DW_AT_ranges 1 DW_FORM_rnglistx}
+		{DW_AT_rnglists_base cu_table DW_FORM_sec_offset}
+	    } {
+		# This tests a DW_AT_ranges attribute of form DW_FORM_rnglistx on a
+		# function, which was buggy at some point.
+		DW_TAG_subprogram {
+		    {DW_AT_name "foo"}
+		    {DW_AT_ranges 2 DW_FORM_rnglistx}
+		}
+	    }
+	}
+
+	rnglists {is-64 $is_64} {
+	    # This table is unused, but exists so that the used table is not at
+	    # the beginning of the section.
+	    table {} {
+		list_ {
+		    start_end 0x1000 0x2000
+		}
+	    }
+
+	    # The lists in this table are accessed by index (DW_FORM_rnglistx).
+	    table {post-header-label cu_table} {
+		# This list is unused, but exists to offset the next ones.
+		list_ {
+		    start_end 0x2000 0x3000
+		}
+
+		# For the CU.
+		list_ {
+		    start_end 0x3000 0x4000
+		}
+
+		# For function foo.
+		list_ {
+		    start_end 0x3000 0x3010
+		}
+	    }
+	}
+    }
+
+    if { [prepare_for_testing "failed to prepare" ${testfile} \
+	      [list $srcfile $asm_file] {nodebug}] } {
+	return -1
+    }
+
+    # Sanity checks to make sure GDB slurped the symbols correctly.
+    gdb_test "p/x &foo" " = 0x3000"
+}

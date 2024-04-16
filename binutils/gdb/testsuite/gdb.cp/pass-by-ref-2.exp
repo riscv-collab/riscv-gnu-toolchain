@@ -1,0 +1,116 @@
+# Copyright 2019-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check that GDB can call C++ functions whose parameters have
+# object type, and are either passed by value or implicitly by reference.
+#
+# This is a companion test to pass-by-ref.exp.  In this test, the input
+# is manually-written.  In pass-by-ref.exp, the test input is generated.
+#
+# We include tests for classes that
+# - contain arrays as fields,
+# - are dynamic (i.e. have virtual methods)
+# - have inlined copy ctor
+# - have deleted destructor
+
+require allow_cplus_tests
+
+standard_testfile .cc
+
+set options {debug c++ additional_flags=-std=c++11}
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile $options]} {
+    return -1
+}
+
+if {![runto_main]} {
+    return -1
+}
+
+# GCC version <= 6 and Clang do not emit DW_AT_defaulted and DW_AT_deleted.
+set is_gcc_6_or_older [test_compiler_info {gcc-[0-6]-*}]
+set is_clang [test_compiler_info {clang-*}]
+
+set bp_location [gdb_get_line_number "stop here"]
+gdb_breakpoint $bp_location
+gdb_continue_to_breakpoint "end of main" ".*return .*;"
+
+gdb_test "print cbvArrayContainerByVal (arrayContainerByVal)" "6" \
+    "call cbvArrayContainerByVal"
+gdb_test "print arrayContainerByVal.items\[0\].x" "2" \
+    "cbv argument 'arrayContainerByVal' should not change"
+
+gdb_test "print cbvArrayContainerByRef (arrayContainerByRef)" "7" \
+    "call cbvArrayContainerByRef"
+gdb_test "print arrayContainerByRef.items\[0\].x" "2" \
+    "cbv argument 'arrayContainerByRef' should not change"
+
+gdb_test "print cbvDynamic (dynamic)" "48" \
+    "call cbvDynamic"
+gdb_test "print dynamic.x" "2" \
+    "cbv argument 'dynamic' should not change"
+
+set sig "\"Inlined\:\:Inlined\\(.*Inlined const\&\\)\""
+gdb_test "print cbvInlined (inlined)" \
+    "expression cannot be evaluated .* \\(maybe inlined\\?\\)"
+
+if {$is_gcc_6_or_older || $is_clang} {setup_xfail "*-*-*"}
+gdb_test "print cbvDtorDel (*dtorDel)" \
+    ".* cannot be evaluated .* 'DtorDel' is not destructible" \
+    "type not destructible"
+
+# Test that GDB calls the correct copy ctor
+gdb_test "print cbvFourCCtor (fourCctor_c0v0)" "13" \
+    "call cbvFourCCtor (c0v0)"
+gdb_test "print fourCctor_c0v0.x" "2" \
+    "cbv argument 'twoCctor_c0v0' should not change"
+
+gdb_test "print cbvFourCCtor (fourCctor_c1v0)" "14" \
+    "call cbvFourCCtor (c1v0)"
+gdb_test "print fourCctor_c1v0.x" "2" \
+    "cbv argument 'twoCctor_c1v0' should not change"
+
+gdb_test "print cbvFourCCtor (fourCctor_c0v1)" "15" \
+    "call cbvFourCCtor (c0v1)"
+gdb_test "print fourCctor_c0v1.x" "2" \
+    "cbv argument 'twoCctor_c0v1' should not change"
+
+gdb_test "print cbvFourCCtor (fourCctor_c1v1)" "16" \
+    "call cbvFourCCtor (c1v1)"
+gdb_test "print fourCctor_c1v1.x" "2" \
+    "cbv argument 'twoCctor_c1v1' should not change"
+
+gdb_test "print cbvTwoMCtor (twoMctor)" \
+    ".* cannot be evaluated .* 'TwoMCtor' is not copy constructible" \
+    "copy ctor is implicitly deleted"
+
+if {$is_gcc_6_or_older || $is_clang} {setup_xfail "*-*-*"}
+gdb_test "print cbvTwoMCtorAndCCtor (twoMctorAndCctor)" "12" \
+    "call cbvTwoMCtorAndCCtor"
+gdb_test "print twoMctorAndCctor.x" "2" \
+    "cbv argument 'twoMctorAndCtor' should not change"
+
+# Test that we get a breakpoint from the cctor during infcall and
+# we can examine arguments.  This is a test that the dummy frame
+# of the copy constructor is set up correctly by the infcall mechanism.
+set bp_location [gdb_get_line_number "ByRef-cctor"]
+gdb_breakpoint $bp_location
+gdb_test "print cbvArrayContainerByRef (arrayContainerByRef)" \
+    ".*The program being debugged stopped.*" \
+    "call cbvArrayContainerByRef with BP"
+gdb_test "backtrace" [multi_line \
+    "#0  ByRef\:\:ByRef .* at .*$srcfile:$bp_location" \
+    "#1  .* ArrayContainerByRef::ArrayContainerByRef .*" \
+    "#2  <function called from gdb>" \
+    "#3  main.*"]

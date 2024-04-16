@@ -1,0 +1,179 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test inferior-specific breakpoints.
+
+standard_testfile -1.c -2.c
+
+if {[use_gdb_stub]} {
+    return
+}
+
+set srcfile1 ${srcfile}
+set binfile1 ${binfile}-1
+set binfile2 ${binfile}-2
+
+if {[build_executable ${testfile}.exp ${binfile1} "${srcfile1}"] != 0} {
+    return -1
+}
+
+if {[build_executable ${testfile}.exp ${binfile2} "${srcfile2}"] != 0} {
+    return -1
+}
+
+# Start the first inferior.
+clean_restart ${binfile1}
+if {![runto_main]} {
+    return
+}
+
+# Add a second inferior, and start this one too.
+gdb_test "add-inferior" "Added inferior 2.*" "add empty inferior 2"
+gdb_test "inferior 2" "Switching to inferior 2.*" "switch to inferior 2"
+gdb_load $binfile2
+if {![runto_main]} {
+    return
+}
+
+# Try to create a breakpoint using both the 'inferior' and 'thread' keywords,
+# this should fail.  Try with the keywords in both orders just in case the
+# parser has a bug.
+gdb_test "break foo thread 1.1 inferior 1" \
+    "You can specify only one of inferior or thread\\."
+gdb_test "break foo inferior 1 thread 1.1" \
+    "You can specify only one of inferior or thread\\."
+
+# Try to create a breakpoint using the 'inferior' keyword multiple times.
+gdb_test "break foo inferior 1 inferior 2" \
+    "You can specify only one inferior\\."
+
+# Clear out any other breakpoints.
+delete_breakpoints
+
+# Use 'info breakpoint' to check that the inferior specific breakpoint is
+# present in the breakpoint list.  TESTNAME is the name used for this test,
+# BP_NUMBER is the number for the breakpoint, and EXPECTED_LOC_COUNT is the
+# number of locations we expect for that breakpoint.
+proc check_info_breakpoints { testname bp_number expected_loc_count } {
+    gdb_test_multiple "info breakpoints $bp_number" $testname {
+	-re "\r\nNum\\s+\[^\r\n\]+\r\n" {
+	    exp_continue
+	}
+
+	-re "^$bp_number\\s+breakpoint\\s+keep\\s+y\\s+<MULTIPLE>\\s*\r\n" {
+	    set saw_header true
+	    exp_continue
+	}
+
+	-re "^\\s+stop only in inferior 1\r\n" {
+	    set saw_inf_cond true
+	    exp_continue
+	}
+
+	-re "^\\s+breakpoint already hit $::decimal times\r\n" {
+	    exp_continue
+	}
+
+	-re "^$bp_number\\.\[123\]\\s+y\\s+ $::hex in foo at \[^\r\n\]+(?: inf \[12\])?\r\n" {
+	    incr location_count
+	    exp_continue
+	}
+
+	-re "^$::gdb_prompt $" {
+	    with_test_prefix $gdb_test_name {
+		gdb_assert { $saw_header \
+				 && $location_count == $expected_loc_count \
+				 && $saw_inf_cond } \
+		    $gdb_test_name
+	    }
+	}
+    }
+}
+
+# Create an inferior-specific breakpoint.  Use gdb_test instead of
+# gdb_breakpoint here as we want to check the breakpoint was placed in
+# multiple locations.
+#
+# Currently GDB still places inferior specific breakpoints into every
+# inferior, just like it does with thread specific breakpoints.
+# Hopefully this will change in the future, at which point, this test
+# will need updating.
+#
+# Two of these locations are in inferior 1, while the third is in
+# inferior 2.
+gdb_test "break foo inferior 1" \
+    "Breakpoint $decimal at $hex: foo\\. \\(3 locations\\)"
+set bp_number [get_integer_valueof "\$bpnum" "INVALID" \
+		  "get b/p number for inferior specific breakpoint"]
+
+set saw_header false
+set location_count 0
+set saw_inf_cond false
+
+check_info_breakpoints "first check for inferior specific breakpoint" \
+    $bp_number 3
+
+# Create a multi-inferior breakpoint to stop at.
+gdb_breakpoint "stop_breakpt" message
+set stop_bp_num [get_integer_valueof "\$bpnum" "INVALID" \
+		    "get b/p number for stop_breakpt"]
+
+# Now resume inferior 2, this should reach 'stop_breakpt'.
+gdb_test "continue" \
+    "hit Breakpoint $stop_bp_num\.$decimal, stop_breakpt \\(\\) .*" \
+    "continue in inferior 2"
+
+# Switch to inferior 1, and try there.
+gdb_test "inferior 1" ".*" \
+    "select inferior 1 to check the inferior-specific b/p works"
+gdb_test "continue " \
+    "Thread 1\\.${decimal}\[^\r\n\]* hit Breakpoint\
+     $bp_number\.$decimal, foo \\(\\) .*" \
+    "first continue in inferior 1"
+
+# Now back to inferior 2, let the inferior exit, and then remove the
+# inferior, the inferior-specific breakpoint should not be deleted.
+gdb_test "inferior 2" ".*" \
+    "switch back to allow inferior 2 to exit"
+gdb_test "continue" "\\\[Inferior 2 \[^\r\n\]+ exited normally\\\]" \
+    "allow inferior 2 to exit"
+gdb_test "inferior 1" ".*" \
+    "back to inferior 1 so inferior 2 can be deleted"
+gdb_test_no_output "remove-inferiors 2"
+
+gdb_test "continue " "hit Breakpoint $bp_number\.$decimal, foo \\(\\) .*" \
+    "second continue in inferior 1"
+gdb_test "continue " "hit Breakpoint $stop_bp_num, stop_breakpt \\(\\) .*" \
+    "third continue in inferior 1"
+
+# Now allow inferior 1 to exit, the inferior specific breakpoint
+# should not be deleted.
+gdb_test "continue" \
+    "\\\[Inferior 1 \[^\r\n\]+ exited normally\\\]" \
+    "allow inferior 1 to exit"
+
+check_info_breakpoints "second check for inferior specific breakpoint" \
+    $bp_number 2
+
+# Now create another new inferior, then remove inferior 1.  As a result of
+# this removal, the inferior specific breakpoint should be deleted.
+gdb_test "add-inferior" "Added inferior 3.*" "add empty inferior 3"
+gdb_test "inferior 3" "Switching to inferior 3.*" "switch to inferior 3"
+gdb_test "remove-inferiors 1" \
+    "Inferior-specific breakpoint $bp_number deleted - inferior 1 has been removed\\."
+
+# Now check 'info breakpoints' to ensure the breakpoint is gone.
+gdb_test "info breakpoints $bp_number" \
+    "No breakpoint or watchpoint matching '$bp_number'\\."

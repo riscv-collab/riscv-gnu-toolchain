@@ -1,0 +1,131 @@
+# Copyright 2007-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Author: P. N. Hilfinger, AdaCore, Inc.
+
+# This test checks the behavior of formatted print when applied to a 
+# reference value.  The intended behavior is that a formatted print of
+# such a value should display the same value as a plain print, 
+# modulo format, of course.  Older versions of GDB would instead print
+# the reference's address value itself when doing a formatted print,
+# rather than printing both that and the dereferenced value.  We also
+# check that the (non-standard) expression &(&x), where x is of type T&,
+# yields an appropriate value.
+# This also tests that some other arithmetic operations on references
+# work properly: condition expression using a reference object as one of its
+# operand.
+
+
+require allow_cplus_tests
+
+standard_testfile .cc
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile {debug c++}]} {
+    return -1
+}
+
+proc get_address { var } {
+    global expect_out
+    global gdb_prompt
+
+    gdb_test_multiple "print &$var" "find address of $var" {
+	-re "\\$\[0-9\]+ = \\(.*\\) (0x\[0-9a-f\]+).*$gdb_prompt $" {
+            return $expect_out(1,string)
+ 	}
+        timeout { 
+	    perror "couldn't find address of $var"
+	    return ""
+        }
+    }
+    return ""
+}
+
+proc test_p_x { var type val addr } {
+    global gdb_prompt
+
+    set test "print/x $var"
+    gdb_test_multiple $test $test {
+        -re "\\$\[0-9\]+ = \\([string_to_regexp $type]\\) @0x\[a-f0-9\]+: [string_to_regexp $val].*$gdb_prompt $" {
+	    pass $test
+	} 
+	-re "\\$\[0-9\]+ = $addr.*$gdb_prompt $" {
+            fail "$test (prints just address)"
+        }
+	-re "\\$\[0-9\]+ = 0x\[a-f0-9\]+.*$gdb_prompt $" {
+            fail "$test (prints unexpected address)"
+        }
+    }
+    return 0
+}
+
+proc test_p_x_addr { var addr } {
+    global gdb_prompt
+
+    set test "print/x &$var"
+    gdb_test_multiple $test $test {
+        -re "\\$\[0-9\]+ = $addr.*$gdb_prompt $" {
+	    pass $test
+	} 
+	-re "\\$\[0-9\]+ = 0x\[a-f0-9+\]+.*$gdb_prompt $" {
+            fail "$test (prints unexpected address)"
+        }
+    }
+    return 0
+}
+
+proc test_p_x_ref_addr { var addr } {
+    global gdb_prompt
+
+    set test "print/x *(&(&$var))"
+    gdb_test_multiple $test $test {
+        -re "\\$\[0-9\]+ = $addr.*$gdb_prompt $" {
+	    pass $test
+	}
+	-re "Attempt to take address of value not located in memory.*$gdb_prompt $" {
+	    # The reference might be in a register.  At least we parsed
+	    # correctly...
+	    pass $test
+	}
+	-re "\\$\[0-9\]+ = 0x\[a-f0-9+\]+.*$gdb_prompt $" {
+            fail "$test (prints unexpected address)"
+        }
+    }
+    return 0
+}
+
+proc test_p_op1_equals_op2 {op1 op2} {
+    set test "print $op1 == $op2"
+    gdb_test $test "\\$\[0-9\]+ = true"
+}
+
+runto ${srcfile}:[gdb_get_line_number "marker here"]
+
+set s1_address  [get_address "s1"]
+set e1_address  [get_address "e1"]
+set i1_address  [get_address "i1"]
+
+test_p_x "s" "Struct1 &" "{x = 0xd, y = 0x13}" $s1_address
+test_p_x "e" "Enum1 &" "0xb" $e1_address
+test_p_x "i" "int &" "0x17" $i1_address
+
+test_p_x_addr "s" $s1_address
+test_p_x_addr "e" $e1_address
+test_p_x_addr "i" $i1_address
+
+test_p_x_ref_addr "s" $s1_address
+test_p_x_ref_addr "i" $i1_address
+test_p_x_ref_addr "e" $e1_address
+
+test_p_op1_equals_op2 "s.x" "13"

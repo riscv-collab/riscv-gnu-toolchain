@@ -1,0 +1,162 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "ada.exp"
+
+require allow_ada_tests
+
+# This test verifies that the commands
+#   info [functions|variables|types]
+# respect the 'set language auto|ada|c' setting, whatever the language
+# of the current frame.
+# Similarly, checks that rbreak reports its results respecting
+# the language mode.
+
+standard_ada_testfile proc_in_ada
+set cfile "some_c"
+# gnat normalizes proc_in_ada source file when compiling.
+# As the 'info' commands results are sorted by absolute path names, also normalize
+# the some_c source file to ensure that the 'info' results are always
+# giving Ada results first.
+set csrcfile [file normalize ${srcdir}/${subdir}/${testdir}/${cfile}.c]
+set cobject [standard_output_file ${cfile}.o]
+
+if { [gdb_compile "${csrcfile}" "${cobject}" object [list debug]] != "" } {
+    untested "failed to compile"
+    return -1
+}
+if {[gdb_compile_ada "${srcfile}" "${binfile}" executable [list debug]] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+clean_restart ${testfile}
+
+set bp_location [gdb_get_line_number "STOP" ${testdir}/some_c.c]
+if {![runto "some_c.c:$bp_location"]} {
+    return
+}
+
+set func_in_c(c_syntax)      "${decimal}:	void proc_in_c\\\(void\\\);"
+set func_in_c(ada_syntax)    "${decimal}:	procedure proc_in_c;"
+set func_in_ada(c_syntax) \
+    [string cat \
+	 "${decimal}:	void proc_in_ada\\\(void\\\);\r\n" \
+	 "${decimal}:	void proc_in_ada.something_in_c\\\(void\\\);"]
+set func_in_ada(ada_syntax) \
+    [string cat \
+	 "${decimal}:	procedure proc_in_ada;\r\n" \
+	 "${decimal}:	procedure proc_in_ada.something_in_c;"]
+
+set type_in_c(c_syntax) "${decimal}:	typedef struct {\\.\\.\\.} some_type_in_c;"
+set type_in_c(ada_syntax) [multi_line \
+			      "${decimal}:	record" \
+			      "    some_component_in_c: int;" \
+			      "end record" ]
+set type_in_ada(c_syntax) "${decimal}:	struct global_pack__some_type_in_ada;"
+set type_in_ada(ada_syntax)  "${decimal}:	global_pack.some_type_in_ada;"
+
+set var_in_c(c_syntax)     "${decimal}:	some_type_in_c some_struct_in_c;"
+set var_in_c(ada_syntax)   "${decimal}:	some_struct_in_c: some_type_in_c;"
+set var_in_ada(c_syntax)   "${decimal}:	struct global_pack__some_type_in_ada global_pack.some_struct_in_ada;"
+set var_in_ada(ada_syntax) "${decimal}:	global_pack.some_struct_in_ada: global_pack.some_type_in_ada;"
+
+set rbreak_func_in_c(c_syntax)      "void proc_in_c\\\(void\\\);"
+set rbreak_func_in_c(ada_syntax)    "procedure proc_in_c;"
+set rbreak_func_in_ada(c_syntax)    "void proc_in_ada\\\(void\\\);"
+set rbreak_func_in_ada(ada_syntax)  "procedure proc_in_ada;"
+
+
+foreach_with_prefix language_choice { "auto" "ada" "c" } {
+
+    # Check that switching to the desired language_choice when the selected
+    # frame has the same language (or the desired language is auto) gives no
+    # warning.  Also set the expected matches for the various commands
+    # tested afterwards.
+    if {$language_choice == "auto"} {
+	gdb_test "frame 0" "#0 .*" "select frame with lang c"
+	set c_match c_syntax
+	set ada_match ada_syntax
+    } elseif {$language_choice == "ada"} {
+	gdb_test "frame 1" "#1 .*" "select frame with lang ada"
+	set c_match ada_syntax
+	set ada_match ada_syntax
+    } elseif {$language_choice == "c"} {
+	gdb_test "frame 0" "#0 .*" "select frame with lang c"
+	set c_match c_syntax
+	set ada_match c_syntax
+    } else {
+	error "unexpected language choice"
+    }
+    gdb_test_no_output "set language $language_choice" "set language language_choice"
+
+    foreach frame {
+	"0"
+	"1" } {
+	if { $frame == 0 } {
+	    set frame_lang "c"
+	} else {
+	    set frame_lang "ada"
+	}
+
+	with_test_prefix "frame=$frame, frame_lang=$frame_lang" {
+
+	    gdb_test "frame $frame" "#$frame .*" "select frame"
+
+	    gdb_test "info functions proc_in_" \
+		[multi_line \
+		     "All functions matching regular expression \"proc_in_\":" \
+		     "" \
+		     "File .*proc_in_ada.adb:" \
+		     $func_in_ada($ada_match) \
+		     "" \
+		     "File .*some_c.c:" \
+		     $func_in_c($c_match)
+		]
+
+	    gdb_test "info types some_type" \
+		[multi_line \
+		     "All types matching regular expression \"some_type\":"  \
+		     "" \
+		     "File .*global_pack.ads:" \
+		     $type_in_ada($ada_match)\
+		     "" \
+		     "File .*some_c.c:" \
+		     $type_in_c($c_match)
+		]
+
+	    gdb_test "info variables some_struct" \
+		[multi_line \
+		     "All variables matching regular expression \"some_struct\":" \
+		     "" \
+		     "File .*global_pack.ads:" \
+		     $var_in_ada($ada_match) \
+		     "" \
+		     "File .*some_c.c:" \
+		     $var_in_c($c_match)
+		]
+
+	    gdb_test "rbreak proc_in_" \
+		[multi_line \
+		     "Breakpoint.*file .*proc_in_ada.adb,.*" \
+		     $rbreak_func_in_ada($ada_match) \
+		     "Breakpoint.*file .*some_c.c,.*" \
+		     $rbreak_func_in_c($c_match)
+		]
+	    delete_breakpoints
+	}
+    }
+}
+

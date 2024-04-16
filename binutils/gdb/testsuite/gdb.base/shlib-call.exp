@@ -1,0 +1,188 @@
+#   Copyright 1997-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# file to test calls into shared libraries
+# the source files for this test are:
+#
+# shmain.c
+# shr1.c (shared lib)
+# shr2.c (shared lib)
+# ss.h (header for shr2.c)
+#
+# file written by Elena Zannoni: elz@ch.apollo.com
+#
+
+#debug shmain
+#prop lib shr1.sl
+#prop lib shr2.sl
+
+
+require allow_shlib_tests
+
+if { [is_remote host] } {
+    gdb_remote_download host $srcdir/$subdir/ss.h
+}
+
+standard_testfile shmain.c shr1.c shr2.c
+set srcfile  ${srcdir}/${subdir}/${srcfile}
+set lib1src  ${srcdir}/${subdir}/${srcfile2}
+set lib2src  ${srcdir}/${subdir}/${srcfile3}
+set lib1     [standard_output_file shr1.sl]
+set lib2     [standard_output_file shr2.sl]
+
+set lib_opts "debug"
+
+set exec_opts {}
+lappend exec_opts debug
+lappend exec_opts shlib=$lib1
+lappend exec_opts shlib=$lib2
+lappend_include_file exec_opts $srcdir/lib/unbuffer_output.c
+
+if { [gdb_compile_shlib ${lib1src} ${lib1} $lib_opts] != ""
+     || [gdb_compile_shlib ${lib2src} ${lib2} $lib_opts] != ""
+     || [gdb_compile ${srcfile} ${binfile} executable $exec_opts] != ""} {
+    untested "failed to compile"
+    return -1
+}
+
+# Start with a fresh gdb.
+
+clean_restart ${binfile}
+gdb_load_shlib $lib1
+gdb_load_shlib $lib2
+
+
+if {![runto_main]} {
+    return
+}
+
+
+#step -over
+
+gdb_test "next 2" "g = shr1\\(g\\);" "next to shr1"
+
+#print g
+
+gdb_test "print g" "\[0-9\]* = 1"
+
+#step -over
+if ![gdb_skip_stdio_test "next over shr1"] {
+    gdb_test_stdio "next" \
+	"address of sgs is $hex" \
+	"g = shr2\\(g\\);" \
+	"next over shr1"
+} else {
+    gdb_test "next" ".*" ""
+}
+
+
+#print g
+gdb_test "print g" "\[0-9\]* = 2" "print g two"
+
+#print shr1(1)
+if ![gdb_skip_stdio_test "print shr1(1)"] {
+    gdb_test_stdio "print shr1(1)" \
+	"address of sgs is $hex" \
+	"\[0-9\]* = 2" \
+	"print shr1(1)"
+}
+
+#print shr1(g)
+if ![gdb_skip_stdio_test "print shr1(g)"] {
+    gdb_test_stdio "print shr1(g)" \
+	"address of sgs is $hex" \
+	"\[0-9\]* = 4" \
+	"print shr1(g)"
+}
+
+#break shr2
+#go
+gdb_test "break shr2" \
+    "Breakpoint.*file.*shr2.c, line.*" \
+    "breakpoint function shr2"
+
+gdb_test "continue" \
+	"Continuing\\..*Breakpoint ${decimal}, shr2 \\(.*\\) at.*shr2\\.c:${decimal}.*shr2-return \\*\\/" \
+	"run until breakpoint set at a function"
+
+
+#print shr1(1)
+if ![gdb_skip_stdio_test "print shr1(1) 2nd time"] {
+    gdb_test_stdio "print shr1(1)" \
+	"address of sgs is $hex" \
+	"\[0-9\]* = 2" \
+	"print shr1(1) 2nd time"
+}
+
+#print mainshr1(1)
+gdb_test "print mainshr1(1)" "\[0-9\]* = 2" \
+    "print mainshr1(1) from shlib func"
+
+#step -return
+# A step at this point will either take us entirely out of
+# the function or into the function's epilogue.  The exact
+# behavior will differ depending upon upon whether or not
+# the compiler emits line number information for the epilogue.
+gdb_test_multiple "step" "step out of shr2 to main" {
+    -re "main \\(\\) at.*g = mainshr1\\(g\\);.*$gdb_prompt $" {
+	pass "step out of shr2 to main"
+    }
+    -re ".*\\\}.*$gdb_prompt $" {
+	pass "step out of shr2 to main (stopped in shr2 epilogue)"
+	gdb_test_multiple "step" "step out of shr2 epilogue to main" {
+	    -re -wrap "main \\(\\) at.*g = mainshr1\\(g\\);" {
+		pass $gdb_test_name
+	    }
+	    -re -wrap "main \\(\\) at.*g = shr2\\(g\\);" {
+		gdb_test "step" "g = mainshr1\\(g\\);" $gdb_test_name
+	    }
+	}
+    }
+}
+
+#print mainshr1(1)
+gdb_test "print mainshr1(1)" "\[0-9\]* = 2"
+
+#step
+gdb_test "step" "mainshr1 \\(g=4\\) at.*return 2.g;" \
+    "step into mainshr1"
+
+# Start with a fresh gdb.
+
+clean_restart $binfile
+
+# PR's 16495, 18213
+# test that we can re-set breakpoints in shared libraries
+gdb_breakpoint "shr1" "allow-pending"
+
+set test "run to bp in shared library"
+gdb_run_cmd
+gdb_test_multiple "" $test {
+    -re "Breakpoint .,.*${gdb_prompt} " {
+	pass $gdb_test_name
+    }
+}
+
+gdb_continue_to_end "" continue 1
+
+set test "re-run to bp in shared library (PR's 16495, 18213)"
+gdb_run_cmd
+gdb_test_multiple "" $test {
+    -re "Breakpoint .,.*${gdb_prompt} " {
+	pass $gdb_test_name
+    }
+}
+
+gdb_continue_to_end "after re-run" continue 1

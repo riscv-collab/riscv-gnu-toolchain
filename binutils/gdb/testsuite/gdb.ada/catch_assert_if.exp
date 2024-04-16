@@ -1,0 +1,60 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "ada.exp"
+
+require allow_ada_tests gnat_runtime_has_debug_info
+
+standard_ada_testfile bla
+
+if {[gdb_compile_ada "${srcfile}" "${binfile}" executable [list debug additional_flags=-gnata ]] != "" } {
+   return -1
+}
+
+clean_restart ${testfile}
+
+set eol "\r\n"
+set sp "\[ \t\]*"
+
+# Here is the scenario:
+#  - Restart the debugger from scratch, runto_main
+#    We'll catch assertions if Global_Var = 2
+#  - continue, we should see the second failed assertion
+#  - continue, the program exits.
+
+if {![runto_main]} {
+   return 0
+}
+
+gdb_test "catch assert if Global_Var = 2" \
+         "Catchpoint $decimal: failed Ada assertions" \
+         "insert catchpoint on failed assertions with condition"
+
+# Check that condition is stored and properly displayed.
+
+set exp_bp ".*$decimal${sp}catchpoint${sp}keep${sp}y${sp}failed Ada assertions$eol${sp}stop only if Global_Var = 2.*"
+gdb_test "info breakpoint" $exp_bp "Check catch assertions with condition"
+
+set bp_location [gdb_get_line_number "STOP" ${testdir}/bla.adb]
+
+set catchpoint_msg \
+  "Catchpoint $decimal, failed assertion at $hex in bla \\\(\\\).*at .*bla.adb:$bp_location"
+gdb_test "continue" \
+	 "Continuing\.$eol$eol$catchpoint_msg$eol.*STOP" \
+         "continuing to expected failed assertion"
+
+gdb_test "continue" \
+         "Continuing\..*$inferior_exited_re.*" \
+         "continuing to program completion"

@@ -1,0 +1,103 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test some error messages that can arise from the 'save gdb-index'
+# command.
+
+standard_testfile
+
+if {[prepare_for_testing "prepare for test" $testfile $srcfile] == -1} {
+    return -1
+}
+
+# This test isn't going to work when the board file automatically adds
+# an index section, or if the debug information is split into a
+# separate objfile.
+set index_type [get_index_type $binfile "check debug style"]
+if { $index_type ne "cooked" } {
+    unsupported "cannot test without a cooked index"
+    return -1
+}
+
+
+# The name of a directory that doesn't exist.
+set bad_dir [standard_output_file "non-existent"]
+
+# Try to write the index into a non-existent directory.
+foreach_with_prefix flag { "" "-dwarf-5" } {
+    gdb_test "save gdb-index ${flag} ${bad_dir}" \
+	"Error while writing index for `[string_to_regexp $binfile]': `[string_to_regexp $bad_dir]': No such file or directory\\." \
+	"try to write index to non-existent directory"
+}
+
+# Create a text-file.
+set text_file [standard_output_file "text-file"]
+set fd [open $text_file w]
+puts $fd "A line of text.\n"
+close $fd
+
+# Try to write the index into something that is not a directory.
+foreach_with_prefix flag { "" "-dwarf-5" } {
+    gdb_test "save gdb-index ${flag} ${text_file}" \
+	"Error while writing index for `[string_to_regexp $binfile]': `[string_to_regexp $text_file]': Is not a directory\\." \
+	"try to write index to something that's not a directory"
+}
+
+# Create a directory which can't be written too.
+set non_writable_dir [standard_output_file "private"]
+remote_exec host "mkdir -p ${non_writable_dir}"
+remote_exec host "chmod u-w,g-w ${non_writable_dir}"
+
+# Try to write the index into a non-writable directory.
+foreach_with_prefix flag { "" "-dwarf-5" } {
+    set test "try to write index to a non-writable directory"
+    if { [root_user] } {
+	unsupported $test
+	continue
+    }
+
+    gdb_test "save gdb-index ${flag} ${non_writable_dir}" \
+	"Error while writing index for `[string_to_regexp $binfile]': couldn't open `[string_to_regexp $non_writable_dir]/${gdb_test_file_name}.*': Permission denied\\." \
+	$test
+}
+
+# Create copies of the executable, we will add an index section to
+# each of these.
+remote_exec host "cp $binfile ${binfile}.gdb_index"
+remote_exec host "cp $binfile ${binfile}.dwarf_5"
+
+# Create a directory in which we can try to generate the index files.
+set already_indexed_dir [standard_output_file "already_indexed"]
+remote_exec host "mkdir -p $already_indexed_dir"
+
+foreach_with_prefix flag { "" "-dwarf-5" } {
+    if { $flag eq "" } {
+	set extension "gdb_index"
+    } else {
+	set extension "dwarf_5"
+    }
+
+    # Add the index section to the executable.
+    clean_restart ${binfile}.${extension}
+    gdb_assert {[ensure_gdb_index ${binfile}.${extension} ${flag}] == 1} \
+	"add index to executable"
+
+    # Reload the executable (which now has an index), and try to
+    # generate and index from it.  This will fail.
+    clean_restart ${binfile}.${extension}
+    gdb_test "save gdb-index ${flag} $already_indexed_dir" \
+	"Error while writing index for `[string_to_regexp $binfile.$extension]': Cannot use an index to create the index" \
+	"try to generate an index from a binary with an index"
+}

@@ -1,0 +1,453 @@
+# Copyright (C) 1998-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# written by Elena Zannoni (ezannoni@cygnus.com)
+# modified by Michael Chastain (chastain@redhat.com)
+
+# This file is part of the gdb testsuite
+#
+# tests for overloaded member functions. Set breakpoints on
+# overloaded member functions
+#
+
+global timeout
+set timeout 15
+#
+# test running programs
+#
+
+require allow_cplus_tests
+
+standard_testfile .cc
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile {debug c++}]} {
+    return -1
+}
+
+# set it up at a breakpoint so we can play with the variable values
+#
+if {![runto_main]} {
+    return
+}
+
+# When I ask gdb to set a breakpoint on an overloaded function,
+# gdb gives me a choice menu.  I might get stuck in that choice menu
+# (for example, if C++ name mangling is not working properly).
+#
+# This procedure issues a command that works at either the menu
+# prompt or the command prompt to get back to the command prompt.
+#
+# Note that an empty line won't do it (it means 'repeat the previous command'
+# at top level).  A line with a single space in it works nicely.
+
+proc take_gdb_out_of_choice_menu {} {
+    global gdb_prompt
+    gdb_test_multiple " " " " {
+        -re ".*$gdb_prompt $" {
+        }
+	timeout {
+	    perror "could not resynchronize to command prompt (timeout)"
+	    continue
+	}
+    }
+}
+
+
+
+# This procedure sets an overloaded breakpoint.  When users ask for
+# such a breakpoint, gdb gives a menu of 'cancel' 'all' and one choice
+# per overload.  Users can then choose from that menu by number.
+#
+# NAME is the spec to use to create the breakpoint.  EXPECTEDMENU is
+# the expected menu.  MYCHOICE is the choice selected.  Can be more
+# than one overload, e.g. "2-3".  BPNUMBER is the expected next
+# breakpoint created.  LINENUMBERS is a list of line numbers, one
+# element per expected breakpoint created.
+
+proc set_bp_overloaded {name expectedmenu mychoice bpnumber linenumbers} {
+    global gdb_prompt hex decimal srcfile
+
+    # Get into the overload menu.
+    gdb_test_multiple "break $name" "bp menu for $name choice $mychoice" {
+	-re "$expectedmenu" {
+	    pass $gdb_test_name
+
+	    set any "\[^\r\n\]*"
+
+	    # True if we've seen a bad breakpoint.
+	    set bad_bp 0
+
+	    # How many breakpoints we expect to see.
+	    set expected_bps [llength $linenumbers]
+
+	    # The count of seen breakpoints.
+	    set seen_bps 0
+
+	    # Choose my choice.
+	    gdb_test_multiple "$mychoice" "set bp $bpnumber on $name $mychoice line $linenumbers" {
+		-re "Breakpoint ($decimal) at $hex: file$any$srcfile, line ($decimal).\r\n" {
+
+		    set got_num $expect_out(1,string)
+		    set got_line $expect_out(2,string)
+
+		    if {$seen_bps >= $expected_bps} {
+			set bad_bp 1
+		    } else {
+			set linenumber [lindex $linenumbers $seen_bps]
+
+			if {$got_num != $bpnumber || $got_line != $linenumber} {
+			    set bad_bp 1
+			}
+
+			incr bpnumber
+			incr seen_bps
+		    }
+		    exp_continue
+		}
+		-re "$gdb_prompt $" {
+		    gdb_assert {!$bad_bp && $seen_bps == $expected_bps} \
+			$gdb_test_name
+                }
+                timeout {
+                    fail "$gdb_test_name (timeout)"
+                    take_gdb_out_of_choice_menu
+                }
+            }
+        }
+        -re ".*\r\n> " {
+            fail "$gdb_test_name (bad menu)"
+            take_gdb_out_of_choice_menu
+        }
+        -re ".*$gdb_prompt $" {
+            fail "$gdb_test_name (no menu)"
+        }
+        timeout {
+            fail "$gdb_test_name (timeout)"
+            take_gdb_out_of_choice_menu
+        }
+    }
+}
+
+# Compute the expected menu for overload1arg.
+# Note the arg type variations for void and integer types.
+# This accommodates different versions of g++.
+
+# Probe for the real types.  This will do some unnecessary checking
+# for some simple types (like "int"), but it's just easier to loop
+# over all_types instead of calling out just the exceptions.
+# This list /must/ remain in the same order that the methods are
+# called in the source code.  Otherwise the order in which breakpoints
+# are hit (tested below) will be incorrect.
+set all_types [list void char signed_char unsigned_char short_int \
+		   unsigned_short_int int unsigned_int long_int \
+		   unsigned_long_int float double]
+
+# ARGUMENTS is an array that will map from synthetic type to argument
+# expressions in the source code, which is of the form "arg = $decimal".
+# ARGUMENTS stores this decimal number.
+array set arguments {
+    void ""
+    char 2
+    signed_char 3
+    unsigned_char 4
+    short_int 5
+    unsigned_short_int 6
+    int 7
+    unsigned_int 8
+    long_int 9
+    unsigned_long_int 10
+    float 100(.0)?
+    double 200(.0)?
+}
+
+unset -nocomplain line types
+foreach type $all_types {
+    # TYPES is an array that maps the synthetic names in ALL_TYPES
+    # to the real type used in the debugger.  These will be checked
+    # below and changed if the debugger thinks they are different from
+    # their default values.
+    set types($type) [join [split $type "_"] " "]
+
+    # LINE is an array that will map from synthetic type to line number.
+    # in the source code.
+    set line($type) [gdb_get_line_number "fo1 $type"]
+
+    # Probe for the actual type.
+    gdb_test_multiple "print &foo::overload1arg($types($type))" \
+        "probe $types($type)" {
+            -re ".*\<foo::.*\>.*$gdb_prompt $" {
+	        regexp {<.*>} $expect_out(0,string) func
+	        regexp {\(.*\)} $func real_type
+
+	        # Store the real type into TYPES.
+	        set types($type) [string trim $real_type {()}]
+
+	        # Create an inverse mapping of the actual type to
+	        # the synthetic type.
+	        set type_map("$types($type)") $type
+	        pass "detect $type"
+	    }
+    }
+}
+
+# This is a list of the actual overloaded method arguments.
+set overloads {}
+foreach type $all_types {
+    lappend overloads $types($type)
+}
+
+# Sort this list alphabetically.
+set overloads [lsort $overloads]
+
+# Create the menu list.
+set items {"cancel" "all"}
+foreach ovld $overloads {
+    lappend items "$srcfile:foo::overload1arg\\($ovld\\)"
+}
+set menu_items {}
+set idx 0
+foreach item $items {
+    lappend menu_items ".$idx. .*$item"
+    incr idx
+}
+set menu_overload1arg [join $menu_items {[\r\n]*}]
+append menu_overload1arg {[\r\n]*> $}
+
+# Set multiple-symbols to "ask", to allow us to test the use
+# of the multiple-choice menu when breaking on an overloaded method.
+gdb_test_no_output "set multiple-symbols ask"
+
+# The last breakpoint created.
+set bpnum 1
+
+# Set breakpoints on foo::overload1arg, one by one.
+set method "foo::overload1arg"
+for {set idx 0} {$idx < [llength $overloads]} {incr idx} {
+    set type [lindex $overloads $idx]
+    set_bp_overloaded $method $menu_overload1arg \
+	[expr {$idx + 2}] [incr bpnum] $line($type_map("$type"))
+}
+
+# Verify the breakpoints.
+set bptable "Num\[\t \]+Type\[\t \]+Disp Enb Address\[\t \]+What\\s*\r\n"
+append bptable "\[0-9\]+\[\t \]+breakpoint\[\t \]+keep\[\t \]y\[\t \]+$hex\[\t \]+in main(\\((|void)\\))? at.*$srcfile:49\r\n"
+append bptable "\[\t \]+breakpoint already hit 1 time"
+foreach ovld $overloads {
+    append bptable [format "\r\n\[0-9\]+\[\t \]+breakpoint\[\t \]+keep y\[\t \]+$hex\[\t \]+in foo::overload1arg\\(%s\\) at.*$srcfile:%d" $ovld \
+			$line($type_map("$ovld"))]
+}
+gdb_test "info break" $bptable "breakpoint info (after setting one-by-one)"
+
+# Test choice "cancel".
+# This is copy-and-paste from set_bp_overloaded.
+
+send_gdb "break foo::overload1arg\n" 
+gdb_expect {
+    -re "$menu_overload1arg" {
+        pass "bp menu for foo::overload1arg choice cancel"
+        # Choose cancel.
+        send_gdb "0\n"
+        gdb_expect {
+            -re "canceled\r\n$gdb_prompt $" {
+                pass "set bp on overload1arg canceled"
+            }
+	    -re "cancelled\r\n$gdb_prompt $" {
+		pass "set bp on overload1arg canceled"
+	    }
+            -re ".*$gdb_prompt $" {
+                fail "set bp on overload1arg canceled (bad message)"
+            }
+            timeout {
+                fail "set bp on overload1arg canceled (timeout)"
+                take_gdb_out_of_choice_menu
+            }
+        }
+    }
+    -re ".*\r\n> " {
+        fail "bp menu for foo::overload1arg choice cancel (bad menu)"
+        take_gdb_out_of_choice_menu
+    }
+    -re ".*$gdb_prompt $" {
+        fail "bp menu for foo::overload1arg choice cancel (no menu)"
+    }
+    timeout {
+        fail "bp menu for foo::overload1arg choice cancel (timeout)"
+        take_gdb_out_of_choice_menu
+    }
+}
+
+gdb_test "info break" $bptable "breakpoint info (after cancel)"
+
+# Test that if the user selects multiple entries from the option list,
+# GDB creates one breakpoint per entry.
+with_test_prefix "multiple breakpoints" {
+    set method "foo::overload1arg"
+
+    set expected_lines {}
+    for {set i 0} {$i < 2} {incr i} {
+	set type [lindex $overloads $i]
+	lappend expected_lines $line($type_map("$type"))
+    }
+    set_bp_overloaded $method $menu_overload1arg \
+	"2-3" [incr bpnum] $expected_lines
+    incr bpnum
+}
+
+# Delete these breakpoints.
+
+send_gdb "delete breakpoints\n"
+gdb_expect {
+    -re "Delete all breakpoints.* $" {
+        send_gdb "y\n"
+        gdb_expect {
+            -re ".*$gdb_prompt $" {
+                pass "delete all breakpoints"
+            }
+            timeout {
+                fail "delete all breakpoints (timeout)"
+            }
+        }
+    }
+    timeout {
+        fail "delete all breakpoints (timeout)"
+    }
+}
+
+gdb_test "info breakpoints" "No breakpoints or watchpoints." "breakpoint info (after delete)"
+
+
+
+# Test choice "all".
+# This is copy-and-paste from set_bp_overloaded.
+
+incr bpnum
+send_gdb "break foo::overload1arg\n" 
+gdb_expect {
+    -re "$menu_overload1arg" {
+        pass "bp menu for foo::overload1arg choice all"
+        # Choose all.
+        send_gdb "1\n"
+        gdb_expect {
+	    -re "Breakpoint $bpnum at $hex: foo::overload1arg. .12 locations.\r\n.*$gdb_prompt $" {
+                pass "set bp on overload1arg all"
+            }
+            -re ".*$gdb_prompt $" {
+                fail "set bp on overload1arg all (bad message)"
+            }
+            timeout {
+                fail "set bp on overload1arg all (timeout)"
+                take_gdb_out_of_choice_menu
+            }
+        }
+    }
+    -re ".*\r\n> " {
+        fail "bp menu for foo::overload1arg choice all (bad menu)"
+        take_gdb_out_of_choice_menu
+    }
+    -re ".*$gdb_prompt $" {
+        fail "bp menu for foo::overload1arg choice all (no menu)"
+    }
+    timeout {
+        fail "bp menu for foo::overload1arg choice all (timeout)"
+        take_gdb_out_of_choice_menu
+    }
+}
+
+# Create the breakpoint table for "info breakpoint".
+set bptable "Num\[\t \]+Type\[\t \]+Disp Enb Address\[\t \]+What\\s*\r\n"
+append bptable "\[0-9\]+\[\t \]+breakpoint\[\t \]+keep\[\t \]y\[\t \]+<MULTIPLE>\\s*"
+foreach ovld {void char signed_char unsigned_char short_int \
+		  unsigned_short_int int unsigned_int long_int \
+		  unsigned_long_int float double} {
+  append bptable [format "\r\n\[0-9\]+.\[0-9\]+\[\t \]+y\[\t \]+$hex\[\t \]+in foo::overload1arg\\(%s\\) at.*$srcfile:%d" \
+		      $types($ovld) $line($ovld)]
+}
+
+gdb_test "info break" $bptable "breakpoint info (after setting on all)"
+
+# Run through each breakpoint.
+proc continue_to_bp_overloaded {bpnumber might_fail line argtype argument} {
+    global gdb_prompt hex decimal srcfile bkptno_num_re
+
+    if {$argument == ""} {
+        set actuals ""
+    } else {
+        set actuals "arg=$argument"
+        if {[regexp {char} $argtype]} {
+	    append actuals " \\'\\\\00$argument\\'"
+      }
+    }
+
+    if {[string match $argtype "void"]} {
+        set body "return $decimal;"
+    } else {
+        set body "arg = 0; return $decimal;"
+    }
+
+    gdb_test_multiple "continue" "continue to bp overloaded : $argtype" {
+        -re "Continuing.\r\n\r\nBreakpoint $bkptno_num_re, foo::overload1arg \\(this=${hex}(, )?$actuals\\) at .*$srcfile:$line\r\n$decimal\[\t \]+{ $body }.*$gdb_prompt $" {
+            pass "continue to bp overloaded : $argtype"
+        }
+
+        -re "Continuing.\r\n\r\nBreakpoint $bkptno_num_re, foo::overload1arg \\(this=${hex}, arg=.*\\) at .*$srcfile:$line\r\n$decimal\[\t \]+{ $body }.*$gdb_prompt $" {
+            if $might_kfail {
+                kfail "c++/8130" "continue to bp overloaded : $argtype"
+            } else {
+                fail "continue to bp overloaded : $argtype"
+            }
+        }
+    }
+}
+
+# An array which describes which of these methods might be expected
+# to kfail on GCC 2.95. See C++/8210.
+array set might_fail {
+    void 0
+    char 1
+    signed_char 1
+    unsigned_char 1
+    short_int 1
+    unsigned_short_int 1
+    int 0
+    unsigned_int 0
+    long_int 0
+    unsigned_long_int 0
+    float 0
+    double 1
+}
+
+foreach type $all_types {
+    continue_to_bp_overloaded $bpnum $might_fail($type) $line($type) \
+	$type $arguments($type)
+}
+
+# Test breaking on an overloaded function when multiple-symbols
+# is set to "cancel"
+gdb_test_no_output "set multiple-symbols cancel"
+gdb_test "break foo::foofunc" \
+    "canceled.*" \
+    "break on ambiguous symbol when multiple-symbols is set to cancel"
+
+# Test breaking on an overloaded function when multiple-symbols
+# is set to "all"
+gdb_test_no_output "set multiple-symbols all"
+gdb_test "break foo::foofunc" \
+    "Breakpoint \[0-9\]+ at ${hex}: foo::foofunc. .2 locations..*" \
+    "break on ambiguous symbol when multiple-symbols is set to all"
+
+# That's all, folks.
+
+unset -nocomplain line types
+gdb_continue_to_end "finish program"

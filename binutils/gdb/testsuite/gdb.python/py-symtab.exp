@@ -1,0 +1,102 @@
+# Copyright (C) 2010-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It tests the mechanism
+# exposing values to Python.
+
+load_lib gdb-python.exp
+
+require allow_python_tests
+
+standard_testfile py-symbol.c
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+if {![runto_main]} {
+    return 0
+}
+
+set debug_types [debug_types]
+
+global hex decimal
+
+# Setup and get the symbol table.
+set line_no [gdb_get_line_number "Block break here."]
+gdb_breakpoint $line_no
+gdb_continue_to_breakpoint "Block break here."
+gdb_py_test_silent_cmd "python frame = gdb.selected_frame()" "Get Frame" 0
+gdb_py_test_silent_cmd "python sal = frame.find_sal()" "Get block" 0
+gdb_py_test_silent_cmd "python symtab = sal.symtab" "Get block" 0
+gdb_py_test_silent_cmd "python global_block = symtab.global_block()" "Get global block" 0
+gdb_py_test_silent_cmd "python static_block = symtab.static_block()" "Get static block" 0
+gdb_py_test_silent_cmd "python global_symbols = \[\]; static_symbols = \[\]" "Set up symbol name lists" 0
+gdb_py_test_silent_cmd "python for sym in global_block: global_symbols.append(sym.name)" "Get global symbol names" 0
+gdb_py_test_silent_cmd "python for sym in static_block: static_symbols.append(sym.name)" "Get static symbol names" 0
+gdb_py_test_silent_cmd "step" "Step to the next line" 0
+gdb_py_test_silent_cmd "python new_pc = gdb.selected_frame().find_sal().pc" "Get new PC" 0
+
+# Test sal.
+if { [is_remote host] } {
+    set py_symbol_c [string_to_regexp $srcfile]
+    set full_py_symbol_c $py_symbol_c
+} else {
+    set py_symbol_c [string_to_regexp ${srcdir}/${subdir}/${srcfile}]
+    set full_py_symbol_c [string_to_regexp testsuite/${subdir}/${srcfile}]
+}
+
+gdb_test "python print (sal.symtab)" ".*${py_symbol_c}" "test symtab"
+gdb_test "python print (sal.pc)" "${decimal}" "test sal.pc"
+gdb_test "python print (sal.last == (new_pc - 1))" "True" "test sal.last"
+gdb_test "python print (sal.line)" "$line_no" "test sal.line"
+gdb_test "python print (sal.is_valid())" "True" "test sal.is_valid"
+
+# Test symbol table.
+gdb_test "python print (symtab.filename)" ".*${py_symbol_c}" "test symtab.filename"
+gdb_test "python print (symtab.objfile)" \
+    "<gdb.Objfile filename=.*${testfile}.*>" "test symtab.objfile"
+gdb_test "python print (symtab.fullname())" ".*${full_py_symbol_c}" "test symtab.fullname"
+gdb_test "python print (symtab.is_valid())" "True" "test symtab.is_valid()"
+gdb_test "python print (\"qq\" in global_symbols)" "True" "test qq in global symbols"
+gdb_test "python print (\"func\" in global_symbols)" "True" "test func in global symbols"
+gdb_test "python print (\"main\" in global_symbols)" "True" "test main in global symbols"
+gdb_test "python print (\"int\" in static_symbols)" "True" "test int in static symbols"
+gdb_test "python print (\"char\" in static_symbols)" "True" "test char in static symbols"
+gdb_test_multiple "python print (\"simple_struct\" in static_symbols)" \
+    "test simple_struct in static symbols" {
+	-re -wrap "True" {
+	    pass $gdb_test_name
+	}
+	-re -wrap "False" {
+	    if { $debug_types } {
+		# Xfail for PR gcc/90232.
+		xfail $gdb_test_name
+	    } else {
+		fail $gdb_test_name
+	    }
+	}
+    }
+
+# Test is_valid when the objfile is unloaded.  This must be the last
+# test as it unloads the object file in GDB.
+gdb_unload
+gdb_test "python print (sal.is_valid())" "False" \
+    "test sal.is_valid after unload"
+gdb_test "python print (symtab.is_valid())" "False" \
+    "test symtab.is_valid() after unload"
+
+gdb_test_no_output "python sal = None" "test sal destructor"
+gdb_test_no_output "python symtab = None" "test symtab destructor"

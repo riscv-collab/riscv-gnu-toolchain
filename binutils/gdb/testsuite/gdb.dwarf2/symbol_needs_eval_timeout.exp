@@ -1,0 +1,135 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test the symbol needs check mechanism if it assumes that faking
+# reads from a target is a safe thing to do.
+#
+# In particular, the test uses a relative branch DWARF operation to
+# potentially cause an infinite loop, if the target reads are indeed
+# faked.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+# Choose suitable integer registers for the test.
+
+set dwarf_regnum 0
+
+if { [is_aarch64_target] } {
+    set regname x0
+} elseif { [is_aarch32_target]
+	   || [istarget "s390*-*-*" ]
+	   || [istarget "powerpc*-*-*"]
+	   || [istarget "rs6000*-*-aix*"] } {
+    set regname r0
+} elseif { [is_x86_like_target] } {
+    set regname eax
+} elseif { [is_amd64_regs_target] } {
+    set regname rax
+} else {
+    verbose "Skipping ${gdb_test_file_name}."
+    return
+}
+
+standard_testfile symbol_needs_eval.c ${gdb_test_file_name}-dw.S
+
+if [prepare_for_testing "failed to prepare" $testfile $srcfile {debug}] {
+    return
+}
+
+set int_size [get_sizeof "int" -1]
+
+# Make some DWARF for the test.
+
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    global dwarf_regnum regname int_size
+
+    set exec_mask_var [gdb_target_symbol exec_mask]
+
+    cu {} {
+	DW_TAG_compile_unit {
+	    {DW_AT_name symbol_needs_eval.c}
+	    {DW_AT_comp_dir /tmp}
+	} {
+	    declare_labels int_type_label
+
+	    # define int type
+	    int_type_label: DW_TAG_base_type {
+		{DW_AT_name "int"}
+		{DW_AT_encoding @DW_ATE_signed}
+		{DW_AT_byte_size $int_size DW_FORM_sdata}
+	    }
+
+	    # add info for variable exec_mask
+	    DW_TAG_variable {
+		{DW_AT_name exec_mask}
+		{DW_AT_type :$int_type_label}
+		{DW_AT_location {
+		    DW_OP_addr $exec_mask_var
+		} SPECIAL_expr}
+		{external 1 flag}
+	    }
+
+	    # add info for subprogram main
+	    DW_TAG_subprogram {
+		{MACRO_AT_func { main }}
+		{DW_AT_frame_base {
+		    DW_OP_regx $dwarf_regnum
+		} SPECIAL_expr}
+	    } {
+		# define artificial variable a
+		DW_TAG_variable {
+		    {DW_AT_name a}
+		    {DW_AT_type :$int_type_label}
+		    {DW_AT_location {
+			DW_OP_lit1
+			DW_OP_addr $exec_mask_var
+			DW_OP_deref_size $int_size
+
+			# jump to DW_OP_fbreg
+			DW_OP_skip 4
+			DW_OP_drop
+			DW_OP_fbreg 0
+			DW_OP_dup
+			DW_OP_lit0
+			DW_OP_eq
+
+			# conditional jump to DW_OP_drop
+			DW_OP_bra -9
+			DW_OP_stack_value
+		    } SPECIAL_expr}
+		    {external 1 flag}
+		}
+	    }
+	}
+    }
+}
+
+if { [prepare_for_testing ${testfile}.exp ${testfile} \
+	  [list $srcfile $asm_file] {nodebug}] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+gdb_test_no_output "set var \$$regname = 2" "init reg to 2"
+gdb_test_no_output "set var exec_mask = 0" "init exec_mask to 0"
+
+gdb_test "print/d a" " = 2" "a == 2"

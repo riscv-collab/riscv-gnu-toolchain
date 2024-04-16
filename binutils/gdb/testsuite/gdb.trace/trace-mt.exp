@@ -1,0 +1,134 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "trace-support.exp"
+
+standard_testfile
+set executable $testfile
+set expfile $testfile.exp
+
+# Some targets have leading underscores on assembly symbols.
+set additional_flags [gdb_target_symbol_prefix_flags]
+
+require gdb_trace_common_supports_arch
+
+if { [gdb_compile_pthreads "$srcdir/$subdir/$srcfile" $binfile \
+	  executable [list debug $additional_flags] ] != "" } {
+    # gdb_compile_pthreads provides an appropriate unsupported message.
+    return -1
+}
+
+clean_restart ${testfile}
+
+if ![runto_main] {
+    return -1
+}
+
+if ![gdb_target_supports_trace] {
+    unsupported "target does not support trace"
+    return -1
+}
+
+proc step_over_tracepoint { trace_type } \
+{with_test_prefix "step over $trace_type" \
+{
+    global executable
+    global hex
+
+    # Start with a fresh gdb.
+    clean_restart ${executable}
+    # Make sure inferior is running in all-stop mode.
+    gdb_test_no_output "set non-stop 0"
+    if ![runto_main] {
+	return -1
+    }
+
+    gdb_test "break set_point1" "Breakpoint \[0-9\] at $hex: file.*"
+    gdb_test "continue" "Continuing\\.\[ \r\n\]+.*Breakpoint.*" "continue to set_point1"
+
+    gdb_test "${trace_type} *\$pc" "\(Fast t|T\)racepoint \[0-9\] at $hex: file.*"
+    gdb_test_no_output "tstart"
+
+    gdb_test "stepi" ".*"
+    gdb_test_no_output "tstop"
+}}
+
+# Set breakpoint and tracepoint at the same address.
+
+proc break_trace_same_addr { trace_type option } \
+{with_test_prefix "$trace_type $option" \
+{
+    global executable
+    global hex
+
+    # Start with a fresh gdb.
+    clean_restart ${executable}
+    if ![runto_main] {
+	return -1
+    }
+
+    gdb_test_no_output "set breakpoint always-inserted ${option}"
+
+    gdb_breakpoint "end" qualified
+
+    gdb_test "break set_point1" "Breakpoint \[0-9\] at $hex: file.*"
+    gdb_test "${trace_type} set_point1" "\(Fast t|T\)racepoint \[0-9\] at $hex: file.*"
+
+    gdb_test_no_output "tstart"
+
+    gdb_test "continue" "Continuing\\.\[ \r\n\]+.*Breakpoint.*" "continue to set_point1 1"
+    gdb_test "continue" "Continuing\\.\[ \r\n\]+.*Breakpoint.*" "continue to set_point1 2"
+
+    gdb_test "continue" "Continuing\\.\[ \r\n\]+.*Breakpoint.*" "continue to end"
+    gdb_test_no_output "tstop"
+
+    gdb_test "tfind" "Found trace frame 0, tracepoint .*" "tfind frame 0"
+    gdb_test "tfind" "Found trace frame 1, tracepoint .*" "tfind frame 1"
+
+    gdb_test "tfind" "Target failed to find requested trace frame\\..*"
+}}
+
+foreach break_always_inserted { "on" "off" } {
+    break_trace_same_addr "trace" ${break_always_inserted}
+}
+
+step_over_tracepoint "trace"
+
+require allow_shlib_tests
+
+set libipa [get_in_proc_agent]
+set remote_libipa [gdb_load_shlib $libipa]
+
+# Compile test case again with IPA.
+if { [gdb_compile_pthreads "$srcdir/$subdir/$srcfile" $binfile \
+	  executable [list debug $additional_flags shlib=$libipa] ] != "" } {
+    untested "failed to compile with in-process agent library"
+    return -1
+}
+clean_restart ${executable}
+
+if ![runto_main] {
+    return 0
+}
+
+gdb_reinitialize_dir $srcdir/$subdir
+if { [gdb_test "info sharedlibrary" ".*${remote_libipa}.*" "IPA loaded"] != 0 } {
+    untested "could not find IPA lib loaded"
+} else {
+    foreach break_always_inserted { "on" "off" } {
+	break_trace_same_addr "ftrace" ${break_always_inserted}
+    }
+
+    step_over_tracepoint "ftrace"
+}

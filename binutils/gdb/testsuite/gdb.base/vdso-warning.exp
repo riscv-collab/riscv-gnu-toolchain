@@ -1,0 +1,82 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that on Linux, we don't warn about not finding the vDSO.  E.g.:
+#
+#   warning: Could not load shared library symbols for linux-vdso.so.1.
+
+standard_testfile
+
+if { [prepare_for_testing "failed to prepare" ${testfile} $srcfile] } {
+    return -1
+}
+
+with_test_prefix "setup" {
+    gdb_breakpoint "main"
+
+    # At least some versions of Fedora/RHEL glibc have local patches that
+    # hide the vDSO.  This lines re-exposes it.  See PR libc/13097,
+    # comment 2.  There's no support for passing environment variables in
+    # the remote protocol, but that's OK -- if we're testing against a
+    # glibc that doesn't list the vDSO without this, the test should still
+    # pass.
+    gdb_test_no_output "set environment LD_DEBUG=unused"
+}
+
+proc test_no_vdso {command} {
+    global srcfile
+    global gdb_prompt
+
+    set message "startup"
+    gdb_test_multiple "$command" $message {
+	-re "Could not load shared library symbols .*\r\n$gdb_prompt $" {
+	    fail $message
+	}
+	-re "main \\(\\) at .*$srcfile.*\r\n$gdb_prompt $" {
+	    pass $message
+	}
+    }
+
+    # Extra testing in case the warning changes and we miss updating
+    # the above.
+    set test "no vdso without symbols is listed"
+    gdb_test_multiple "info shared" $test {
+	-re "No\[^\r\n\]+linux-(vdso|gate).*$gdb_prompt $" {
+	    fail $test
+	}
+	-re "$gdb_prompt $" {
+	    pass $test
+	}
+    }
+}
+
+# First, try a live process.
+with_test_prefix "run" {
+    gdb_run_cmd
+    test_no_vdso ""
+}
+
+# Now, dump a core, and reload it.
+with_test_prefix "core" {
+    set corefile [standard_output_file $testfile.core]
+    set core_supported [gdb_gcore_cmd "$corefile" "save a corefile"]
+    if {!$core_supported} {
+	return -1
+    }
+
+    clean_restart ${testfile}
+
+    test_no_vdso "core-file $corefile"
+}

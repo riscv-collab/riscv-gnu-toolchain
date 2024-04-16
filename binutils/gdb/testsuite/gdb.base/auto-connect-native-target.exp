@@ -1,0 +1,192 @@
+# Copyright 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test "set auto-connect-native-target off" and "target native" on
+# native targets.
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+require have_native_target
+
+# Returns the topmost target pushed on the target stack.  TEST is used
+# as test message.
+
+proc get_topmost_target {test} {
+    global gdb_prompt
+
+    set topmost "unknown"
+
+    gdb_test_multiple "maint print target-stack" $test {
+	-re "The current target stack is:\r\n  - (\[^ \]+) .*$gdb_prompt $" {
+	    set topmost $expect_out(1,string)
+	    pass $test
+	}
+    }
+
+    return $topmost
+}
+
+set topmost [get_topmost_target "check whether a target is already connected"]
+
+# Testing against the extended-remote board, for example?
+if { $topmost != "exec" } {
+    unsupported "already connected to target $topmost."
+    return
+}
+
+# Check which target this board connects to.  If testing with a native
+# target board, this should cause the native target to auto connect.
+if {![runto_main]} {
+    return 0
+}
+
+# Returns true if the native target is pushed on the target stack.
+# TEST is used as test message.
+
+proc check_native_target {test} {
+    global gdb_prompt
+
+    gdb_test_multiple "maint print target-stack" $test {
+	-re " native .*$gdb_prompt $" {
+	    pass $test
+	    return 1
+	}
+	-re "$gdb_prompt $" {
+	    pass $test
+	}
+    }
+
+    return 0
+}
+
+# Testing against a remote board, for example?
+if { ![check_native_target "check whether board tests the native target"] } {
+    unsupported "not testing the native target."
+    return
+}
+
+# Kill program.  TEST is used as test message.
+
+proc kill_program {test} {
+    global gdb_prompt
+
+    gdb_test_multiple "kill" $test {
+	-re "Kill the program being debugged\\? .y or n. $" {
+	    send_gdb "y\n"
+	    exp_continue
+	}
+	-re "$gdb_prompt $" {
+	    pass $test
+	}
+    }
+}
+
+# Kill the program.  This should pop the target.  The "start" test
+# below will fail otherwise.
+kill_program "kill"
+
+# Now prevent the native target from auto connecting.
+gdb_test_no_output "set auto-connect-native-target off"
+
+# Commands that rely on the native target auto-connecting should no longer work.
+gdb_test "start" "Don't know how to run.*" "start no longer works"
+
+# Explicitly connect to the native target.
+gdb_test "target native" \
+    "Done.  Use the \"run\" command to start a process.*" \
+    "explicitly connect to the native target"
+
+proc test_native_target_remains_pushed {} {
+    gdb_test "maint print target-stack"  \
+	"The current target stack is:\r\n  .* native .* exec .*" \
+	"native target remains pushed"
+}
+
+# Test a set of "inferior gone" scenarios, making sure the target
+# remains pushed.
+
+with_test_prefix "kill" {
+    gdb_test "start" "main.*"
+
+    kill_program "kill"
+
+    test_native_target_remains_pushed
+}
+
+with_test_prefix "detach" {
+    gdb_test "start" "main.*"
+
+    set test "detach"
+    gdb_test_multiple $test $test {
+	-re "Detach the program being debugged\\? .y or n. $" {
+	    send_gdb "y\n"
+	    exp_continue
+	}
+	-re "$gdb_prompt $" {
+	    pass $test
+	}
+    }
+
+    test_native_target_remains_pushed
+}
+
+with_test_prefix "run to exit" {
+    gdb_test "start" "Temporary breakpoint .* main .*"
+
+    gdb_test "c" "$inferior_exited_re normally.*"
+
+    test_native_target_remains_pushed
+}
+
+# Now test disconnecting.  Commands that rely on the native target
+# auto-connecting should no longer work (again) after this.
+
+with_test_prefix "disconnect" {
+    gdb_test "start" "Temporary breakpoint .* main .*"
+
+    set test "disconnect"
+    gdb_test_multiple $test $test {
+	-re "A program is being debugged already.* .y or n. $" {
+	    send_gdb "y\n"
+	    exp_continue
+	}
+	-re "$gdb_prompt $" {
+	    pass $test
+	}
+    }
+
+    set topmost \
+	[get_topmost_target "check whether the target is no longer connected"]
+
+    set test "no longer connected to a target"
+    if { $topmost == "exec" } {
+	pass $test
+    } else {
+	fail $test
+    }
+
+    gdb_test "start" "Don't know how to run.*" "start no longer works"
+}
+
+# Reenable auto-connecting to the native target.  Plain "start" should
+# start working again.
+gdb_test_no_output "set auto-connect-native-target on"
+
+gdb_test "start" "Temporary breakpoint .* main .*" \
+    "start auto-connects to the native target after reenabling auto-connect"

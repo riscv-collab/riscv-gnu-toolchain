@@ -1,0 +1,102 @@
+# Copyright 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# Test instruction record for PowerPC, ISA 2.06.
+#
+
+# The basic flow of the record tests are:
+#    1) Stop before executing the instructions of interest.  Record
+#       the initial value of the registers that the instruction will
+#       change, i.e. the destination register.
+#    2) Execute the instructions.  Record the new value of the
+#       registers that changed.
+#    3) Reverse the direction of the execution and execute back to
+#       just before the instructions of interest.  Record the final
+#       value of the registers of interest.
+#    4) Check that the initial and new values of the registers are
+#       different, i.e. the instruction changed the registers as expected.
+#    5) Check that the initial and final values of the registers are
+#       the same, i.e. gdb record restored the registers to their
+#       original values.
+
+standard_testfile
+
+set gen_src record_test_isa_2_06.c
+set executable record_test_isa_2_06
+set options [list debug]
+
+require {istarget "powerpc*"}
+
+if {[build_executable "failed to prepare" $executable $srcfile $options] == -1} {
+    return -1
+}
+
+clean_restart $executable
+
+if {![runto_main]} {
+    untested "could not run to main"
+    return
+}
+
+gdb_test_no_output "record"
+
+###### Test: Test an ISA 2.06 load (lxvd2x) and square root instruction
+###### (xvsqrtsp).  The load instruction will load vs1.  The sqrt instruction
+###### will put its result into vs0.
+
+set stop1 [gdb_get_line_number "stop 1"]
+set stop2 [gdb_get_line_number "stop 2"]
+
+gdb_test "break $stop1" ".*Breakpoint .*" "about to execute test"
+gdb_test "continue"  ".*Breakpoint .*" "at stop 1"
+
+# Record the initial values in vs0, vs1.
+set vs0_initial [capture_command_output "info register vs0" ""]
+set vs1_initial [capture_command_output "info register vs1" ""]
+
+gdb_test "break $stop2" ".*Breakpoint .*" "executed lxvd2x, xvsqrtsp"
+gdb_test "continue"  ".*Breakpoint .*" "at stop 2"
+
+# Record the new values of vs0 and vs1.
+set vs0_new [capture_command_output "info register vs0" ""]
+set vs1_new [capture_command_output "info register vs1" ""]
+
+# Reverse the execution direction.
+gdb_test_no_output "set exec-direction reverse"
+gdb_test "break $stop1" ".*Breakpoint .*" "un executed lxvd2x, xvsqrtsp"
+
+# Execute in reverse to before the lxvd2x instruction.
+gdb_test "continue"  ".*Breakpoint.*" "at stop 1 in reverse"
+
+# Record the final values of vs0, vs1.
+set vs0_final [capture_command_output "info register vs0" ""]
+set vs1_final [capture_command_output "info register vs1" ""]
+
+# Check initial and new of vs0 are different.
+gdb_assert [string compare $vs0_initial $vs1_new] \
+    "check vs0 initial versus vs0 new"
+
+# Check initial and new of vs1 are different.
+gdb_assert [string compare $vs1_initial $vs1_new] \
+    "check vs0 initial versus vs1 new"
+
+# Check initial and final are the same.
+gdb_assert ![string compare $vs0_initial $vs0_final] \
+    "check vs0 initial versus vs0 final"
+
+# Check initial and final are the same.
+gdb_assert ![string compare $vs1_initial $vs1_final] \
+    "check vs1 initial versus vs1 final"
+

@@ -1,0 +1,94 @@
+# Copyright (C) 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test the gdb.RemoteTargetConnection.send_packet API.  This is done
+# by connecting to a remote target and fetching the thread list in two
+# ways, first, we manually send the packets required to read the
+# thread list using gdb.TargetConnection.send_packet, then we compare
+# the results to the thread list using the standard API calls.
+
+load_lib gdb-python.exp
+load_lib gdbserver-support.exp
+
+standard_testfile
+
+require allow_gdbserver_tests allow_python_tests
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+    return -1
+}
+
+# Make sure we're disconnected, in case we're testing with an
+# extended-remote board, therefore already connected.
+gdb_test "disconnect" ".*"
+
+gdbserver_run ""
+
+gdb_breakpoint "breakpt"
+gdb_continue_to_breakpoint "breakpt"
+
+# Source the python script.
+set remote_python_file [gdb_remote_download host \
+			    ${srcdir}/${subdir}/${testfile}.py]
+gdb_test "source $remote_python_file" "Sourcing complete\\." \
+    "source ${testfile}.py script"
+
+# The test is actually written in the Python script.  Run it now.
+gdb_test "python run_send_packet_test()" "Send packet test passed"
+
+# Check the string representation of a remote target connection.
+gdb_test "python print(gdb.selected_inferior().connection)" \
+    "<gdb.RemoteTargetConnection num=$decimal, what=\".*\">"
+
+# Check to see if there's any auxv data for this target.
+gdb_test_multiple "info auxv" "" {
+    -re -wrap "The program has no auxiliary information now\\. " {
+	set skip_auxv_test true
+    }
+    -re -wrap "0\\s+AT_NULL\\s+End of vector\\s+0x0" {
+	set skip_auxv_test false
+    }
+}
+
+if { ! $skip_auxv_test } {
+    # Use 'maint packet' to fetch the auxv data.
+    set reply_data ""
+    gdb_test_multiple "maint packet qXfer:auxv:read::0,1000" "" {
+	-re "sending: \"qXfer:auxv:read::0,1000\"\r\n" {
+	    exp_continue
+	}
+	-re -wrap "received: \"(.*)\"" {
+	    set reply_data $expect_out(1,string)
+	}
+    }
+
+    # Escape any backslash characters in the output, so we can safely
+    # pass a string through to Python.
+    set reply_data [string map {\\ \\\\} $reply_data]
+    gdb_assert { ![string equal "$reply_data" ""] }
+
+    # Run the test, fetches the auxv data in Python and confirm it
+    # matches the expected results.
+    gdb_test "python run_auxv_send_packet_test(\"$reply_data\")" \
+	"auxv send packet test passed" \
+	"call python run_auxv_send_packet_test function"
+}
+
+set sizeof_global_var [get_valueof "/d" "sizeof(global_var)" "UNKNOWN"]
+if { $sizeof_global_var == 4 } {
+    gdb_test_no_output "set debug remote 1"
+    gdb_test "python run_set_global_var_test()" \
+	"set global_var test passed"
+}

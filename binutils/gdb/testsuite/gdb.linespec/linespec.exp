@@ -1,0 +1,215 @@
+# Copyright 2011-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Tests of ambiguous linespecs.
+
+standard_testfile lspec.cc
+
+set exefile $testfile
+
+set baseone base/one/thefile.cc
+set basetwo base/two/thefile.cc
+
+require allow_cplus_tests
+
+if {[prepare_for_testing "failed to prepare" $exefile \
+	 [list $srcfile $baseone $basetwo] \
+	 {debug nowarnings c++}]} {
+    return -1
+}
+
+gdb_test_no_output "set multiple-symbols all" \
+    "set multiple-symbols to all for linespec tests"
+
+set l1 [gdb_get_line_number "thefile breakpoint" $baseone]
+set l2 [gdb_get_line_number "thefile breakpoint" $basetwo]
+
+if {$l1 != $l2} {
+    error "somebody incompatibly modified the source files needed by linespec.exp"
+}
+
+gdb_test_no_output "set breakpoint pending off" \
+    "disable pending breakpoints for linespec tests"
+
+# Copying files to a remote host loses the directory prefix during
+# compilation.
+if { [is_remote host] } {
+    untested "breakpoints using dir/file:line"
+} else {
+    gdb_test "break one/thefile.cc:$l1" \
+        "Breakpoint $decimal at $hex: file .*thefile.cc, line $l1." \
+        "single-location break using dir/file:line"
+
+    gdb_test "clear one/thefile.cc:$l1" \
+        "Deleted breakpoint $decimal *" \
+        "clear breakpoint using dir/file:line"
+
+    if { [readline_is_used] } {
+	# There are functions named 'twodup' in both source files.
+	# Both should be found if we restrict the linespec to the
+	# ambiguous "thefile.cc" source filename.  Check both
+	# completion and setting the breakpoint.
+	set tst "complete unique function name in two source files"
+	send_gdb "break thefile.cc:t\t"
+	gdb_test_multiple "" $tst {
+	    -re "break thefile.cc:twodup\\(\\) " {
+		pass $tst
+
+		send_gdb "\n"
+		gdb_test "" \
+		    "Breakpoint $decimal at $hex: thefile.cc:twodup\\(\\). \[(\]2 locations\[)\]" \
+		    "set break at unique function name in two source files"
+	    }
+	}
+
+	# Check both completing and setting a breakpoint on a linespec
+	# with a source component, where there's more than one source
+	# file with the same basename.  We should find the functions
+	# in all matching sources -- one/thefile.cc and
+	# two/thefile.cc.  The "one" file has "z1()", while the "two"
+	# file has "z2()".
+	set tst "complete non-unique function name in two source files"
+	send_gdb "break thefile.cc:z\t"
+	gdb_test_multiple "" $tst {
+	    -re "break thefile.cc:z\\\x07" {
+		send_gdb "\t"
+		gdb_test_multiple "" $tst {
+		    -re "\r\nz1\\(\\)\[ \t\]+z2\\(\\)\[ \t\]+\r\n$gdb_prompt " {
+			pass $tst
+
+			send_gdb "\n"
+			gdb_test "" \
+			    "Function \"z\" not defined in \"thefile.cc\"." \
+			    "set break at non-unique function name in two source files"
+		    }
+		}
+	    }
+	}
+
+	# Now check that disambiguating the source path makes GDB only
+	# match the symbols in that file.  "z" should now have a
+	# unique completion to "z1()", and setting the breakpoint
+	# should find only one location.
+	set tst "complete unique function name in disambiguated source file"
+	send_gdb "break one/thefile.cc:z\t"
+	gdb_test_multiple "" $tst {
+	    -re "break one/thefile.cc:z1\\(\\) " {
+		pass $tst
+
+		send_gdb "\n"
+		gdb_test "" \
+		    "Breakpoint $decimal at $hex: file .*thefile.cc, line \[^\r\n\]*" \
+		    "set break at unique function name in disambiguated source file"
+		}
+	}
+
+	# Check that using a non-existing source path does not confuse
+	# GDB.  It should not match any symbol.
+	set dir_file "one/thefile.cc"
+	set non_existing "/some/non-existing/absolute/path/prefix/$dir_file"
+	set non_existing_re [string_to_regexp $non_existing]
+
+	set tst "complete functions in non-existing absolute path"
+	send_gdb "break $non_existing:\t"
+	gdb_test_multiple "" $tst {
+	    -re "break $non_existing_re:\\\x07" {
+		send_gdb "\t\t"
+		gdb_test_multiple "" $tst {
+		    -re "^\\\x07\\\x07" {
+			pass $tst
+
+			# There's a function called 'twodup' in each
+			# of the thefile.cc files.  Make sure none is
+			# picked.
+			send_gdb "twodup\n"
+			gdb_test "" \
+			    "No source file named $non_existing_re." \
+			    "set break in function in non-existing absolute path"
+		    }
+		}
+	    }
+	}
+    }
+}
+
+gdb_test "break thefile.cc:$l1" \
+    "Breakpoint $decimal at $hex: thefile.cc:$l1. \[(\]2 locations\[)\]" \
+    "multi-location break using file:line"
+
+gdb_test "break dupname" \
+    "Breakpoint $decimal at $hex: dupname. \[(\]2 locations\[)\]" \
+    "multi-location break using duplicate function name"
+
+gdb_test "break dupname:label" \
+    "Breakpoint $decimal at $hex: dupname:label. \[(\]2 locations\[)\]" \
+    "multi-location break using duplicate function name and label"
+
+# Testing if the "condition" command completes only the breakpoints,
+# not the locations.
+gdb_test "complete condition " "condition $decimal\r\ncondition $decimal\r\ncondition $decimal"
+
+# This is PR breakpoints/12856.
+gdb_test "break lspec.cc:nosuchfunction" \
+    "Function \"nosuchfunction\" not defined in \"lspec.cc\"." \
+    "set breakpoint on non-existent function"
+
+gdb_test "break NameSpace::overload" \
+    "Breakpoint \[0-9\]+ at $hex: NameSpace::overload. \[(\]3 locations\[)\]" \
+    "set breakpoint at all instances of NameSpace::overload"
+
+gdb_test "break lspec.cc:NameSpace::overload" \
+    "Breakpoint \[0-9\]+ at $hex: file .*lspec.cc, line 7." \
+    "set breakpoint at lspec.cc instance of NameSpace::overload"
+
+gdb_test "break lspec.cc:NameSpace::overload(double)" \
+    "Function \"NameSpace::overload\\(double\\)\" not defined in \"lspec.cc\"." \
+    "set breakpoint at non-existent lspec.cc instance of NameSpace::overload"
+
+gdb_test "break NameSpace::overload()" \
+    "Breakpoint \[0-9\]+ at $hex: file .*lspec.cc, line 7." \
+    "set breakpoint at specific instance of NameSpace::overload"
+
+# This should manage to set a breakpoint even though body.h does not
+# include all of the function in question.
+set line [gdb_get_line_number "body breakpoint no code" body.h]
+gdb_test "break body.h:$line" \
+    "Breakpoint \[0-9\]+.*" \
+    "set breakpoint in body.h"
+
+# This should only have a single location -- in f1.
+set line [gdb_get_line_number "f1 breakpoint" lspec.h]
+gdb_test "break lspec.h:$line" \
+    "Breakpoint \[0-9\]+ at $hex: file .*lspec.h, line $line." \
+    "set breakpoint in f1"
+
+#
+# Multi-inferior tests.
+#
+
+gdb_test "add-inferior" "Added inferior 2.*" \
+    "add inferior for linespec tests"
+
+gdb_test "inferior 2" "Switching to inferior 2 .*" \
+    "switch to inferior 2 for linespec tests"
+
+# Note that in particular this should not cause errors when re-setting
+# breakpoints.
+gdb_test "file $binfile" \
+    "Reading symbols from .*" \
+    "set the new inferior file for linespec tests"
+
+gdb_test "break -q main" \
+    "Breakpoint \[0-9\]+ at $hex: -qualified main. .2 locations." \
+    "set breakpoint at main in both inferiors"

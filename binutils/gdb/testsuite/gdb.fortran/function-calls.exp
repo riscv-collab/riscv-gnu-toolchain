@@ -1,0 +1,119 @@
+# Copyright 2019-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/> .
+
+# Exercise passing and returning arguments in Fortran. This test case
+# is based on the GNU Fortran Argument passing conventions.
+
+require allow_fortran_tests
+
+standard_testfile ".f90"
+
+if {[prepare_for_testing ${testfile}.exp ${testfile} ${srcfile} {debug f90}]} {
+    return -1
+}
+
+with_complaints 5 {
+    set cmd "maint expand-symtabs $srcfile"
+    set cmd_regexp [string_to_regexp $cmd]
+    set re_kfail [concat "During symbol reading:" \
+		      " unable to find array range"]
+    gdb_test_multiple $cmd "no complaints in srcfile" {
+	-re -wrap "$re_kfail.*" {
+	    kfail symtab/27388 $gdb_test_name
+	}
+        -re "^$cmd_regexp\r\n$gdb_prompt $" {
+	    pass $gdb_test_name
+	}
+    }
+}
+
+if {![runto [gdb_get_line_number "post_init"]]} {
+    return
+}
+
+# Use inspired by gdb.base/callfuncs.exp.
+gdb_test_no_output "set unwindonsignal on"
+
+# Baseline: function and subroutine call with no arguments.
+gdb_test "p no_arg()" " = .TRUE."
+gdb_test_no_output "call no_arg_subroutine()"
+
+# Argument class: literal, inferior variable, convenience variable,
+# function call return value, function.
+# Paragraph 3: Variables are passed by reference.
+gdb_test "p one_arg(.TRUE.)" " = .TRUE."
+gdb_test "p one_arg(untrue)" " = .FALSE."
+gdb_test_no_output "set \$var = .FALSE."
+gdb_test "p one_arg(\$var)" " = .FALSE."
+gdb_test "p one_arg(one_arg(.TRUE.))" " = .TRUE."
+gdb_test "p one_arg(one_arg(.FALSE.))" " = .FALSE."
+gdb_test_no_output "call run(no_arg_subroutine)"
+
+# Return: constant.
+gdb_test "p return_constant()" " = 17"
+# Return derived type and call a function in a module.
+gdb_test "p derived_types_and_module_calls::build_cart(7,8)" \
+	 " = \\\( x = 7, y = 8 \\\)"
+
+# Two hidden arguments. 1. returned string and 2. string length.
+# Paragraph 1.
+gdb_test "p return_string(returned_string_debugger, 40)" ""
+gdb_test "p returned_string_debugger" "'returned in hidden first argument       '"
+
+# Argument type: real(kind=4), complex, array, pointer, derived type,
+# derived type with allocatable, nested derived type.
+# Paragraph 4: pointer.
+gdb_test "p pointer_function(int_pointer)" " = 87"
+# Paragraph 4: array.
+gdb_test "call array_function(integer_array)" " = 17"
+gdb_test "p derived_types_and_module_calls::pass_cart(c)" \
+	 " = \\\( x = 2, y = 4 \\\)"
+# Allocatable elements in a derived type. Technical report ISO/IEC 15581.
+gdb_test "p derived_types_and_module_calls::pass_cart_nd(c_nd)" " = 4"
+gdb_test "p derived_types_and_module_calls::pass_nested_cart(nested_c)" \
+	  "= \\\( d = \\\( x = 1, y = 2 \\\), z = 3 \\\)"
+# Result within some tolerance.
+gdb_test "p real4_argument(real4)" " = 3.${decimal}"
+
+# Paragraph 2. Complex argument and return.
+gdb_test "p complex_argument(fft)" " = \\\(2.${decimal},3.${decimal}\\\)"
+
+# Function with optional arguments.
+# Paragraph 10: Option reference arguments.
+gdb_test "p sum_some(1,2,3)" " = 6"
+
+# There is currently no mechanism to call a function without all
+# optional parameters present.
+setup_kfail "gdb/24147" *-*-*
+gdb_test "p sum_some(1,2)" " = 3"
+
+# Paragraph 10: optional value arguments. There is insufficient DWARF
+# information to reliably make this case work.
+if { [test_compiler_info {gfortran-*} f90] } {
+    setup_kfail "gdb/24305" *-*-*
+}
+gdb_test "p one_arg_value(10)" " = 10"
+
+# DW_AT_artificial formal parameters must be passed manually. This
+# assert will fail if the length of the string is wrapped in a pointer.
+# Paragraph 7: Character type.
+gdb_test "p hidden_string_length('arbitrary string', 16)" " = 16"
+
+# Several arguments.
+gdb_test "p several_arguments(2, 3, 5)" " = 10"
+gdb_test "p mix_of_scalar_arguments(5, .TRUE., 3.5)" " = 9"
+
+# Calling other functions: Recursive call.
+gdb_test "p fibonacci(6)" " = 8"

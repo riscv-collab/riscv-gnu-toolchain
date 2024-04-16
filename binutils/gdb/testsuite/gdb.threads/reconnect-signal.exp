@@ -1,0 +1,84 @@
+# Copyright 2013-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+# Test that disconnecting and reconnecting doesn't lose signals.
+
+set gdbserver_reconnect_p 1
+if { [info proc gdb_reconnect] == "" } {
+    unsupported "requires gdbserver reconnect"
+    return 0
+}
+
+standard_testfile
+set executable ${testfile}
+
+if { [gdb_compile_pthreads \
+	  "${srcdir}/${subdir}/${srcfile}" \
+	  "${binfile}" \
+	  executable {debug}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+clean_restart $executable
+
+if {![runto_main]} {
+    return 0
+}
+
+gdb_test "continue" "signal SIGUSR1.*" "continue to signal"
+
+# Check that it's thread 2 that is selected.
+gdb_test "info threads" "\\* 2 .*" "thread 2 is selected"
+
+set msg "save \$pc after signal"
+set saved_pc ""
+gdb_test_multiple "print/x \$pc" $msg {
+    -re "\\\$$decimal = (\[^\r\n\]*)\r\n$gdb_prompt $" {
+	set saved_pc $expect_out(1,string)
+	pass $msg
+    }
+}
+
+# Switch to the other thread.
+gdb_test "thread 1" "thread 1.*" "switch to thread 1"
+
+# Force GDB to select thread 1 on the remote end as well.
+gdb_test "print/x \$pc"
+
+gdb_test "disconnect" "Ending remote debugging\\." "disconnect after signal"
+
+set test "reconnect after signal"
+
+set res [gdb_reconnect]
+if { [lindex $res 0] == 0 } {
+    pass $test
+} else {
+    fail $test
+    return 0
+}
+
+# Check that thread 2 is re-selected.
+gdb_test "info threads" "\\* 2 .*" "thread 2 is selected on reconnect"
+
+# Check that the program is still alive, and stopped in the same spot.
+gdb_test "print/x \$pc" "\\\$$decimal = $saved_pc" "check \$pc after signal"
+
+# Check that we didn't lose the signal.
+gdb_test "info program" "stopped with signal SIGUSR1,.*"
+
+# Nor does the program.
+gdb_test "b handle" "Breakpoint .*" "set breakpoint in signal handler"
+gdb_test "continue" "handle.*" "continue to signal handler"

@@ -1,0 +1,106 @@
+# Copyright (C) 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test script checks how GDB handles exiting with ctrl-d.
+
+# Start GDB, and then close it by sendig ctrl-d.  Check that the
+# string 'quit' appears where we expect it too.
+proc run_test {} {
+    clean_restart
+
+    # The gdb_start call above swallows the GDB prompt, and we want
+    # the prompt for the test below.
+    #
+    # Send a newline character, which will cause GDB to redisplay the
+    # prompt.
+    #
+    # We then consume the newline characters, and then make use of
+    # expect's -notransfer option to ensure that the prompt has been
+    # displayed, but to leave the prompt in expect's internal buffer.
+    # This is important as the following test wants to check how GDB
+    # displays the 'quit' message relative to the prompt, this is much
+    # easier to do if the prompt is still in expect's buffers.
+    #
+    # The other special thing we do here is avoid printing a 'PASS'
+    # result.  The reason for this is so that the GDB output in the
+    # log file will match what a user should see, this makes it much
+    # easier to debug issues.  Obviously we could print a 'PASS' here
+    # as the text printed by expect is not considered part of GDB's
+    # output, so the pattern matching will work just fine... but, the
+    # log file becomes much harder to read.
+    send_gdb "\n"
+    gdb_test_multiple "" "discard newline" {
+	-re "^\r\n" {
+	    exp_continue
+	}
+	-notransfer -re "^\[^\n\]*$::gdb_prompt $" {
+	}
+    }
+
+    # Send GDB a ctrl-d.  Check that we see the 'quit' string in the
+    # expected place.
+    send_gdb "\004"
+    gdb_test_multiple "" "close GDB with eof" {
+	-re "$::gdb_prompt \[^\n\]*\r\[^\n\]*quit" {
+	    fail "$gdb_test_name (misplaced \\r)"
+	}
+	-re "$::gdb_prompt (?:\[^\n\]*\r)?\[^\n\]*\r\nquit\r\n" {
+	    # For versions of readline that don't include the
+	    # RL_STATE_EOF patch, then the 'quit' is printed on the
+	    # subsequent line.
+	    kfail gdb/28833 "$gdb_test_name (older version of readline)"
+	}
+	-re "$::gdb_prompt quit\[^\n\]*\r\n\[^\n\]*\r\n$" {
+	    # There was a bug where GDB would print an extra blank
+	    # line after the 'quit', this catches that case.
+	    fail $gdb_test_name
+	}
+       -re "$::gdb_prompt \[^\n\r\]*quit\[^\n\]*\r\n\[^\n\]*$" {
+	    pass $gdb_test_name
+	}
+	eof {
+	    fail "$gdb_test_name (missed the prompt)"
+	}
+    }
+}
+
+with_test_prefix "default" {
+    run_test
+}
+
+save_vars { env(TERM) } {
+    setenv TERM ansi
+
+    with_test_prefix "with non-dump terminal" {
+	run_test
+
+	save_vars { env(INPUTRC) } {
+
+	    # Create an inputrc file that turns bracketed paste mode
+	    # on.  This is usually turned off (see lib/gdb.exp), but
+	    # for the next test we want to see what happens with this
+	    # on.
+	    set inputrc [standard_output_file inputrc]
+	    set fd [open "$inputrc" w]
+	    puts $fd "set enable-bracketed-paste on"
+	    close $fd
+
+	    setenv INPUTRC "$inputrc"
+	    with_test_prefix "with bracketed-paste-mode on" {
+		run_test
+	    }
+	}
+    }
+}

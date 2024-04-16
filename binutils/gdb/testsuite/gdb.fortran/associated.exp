@@ -1,0 +1,86 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/> .
+
+# Testing GDB's implementation of ASSOCIATED keyword.
+
+require allow_fortran_tests
+
+standard_testfile ".f90"
+load_lib fortran.exp
+
+if {[prepare_for_testing ${testfile}.exp ${testfile} ${srcfile} \
+	 {debug f90}]} {
+    return -1
+}
+
+if ![fortran_runto_main] {
+    return -1
+}
+
+gdb_breakpoint [gdb_get_line_number "Test Breakpoint"]
+gdb_breakpoint [gdb_get_line_number "Final Breakpoint"]
+
+# We place a limit on the number of tests that can be run, just in
+# case something goes wrong, and GDB gets stuck in an loop here.
+set found_final_breakpoint false
+set test_count 0
+while { $test_count < 500 } {
+    with_test_prefix "test $test_count" {
+	incr test_count
+
+	gdb_test_multiple "continue" "continue" {
+	    -re -wrap "! Test Breakpoint" {
+		# We can run a test from here.
+	    }
+	    -re -wrap "! Final Breakpoint" {
+		# We're done with the tests.
+		set found_final_breakpoint true
+	    }
+	}
+
+	if ($found_final_breakpoint) {
+	    break
+	}
+
+	# First grab the expected answer.
+	set answer [get_valueof "" "answer" "**unknown**"]
+
+	# Now move up a frame and figure out a command for us to run
+	# as a test.
+	set command ""
+	gdb_test_multiple "up" "up" {
+	    -re -wrap "\r\n\[0-9\]+\[ \t\]+call test_associated \\((\[^\r\n\]+)\\)" {
+		set command $expect_out(1,string)
+	    }
+	}
+
+	gdb_assert { ![string equal $command ""] } "found a command to run"
+
+	gdb_test "p $command" " = $answer"
+    }
+}
+
+# Ensure we reached the final breakpoint.  If more tests have been added
+# to the test script, and this starts failing, then the safety 'while'
+# loop above might need to be increased.
+gdb_assert {$found_final_breakpoint} "ran all compiled in tests"
+
+# Now perform the final tests.  These should all be error condition
+# checks, for things that can't be compiled into the test source file.
+gdb_test "p associated (array_1d_p, an_integer)" \
+    "arguments to associated must be of same type and kind"
+
+gdb_test "p associated (an_integer_p, a_real)" \
+    "arguments to associated must be of same type and kind"

@@ -1,0 +1,465 @@
+#   Copyright 1997-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test relies on checking follow-fork output. Do not run if gdb debug is
+# enabled as it will be redirected to the log.
+require !gdb_debug_enabled
+
+standard_testfile
+
+if {[build_executable "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+# Restart GDB and run the inferior to main.  Return 1 on success, 0 on failure.
+
+proc setup {} {
+    clean_restart $::testfile
+
+    if { ![runto_main] } {
+	return 0
+    }
+
+    return 1
+}
+
+# Check that fork catchpoints are supported, as an indicator for whether
+# fork-following is supported.  Return 1 if they are, else 0.
+
+proc_with_prefix check_fork_catchpoints {} {
+  global gdb_prompt
+
+  if { ![setup] } {
+      return
+  }
+
+  # Verify that the system supports "catch fork".
+  gdb_test "catch fork" "Catchpoint \[0-9\]* \\(fork\\)" "insert first fork catchpoint"
+  set has_fork_catchpoints 0
+  gdb_test_multiple "continue" "continue to first fork catchpoint" {
+    -re ".*Your system does not support this type\r\nof catchpoint.*$gdb_prompt $" {
+      unsupported "continue to first fork catchpoint"
+    }
+    -re ".*Catchpoint.*$gdb_prompt $" {
+      set has_fork_catchpoints 1
+      pass "continue to first fork catchpoint"
+    }
+  }
+
+  return $has_fork_catchpoints
+}
+
+# Test follow-fork to ensure that the correct process is followed, that
+# the followed process stops where it is expected to stop, that processes
+# are detached (or not) as expected, and that the inferior list has the
+# expected contents after following the fork.  WHO is the argument to
+# the 'set follow-fork-mode' command, DETACH is the argument to the 
+# 'set detach-on-fork' command, and CMD is the GDB command used to 
+# execute the program past the fork.  If the value of WHO or DETACH is
+# 'default', the corresponding GDB command is skipped for that test.
+# The value of CMD must be either 'next 2' or 'continue'.
+proc_with_prefix test_follow_fork { follow-fork-mode detach-on-fork cmd } {
+    global gdb_prompt
+    global srcfile
+    global testfile
+
+    # Start a new debugger session each time so defaults are legitimate.
+    if { ![setup] } {
+	return
+    }
+
+    # The "Detaching..." and "Attaching..." messages may be hidden by
+    # default.
+    gdb_test_no_output "set verbose"
+
+    # Set follow-fork-mode if we aren't using the default.
+    if {${follow-fork-mode} == "default"} {
+	set follow-fork-mode "parent"
+    } else {
+	gdb_test_no_output "set follow-fork ${follow-fork-mode}"
+    }
+
+    gdb_test "show follow-fork" \
+    "Debugger response to a program call of fork or vfork is \"${follow-fork-mode}\"."
+
+    # Set detach-on-fork mode if we aren't using the default.
+    if {${detach-on-fork} == "default"} {
+	set detach-on-fork "on"
+    } else {
+	gdb_test_no_output "set detach-on-fork ${detach-on-fork}"
+    }
+
+    gdb_test "show detach-on-fork" \
+	     "Whether gdb will detach.* fork is ${detach-on-fork}."
+
+    # Set a breakpoint after the fork if we aren't single-stepping
+    # past the fork.
+    if {$cmd == "continue"} {
+	set bp_after_fork [gdb_get_line_number "set breakpoint here"]
+	gdb_test "break ${srcfile}:$bp_after_fork" \
+		 "Breakpoint.*, line $bp_after_fork.*" \
+		 "set breakpoint after fork"
+    }
+
+    # Set up the output we expect to see after we run.
+    set expected_re ""
+    if {${follow-fork-mode} == "child"} {
+	set expected_re "\\\[Attaching after.* fork to.*"
+	if {${detach-on-fork} == "on"} {
+	    append expected_re "\\\[Detaching after fork from .*"
+	}
+	append expected_re "set breakpoint here.*"
+    } elseif {${follow-fork-mode} == "parent" && ${detach-on-fork} == "on"} {
+	set expected_re "\\\[Detaching after fork from .*set breakpoint here.*"
+    } else {
+	set expected_re ".*set breakpoint here.*"
+    }
+
+    # Test running past and following the fork, using the parameters
+    # set above.
+    gdb_test $cmd $expected_re "$cmd past fork"
+
+    # Check that we have the inferiors arranged correctly after
+    # following the fork.
+    set resume_unfollowed 0
+    if {${follow-fork-mode} == "parent" && ${detach-on-fork} == "on"} {
+
+	# Follow parent / detach child: the only inferior is the parent.
+	gdb_test "info inferiors" "\\* 1 .* process.*"
+
+    } elseif {${follow-fork-mode} == "parent" && ${detach-on-fork} == "off"} {
+
+	# Follow parent / keep child: two inferiors under debug, the
+	# parent is the current inferior.
+	gdb_test "info inferiors" "\\* 1 .*process.* 2 .*process.*"
+
+	gdb_test "inferior 2" "Switching to inferior 2 .*"
+	set resume_unfollowed 1
+
+    } elseif {${follow-fork-mode} == "child" && ${detach-on-fork} == "on"} {
+
+	# Follow child / detach parent: the child is under debug and is
+	# the current inferior.  The parent is listed but is not under
+	# debug.
+	gdb_test "info inferiors" " 1 .*<null>.*\\* 2 .*process.*"
+
+    } elseif {${follow-fork-mode} == "child" && ${detach-on-fork} == "off"} {
+
+	# Follow child / keep parent: two inferiors under debug, the
+	# child is the current inferior.
+	gdb_test "info inferiors" " 1 .*process.*\\* 2 .*process.*"
+
+	gdb_test "inferior 1" "Switching to inferior 1 .*"
+	set resume_unfollowed 1
+    }
+
+    if {$resume_unfollowed == 1} {
+	if {$cmd == "next 2"} {
+
+	    gdb_continue_to_end "continue unfollowed inferior to end"
+
+	} elseif {$cmd == "continue"} {
+
+	    gdb_continue_to_breakpoint \
+		"continue unfollowed inferior to bp" \
+		".* set breakpoint here.*"
+	}
+    }
+
+    # If we end up with two inferiors, verify that they each end up with their
+    # own program space.  Do this by setting a breakpoint, if we see two
+    # locations it means there are two program spaces.
+    if {${detach-on-fork} == "off" || ${follow-fork-mode} == "child"} {
+	set bpnum "<unset>"
+	gdb_test_multiple "break callee" "break callee" {
+	    -re -wrap "Breakpoint ($::decimal) at $::hex: callee\\. \\(2 locations\\)" {
+		set bpnum $expect_out(1,string)
+		pass $gdb_test_name
+	    }
+	}
+
+	set any {[^\r\n]+}
+
+	set loc1_inf1 "$bpnum\\.1 $any inf 1"
+	set loc1_inf2 "$bpnum\\.1 $any inf 2"
+
+	set loc2_inf1 "$bpnum\\.2 $any inf 1"
+	set loc2_inf2 "$bpnum\\.2 $any inf 2"
+
+	gdb_test "info breakpoints $bpnum" \
+	    "($loc1_inf1\r\n$loc2_inf2|$loc1_inf2\r\n$loc2_inf1)" \
+	    "info breakpoints"
+    }
+}
+
+set reading_in_symbols_re {(?:\r\nReading in symbols for [^\r\n]*)?}
+
+# Test the ability to catch a fork, specify that the child be
+# followed, and continue.  Make the catchpoint permanent.
+
+proc_with_prefix catch_fork_child_follow {second_inferior} {
+    global gdb_prompt
+    global srcfile
+    global reading_in_symbols_re
+
+    if { $second_inferior && [use_gdb_stub] } {
+	return
+    }
+
+    if { ![setup] } {
+	return
+    }
+
+    # Get rid of the breakpoint at "main".
+    delete_breakpoints
+
+    set bp_after_fork [gdb_get_line_number "set breakpoint here"]
+
+    gdb_test "catch fork" \
+	"Catchpoint \[0-9\]* \\(fork\\)$reading_in_symbols_re" \
+	"explicit child follow, set catch fork"
+
+    # Verify that the catchpoint is mentioned in an "info breakpoints",
+    # and further that the catchpoint mentions no process id.
+    gdb_test "info breakpoints" \
+	".*catchpoint.*keep y.*fork" \
+	"info breakpoints before fork"
+
+    gdb_test "continue" \
+	"Catchpoint \[0-9\]* \\(forked process \[0-9\]*\\),.*" \
+	"explicit child follow, catch fork"
+
+    # Verify that the catchpoint is mentioned in an "info breakpoints",
+    # and further that the catchpoint managed to capture a process id.
+    gdb_test "info breakpoints" \
+	".*catchpoint.*keep y.*fork, process.*" \
+	"info breakpoints after fork"
+
+    gdb_test_no_output "set follow-fork child"
+
+    gdb_test "tbreak ${srcfile}:$bp_after_fork" \
+	"Temporary breakpoint.*, line $bp_after_fork.*" \
+	"set follow-fork child, tbreak"
+
+    if {$second_inferior} {
+	gdb_test "add-inferior" "Added inferior 2.*" "add inferior 2"
+
+	gdb_test "inferior 2" "Switching to inferior 2.*"
+
+	gdb_load $::binfile
+
+	# Start it.  This should not affect inferior 1, given "set
+	# schedule-multiple off" (default).  GDB used to have a bug
+	# where "start" would clear the pending follow fork
+	# information of inferior 1.
+	gdb_test "start" "Starting program.*Temporary breakpoint .*"
+
+	gdb_test "inferior 1" "Switching to inferior 1.*"
+
+	# Verify that the catchpoint is still mentioned in an "info
+	# breakpoints", and further that the catchpoint still shows
+	# the captured process id.
+	gdb_test "info breakpoints" \
+	    ".*catchpoint.*keep y.*fork, process.*" \
+	    "info breakpoints, after starting second inferior"
+    }
+
+    set expected_re "\\\[Attaching after.* fork to.*\\\[Detaching after fork from"
+    append expected_re ".* at .*$bp_after_fork.*"
+    gdb_test "continue" $expected_re "set follow-fork child, hit tbreak"
+
+    # The parent has been detached; allow time for any output it might
+    # generate to arrive, so that output doesn't get confused with
+    # any expected debugger output from a subsequent testpoint.
+    #
+    exec sleep 1
+
+    gdb_test "delete breakpoints" \
+	"" \
+	"set follow-fork child, cleanup" \
+	"Delete all breakpoints. \\(y or n\\) $" \
+	"y"
+}
+
+# Test that parent breakpoints are successfully detached from the
+# child at fork time, even if the user removes them from the
+# breakpoints list after stopping at a fork catchpoint.
+
+proc_with_prefix catch_fork_unpatch_child {} {
+    global gdb_prompt
+    global srcfile
+
+    if { ![setup] } {
+	return
+    }
+
+    set bp_exit [gdb_get_line_number "at exit"]
+
+    gdb_test "break callee" "file .*$srcfile, line .*" \
+	"unpatch child, break at callee"
+    gdb_test "catch fork" "Catchpoint \[0-9\]* \\(fork\\)" \
+	"unpatch child, set catch fork"
+
+    gdb_test "continue" \
+	"Catchpoint \[0-9\]* \\(forked process \[0-9\]*\\),.*" \
+	"unpatch child, catch fork"
+
+    # Delete all breakpoints and catchpoints.
+    delete_breakpoints
+
+    # Force $srcfile as the current GDB source can be in glibc sourcetree.
+    gdb_test "break $srcfile:$bp_exit" \
+	"Breakpoint .*file .*$srcfile, line .*" \
+	"unpatch child, breakpoint at exit call"
+
+    gdb_test_no_output "set follow-fork child" \
+	"unpatch child, set follow-fork child"
+
+    set test "unpatch child, unpatched parent breakpoints from child"
+    gdb_test_multiple "continue" $test {
+	-re "at exit.*$gdb_prompt $" {
+	    pass "$test"
+	}
+	-re "SIGTRAP.*$gdb_prompt $" {
+	    fail "$test"
+
+	    # Explicitly kill this child, so we can continue gracefully
+	    # with further testing...
+	    send_gdb "kill\n"
+	    gdb_expect {
+		-re ".*Kill the program being debugged.*y or n. $" {
+		    send_gdb "y\n"
+		    gdb_expect -re "$gdb_prompt $" {}
+		}
+	    }
+	}
+    }
+}
+
+# Test the ability to catch a fork, specify via a -do clause that
+# the parent be followed, and continue.  Make the catchpoint temporary.
+
+proc_with_prefix tcatch_fork_parent_follow {} {
+    global gdb_prompt
+    global srcfile
+    global reading_in_symbols_re
+
+    if { ![setup] } {
+	return
+    }
+
+    set bp_after_fork [gdb_get_line_number "set breakpoint here"]
+
+    gdb_test "catch fork" \
+	"Catchpoint \[0-9\]* \\(fork\\)$reading_in_symbols_re" \
+	"explicit parent follow, set tcatch fork"
+
+# ??rehrauer: I don't yet know how to get the id of the tcatch
+# via this script, so that I can add a -do list to it.  For now,
+# do the follow stuff after the catch happens.
+
+    gdb_test "continue" \
+	"Catchpoint \[0-9\]* \\(forked process \[0-9\]*\\),.*" \
+	"explicit parent follow, tcatch fork"
+
+    gdb_test_no_output "set follow-fork parent"
+
+    gdb_test "tbreak ${srcfile}:$bp_after_fork" \
+	"Temporary breakpoint.*, line $bp_after_fork.*" \
+	"set follow-fork parent, tbreak"
+
+    gdb_test "continue" \
+	"\\\[Detaching after fork from.* at .*$bp_after_fork.*" \
+	"set follow-fork parent, hit tbreak"
+
+    # The child has been detached; allow time for any output it might
+    # generate to arrive, so that output doesn't get confused with
+    # any expected debugger output from a subsequent testpoint.
+    #
+    exec sleep 1
+
+    gdb_test "delete breakpoints" \
+	"" \
+	"set follow-fork parent, cleanup" \
+	"Delete all breakpoints. \\(y or n\\) $" \
+	"y"
+}
+
+# Test simple things about the "set follow-fork-mode" command.
+
+proc_with_prefix test_set_follow_fork_command {} {
+    clean_restart
+
+    # Verify that help is available for "set follow-fork-mode".
+    #
+    gdb_test "help set follow-fork-mode" \
+	"Set debugger response to a program call of fork or vfork..*
+A fork or vfork creates a new process.  follow-fork-mode can be:.*
+.*parent  - the original process is debugged after a fork.*
+.*child   - the new process is debugged after a fork.*
+The unfollowed process will continue to run..*
+By default, the debugger will follow the parent process..*"
+
+    # Verify that we can set follow-fork-mode, using an abbreviation
+    # for both the flag and its value.
+    #
+    gdb_test_no_output "set follow-fork ch"
+
+    gdb_test "show follow-fork" \
+	"Debugger response to a program call of fork or vfork is \"child\".*" \
+	"set follow-fork, using abbreviations"
+
+    # Verify that we cannot set follow-fork-mode to nonsense.
+    #
+    gdb_test "set follow-fork chork" "Undefined item: \"chork\".*" \
+	"set follow-fork to nonsense is prohibited"
+
+    gdb_test_no_output "set follow-fork parent" "reset parent"
+}
+
+test_set_follow_fork_command
+
+if { ![check_fork_catchpoints] } {
+    untested "follow-fork not supported"
+    return
+}
+
+# Test the basic follow-fork functionality using all combinations of
+# values for follow-fork-mode and detach-on-fork, using either a
+# breakpoint or single-step to execute past the fork.
+#
+# The first loop should be sufficient to test the defaults.  There
+# is no need to test using the defaults in other permutations (e.g.
+# "default" "on", "parent" "default", etc.).
+foreach_with_prefix cmd {"next 2" "continue"} {
+    test_follow_fork "default" "default" $cmd
+}
+
+# Now test all explicit permutations.
+foreach_with_prefix follow-fork-mode {"parent" "child"} {
+    foreach_with_prefix detach-on-fork {"on" "off"} {
+	foreach_with_prefix cmd {"next 2" "continue"} {
+	    test_follow_fork ${follow-fork-mode} ${detach-on-fork} $cmd
+	}
+    }
+}
+
+# Catchpoint tests.
+
+foreach_with_prefix second_inferior {false true} {
+    catch_fork_child_follow $second_inferior
+}
+catch_fork_unpatch_child
+tcatch_fork_parent_follow

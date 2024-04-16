@@ -1,0 +1,58 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib ada.exp
+load_lib dap-support.exp
+
+require allow_cplus_tests allow_dap_tests
+
+standard_testfile .cc
+
+if {[build_executable ${testfile}.exp $testfile $srcfile {debug c++}] == -1} {
+    return
+}
+
+if {[dap_launch $testfile] == ""} {
+    return
+}
+
+set obj [dap_check_request_and_response "set exception catchpoints" \
+	     setExceptionBreakpoints \
+	     {o filters [a [s throw] [s rethrow] [s catch]]}]
+
+set bps [dict get [lindex $obj 0] body breakpoints]
+# We should get three responses, because we requested three
+# breakpoints.
+gdb_assert {[llength $bps] == 3} "three breakpoints"
+
+dap_check_request_and_response "start inferior" configurationDone
+
+dap_wait_for_event_and_check "stopped at throw" stopped \
+    "body reason" breakpoint \
+    "body hitBreakpointIds" 1
+
+dap_check_request_and_response "continue to catch" continue \
+    {o threadId [i 1]}
+dap_wait_for_event_and_check "stopped at catch" stopped \
+    "body reason" breakpoint \
+    "body hitBreakpointIds" 3
+
+dap_check_request_and_response "continue to rethrow" continue \
+    {o threadId [i 1]}
+dap_wait_for_event_and_check "stopped at rethrow" stopped \
+    "body reason" breakpoint \
+    "body hitBreakpointIds" 2
+
+dap_shutdown

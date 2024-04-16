@@ -1,0 +1,180 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test GDB's awareness of the wchar_t (C++98+) and char16_t, char32_t
+# (C++11+) built-in types.  We also run most tests here in C mode, and
+# check whether the built-ins are disabled (gdb uses the typedefs in
+# the debug info instead.)
+
+standard_testfile
+
+# Test char16_t/char32_t/wchar_t in language LANG, against symbols in
+# a program.  Lang can be "c", "c++03" or "c++11".  In C++11,
+# char16_t/char32_t are built-in types, and the debug information
+# reflects that (see
+# http://wiki.dwarfstd.org/index.php?title=C%2B%2B0x:_New_string_literals).
+
+proc wide_char_types_program {lang} {
+    global srcfile testfile
+
+    set options {debug}
+    if {$lang == "c++03"} {
+	lappend options c++ additional_flags=-std=c++03
+	set out $testfile-cxx03
+    } elseif {$lang == "c++11"} {
+	lappend options c++ additional_flags=-std=c++11
+	set out $testfile-cxx11
+    } else {
+	set out $testfile-c
+    }
+
+    if { [prepare_for_testing "failed to prepare" \
+	      ${out} [list $srcfile] $options] } {
+	return -1
+    }
+
+    if {![runto_main]} {
+	return 0
+    }
+    do_test_wide_char $lang "u16" "u32" "wchar"
+}
+
+# Test char16_t/char32_t/wchar_t in language LANG.  Use CHAR16_EXP,
+# CHAR32_EXP, and WCHAR_EXP as expression for each of the
+# corresponding types.  (E.g., CHAR16_EXP will be u16 when testing
+# against the program, and "(char16_t)-1" when testing the built-in
+# types without a program loaded.)
+
+proc do_test_wide_char {lang char16_exp char32_exp wchar_exp} {
+    global gdb_prompt
+
+    # Check that the fixed-width wide types are distinct built-in
+    # types in C++11+.  In other modes, they're instead typedefs,
+    # found in the debug info.
+    if {$lang == "c++11"} {
+	gdb_test "ptype $char16_exp" "type = char16_t" \
+	    "char16_t is distinct"
+	gdb_test "ptype $char32_exp" "type = char32_t" \
+	    "char32_t is distinct"
+    } else {
+	gdb_test "ptype $char16_exp" "type = unsigned (long|int|short)" \
+	    "char16_t is typedef"
+	gdb_test "ptype $char32_exp" "type = unsigned (long|int|short)" \
+	    "char32_t is typedef"
+    }
+
+    # wchar_t is a disctinct built-in type in C++03+.
+    if {$lang != "c"} {
+	gdb_test "ptype $wchar_exp" "type = wchar_t" \
+	    "wchar_t is distinct"
+    } else {
+	gdb_test "ptype $wchar_exp" "type = (unsigned )?(long|int|short)" \
+	    "wchar_t is typedef"
+    }
+
+    # Check that the fixed-width wide char types are unsigned.
+    gdb_test "p $char16_exp" " = 65535 u'\\\\xffff'" \
+	"char16_t is unsigned"
+    gdb_test "p $char32_exp" " = 4294967295 U'\\\\xffffffff'" \
+	"char32_t is unsigned"
+
+    # Whether wchar_t is signed is implementation-dependent.  While we
+    # ignore whether GDB got the ABI size/sign details right here,
+    # this at least verifies that the value isn't garbage, and that
+    # GDB correctly outputs the character using the "L" prefix.
+    set test "wchar_t sign"
+    gdb_test_multiple "p $wchar_exp" $test {
+	-re " = 4294967295 L'\\\\xffffffff'\r\n$gdb_prompt $" {
+	    pass "$test (unsigned)"
+	}
+	-re " = 65535 L'\\\\xffff'\r\n$gdb_prompt $" {
+	    pass "$test (unsigned)"
+	}
+	-re " = -1 L'\\\\xffffffff'\r\n$gdb_prompt $" {
+	    pass "$test (signed)"
+	}
+	-re " = -1 L'\\\\xffff'\r\n$gdb_prompt $" {
+	    pass "$test (signed)"
+	}
+    }
+
+    # Check sizeof.  These are fixed-width.
+    gdb_test "p sizeof($char16_exp)" "= 2" \
+	"sizeof($char16_exp) == 2"
+    gdb_test "p sizeof($char32_exp)" "= 4" \
+	"sizeof(char16_t) == 4"
+
+    # Size of wchar_t depends on ABI.
+    gdb_test "p sizeof($wchar_exp)" "= (2|4)" \
+	"sizeof(wchar_t)"
+
+    # Test printing wide literal strings.  Note that when testing with
+    # no program started, this relies on GDB's awareness of the
+    # built-in wide char types.
+    gdb_test {p U"hello"} {= U"hello"}
+    gdb_test {p u"hello"} {= u"hello"}
+    gdb_test {p L"hello"} {= L"hello"}
+}
+
+# Make sure that the char16_t/char32_t/wchar_t types are recognized as
+# distinct built-in types in C++ mode, even with no program loaded.
+# Check that in C mode, the types are not recognized.
+
+proc wide_char_types_no_program {} {
+    global srcfile testfile
+
+    gdb_exit
+    gdb_start
+
+    # These types are not built-in in C.
+    with_test_prefix "c" {
+	gdb_test "set language c"
+
+	gdb_test "p (char16_t) -1" "No symbol table is loaded.*" \
+	    "char16_t is not built-in"
+	gdb_test "p (char32_t) -1" "No symbol table is loaded.*" \
+	    "char32_t is not built-in"
+
+	gdb_test "p (wchar_t) -1" "No symbol table is loaded.*" \
+	    "wchar_t is not built-in"
+
+	gdb_test {p U"hello"} "No type named char32_t\\\."
+	gdb_test {p u"hello"} "No type named char16_t\\\."
+	gdb_test {p L"hello"} "No type named wchar_t\\\."
+    }
+
+    # Note GDB does not distinguish C++ dialects, so the fixed-width
+    # types are always available in C++ mode, even if they were not
+    # built-in types before C++11.
+    with_test_prefix "c++" {
+	gdb_test "set language c++"
+
+	do_test_wide_char "c++11" "(char16_t) -1" "(char32_t) -1" "(wchar_t) -1"
+    }
+}
+
+# Check wide char types with no program loaded.
+with_test_prefix "no program" {
+    wide_char_types_no_program
+}
+
+# Check types when a program is loaded.
+with_test_prefix "with program" {
+    foreach_with_prefix lang {"c" "c++03" "c++11"} {
+	wide_char_types_program $lang
+    }
+}

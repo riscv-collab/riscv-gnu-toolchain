@@ -1,0 +1,172 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the gdb testsuite.
+
+# Test that GDB presents a hardware watchpoint stop at the first
+# instruction right after the instruction that changes memory.
+#
+# Some targets trigger a hardware watchpoint after the instruction
+# that wrote memory executes, thus with the memory already changed and
+# the PC pointing to the instruction after the instruction that wrote
+# to memory.  These targets are said to have "continuable"
+# watchpoints, referring to the fact that to make progress after the
+# watchpoint triggers, GDB just needs to continue the target.
+#
+# Other targets trigger a hardware watchpoint at the instruction which
+# has attempted to write to the piece of memory under control of the
+# watchpoint, with the instruction actually not executed yet.  To be
+# able to check whether the watched value changed, GDB needs to
+# complete the memory write, single-stepping the target once.  These
+# targets are said to have "non-continuable" watchpoints.
+#
+# This test makes sure that GDB knows which kind of watchpoint the
+# target has, using this sequence of steps:
+#
+# 1 - run to main
+#
+# 2 - set a software watchpoint
+#
+# 3 - continue until watchpoint triggers
+#
+# 4 - the PC now points to the instruction right after the instruction
+#     that actually caused the memory write.  So this is the address a
+#     hardware watchpoint should present the stop to the user too.
+#     Store the PC address.
+#
+# 5 - replace the software watchpoint by a hardware watchpoint
+#
+# 6 - continue until hardware watchpoint triggers
+#
+# 7 - the PC must point to the same address the software watchpoint
+#     triggered at.
+#
+# If the target has continuable watchpoints, but GDB thinks it has
+# non-continuable watchpoints, GDB will stop the inferior two
+# instructions after the watched value change, rather than at the next
+# instruction.
+#
+# If the target has non-continuable watchpoints, while GDB thinks it
+# has continuable watchpoints, GDB will see a watchpoint trigger,
+# notice no value changed, and immediatly continue the target.  Now,
+# either the target manages to step-over the watchpoint transparently,
+# and GDB thus fails to present to value change to the user, or, the
+# watchpoint will keep re-triggering, with the program never making
+# any progress.
+
+standard_testfile
+
+# No use testing this if we can't use hardware watchpoints.
+require allow_hw_watchpoint_tests
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+    return -1
+}
+
+if {![runto_main]} {
+    return
+}
+
+# Get the current PC.  TEST is used as test prefix.
+
+proc get_pc {test} {
+    global hex gdb_prompt
+
+    set addr ""
+    gdb_test_multiple "p /x \$pc" "$test" {
+	-re " = ($hex).*$gdb_prompt $" {
+	    set addr $expect_out(1,string)
+	    pass "$test"
+	}
+    }
+
+    return $addr
+}
+
+# So we get an immediate warning/error if the target doesn't support a
+# given watchpoint type.
+gdb_test_no_output "set breakpoint always-inserted on"
+
+set hw_watchpoints_supported 0
+
+set test "set probe hw watchpoint"
+gdb_test_multiple "watch global" $test {
+    -re "You may have requested too many.*$gdb_prompt $" {
+	pass $test
+    }
+    -re "Target does not support.*$gdb_prompt $" {
+	pass $test
+    }
+    -re "$gdb_prompt $" {
+	pass $test
+	set hw_watchpoints_supported 1
+    }
+}
+
+if {!$hw_watchpoints_supported} {
+    unsupported "no hw watchpoints support"
+    return
+}
+
+delete_breakpoints
+
+proc test {always_inserted} {
+    global srcfile binfile
+
+    with_test_prefix "always-inserted $always_inserted" {
+
+	clean_restart $binfile
+
+	if {![runto_main]} {
+	    return
+	}
+
+	# Force use of software watchpoints.
+	gdb_test_no_output "set can-use-hw-watchpoints 0"
+
+	gdb_test "watch global" \
+	    "Watchpoint .*: global" \
+	    "set software watchpoint on global variable"
+
+	gdb_test "continue" \
+	    "Watchpoint .*: global.*Old value = 0.*New value = 1.*set_global \\(val=1\\).*$srcfile.*" \
+	    "software watchpoint triggers"
+
+	set sw_watch_pc [get_pc "get sw watchpoint PC"]
+
+	delete_breakpoints
+
+	# Allow hardware watchpoints again.
+	gdb_test_no_output "set can-use-hw-watchpoints 1"
+
+	gdb_test "watch global" \
+	    "Hardware watchpoint .*: global" \
+	    "set hardware watchpoint on global variable"
+
+	gdb_test "continue" \
+	    "Hardware watchpoint .*: global.*Old value = 1.*New value = 2.*set_global \\(val=2\\).*$srcfile.*" \
+	    "hardware watchpoint triggers"
+
+	set hw_watch_pc [get_pc "get hw watchpoint PC"]
+
+	gdb_assert {$sw_watch_pc == $hw_watch_pc} "hw watchpoint stops at right instruction"
+    }
+}
+
+foreach always_inserted {"off" "on" } {
+    test $always_inserted
+}

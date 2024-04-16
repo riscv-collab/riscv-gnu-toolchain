@@ -1,0 +1,131 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib dwarf.exp
+
+# Test that psymbols are made when DW_AT_ranges is used.
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+require is_c_compiler_gcc
+
+standard_testfile main.c .c -dw.S
+
+# We need to know the size of integer and address types in order to
+# write some of the debugging info we'd like to generate.
+#
+# For that, we ask GDB by debugging our test program.  Any program
+# would do, but since we already have it specifically for this
+# testcase, might as well use that.
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	  [list ${srcfile} ${srcfile2}]] } {
+    return -1
+}
+
+set asm_file [standard_output_file $srcfile3]
+Dwarf::assemble $asm_file {
+    global srcdir subdir srcfile srcfile2
+    declare_labels integer_label volatile_label func_ranges_label cu_ranges_label
+    set int_size [get_sizeof "int" 4]
+
+    # Find start address and length for our functions.
+    set sources  [list ${srcdir}/${subdir}/$srcfile ${srcdir}/${subdir}/$srcfile2]
+
+    lassign [function_range foo $sources] \
+	foo_start foo_len
+    set foo_end "$foo_start + $foo_len"
+
+    lassign [function_range foo_low $sources] \
+	foo_low_start foo_low_len
+    set foo_low_end "$foo_low_start + $foo_low_len"
+
+    lassign [function_range bar $sources] \
+	bar_start bar_len
+    set bar_end "$bar_start + $bar_len"
+
+    lassign [function_range baz $sources] \
+	baz_start baz_len
+    set baz_end "$baz_start + $baz_len"
+
+    cu {} {
+	compile_unit {
+	    {language @DW_LANG_C}
+	    {name dw-ranges-psym.c}
+	    {low_pc 0 addr}
+	    {ranges ${cu_ranges_label} DW_FORM_sec_offset}
+	} {
+	    integer_label: DW_TAG_base_type {
+		{DW_AT_byte_size $int_size DW_FORM_sdata}
+		{DW_AT_encoding  @DW_ATE_signed}
+		{DW_AT_name      integer}
+	    }
+	    volatile_label: DW_TAG_volatile_type {
+		{type :$integer_label}
+	    }
+	    subprogram {
+		{external 1 flag}
+		{name someothername}
+		{ranges ${func_ranges_label} DW_FORM_sec_offset}
+	    }
+	    subprogram {
+		{external 1 flag}
+		{name bar}
+		{low_pc $bar_start addr}
+		{high_pc $bar_len DW_FORM_data4}
+	    }
+	    subprogram {
+		{external 1 flag}
+		{name baz}
+		{low_pc $baz_start addr}
+		{high_pc $baz_len DW_FORM_data4}
+	    }
+	}
+    }
+
+    # Generate ranges data.
+    ranges {is_64 [is_64_target]} {
+	func_ranges_label: sequence {
+	    range $foo_start $foo_end
+	    range $foo_low_start $foo_low_end
+	}
+	cu_ranges_label: sequence {
+	    range $foo_start $foo_end
+	    range $foo_low_start $foo_low_end
+	    range $bar_start $bar_end
+	    range $baz_start $baz_end
+	}
+    }
+}
+
+if { [build_executable "failed to prepare" ${testfile} \
+	  [list $srcfile $srcfile2 $asm_file] {nodebug}] } {
+    return -1
+}
+
+clean_restart
+gdb_load_no_complaints $binfile
+
+if ![runto_main] {
+    return -1
+}
+
+# "someothername" should be put into the partial symbol table, but
+# there was a bug causing functions using DW_AT_ranges not to be.
+# Note we use a name that is very different from the linkage name, in
+# order to not set the breakpoint via minsyms.
+gdb_test "break someothername" \
+    "Breakpoint.*at.*"

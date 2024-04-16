@@ -1,0 +1,115 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# This file is part of the gdb testsuite.
+#
+# Test that GDB for AArch64/Linux can properly handle pointers with
+# the upper 16 bits (PAC) or 8 bits (Tag) set, as well as the
+# VA_RANGE_SELECT bit (55).
+
+require is_aarch64_target
+
+standard_testfile
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+# We need to iterate over two distinct ranges, separated by a single bit.
+# This bit is 55 (VA_RANGE_SELECT) which tells us if we have a kernel-space
+# address or a user-space address.
+
+# The tag field has 8 bits.
+set tag_bits_count 8
+
+# The pac field has 7 bits.
+set pac_bits_count 7
+
+# A couple patterns that we reuse for the tests later.  One is for a successful
+# memory read and the other is for a memory read failure.
+set memory_read_ok_pattern "$::hex\( <l>\)?:\[ \t\]+$::hex"
+set memory_read_fail_pattern "$::hex:\[ \t\]+Cannot access memory at address $::hex"
+
+set pac_enabled 0
+
+# Check if PAC is enabled.
+gdb_test_multiple "ptype \$pauth_cmask" "fetch PAC cmask" {
+    -re -wrap "type = long" {
+	set pac_enabled 1
+    }
+    -re -wrap "type = void" {
+    }
+    -re ".*$gdb_prompt $" {
+	fail $gdb_test_name
+	return 1
+    }
+}
+
+# Value of the cmask register.
+set cmask 0
+
+# If there are PAC registers, GDB uses those to unmask the PAC bits.
+if {$pac_enabled} {
+    set cmask [get_valueof "" "\$pauth_cmask >> 48" "0" "fetch PAC cmask"]
+}
+
+# Cycle through the tag and pac bit ranges and check how GDB
+# behaves when trying to access these addresses.
+foreach_with_prefix upper_bits {"0x0" "0x1" "0x2" "0x4" "0x8" "0x10" "0x20" "0x40" "0x80"} {
+    foreach_with_prefix lower_bits {"0x0" "0x1" "0x2" "0x4" "0x8" "0x10" "0x20" "0x40"} {
+
+	# A successful memory read pattern
+	set pattern $memory_read_ok_pattern
+
+	if {!$pac_enabled} {
+	    # If PAC is not supported, memory reads will fail if
+	    # lower_bits != 0x0
+	    if {$lower_bits != "0x0"} {
+		set pattern $memory_read_fail_pattern
+	    }
+	} else {
+	    # Otherwise, figure out if the memory read will succeed or not by
+	    # checking cmask.
+	    gdb_test_multiple "p/x (~${cmask}ULL & (${lower_bits}ULL))" "" {
+		-re -wrap "= 0x0" {
+		    # Either cmask is 0x7F or lower_bits is 0x0.
+		    # Either way, the memory read should succeed.
+		}
+		-re -wrap "= $::hex" {
+		    if {$lower_bits != "0x0"} {
+			# cmask doesn't mask off all the PAC bits, which
+			# results in a memory read failure, with the actual
+			# address being accessed differing from the one we
+			# passed.
+			set pattern $memory_read_fail_pattern
+		    }
+		}
+	    }
+	}
+
+	# Test without the VA_RANGE_SELECT bit set.
+	gdb_test "x/gx ((unsigned long) l_ptr | ((${upper_bits}ULL << 56) | (${lower_bits}ULL << 48)))" \
+	    $pattern \
+	    "user-space memory access"
+
+	# Now test with the VA_RANGE_SELECT bit set.
+	gdb_test "x/gx ((unsigned long) l_ptr | ((${upper_bits}ULL << 56) | (${lower_bits}ULL << 48) | (1ULL << 55))) " \
+	    $memory_read_fail_pattern \
+	    "kernel-space memory access"
+    }
+}

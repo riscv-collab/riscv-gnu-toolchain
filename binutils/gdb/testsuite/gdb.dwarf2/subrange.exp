@@ -1,0 +1,116 @@
+# Copyright 2013-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+require allow_cplus_tests
+
+standard_testfile method-ptr.cc -dw.S
+
+# Make some DWARF for the test.
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    cu {} {
+ 	compile_unit {{language @DW_LANG_Pascal83}} {
+	    declare_labels byte_label typedef_label array_label
+
+	    # A subrange's underlying type that is a typedef.
+	    byte_label: base_type {
+		{name byte}
+		{encoding @DW_ATE_unsigned}
+		{byte_size 1 DW_FORM_sdata}
+	    }
+
+	    typedef_label: typedef {
+		{name byte_typedef}
+		{type :$byte_label}
+	    }
+
+	    array_label: array_type {
+		{type :$byte_label}
+	    } {
+		subrange_type {
+		    {lower_bound 0 DW_FORM_sdata}
+		    {upper_bound 191 DW_FORM_sdata}
+		    {byte_stride 2 DW_FORM_sdata}
+		    {type :$typedef_label}
+		}
+	    }
+
+	    typedef {
+		{name TByteArray}
+		{type :$array_label}
+	    }
+
+	    # This subrange's underlying type is signed, but the bounds are
+	    # specified using a non-signed form.
+	    declare_labels signed_byte_label subrange_with_buggy_negative_bounds_label
+
+	    signed_byte_label: base_type {
+		{name signed_byte}
+		{encoding @DW_ATE_signed}
+		{byte_size 1 DW_FORM_sdata}
+	    }
+
+	    # The bounds mean -16 to -12.
+	    subrange_with_buggy_negative_bounds_label: subrange_type {
+		{lower_bound 0xf0 DW_FORM_udata}
+		{upper_bound 0xf4 DW_FORM_udata}
+		{type :$signed_byte_label}
+	    }
+
+	    DW_TAG_variable {
+		{name subrange_with_buggy_negative_bounds_variable}
+		{type :$subrange_with_buggy_negative_bounds_label}
+	    }
+
+	    # This subrange's base type is 16-bytes long (although the bounds fit in
+	    # signed 64-bit).  This is to test the fix for PR 29386.
+	    declare_labels a_16_byte_integer_label a_16_byte_subrange_label
+
+	    a_16_byte_integer_label: base_type {
+		{byte_size 16 udata}
+		{encoding @DW_ATE_signed}
+	    }
+
+	    a_16_byte_subrange_label: subrange_type {
+		{lower_bound -9223372036854775808 DW_FORM_sdata}
+		{upper_bound 9223372036854775807 DW_FORM_sdata}
+		{type :$a_16_byte_integer_label}
+	    }
+
+	    DW_TAG_variable {
+		{name a_16_byte_subrange_variable}
+		{type :$a_16_byte_subrange_label}
+	    }
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	  [list $srcfile $asm_file] {nodebug}] } {
+    return -1
+}
+
+gdb_test_no_output "set language pascal"
+
+gdb_test "ptype TByteArray" \
+    "type = array \\\[0\\.\\.191\\\] of byte"
+gdb_test "ptype subrange_with_buggy_negative_bounds_variable" \
+    "type = -16\\.\\.-12"
+gdb_test "ptype a_16_byte_subrange_variable" \
+    "type = -9223372036854775808\\.\\.9223372036854775807"

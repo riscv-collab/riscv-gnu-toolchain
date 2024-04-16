@@ -1,0 +1,156 @@
+# Copyright 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+# Test that "file" doesn't leave stale breakpoints planted in the
+# target.
+
+standard_testfile
+
+if {[build_executable "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+# Run the test proper.  INITIAL_LOAD determines whether the program is
+# initially loaded by the "file" command or by passing it to GDB on
+# the command line.  ALWAYS_INSERT determines whether always-inserted
+# mode is on/off.  BREAK_COMMAND is the break command being tested.
+#
+proc test_break { initial_load always_inserted break_command } {
+    global srcdir subdir binfile
+    global gdb_prompt hex
+    global GDBFLAGS
+
+    append prefix "$initial_load: "
+    append prefix "always-inserted $always_inserted: "
+    append prefix "$break_command"
+    with_test_prefix "$prefix" {
+	gdb_exit
+
+	set saved_gdbflags $GDBFLAGS
+
+	# See "used to behave differently" further below.
+	if { $initial_load == "file" } {
+	    gdb_start
+	    gdb_file_cmd $binfile
+	} else {
+	    global last_loaded_file
+
+	    # gdb_file_cmd sets this.  This is what gdb_reload
+	    # implementations use as binary.
+	    set last_loaded_file $binfile
+
+	    set GDBFLAGS "$GDBFLAGS $binfile"
+	    gdb_start
+	}
+
+	gdb_reinitialize_dir $srcdir/$subdir
+	gdb_reload
+	set GDBFLAGS $saved_gdbflags
+
+	if {![runto_main]} {
+	    return
+	}
+
+	delete_breakpoints
+
+	gdb_test_no_output "set breakpoint always-inserted $always_inserted"
+
+	set test "$break_command foo"
+	gdb_test_multiple "$break_command foo" $test {
+	    -re "No hardware breakpoint support in the target.*$gdb_prompt $" {
+		unsupported $test
+		return
+	    }
+	    -re "Hardware breakpoints used exceeds limit.*$gdb_prompt $" {
+		unsupported $test
+		return
+	    }
+	    -re "Cannot insert hardware breakpoint.*$gdb_prompt $" {
+		unsupported $test
+		return
+	    }
+	    -re ".*reakpoint .* at .*$gdb_prompt $" {
+		pass $test
+	    }
+	}
+
+	# The breakpoint shouldn't be pending now.
+	gdb_test "info break" "y.*$hex.*in foo at.*" \
+	    "breakpoint is not pending"
+
+	# Remove the file, while the breakpoint above is inserted in a
+	# function in the main objfile.  GDB used to have a bug where
+	# it would mark the breakpoint as uninserted, but actually
+	# would leave it inserted in the target.
+	set test "file"
+	gdb_test_multiple "file" $test {
+	    -re "Are you sure you want to change the file. .*y or n. $" {
+		send_gdb "y\n"
+		exp_continue
+	    }
+	    -re "Discard symbol table from `.*'? .y or n. $" {
+		send_gdb "y\n"
+		exp_continue
+	    }
+	    -re "No symbol file now\\.\r\n$gdb_prompt $" {
+		pass $test
+	    }
+	}
+
+	# This test used to behave differently depending on whether
+	# the program was first loaded through "file PROGRAM" or "gdb
+	# PROGRAM".
+	set ws "\[ \t\]"
+	gdb_test "info break" "breakpoint${ws}+keep${ws}+n${ws}+$hex${ws}*" \
+	    "breakpoint is disabled"
+
+	# Now delete the breakpoint from GDB's tables, to make sure
+	# GDB doesn't reinsert it, masking the bug (with the bug, on
+	# re-insert, GDB would fill the shadow buffer with a
+	# breakpoint instruction).  Avoid delete_breakpoints as that
+	# doesn't record a pass/fail.
+	gdb_test "delete" "" "delete all breakpoints" \
+	    "Delete all breakpoints.*y or n.*$" "y"
+
+	# Re-add symbols back.
+	set test "file \$binfile"
+	gdb_test_multiple "file $binfile" $test {
+	    -re "Are you sure you want to change the file. .*y or n. $" {
+		send_gdb "y\n"
+		exp_continue
+	    }
+	    -re "Reading symbols from.*$gdb_prompt $" {
+		pass $test
+	    }
+	}
+
+	# Run to another function now.  With the bug, GDB would trip
+	# on a spurious trap at foo.
+	gdb_test "b bar" ".*reakpoint .* at .*"
+	gdb_test "continue" "Breakpoint .*, bar .*"
+    }
+}
+
+foreach initial_load { "cmdline" "file" } {
+    # While it doesn't trigger the original bug this is a regression
+    # test for, test with breakpoint always-inserted off for extra
+    # coverage.
+    foreach always_inserted { "off" "on" } {
+	test_break $initial_load $always_inserted "break"
+	if {[allow_hw_breakpoint_tests]} {
+	    test_break $initial_load $always_inserted "hbreak"
+	}
+    }
+}

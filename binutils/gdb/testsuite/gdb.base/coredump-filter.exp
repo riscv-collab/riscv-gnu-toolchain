@@ -1,0 +1,244 @@
+# Copyright 2015-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile
+
+# This test is Linux-only.
+if {![istarget *-*-linux*]} {
+    untested "coredump-filter.exp"
+    return -1
+}
+
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile debug] } {
+    return -1
+}
+
+if { ![runto_main] } {
+    return -1
+}
+
+gdb_breakpoint [gdb_get_line_number "break-here"]
+gdb_continue_to_breakpoint "break-here" ".* break-here .*"
+
+proc do_save_core { filter_flag core dump_excluded } {
+    verbose -log "writing $filter_flag to /proc/<inferior pid>/coredump_filter"
+
+    gdb_test "p set_coredump_filter ($filter_flag)" " = 0"
+
+    # Enable dumping of excluded mappings (i.e. VM_DONTDUMP).
+    if { $dump_excluded == 1 } {
+        gdb_test_no_output "set dump-excluded-mappings on"
+    }
+
+    # Generate a corefile.
+    gdb_gcore_cmd "$core" "save corefile"
+
+    # Restore original status.
+    if { $dump_excluded == 1 } {
+        gdb_test_no_output "set dump-excluded-mappings off"
+    }
+}
+
+proc do_load_and_test_core { core var working_var working_value dump_excluded } {
+    global hex decimal coredump_var_addr
+
+    set core_loaded [gdb_core_cmd "$core" "load core"]
+    if { $core_loaded == -1 } {
+	fail "loading $core"
+	return
+    }
+
+    # Access the memory the addresses point to.
+    if { $dump_excluded == 0 } {
+        gdb_test "print/x *(char *) $coredump_var_addr($var)" "\(\\\$$decimal = <error: \)?Cannot access memory at address $hex\(>\)?" \
+	    "printing $var when core is loaded (should not work)"
+        gdb_test "print/x *(char *) $coredump_var_addr($working_var)" " = $working_value.*" \
+	    "print/x *$working_var ( = $working_value)"
+    } else {
+        # Check if VM_DONTDUMP mappings are present in the core file.
+        gdb_test "print/x *(char *) $coredump_var_addr($var)" " = $working_value.*" \
+	    "print/x *$var ( = $working_value)"
+    }
+}
+
+# We do not do file-backed mappings in the test program, but it is
+# important to test this anyway.  One way of performing the test is to
+# load GDB with a corefile but without a binary, and then ask for the
+# disassemble of a function (i.e., the binary's .text section).  GDB
+# should fail in this case.  However, it must succeed if the binary is
+# provided along with the corefile.  This is what we test here.
+#
+# A further complication is that Linux NT_FILE notes are now read from
+# the corefile.  This note allows GDB to find the binary for file
+# backed mappings even though the binary wasn't loaded by GDB in the
+# conventional manner.  In order to see the expected failure for this
+# case, we rename the binary in order to perform this test.
+
+proc test_disasm { core address should_fail } {
+    global testfile hex binfile
+
+    # Restart GDB without loading the binary.
+    with_test_prefix "no binary" {
+	gdb_exit
+	gdb_start
+
+	set hide_binfile [standard_output_file "${testfile}.hide"]
+	if { $should_fail == 1 } {
+	    remote_exec host "mv -f $binfile $hide_binfile"
+	}
+
+	set core_loaded [gdb_core_cmd "$core" "load core"]
+	if { $core_loaded == -1 } {
+	    fail "loading $core"
+	    return
+	}
+
+	if { $should_fail == 1 } {
+	    remote_exec host "mv -f $hide_binfile $binfile"
+	    gdb_test "x/i \$pc" "=> $hex:\tCannot access memory at address $hex" \
+		"disassemble function with corefile and without a binary"
+	} else {
+	    gdb_test "x/i \$pc" "=> $hex:\t\[^C\].*" \
+		"disassemble function with corefile and without a binary"
+	}
+    }
+
+    with_test_prefix "with binary" {
+	clean_restart $testfile
+
+	set core_loaded [gdb_core_cmd "$core" "load core"]
+	if { $core_loaded == -1 } {
+	    fail "loading $core"
+	    return
+	}
+
+	gdb_test "disassemble $address" "Dump of assembler code for function.*" \
+	    "disassemble function with corefile and with a binary"
+    }
+}
+
+set non_private_anon_core [standard_output_file non-private-anon.gcore]
+set non_shared_anon_core [standard_output_file non-shared-anon.gcore]
+# A corefile without {private,shared} {anonymous,file-backed} pages
+set non_private_shared_anon_file_core [standard_output_file non-private-shared-anon-file.gcore]
+set dont_dump_core [standard_output_file dont-dump.gcore]
+set dump_excluded_core [standard_output_file dump-excluded.gcore]
+
+# We will generate a few corefiles.
+#
+# This list is composed by sub-lists, and their elements are (in
+# order):
+#
+# - name of the test
+# - hexadecimal value to be put in the /proc/PID/coredump_filter file
+# - name of the variable that contains the name of the corefile to be
+#   generated (including the initial $).
+# - name of the variable in the C source code that points to the
+#   memory mapping that will NOT be present in the corefile.
+# - name of a variable in the C source code that points to a memory
+#   mapping that WILL be present in the corefile
+# - corresponding value expected for the above variable
+# - whether to include mappings marked as VM_DONTDUMP in the
+#   corefile (1) or not (0).
+#
+# This list refers to the corefiles generated by MAP_ANONYMOUS in the
+# test program.
+
+set all_anon_corefiles { { "non-Private-Anonymous" "0x7e" \
+			       $non_private_anon_core \
+			       "private_anon" \
+			       "shared_anon" "0x22" "0" }
+    { "non-Shared-Anonymous" "0x7d" \
+	  $non_shared_anon_core "shared_anon" \
+	  "private_anon" "0x11" "0" }
+    { "DoNotDump" "0x33" \
+	  $dont_dump_core "dont_dump" \
+	  "shared_anon" "0x22" "0" }
+    { "DoNotDump-DumpExcluded" "0x33" \
+	  $dump_excluded_core "dont_dump" \
+	  "shared_anon" "0x55" "1" } }
+
+# If corefile loading is not supported, we do not even try to run the
+# tests.
+set core_supported [gdb_gcore_cmd "$non_private_anon_core" "save a corefile"]
+if { !$core_supported } {
+    untested "corefile generation is not supported"
+    return -1
+}
+
+gdb_test_multiple "info inferiors" "getting inferior pid" {
+    -re "process $decimal.*\r\n$gdb_prompt $" {
+    }
+    -re "Remote target.*$gdb_prompt $" {
+	# If the target does not provide PID information (like usermode QEMU),
+	# just bail out as the rest of the test may rely on it, giving spurious
+	# failures.
+	return -1
+    }
+}
+
+# Get the main function's address.
+set main_addr ""
+gdb_test_multiple "print/x &main" "getting main's address" {
+    -re "$decimal = \($hex\)\r\n$gdb_prompt $" {
+	set main_addr $expect_out(1,string)
+    }
+}
+
+# Obtain the address of each variable that will be checked on each
+# case.
+unset -nocomplain coredump_var_addr
+foreach item $all_anon_corefiles {
+    foreach name [list [lindex $item 3] [lindex $item 4]] {
+	set test "print/x $name"
+	gdb_test_multiple $test $test {
+	    -re " = \($hex\)\r\n$gdb_prompt $" {
+		set coredump_var_addr($name) $expect_out(1,string)
+	    }
+	}
+    }
+}
+
+# Generate corefiles for the "anon" case.
+foreach item $all_anon_corefiles {
+    with_test_prefix "saving corefile for [lindex $item 0]" {
+	do_save_core [lindex $item 1] [subst [lindex $item 2]] [lindex $item 6]
+    }
+}
+
+with_test_prefix "saving corefile for non-Private-Shared-Anon-File" {
+    do_save_core "0x60" $non_private_shared_anon_file_core "0"
+}
+
+clean_restart $testfile
+
+foreach item $all_anon_corefiles {
+    with_test_prefix "loading and testing corefile for [lindex $item 0]" {
+	do_load_and_test_core [subst [lindex $item 2]] [lindex $item 3] \
+	    [lindex $item 4] [lindex $item 5] [lindex $item 6]
+    }
+
+    with_test_prefix "disassembling function main for [lindex $item 0]" {
+	test_disasm [subst [lindex $item 2]] $main_addr 0
+    }
+}
+
+with_test_prefix "loading and testing corefile for non-Private-Shared-Anon-File" {
+    test_disasm $non_private_shared_anon_file_core $main_addr 0
+}
+
+with_test_prefix "loading and testing corefile for non-Private-Shared-Anon-File with renamed binary" {
+    test_disasm $non_private_shared_anon_file_core $main_addr 1
+}

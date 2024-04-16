@@ -1,0 +1,132 @@
+# Copyright 2011-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "ada.exp"
+
+require allow_ada_tests gnat_runtime_has_debug_info
+
+standard_ada_testfile foo
+
+if {[gdb_compile_ada "${srcfile}" "${binfile}" executable [list debug additional_flags=-gnata ]] != "" } {
+  return -1
+}
+
+# A global variable used to simplify the maintenance of some of
+# the regular expressions below.
+set any_nb "\[0-9\]+"
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+mi_clean_restart $binfile
+
+####################################
+# 1. Try catching all exceptions.  #
+####################################
+
+with_test_prefix "scenario 1" {
+    if {[mi_runto_main] < 0} {
+	return 0
+    }
+}
+
+mi_gdb_test "-catch-exception" \
+            "\\^done,bkptno=\"$decimal\",bkpt={.*disp=\"keep\",enabled=\"y\",what=\"all Ada exceptions\",.*}" \
+            "catch all exceptions"
+
+# Continue to caught exception.
+
+proc continue_to_exception { exception_name exception_message test } {
+    global hex any_nb
+
+    mi_send_resuming_command "exec-continue" "$test"
+
+    # Match console stream output.
+    gdb_expect {
+	-re " $exception_name\( \\($exception_message\\)\)? at $hex in foo " {
+	}
+	timeout {
+	    fail "$test (timeout)"
+	    return -1
+	}
+    }
+
+    # Now MI stream output.
+    mi_expect_stop \
+	"\"breakpoint-hit\",disp=\"keep\",bkptno=\"$any_nb\",exception-name=\"$exception_name\(\",exception-message=\"$exception_message\)?\"" \
+	"foo" "" ".*" ".*" \
+	".*" \
+	$test
+}
+
+continue_to_exception \
+    "CONSTRAINT_ERROR" "foo\\.adb:$decimal explicit raise" \
+    "continue until CE caught by all-exceptions catchpoint"
+
+continue_to_exception \
+    "PROGRAM_ERROR" "foo\\.adb:$decimal explicit raise" \
+    "continue until PE caught by all-exceptions catchpoint"
+
+################################################
+# 2. Try catching only some of the exceptions. #
+################################################
+
+# Here is the scenario:
+#  - Restart the debugger from scratch, runto_main
+#  - We'll catch only "Program_Error"
+#    We'll catch assertions
+#    We'll catch unhandled exceptions
+#  - continue, we should see the first Program_Error exception
+#  - continue, we should see the failed assertion
+#  - continue, we should see the unhandled Constrait_Error exception
+#  - continue, the program exits.
+
+with_test_prefix "scenario 2" {
+    mi_delete_breakpoints
+    if {[mi_runto_main] < 0} {
+	return 0
+    }
+}
+
+mi_gdb_test "-catch-exception -e Program_Error" \
+            "\\^done,bkptno=\"$decimal\",bkpt={.*disp=\"keep\",enabled=\"y\",what=\"`Program_Error' Ada exception\",.*}" \
+            "catch Program_Error"
+
+mi_gdb_test "-catch-assert" \
+            "\\^done,bkptno=\"$decimal\",bkpt={.*disp=\"keep\",enabled=\"y\",what=\"failed Ada assertions\",.*}" \
+            "catch assert failures"
+
+mi_gdb_test "-catch-exception -u" \
+            "\\^done,bkptno=\"$decimal\",bkpt={.*disp=\"keep\",enabled=\"y\",what=\"unhandled Ada exceptions\",.*}" \
+            "catch unhandled exceptions"
+
+mi_execute_to "exec-continue" \
+              "\"breakpoint-hit\",disp=\"keep\",bkptno=\"$any_nb\",exception-name=\"PROGRAM_ERROR(\",exception-message=\"foo\\.adb:$decimal explicit raise)?\"" \
+              "foo" "" ".*" ".*" \
+              ".*" \
+              "continue to exception catchpoint hit"
+
+mi_execute_to "exec-continue" \
+              "\"breakpoint-hit\",disp=\"keep\",bkptno=\"$any_nb\"" \
+              "foo" "" ".*" ".*" \
+              ".*" \
+              "continue to assert failure catchpoint hit"
+
+mi_execute_to "exec-continue" \
+              "\"breakpoint-hit\",disp=\"keep\",bkptno=\"$any_nb\",exception-name=\"CONSTRAINT_ERROR\"" \
+              "foo" "" ".*" ".*" \
+              ".*" \
+              "continue to unhandled exception catchpoint hit"
+

@@ -1,0 +1,96 @@
+# Copyright (C) 2016-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test name lookup.
+
+load_lib rust-support.exp
+require allow_rust_tests
+require {can_compile rust}
+
+standard_testfile .rs
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile {debug rust}]} {
+    return -1
+}
+
+set line [gdb_get_line_number "set breakpoint here"]
+if {![runto ${srcfile}:$line]} {
+    untested "could not run to breakpoint"
+    return -1
+}
+
+# Currently a closure type is not described by rustc.
+# https://github.com/rust-lang/rust/issues/33121
+# gdb_test "call f2()" "lambda f2"
+
+if ![target_info exists gdb,noinferiorio] {
+    gdb_test_stdio "call f3()" "mod1::inner::innest::f3"
+    gdb_test_stdio "call self::f2()" "mod1::inner::innest::f2"
+    gdb_test_stdio "call self::super::f2()" "mod1::inner::f2"
+    gdb_test_stdio "call super::f2()" "mod1::inner::f2"
+    gdb_test_stdio "call self::super::super::f2()" "mod1::f2"
+    gdb_test_stdio "call super::super::f2()" "mod1::f2"
+    gdb_test_stdio "call ::f2()" "::f2"
+    gdb_test_stdio "call extern modules::mod1::f2()" "mod1::f2"
+}
+gdb_test "call super::super::super::f2()" \
+    "Too many super:: uses from 'modules::mod1::inner::innest'"
+
+gdb_test_sequence "ptype ::Generic::<::Generic<::Type> >" "" {
+    "type = struct modules::Generic<modules::Generic<modules::Type>> \\("
+    "  modules::Generic<modules::Type>,"
+    "\\)"
+}
+
+gdb_test_sequence "ptype ::Generic::<::Generic<extern modules::Type> >" "" {
+    "type = struct modules::Generic<modules::Generic<modules::Type>> \\("
+    "  modules::Generic<modules::Type>,"
+    "\\)"
+}
+
+gdb_test_sequence "ptype ::Generic::<::Generic<::mod1::Type>>" "" {
+    "type = struct modules::Generic<modules::Generic<modules::mod1::Type>> \\("
+    "  modules::Generic<modules::mod1::Type>,"
+    "\\)"
+}
+
+gdb_test_sequence "ptype ::Generic::<::Generic<super::Type>>" "" {
+    "type = struct modules::Generic<modules::Generic<modules::mod1::inner::Type>> \\("
+    "  modules::Generic<modules::mod1::inner::Type>,"
+    "\\)"
+}
+
+gdb_test_sequence "ptype ::Generic::<::Generic<self::Type>>" "" {
+    "type = struct modules::Generic<modules::Generic<modules::mod1::inner::innest::Type>> \\("
+    "  modules::Generic<modules::mod1::inner::innest::Type>,"
+    "\\)"
+}
+
+# Not working yet.
+# gdb_test_sequence "ptype ::Generic<Type>" "" ...
+
+# Some basic linespec tests.
+foreach mod {mod1::inner::innest mod1::inner mod1 {}} {
+    if {$mod != ""} {
+	append mod ::
+    }
+    gdb_breakpoint modules::${mod}f2 message
+    gdb_breakpoint "*::${mod}f2" message
+}
+
+gdb_test "print ::TWENTY_THREE" " = 23"
+
+gdb_test "print super TWENTY_THREE" "'::' expected"
+gdb_test "print super::23" "identifier expected"
+gdb_test "ptype ::Generic::<::Generic<self::Type" "'>' expected"

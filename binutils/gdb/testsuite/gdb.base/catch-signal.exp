@@ -1,0 +1,146 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require {!target_info exists gdb,nosignals}
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+proc test_catch_signal {signame} {
+    global srcfile
+
+    with_test_prefix $signame {
+	if {![runto_main]} {
+	    return -1
+	}
+
+	# Test "catch signal" without arguments.
+	# Don't let the signal be handled otherwise.
+	gdb_breakpoint ${srcfile}:[gdb_get_line_number "first HUP"]
+	gdb_continue_to_breakpoint "first HUP"
+	gdb_test "handle SIGHUP nostop noprint pass" \
+	    "SIGHUP.*No.*No.*Yes.*"
+	gdb_test "catch signal" "Catchpoint .*"
+	gdb_test "continue" "Catchpoint .*" "continue to first HUP"
+
+	# Now ensure that the "pass" setting worked, and also that we did not
+	# see gdb's SIGTRAP.
+	gdb_breakpoint ${srcfile}:[gdb_get_line_number "handle marker"]
+	gdb_continue_to_breakpoint "handle marker"
+
+	delete_breakpoints
+
+	# Catch just $SIGNAME.
+	gdb_breakpoint ${srcfile}:[gdb_get_line_number "second HUP"]
+	gdb_continue_to_breakpoint "second HUP"
+	gdb_test "catch signal $signame" "Catchpoint .*"
+	gdb_test "continue" "Catchpoint .*" "continue to catch signal $signame"
+	delete_breakpoints
+
+	# Catch just SIGUSR1 -- but it isn't sent.
+	gdb_breakpoint ${srcfile}:[gdb_get_line_number "third HUP"]
+	gdb_continue_to_breakpoint "third HUP"
+	gdb_test "handle SIGUSR1 nostop noprint pass" \
+	    "SIGUSR1.*No.*No.*Yes.*"
+	gdb_test "catch signal SIGUSR1" "Catchpoint .*"
+
+	# Also verify that if we set SIGHUP to "nopass", then it is
+	# still not delivered.
+	gdb_breakpoint ${srcfile}:[gdb_get_line_number "handle marker"]
+	gdb_test "handle SIGHUP nostop noprint nopass" \
+	    "SIGHUP.*No.*No.*No.*"
+
+	gdb_breakpoint ${srcfile}:[gdb_get_line_number "fourth HUP"]
+	gdb_continue_to_breakpoint "fourth HUP"
+	delete_breakpoints
+
+	# Verify an internal signal used by gdb is properly caught.
+	gdb_breakpoint ${srcfile}:[gdb_get_line_number "first INT"]
+	gdb_continue_to_breakpoint "first INT"
+	set test "override SIGINT to catch"
+	gdb_test "handle SIGINT nostop print nopass" \
+	    "SIGINT.*No.*Yes.*No.*" \
+	    "$test" \
+	    "SIGINT is used by the debugger.*Are you sure you want to change it.*y or n.*" \
+	    y
+	gdb_test "catch signal SIGINT" "Catchpoint .*"
+	gdb_test "continue" "Catchpoint .* SIGINT.*"
+    }
+}
+
+# Test with symbolic signal.
+test_catch_signal SIGHUP
+
+# Test with numeric signal.
+clean_restart $testfile
+test_catch_signal 1
+
+# Test with two signals in catchpoint.
+clean_restart $testfile
+test_catch_signal "SIGHUP SIGUSR2"
+
+#
+# Coverage tests.
+#
+
+gdb_test "catch signal SIGZARDOZ" "Unknown signal name 'SIGZARDOZ'."
+gdb_test "catch signal all" "Catchpoint .*"
+gdb_test "catch signal all SIGHUP" "'all' cannot be caught with other signals"
+gdb_test "catch signal SIGHUP all" "'all' cannot be caught with other signals"
+
+set i 0
+foreach {arg desc} {"" "standard signals" \
+			SIGHUP SIGHUP \
+			"SIGHUP SIGUSR2" "SIGHUP SIGUSR2" \
+			all "any signal"} {
+    delete_breakpoints
+    gdb_test "catch signal $arg" "Catchpoint .*" \
+	"set catchpoint '$arg' for printing"
+    gdb_test "info break" "$decimal.*catchpoint.*signal.*$desc.*" \
+	"info break for '$arg'"
+    gdb_breakpoint "main"
+    gdb_test "save breakpoints [standard_output_file bps.$i]" \
+	"Saved to file .*bps.$i.*" \
+	"save breakpoints for '$arg'"
+
+    set filename [remote_upload host [standard_output_file bps.$i] \
+		      [standard_output_file bps-local.$i]]
+    set fd [open $filename]
+    set file_data [read $fd]
+    set data [split $file_data "\n"]
+    close $fd
+
+    if {$arg == ""} {
+	set pattern "catch signal"
+    } else {
+	set pattern "catch signal $arg"
+    }
+    gdb_assert {[expr [llength $data] == 3]} \
+	"Number of lines of save breakpoints for '$arg'"
+    # Check the first line.
+    gdb_assert {[string match $pattern [lindex $data 0]]} \
+	"1st line of save breakpoints for '$arg'"
+    # Check the second line.
+    gdb_assert {[string match "break main" [lindex $data 1]]} \
+        "2nd line of save breakpoints for '$arg'"
+    # Check the trailing newline.
+    gdb_assert {[string match "" [lindex $data 2]]} \
+        "Trailing newline of save breakpoints for '$arg'"
+
+    incr i
+}

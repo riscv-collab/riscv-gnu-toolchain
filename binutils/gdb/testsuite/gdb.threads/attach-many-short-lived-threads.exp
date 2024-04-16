@@ -1,0 +1,174 @@
+# Copyright 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test attaching to a program that is constantly spawning short-lived
+# threads.  The stresses the edge cases of attaching to threads that
+# have just been created or are in process of dying.  In addition, the
+# test attaches, debugs, detaches, reattaches in a loop a few times,
+# to stress the behavior of the debug API around detach (some systems
+# end up leaving stale state behind that confuse the following
+# attach).
+
+# Return true if the running version of DejaGnu is known to not be
+# able to run this test.
+proc bad_dejagnu {} {
+    set dj_ver [dejagnu_version]
+    set dj_ver_major [lindex $dj_ver 0]
+    set dj_ver_minor [lindex $dj_ver 1]
+
+    # DejaGnu versions prior to 1.6 manage to kill the wrong process
+    # due to PID-reuse races.  Since this test spawns many threads, it
+    # widens the race window a whole lot, enough that the inferior is
+    # often killed, and thus the test randomly fails.  See:
+    # http://lists.gnu.org/archive/html/dejagnu/2015-07/msg00005.html
+    # The fix added a close_wait_program procedure.  If that procedure
+    # is defined, and DejaGnu is older than 1.6, assume that means the
+    # fix was backported.
+    if {$dj_ver_major == 1
+	&& ($dj_ver_minor < 6 && [info procs close_wait_program] == "")} {
+	return 1
+    }
+
+    return 0
+}
+
+if {[bad_dejagnu]} {
+    unsupported "broken DejaGnu"
+    return 0
+}
+
+require can_spawn_for_attach
+
+standard_testfile
+
+# The test proper.  See description above.
+
+proc test {} {
+    global binfile
+    global gdb_prompt
+    global decimal
+
+    set test_spawn_id [spawn_wait_for_attach $binfile]
+    set testpid [spawn_id_get_pid $test_spawn_id]
+
+    set attempts 10
+    for {set attempt 1} { $attempt <= $attempts } { incr attempt } {
+	with_test_prefix "iter $attempt" {
+	    set attached 0
+	    set eperm 0
+	    set test "attach"
+	    gdb_test_multiple "attach $testpid" $test {
+		-re "new threads in iteration" {
+		    # Seen when "set debug libthread_db" is on.
+		    exp_continue
+		}
+		-re "warning: Cannot attach to lwp $decimal: Operation not permitted" {
+		    # On Linux, PTRACE_ATTACH sometimes fails with
+		    # EPERM, even though /proc/PID/status indicates
+		    # the thread is running.
+		    set eperm 1
+		    exp_continue
+		}
+		-re "debugger service failed.*$gdb_prompt $" {
+		    fail $test
+		}
+		-re "$gdb_prompt $" {
+		    if {$eperm} {
+			xfail "$test (EPERM)"
+		    } else {
+			pass $test
+		    }
+		}
+		-re "Attaching to program.*process $testpid.*$gdb_prompt $" {
+		    pass $test
+		}
+	    }
+
+	    # Sleep a bit and try updating the thread list.  We should
+	    # know about all threads already at this point.  If we see
+	    # "New Thread" or similar being output, then "attach" is
+	    # failing to actually attach to all threads in the process,
+	    # which would be a bug.
+	    sleep 1
+
+	    set test "no new threads"
+	    set status 1
+	    gdb_test_multiple "info threads" $test -lbl {
+		-re "\r\n\[^\r\n\]*New " {
+		    set status 0
+		    exp_continue
+		}
+		-re -wrap "" {
+		    if { $status == 1 } {
+			pass $gdb_test_name
+		    } else {
+			fail $gdb_test_name
+		    }
+		}
+	    }
+
+	    # Force breakpoints always inserted, so that threads we might
+	    # have failed to attach to hit them even when threads we do
+	    # know about are stopped.
+	    gdb_test_no_output "set breakpoint always-inserted on"
+
+	    # Run to a breakpoint a few times.  A few threads should spawn
+	    # and die meanwhile.  This checks that thread creation/death
+	    # events carry on correctly after attaching.  Also, be
+	    # detaching from the program and reattaching, we check that
+	    # the program doesn't die due to gdb leaving a pending
+	    # breakpoint hit on a new thread unprocessed.
+	    gdb_test "break break_fn" "Breakpoint.*"
+
+	    # Wait a bit, to give time for most threads to hit the
+	    # breakpoint, including threads we might have failed to
+	    # attach.
+	    sleep 2
+
+	    set bps 3
+	    for {set bp 1} { $bp <= $bps } { incr bp } {
+		gdb_test "continue" "Breakpoint.*" "break at break_fn: $bp"
+	    }
+
+	    if {$attempt < $attempts} {
+		# Kick the time out timer for another round.
+		gdb_test "print again = 1" " = 1" "reset timer in the inferior"
+		# Show the time we had left in the logs, in case
+		# something goes wrong.
+		gdb_test "print seconds_left" " = .*"
+
+		gdb_test "detach" "Detaching from.*"
+	    } else {
+		gdb_test "kill" "" "kill process" "Kill the program being debugged.*y or n. $" "y"
+	    }
+
+	    gdb_test_no_output "set breakpoint always-inserted off"
+	    delete_breakpoints
+	}
+    }
+    kill_wait_spawned_process $test_spawn_id
+}
+
+# The test program exits after a while, in case GDB crashes.  Make it
+# wait at least as long as we may wait before declaring a time out
+# failure.
+set options { "additional_flags=-DTIMEOUT=$timeout" debug pthreads }
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile \
+	 $options] == -1} {
+    return -1
+}
+
+test

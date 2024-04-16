@@ -1,0 +1,80 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+standard_testfile
+set srcfileabs [standard_output_file $srcfile]
+
+# Double the final slash separator in $srcfileabs, such that
+# "/path/to/$srcfile" becomes "/path/to//$srcfile".  This is
+# passed as the "source" argument of gdb_compile, which, when
+# using GCC (as of 10.2) will result in the doubled slash
+# being incorporated into the built executable's debug info.
+# This is then used to check compare_filenames_for_search does
+# not falsely use an absolute filename as a relative one.
+# Note that Clang (as of 12.0.0) normalizes the path before
+# storing it in the executable's debug info, removing the double
+# slash.  This nullifies the "compare_filenames_for_search does
+# not match" test when using Clang (it can never fail).
+if { [regsub {/[^/]+$} $srcfileabs {/\0} srcfileabs] != 1 } {
+    xfail "cannot double the last slash separator"
+    return -1
+}
+
+if { [regsub {^(/[^/]+)/} $srcfileabs {\1subst/} srcfileabssubst] != 1
+     || [regsub {^(/[^/]+)/.*$} $srcfileabs {\1} initdir] != 1 } {
+    xfail "missing root subdirectory"
+    return -1
+}
+
+# Generate a regular expression which to match $srcfileabs with
+# or without the doubled slash.  This is used by the substituted
+# fullname test.
+set srcfileabssubst_regexp [string_to_regexp $srcfileabssubst]
+regsub {//} $srcfileabssubst_regexp {\0?} srcfileabssubst_regexp
+
+set f [open $srcfileabs "w"]
+puts $f "int main (void) { return 0; }"
+close $f
+
+if { [gdb_compile "$srcfileabs" "${binfile}" executable {debug}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+file delete -- $srcfileabs
+
+if {[mi_clean_restart $binfile]} {
+    return
+}
+
+mi_gdb_test "-interpreter-exec console \"set substitute-path ${initdir} ${initdir}subst\"" {\^done} "set substitute-path"
+
+mi_gdb_test "-file-list-exec-source-file" ".*\",fullname=\".*\".*" "fullname present"
+
+mi_gdb_test "-file-list-exec-source-file" ".*\",fullname=\"$srcfileabssubst_regexp\".*" "substituted fullname"
+
+# Test compare_filenames_for_search does not falsely use absolute
+# filename as a relative one.  Note that this test can falsely pass
+# with Clang, and possibly other compilers too; see the comment
+# above for more.
+mi_gdb_test "-break-insert -t /$srcfile:main" \
+	    "\\^error,msg=\"No source file named /[string_to_regexp $srcfile]\\.\"" \
+	    "compare_filenames_for_search does not match"
+mi_gdb_test "-break-insert -t $srcfile:main" \
+	    {\^done,bkpt=.*} \
+	    "compare_filenames_for_search does match"

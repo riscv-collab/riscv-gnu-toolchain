@@ -1,0 +1,155 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+require allow_shlib_tests
+
+proc test {hidden dlopen version_id_main lang} {
+    global srcdir subdir
+
+    set main "print-file-var-main"
+
+    set suffix "-hidden$hidden-dlopen$dlopen-version_id_main$version_id_main"
+
+    # Normally we place different builds (C/C++) of a test into
+    # subdirectories within the test build directory, however, using
+    # gdb_load_shlib doesn't work well with this approach, so instead
+    # add a language specific suffix to the binary and library names.
+    if { $lang == "c" } {
+	set suffix "${suffix}_c"
+    } else {
+	set suffix "${suffix}_cpp"
+    }
+
+    set executable $main$suffix
+
+    set lib1 "print-file-var-lib1"
+    set lib2 "print-file-var-lib2"
+
+    set libobj1 [standard_output_file ${lib1}$suffix.so]
+    set libobj2 [standard_output_file ${lib2}$suffix.so]
+
+    set lib_opts { debug $lang }
+    lappend lib_opts "additional_flags=-DHIDDEN=$hidden"
+
+    if { [gdb_compile_shlib ${srcdir}/${subdir}/${lib1}.c \
+	      ${libobj1} \
+	      ${lib_opts} ] != "" } {
+	return -1
+    }
+    if { [gdb_compile_shlib ${srcdir}/${subdir}/${lib2}.c \
+	      ${libobj2} \
+	      ${lib_opts} ] != "" } {
+	return -1
+    }
+
+    set main_opts [list debug $lang]
+    set link_opts [list debug shlib=${libobj1}]
+
+    set target_libobj2 [gdb_download_shlib $libobj2]
+
+    if {$dlopen} {
+	lappend main_opts "additional_flags=-DSHLIB_NAME=\"$target_libobj2\""
+	lappend link_opts "shlib_load"
+    } else {
+	lappend link_opts "shlib=${libobj2}"
+    }
+
+    lappend main_opts "additional_flags=-DVERSION_ID_MAIN=$version_id_main"
+
+    if { [build_executable_from_specs ${main} \
+	      $executable \
+	      $link_opts \
+	      ${main}.c \
+	      $main_opts]
+	 != 0 } {
+	return -1
+    }
+
+    clean_restart $executable
+    gdb_load_shlib $libobj1
+    gdb_locate_shlib $libobj2
+
+    if ![runto_main] {
+	return -1
+    }
+
+    # Try printing "this_version_num" qualified with the name of the file
+    # where the variables are defined.  There are three global variables
+    # with that name, and some systems such as GNU/Linux merge them
+    # into one single entity, while some other systems such as Windows
+    # keep them separate.  In the first situation, we have to verify
+    # that GDB does not randomly select the wrong instance, even when
+    # a specific filename is used to qualified the lookup.  And in the
+    # second case, we have to verify that GDB does select the instance
+    # defined in the given filename.
+    #
+    # To avoid adding target-specific code in this testcase, the program
+    # sets three local variables named 'vm', 'v1' and 'v2' with the value of
+    # our global variables.  This allows us to compare the value that
+    # GDB returns for each query against the actual value seen by
+    # the program itself.
+
+    # Get past the initialization of the v* variables.
+
+    set bp_location \
+	[gdb_get_line_number "STOP" "${main}.c"]
+    gdb_test "break $main.c:$bp_location" \
+	"Breakpoint \[0-9\]+ at 0x\[0-9a-fA-F\]+: .*" \
+	"breakpoint at STOP marker"
+
+    gdb_test "continue" \
+	"Breakpoint \[0-9\]+, main \\(\\) at.*STOP.*" \
+	"continue to STOP marker"
+
+    # Now check the value of this_version_id in all of
+    # print-file-var-main.c, print-file-var-lib1.c and
+    # print-file-var-lib2.c.
+
+    # Compare the values of $sym1 and $sym2.
+    proc compare {sym1 sym2} {
+	with_test_prefix "sym1=$sym1,sym2=$sym2" {
+	    # Done this way instead of comparing the symbols with "print $sym1
+	    # == sym2" in GDB directly so that the values of the symbols end
+	    # up visible in the logs, for debug purposes.
+	    set vsym1 [get_integer_valueof $sym1 -1]
+	    set vsym2 [get_integer_valueof $sym2 -1]
+	    gdb_assert {$vsym1 == $vsym2} "$sym1 == $sym2"
+	}
+    }
+
+    if $version_id_main {
+	compare "'print-file-var-main.c'::this_version_id" "vm"
+	compare "this_version_id" "vm"
+    }
+
+    compare "'print-file-var-lib1.c'::this_version_id" "v1"
+    compare "'print-file-var-lib2.c'::this_version_id" "v2"
+}
+
+# Only test C++ if we are able.  Always use C.
+set lang_list {c}
+if {[allow_cplus_tests]} {
+    lappend lang_list c++
+}
+
+foreach_with_prefix lang $lang_list {
+    foreach_with_prefix hidden {0 1} {
+	foreach_with_prefix dlopen {0 1} {
+	    foreach_with_prefix version_id_main {0 1} {
+		test $hidden $dlopen $version_id_main $lang
+	    }
+	}
+    }
+}

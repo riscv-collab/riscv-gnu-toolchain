@@ -1,0 +1,199 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test re-running an inferior with a JIT descriptor, where the JIT
+# descriptor changes address between runs.
+# http://sourceware.org/bugzilla/show_bug.cgi?id=13431
+
+# Test both the case of the JIT reader being included in the main
+# program directly, and the case of the JIT reader being split out to
+# a shared library.
+
+# For completeness, also test when the JIT descriptor does not change
+# address between runs.
+
+require allow_shlib_tests
+
+standard_testfile
+
+set libname $testfile-jit
+set srcfile_lib $srcdir/$subdir/$libname.c
+set binfile_lib [standard_output_file $libname.so]
+set binfile_lib2 [standard_output_file ${libname}2.so]
+
+# Build a standalone JIT binary.
+
+proc build_standalone_jit {{options ""}} {
+    global testfile srcfile binfile
+
+    lappend options "debug"
+
+    if {[build_executable $testfile.exp $testfile $srcfile $options] == -1} {
+	return -1
+    }
+
+    return 0
+}
+
+# Build the shared library JIT.
+
+proc build_shared_jit {{options ""}} {
+    global testfile
+    global srcfile_lib binfile_lib binfile_lib2
+
+    lappend options "debug"
+    if { [gdb_compile_shlib $srcfile_lib $binfile_lib $options] != "" } {
+	return -1
+    }
+    if { [gdb_compile_shlib $srcfile_lib $binfile_lib2 $options] != "" } {
+	return -1
+    }
+
+    return 0
+}
+
+if {[build_standalone_jit] == -1} {
+    untested "failed to compile standalone testcase"
+    return
+}
+
+if {[build_shared_jit] == -1} {
+    untested "failed to compile shared library testcase"
+    return
+}
+
+# Build the program that loads the JIT library.
+set srcfile_dl $testfile-dl.c
+set binfile_dl $binfile-dl
+set options [list debug shlib=${binfile_lib}]
+if {[gdb_compile ${srcdir}/${subdir}/${srcfile_dl} $binfile_dl executable \
+	 $options] == -1 } {
+    untested "failed to compile"
+    return -1
+}
+
+# Build the program that loads *two* JIT libraries.
+set binfile_dl2 $binfile-dl2
+set options [list debug shlib=${binfile_lib} shlib=${binfile_lib2}]
+if {[gdb_compile ${srcdir}/${subdir}/${srcfile_dl} $binfile_dl2 executable \
+	 $options] == -1 } {
+    untested "failed to compile two-jitter binary"
+    return -1
+}
+
+# STANDALONE is true when the JIT reader is included directly in the
+# main program.  False when the JIT reader is in a separate shared
+# library.  If CHANGE_ADDR is true, force changing the JIT descriptor
+# changes address between runs.
+proc jit_test_reread {standalone change_addr} {
+    global testfile binfile subdir srcfile srcdir binfile_lib binfile_dl
+    global hex
+
+    with_test_prefix "initial run" {
+	if {$standalone} {
+	    clean_restart $binfile
+	} else {
+	    clean_restart $binfile_dl
+	}
+
+	runto_main
+
+	set addr_before [get_hexadecimal_valueof "&__jit_debug_descriptor" 0 \
+			     "get address of __jit_debug_descriptor"]
+
+	gdb_test "maint info breakpoints" \
+	    "jit events\[ \]+keep y   $hex <__jit_debug_register_code>.*" \
+	    "maint info breakpoints shows jit breakpoint"
+    }
+
+    with_test_prefix "second run" {
+	# Ensure that the new executable is at least one second newer
+	# than the old.  If the recompilation happens in the same
+	# second, gdb might not reload the executable automatically.
+	sleep 1
+
+	if ${change_addr} {
+	    set options "additional_flags=-DSPACER"
+	    if {$standalone} {
+		gdb_rename_execfile $binfile ${binfile}x
+		set res [build_standalone_jit $options]
+	    } else {
+		gdb_rename_execfile $binfile_lib ${binfile_lib}x
+		set res [build_shared_jit $options]
+	    }
+	    if  { $res == -1 } {
+		fail "recompile"
+		return
+	    } else {
+		pass "recompile"
+	    }
+	}
+
+	runto_main
+
+	set addr_after [get_hexadecimal_valueof "&__jit_debug_descriptor" 0 \
+			    "get address of __jit_debug_descriptor"]
+
+	# This used to crash in the JIT-in-shared-library case:
+	# https://sourceware.org/bugzilla/show_bug.cgi?id=11094
+	gdb_test "maint info breakpoints" \
+	    "jit events\[ \]+keep y   $hex <__jit_debug_register_code>.*" \
+	    "maint info breakpoints shows jit breakpoint"
+    }
+
+    if ${change_addr} {
+	gdb_assert {$addr_before != $addr_after} "address changed"
+    } else {
+	gdb_assert {$addr_before == $addr_after} "address didn't change"
+    }
+}
+
+foreach standalone {1 0} {
+    with_test_prefix [expr ($standalone)?"standalone":"shared"] {
+	with_test_prefix "change addr" {
+	    jit_test_reread $standalone 1
+	}
+	with_test_prefix "same addr" {
+	    jit_test_reread $standalone 0
+	}
+    }
+}
+
+# Now start the program that loads two JITer libraries and expect to
+# see JIT breakpoints defined for both.
+
+with_test_prefix "two JITers" {
+    clean_restart $binfile_dl2
+
+    if {![runto_main]} {
+	return -1
+    }
+
+    set num_bps 0
+    set ws "\[ \t\]+"
+    gdb_test_multiple "maint info breakpoints" "have two jit breakpoints" {
+	-re "jit events${ws}keep y${ws}$hex <__jit_debug_register_code> inf 1\r\n" {
+	    incr num_bps
+	    exp_continue
+	}
+	-re "$gdb_prompt $" {
+	    if {$num_bps == 2} {
+		pass $gdb_test_name
+	    } else {
+		fail $gdb_test_name
+	    }
+	}
+    }
+}

@@ -1,0 +1,193 @@
+# Copyright 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test multi-exec / multi-process features that work for all configurations,
+# even ones that cannot run multiple processes simultaneously.
+
+set testfile "base"
+
+set exec1 "hello"
+set srcfile1 ${exec1}.c
+set binfile1 [standard_output_file ${exec1}]
+
+set exec2 "hangout"
+set srcfile2 ${exec2}.c
+set binfile2 [standard_output_file ${exec2}]
+
+set exec3 "goodbye"
+set srcfile3 ${exec3}.c
+set binfile3 [standard_output_file ${exec3}]
+
+if { [build_executable ${testfile}.exp ${exec1} "${srcfile1}" {debug}] == -1 } {
+    return -1
+}
+
+if { [build_executable ${testfile}.exp ${exec2} "${srcfile2}" {debug}] == -1} {
+    return -1
+}
+
+if { [build_executable ${testfile}.exp ${exec3} "${srcfile3}" {debug}] == -1 } {
+    return -1
+}
+
+clean_restart ${exec1}
+
+gdb_test {print $_inferior} " = 1"
+
+# Add an empty inferior, switch to it, and load a main executable into
+# it.
+gdb_test "add-inferior" "Added inferior 2.*" "add empty inferior 2"
+gdb_test "inferior 2" "Switching to inferior 2.*" "switch to inferior 2"
+gdb_test "file ${binfile2}" ".*" "load ${exec2} file in inferior 2"
+
+gdb_test {print $_inferior} " = 2" "print \$_inferior after switching"
+
+# Add a new inferior and load a main executable into it in one
+# command.
+gdb_test "add-inferior -exec ${binfile3}" \
+    "Added inferior 3.*" \
+    "add inferior 3 with -exec ${exec3}"
+
+# Check that we have multiple inferiors.
+
+gdb_test "info inferiors" \
+    "Executable.*${exec1}.*${exec2}.*${exec3}.*"
+
+# Test info inferiors with args
+
+set see1 0
+set see2 0
+set see3 0
+
+gdb_test_multiple "info inferior 2 3" "info inferior 2 3" {
+    -re ". 1 \[^\r\n\]*${exec1}" {
+	set see1 1
+	exp_continue
+    }
+    -re ". 2 \[^\r\n\]*${exec2}" {
+	set see2 1
+	exp_continue
+    }
+    -re ". 3 \[^\r\n\]*${exec3}" {
+	set see3 1
+	exp_continue
+    }
+    -re "$gdb_prompt $" {
+	if {!$see1 && $see2 && $see3} {
+	    pass "info inferior 2 3"
+	} else {
+	    fail "info inferior 2 3"
+	}
+    }
+}
+
+set see1 0
+set see2 0
+set see3 0
+
+gdb_test_multiple "info inferior 1-2" "info inferior 1-2" {
+    -re ". 1 \[^\r\n\]*${exec1}" {
+	set see1 1
+	exp_continue
+    }
+    -re ". 2 \[^\r\n\]*${exec2}" {
+	set see2 1
+	exp_continue
+    }
+    -re ". 3 \[^\r\n\]*${exec3}" {
+	set see3 1
+	exp_continue
+    }
+    -re "$gdb_prompt $" {
+	if {$see1 && $see2 && !$see3} {
+	    pass "info inferior 1-2"
+	} else {
+	    fail "info inferior 1-2"
+	}
+    }
+}
+
+# Test that we have multiple symbol tables.
+
+gdb_test "inferior 1" ".*" "switch to inferior 1"
+gdb_test "info functions commonfun" \
+    "${srcfile1}.*" \
+    "'info functions commonfun' in inferior 1"
+
+gdb_test "inferior 3" ".*" "switch to inferior 3"
+gdb_test "info functions commonfun" \
+    "${srcfile3}.*" \
+    "'info functions commonfun' in inferior 3"
+
+gdb_test "inferior 1" ".*" "switch back to inferior 1"
+
+gdb_test_no_output "set listsize 1"
+
+gdb_test "list commonfun" "from hello.*" "list commonfun in hello"
+
+gdb_test "print hglob" "1"
+
+gdb_test "print glob" "92" "print glob (${exec1})"
+
+
+gdb_test "inferior 3" ".*" "switch to inferior 3 to print globals"
+
+gdb_test "print gglob" "2"
+
+gdb_test "print glob" "45" "print glob (${exec3})"
+
+gdb_test "list commonfun" "from goodbye.*" "list commonfun in goodbye"
+
+
+# Let's run the hello program.
+gdb_test "inferior 1" ".*" "switch to inferior 1 to run it"
+
+if {![runto_main]} {
+    return -1
+}
+
+gdb_test "break hello" ".*"
+gdb_test "continue" "Breakpoint \[0-9\].*, hello.*"
+
+# Now let's remove the other two
+
+gdb_test_no_output "remove-inferiors 2-3" "remove-inferiors 2-3"
+
+set see1 0
+set see2 0
+set see3 0
+
+gdb_test_multiple "info inferiors" "check remove-inferiors" {
+    -re ". 3 \[^\r\n\]*${exec3}" {
+	set see3 1
+	exp_continue
+    }
+    -re ". 2 \[^\r\n\]*${exec2}" {
+	set see2 1
+	exp_continue
+    }
+    -re ". 1 \[^\r\n\]*${exec1}" {
+	set see1 1
+	exp_continue
+    }
+    -re "$gdb_prompt $" {
+	if {$see1 && !$see2 && !$see3} {
+	    pass "check remove-inferiors"
+	} else {
+	    fail "check remove-inferiors"
+	}
+    }
+}
+

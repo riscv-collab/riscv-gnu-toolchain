@@ -1,0 +1,87 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "ada.exp"
+
+require allow_ada_tests
+
+standard_ada_testfile local
+
+if {[gdb_compile_ada "${srcfile}" "${binfile}" executable debug] != ""} {
+  return -1
+}
+
+clean_restart ${testfile}
+
+set bp_location [gdb_get_line_number "STOP" ${testdir}/local.adb]
+if {![runto "local.adb:$bp_location"]} {
+  return
+}
+
+# The test has two constants named 'three', with different values.
+# This prints one of them and checks the value.  WHICH_ENUM is the
+# name of the enum, either "e1" or "e2".
+proc print_three {which_enum value} {
+    # We don't know which in order gdb will print the constants, so
+    # adapt to either.
+    set menu1 [multi_line \
+		   "Multiple matches for three" \
+		   "\\\[0\\\] cancel" \
+		   "\\\[1\\\] local\\.e2'\\(three\\) \\(enumeral\\)" \
+		   "\\\[2\\\] local\\.e1'\\(three\\) \\(enumeral\\)" \
+		   "> $"]
+    set menu2 [multi_line \
+		   "Multiple matches for three" \
+		   "\\\[0\\\] cancel" \
+		   "\\\[1\\\] local\\.e1'\\(three\\) \\(enumeral\\)" \
+		   "\\\[2\\\] local\\.e2'\\(three\\) \\(enumeral\\)" \
+		   "> $"]
+
+    set index -1
+    set test_name "menu for test index $which_enum"
+    gdb_test_multiple "print/d three" $test_name {
+	-re $menu1 {
+	    pass $test_name
+	    if {$which_enum == "e1"} {
+		set index 2
+	    } else {
+		set index 1
+	    }
+	}
+	-re $menu2 {
+	    pass $test_name
+	    if {$which_enum == "e1"} {
+		set index 1
+	    } else {
+		set index 2
+	    }
+	}
+	default {
+	    fail $test_name
+	}
+    }
+
+    if {$index != -1} {
+	gdb_test $index " = $value"
+    }
+}
+
+print_three e2 0
+print_three e1 2
+
+# These will not result in a menu, as expression resolution should
+# disambiguate the meaning of 'three'.
+gdb_test "print v1(three)" " = 2" "print v1 element"
+gdb_test "print v2(three)" " = 3" "print v2 element"

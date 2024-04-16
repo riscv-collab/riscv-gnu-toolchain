@@ -1,0 +1,202 @@
+# Copyright (C) 2016-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Regression test for PR gdb/18360.  Test that "interrupt -a" while
+# some thread is stepping over a breakpoint behaves as expected.
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile \
+	 {debug pthreads}] == -1} {
+    return -1
+}
+
+if {![runto_main]} {
+    return -1
+}
+
+# Read the number of threads out of the inferior.
+set NUM_THREADS [get_integer_valueof "num_threads" -1]
+
+# Account for the main thread.
+incr NUM_THREADS
+
+# Run command and wait for the prompt, without end anchor.
+
+proc gdb_test_no_anchor {cmd} {
+    global gdb_prompt
+
+    gdb_test_multiple $cmd $cmd {
+	-re "$gdb_prompt " {
+	    pass $cmd
+	}
+	-re "infrun:" {
+	    exp_continue
+	}
+    }
+}
+
+# Enable/disable debugging.
+
+proc enable_debug {enable} {
+
+    # Comment out to debug problems with the test.
+    return
+
+    gdb_test_no_anchor "set debug infrun $enable"
+    gdb_test_no_anchor "set debug displaced $enable"
+}
+
+# If RESULT is not zero, make the caller return RESULT.
+
+proc return_if_nonzero { result } {
+    if {$result != 0} {
+	return -code return $result
+    }
+}
+
+# Do one iteration of "c -a& -> interrupt -a".  Return zero on sucess,
+# and non-zero if some test fails.
+
+proc test_one_iteration {} {
+    global gdb_prompt
+    global NUM_THREADS
+    global decimal
+
+    set saw_continuing 0
+    set test "continue -a &"
+    return_if_nonzero [gdb_test_multiple $test $test {
+	-re "Continuing.\r\n" {
+	    set saw_continuing 1
+	    exp_continue
+	}
+	-re "$gdb_prompt " {
+	    if ![gdb_assert $saw_continuing $test] {
+		return 1
+	    }
+	}
+	-re "infrun:" {
+	    exp_continue
+	}
+    }]
+
+    set running_count 0
+    set test "all threads are running"
+    return_if_nonzero [gdb_test_multiple "info threads" $test {
+	-re "Thread \[^\r\n\]* \\(running\\)" {
+	    incr running_count
+	    exp_continue
+	}
+	-re "$gdb_prompt " {
+	    if ![gdb_assert {$running_count == $NUM_THREADS} $test] {
+		return 1
+	    }
+	}
+	-re "infrun:" {
+	    exp_continue
+	}
+    }]
+
+    set test "interrupt -a"
+    return_if_nonzero [gdb_test_multiple $test $test {
+	-re "$gdb_prompt " {
+	    pass $test
+	}
+	-re "infrun:" {
+	    exp_continue
+	}
+    }]
+
+    set stopped_count 0
+    set test "wait for stops"
+    # Don't return on failure here, in order to let "info threads" put
+    # useful info in gdb.log.
+    gdb_test_multiple "" $test {
+	-re "Thread $decimal \[^\r\n\]*stopped" {
+	    incr stopped_count
+	    if {$stopped_count != $NUM_THREADS} {
+		exp_continue
+	    }
+	}
+	-re "$gdb_prompt " {
+	    gdb_assert {$stopped_count == $NUM_THREADS} $test
+	}
+	-re "infrun:" {
+	    exp_continue
+	}
+    }
+
+    # Check if all threads are seen as stopped with "info
+    # threads".  It's a bit redundant with the test above, but
+    # it's useful to have this in the gdb.log if the above ever
+    # happens to fail.
+    set running_count 0
+    set test "all threads are stopped"
+    return_if_nonzero [gdb_test_multiple "info threads" $test {
+	-re "Thread \[^\r\n\]* \\(running\\)" {
+	    incr running_count
+	    exp_continue
+	}
+	-re "$gdb_prompt " {
+	    if ![gdb_assert {$running_count == 0} $test] {
+		return 1
+	    }
+	}
+    }]
+
+    return 0
+}
+
+# The test driver proper.  If DISPLACED is "on", turn on displaced
+# stepping.  If "off", turn it off.
+
+proc testdriver {displaced} {
+    global binfile
+    global GDBFLAGS
+
+    save_vars { GDBFLAGS } {
+	append GDBFLAGS " -ex \"set non-stop on\""
+	clean_restart $binfile
+    }
+
+    gdb_test_no_output "set displaced-stepping $displaced"
+
+    if ![runto all_started] {
+	return
+    }
+    set break_line [gdb_get_line_number "set breakpoint here"]
+
+    gdb_test "break $break_line if always_zero" "Breakpoint .*" "set breakpoint"
+
+    enable_debug 1
+
+    for {set iter 0} {$iter < 20} {incr iter} {
+	with_test_prefix "iter=$iter" {
+	    # Return early if some test fails, to avoid cascading
+	    # timeouts if something goes wrong.
+	    if {[test_one_iteration] != 0} {
+		return
+	    }
+	}
+    }
+}
+
+foreach_with_prefix displaced-stepping {"on" "off"} {
+    if { ${displaced-stepping} != "off" && ![support_displaced_stepping] } {
+	continue
+    }
+
+    testdriver ${displaced-stepping}
+}

@@ -1,0 +1,154 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test floating-point literal extension.
+
+load_lib "ada.exp"
+
+require allow_ada_tests
+
+standard_ada_testfile prog
+
+if {[gdb_compile_ada "${srcfile}" "${binfile}" executable {debug}] != ""} {
+    return -1
+}
+
+# Given a floating point EXPRESSION, return the size of the result.
+
+proc float_size { expression } {
+
+    set size 0
+    gdb_test_multiple "ptype ${expression}" "" {
+	-re -wrap "<16-byte float>" {
+	    set size 16
+	}
+	-re -wrap "<12-byte float>" {
+	    set size 12
+	}
+	-re -wrap "<\\d+-byte float>" {
+	    # Assume 8 for anything less than or equal to 8.
+	    set size 8
+	}
+    }
+
+    return $size
+}
+
+clean_restart ${testfile}
+
+set bp_location [gdb_get_line_number "BREAK" ${testdir}/prog.adb]
+runto "prog.adb:$bp_location"
+
+gdb_test "print 16f#41b80000#" " = 23.0"
+gdb_test "print val_float" " = 23.0"
+gdb_test "print val_float := 16f#41b80000#" " = 23.0"
+gdb_test "print val_float" " = 23.0" \
+    "print val_float after assignment"
+
+gdb_test "print 16lf#bc0d83c94fb6d2ac#" " = -2.0e-19"
+gdb_test "print val_double" " = -2.0e-19"
+gdb_test "print val_double := 16lf#bc0d83c94fb6d2ac#" " = -2.0e-19"
+gdb_test "print val_double" " = -2.0e-19" \
+    "print val_double after assignment"
+
+# Fetch the size of a compiler-generated long double.
+set compiler_long_double_size [float_size "long_long_float" ]
+
+# Fetch the size of an internal long double type in GDB.
+set gdb_long_double_size [float_size "16llf#0#" ]
+
+# Different architectures use different long double formats.  For
+# example, IEEE quad versus i387 long doubles.  Account for that in the
+# tests below.
+
+# Get the used long double format.
+set long_double_format ""
+set cmd "maint print architecture"
+gdb_test_multiple $cmd  "" {
+    -re "^[string_to_regexp $cmd](?=\r\n)" {
+	exp_continue
+    }
+    -re "^\r\ngdbarch_dump: long_double_format = (\[^\r\n\]*)(?=\r\n)" {
+	set long_double_format $expect_out(1,string)
+	exp_continue
+    }
+    -re "^\r\n$gdb_prompt $" {
+	pass $gdb_test_name
+    }
+    -re "^\r\n(\[^\r\n\]*)(?=\r\n)" {
+	exp_continue
+    }
+}
+
+# Set default values for 128-bit IEEE quad long doubles.
+set valid_long_double "16llf#4000921fb54442d18469898cc51701b8#"
+set printed_long_double "3.1415926535897932384626433832795028"
+set invalid_long_double ""
+set has_invalid_long_double 0
+
+switch -glob $long_double_format {
+    floatformat_ibm_long_double_* {
+	set w1 c1e1c00000000000
+	set w2 4544adf4b7320335
+	switch $long_double_format {
+	    floatformat_ibm_long_double_big {
+		set valid_long_double "16llf#$w2$w1#"
+	    }
+	    floatformat_ibm_long_double_little {
+		set valid_long_double "16llf#$w1$w2#"
+	    }
+	}
+	set printed_long_double "50000000000000000000000000.0"
+    }
+}
+
+if { [istarget x86_64-*-* ] || [istarget i?86-*-*] } {
+    # i387 long double have invalid values
+    set has_invalid_long_double 1
+    if { $compiler_long_double_size == 16 } {
+	# 5.0e+25 in i387 128-bit long double.
+	set valid_long_double "16llf#7ffff7ff4054a56fa5b99019a5c8#"
+	set invalid_long_double "16llf#a56fa5b99019a5c800007ffff7ff4054#"
+	set printed_long_double "5.0e\\+25"
+    } elseif { $compiler_long_double_size == 12 } {
+	# 5.0e+25 in i387 80-bit long double.
+	set valid_long_double "16llf#56554054a56fa5b99019a5c8#"
+	set invalid_long_double "16llf#9019a5c800007ffff7ff4054#"
+	set printed_long_double "5.0e\\+25"
+    }
+}
+
+# Exercise GDB-side long doubles.
+if { $gdb_long_double_size > 8 } {
+    gdb_test "print ${valid_long_double}" " = ${printed_long_double}"
+    gdb_test "print \$foo:=${valid_long_double}" "= ${printed_long_double}"
+    gdb_test "print \$foo" "= ${printed_long_double}" \
+	"print internal long double variable after assignment"
+}
+
+# Exercise compiler-side long doubles.
+if { $compiler_long_double_size > 8 } {
+    gdb_test "print val_long_double" " = 5.0e\\+25"
+    gdb_test "print val_long_double := ${valid_long_double}" \
+	" = ${printed_long_double}"
+    gdb_test "print val_long_double" " = ${printed_long_double}" \
+	"print val_long_double after assignment"
+}
+
+# If the target has invalid long double values, test it now.
+if { $has_invalid_long_double } {
+    gdb_test "print ${invalid_long_double}" \
+	" = <invalid float value>" "print invalid long double value"
+}

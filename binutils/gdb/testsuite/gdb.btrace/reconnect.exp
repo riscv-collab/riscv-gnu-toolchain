@@ -1,0 +1,81 @@
+# This testcase is part of GDB, the GNU debugger.
+#
+# Copyright 2016-2024 Free Software Foundation, Inc.
+#
+# Contributed by Intel Corp. <tim.wiederhake@intel.com>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib gdbserver-support.exp
+
+require allow_btrace_tests
+require allow_gdbserver_tests
+
+standard_testfile
+if [prepare_for_testing "failed to prepare" $testfile $srcfile] {
+    return -1
+}
+
+set target_binfile [gdb_remote_download target $binfile]
+
+# Make sure we're disconnected and no recording is active, in case
+# we're testing with an extended-remote board, therefore already
+# connected.
+with_test_prefix "preparation" {
+  gdb_test "record stop" ".*"
+  gdb_test "disconnect" ".*"
+}
+
+# Start fresh gdbserver.
+set gdbserver_reconnect_p 1
+set res [gdbserver_start "" $target_binfile]
+set gdbserver_protocol [lindex $res 0]
+set gdbserver_gdbport [lindex $res 1]
+gdb_target_cmd $gdbserver_protocol $gdbserver_gdbport
+
+# Create a record, check, reconnect
+with_test_prefix "first" {
+  gdb_test_no_output "record btrace" "record btrace enable"
+  gdb_test "stepi 19" ".*"
+
+  gdb_test "info record" [multi_line \
+    "Active record target: .*" \
+    "Recorded 19 instructions in .+ functions \\(. gaps\\) for thread 1 \\(Thread .*\\)."
+  ]
+
+  gdb_test "disconnect" "Ending remote debugging."
+  gdb_target_cmd $gdbserver_protocol $gdbserver_gdbport
+}
+
+# Test if we can access the recorded data from first connect.
+# Note: BTS loses the first function call entry with its associated
+# instructions for technical reasons.  This is why we test for
+# "a number between 10 and 19", so we catch at least the case where
+# there are 0 instructions in the record.
+with_test_prefix "second" {
+  gdb_test "info record" [multi_line \
+    "Active record target: .*" \
+    "Recorded 1. instructions in .+ functions \\(. gaps\\) for thread 1 \\(Thread .*\\)."
+  ]
+
+  gdb_test "record stop" "Process record is stopped and all execution logs are deleted."
+
+  gdb_test "disconnect" "Ending remote debugging."
+  gdb_target_cmd $gdbserver_protocol $gdbserver_gdbport
+}
+
+# Test that recording is now off.
+with_test_prefix "third" {
+  gdb_test "info record" "No recording is currently active."
+}

@@ -1,0 +1,98 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test a binary that uses SVE and exercise changing the SVE vector length.
+
+require allow_aarch64_sve_tests
+
+standard_testfile
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+    return
+}
+
+set linespec ${srcfile}:[gdb_get_line_number "break here"]
+
+if ![runto ${linespec}] {
+    return
+}
+
+# Count number of lines in "info registers" output.
+proc count_info_registers {} {
+    global gdb_prompt
+    set ret 0
+
+    gdb_test_multiple "info all-registers" "" {
+	-re ".*$gdb_prompt $" {
+	    set ret [count_newlines $expect_out(buffer)]
+	}
+    }
+
+    return ${ret}
+}
+
+proc get_register_value {register} {
+    global gdb_prompt
+    set ret ""
+
+    gdb_test_multiple "print \$${register}" "" {
+	-re ". = \[0-9\]+\r\n$gdb_prompt $" {
+	    regexp {. = ([0-9]+)} $expect_out(buffer) matched ret
+	}
+	-re ".*$gdb_prompt $" {
+	}
+    }
+
+    return ${ret}
+}
+
+# The test executable halves the vector length in a loop, so loop along
+# to check it.
+for {set i [get_register_value "vg"]} {$i > 1} {set i [expr $i / 2]} {
+    set lines_before [count_info_registers]
+
+    gdb_test "next" ".*if .res < 0." "step over prctl vg = ${i}"
+
+    set lines_after [count_info_registers]
+
+    # There was a bug where GDB would lose track of some registers when the
+    # vector length changed.  Make sure they're still all there.
+    if {${lines_before} == ${lines_after}} {
+	pass "same number of registers vg = ${i}"
+    } else {
+	fail "same number of registers vg = ${i}"
+    }
+
+    gdb_test "print \$vg" ". = ${i}" "vg was changed to ${i}"
+
+    set size_after [expr {$i * 8}]
+
+    for {set j 0} {$j < 32} {set j [incr j]} {
+	gdb_test "print sizeof(\$z$j)" ". = ${size_after}" "z$j has ${size_after} bytes"
+    }
+
+    gdb_test_multiple "continue" "" {
+	-re ".*Breakpoint $decimal, do_sve_ioctl_test .*$gdb_prompt $" {
+	    # Next iteration.
+	}
+	-re "Inferior 1 .* exited normally.*$gdb_prompt $" {
+	    # We're done.
+	    break
+	}
+	-re "$gdb_prompt $" {
+	    fail "unexpected output"
+	    break;
+	}
+    }
+}

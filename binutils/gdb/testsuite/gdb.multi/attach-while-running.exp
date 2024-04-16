@@ -1,0 +1,66 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test was introduced to reproduce a specific bug in GDBserver, where
+# attaching an inferior while another one was running would trigger a segfault
+# in GDBserver.  Reproducing the bug required specific circumstances:
+#
+#  - The first process must be far enough to have loaded its libc or
+#    libpthread (whatever triggers the loading of libthread_db), such that
+#    its proc->priv->thread_db is not nullptr
+#
+#  - However, its lwp must still be in the `!lwp->thread_known` state,
+#    meaning GDBserver hasn't asked libthread_db to compute the thread
+#    handle yet.  That means, GDB must not have refreshed the thread list
+#    yet, since that would cause the thread handles to be computed.  That
+#    means, no stopping on a breakpoint, since that causes a thread list
+#    update.  That's why the first inferior needs to be started with "run
+#    &".
+#
+#  - Attaching the second process would segfault GDBserver.
+#
+# All of this to say, if modifying this test, please keep in mind the original
+# intent.
+
+standard_testfile
+
+require !use_gdb_stub
+
+if { [build_executable "failed to prepare" ${testfile} ${srcfile}] } {
+    return
+}
+
+proc do_test {} {
+    save_vars { $::GDBFLAGS } {
+	append ::GDBFLAGS " -ex \"maint set target-non-stop on\""
+	clean_restart $::binfile
+    }
+
+    gdb_test -no-prompt-anchor "run &"
+    gdb_test "add-inferior" "Added inferior 2 on connection 1 .*"
+    gdb_test "inferior 2" "Switching to inferior 2 .*"
+
+    set spawn_id [spawn_wait_for_attach $::binfile]
+    set pid [spawn_id_get_pid $spawn_id]
+
+    # This call would crash GDBserver.
+    gdb_attach $pid
+
+    # Read a variable from the inferior, just to make sure the attach worked
+    # fine.
+    gdb_test "print global_var" " = 123"
+}
+
+do_test

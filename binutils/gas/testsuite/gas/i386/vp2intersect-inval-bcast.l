@@ -1,0 +1,13 @@
+.*: Assembler messages:
+.*:5: Error: unsupported broadcast for `vp2intersectd'
+.*:6: Error: unsupported broadcast for `vp2intersectd'
+.*:7: Error: unsupported broadcast for `vp2intersectd'
+.*:8: Error: unsupported broadcast for `vp2intersectq'
+.*:9: Error: unsupported broadcast for `vp2intersectq'
+.*:10: Error: unsupported broadcast for `vp2intersectq'
+.*:13: Error: unsupported broadcast for `vp2intersectd'
+.*:14: Error: unsupported broadcast for `vp2intersectd'
+.*:15: Error: unsupported broadcast for `vp2intersectd'
+.*:16: Error: unsupported broadcast for `vp2intersectq'
+.*:17: Error: unsupported broadcast for `vp2intersectq'
+.*:18: Error: unsupported broadcast for `vp2intersectq'

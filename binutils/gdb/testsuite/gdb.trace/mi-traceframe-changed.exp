@@ -1,0 +1,154 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib trace-support.exp
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+standard_testfile tfile.c
+set executable $testfile
+
+if {![is_remote host] && ![is_remote target]} {
+    set tfile_basic [standard_output_file tfile-basic.tf]
+    set tfile_dir [file dirname $tfile_basic]/
+    set purely_local 1
+} else {
+    set tfile_basic tfile-basic.tf
+    set tfile_dir ""
+    set purely_local 0
+}
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" \
+	   executable \
+	   [list debug nowarnings nopie\
+		"additional_flags=-DTFILE_DIR=\"$tfile_dir\""]] \
+	  != "" } {
+     untested "failed to compile"
+     return -1
+}
+
+# Make sure we are starting fresh.
+remote_file host delete $tfile_basic
+remote_file target delete $tfile_basic
+
+proc test_tfind_tfile { } {
+    with_test_prefix "tfile" {
+	global binfile
+	global decimal
+	global tfile_basic
+
+	mi_clean_restart $binfile
+
+	mi_gdb_test "-target-select tfile ${tfile_basic}" \
+	    ".*=breakpoint-created,bkpt=\{number=\"${decimal}\",type=\"tracepoint\",disp=\"keep\",enabled=\"y\",.*,func=\"write_basic_trace_file\".*\\^connected" \
+	    "select trace file"
+
+	mi_gdb_test "tfind 0" \
+	    ".*=traceframe-changed,num=\"0\",tracepoint=\"${decimal}\".*\\^done" \
+	    "tfind 0"
+
+	# No MI notification is sent because traceframe is not changed.
+	mi_gdb_test "tfind 0" \
+	    "\\&\"tfind 0\\\\n\"\r\n\~\"Found.*\\^done" \
+	    "tfind 0 again"
+
+	mi_gdb_test "tfind end" \
+	    ".*=traceframe-changed,end.*\\^done" \
+	    "tfind end"
+
+	# No MI notification is send because request is from MI command.
+	mi_gdb_test "-trace-find frame-number 0" \
+	    "-trace-find frame-number 0\r\n\\^done,found=\"1\",tracepoint=\"${decimal}\",traceframe=\"0\",frame=\{.*" \
+	    "-trace-find frame-number 0"
+
+	mi_gdb_exit
+    }
+}
+
+# If tracefile is generated successfully, copy tracefile to host and
+# run tests.
+if [generate_tracefile $binfile] {
+    if {!$purely_local} {
+	# Copy tracefile from target to host.
+	remote_download host [remote_upload target tfile-basic.tf] \
+	    tfile-basic.tf
+    }
+
+    test_tfind_tfile
+}
+
+# Change to a different test case in order to run it on target, and get
+# several traceframes.
+standard_testfile status-stop.c
+append testfile -1
+append binfile -1
+set executable $testfile
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" \
+	   executable {debug nowarnings}] != "" } {
+     untested "failed to compile"
+     return -1
+}
+
+# Test target supports tracepoints or not.
+
+clean_restart $executable
+
+if ![runto_main] {
+    return -1
+}
+
+if ![gdb_target_supports_trace] {
+    unsupported "current target does not support trace"
+    return -1
+}
+
+gdb_exit
+
+proc test_tfind_remote { } {
+    with_test_prefix "remote" {
+	global decimal
+	global binfile
+
+	mi_clean_restart $binfile
+	mi_runto_main
+
+	mi_gdb_test "-break-insert end" "\\^done.*" "break end"
+	mi_gdb_test "-break-insert -a func2" "\\^done.*" "break func2"
+	mi_gdb_test "-trace-start" "=breakpoint-modified,bkpt={.*installed=\"y\".*}.*\\^done.*" \
+	    "trace start"
+
+	mi_execute_to "exec-continue" "breakpoint-hit" end "" ".*" ".*" \
+	    { "" "disp=\"keep\"" } \
+	    "continue to end"
+	mi_gdb_test "-trace-stop" "\\^done.*" "trace stop"
+
+	mi_gdb_test "tfind 0" \
+	    ".*=traceframe-changed,num=\"0\",tracepoint=\"${decimal}\".*\\^done" \
+	    "tfind 0"
+
+	mi_gdb_test "tfind" \
+	    ".*=traceframe-changed,num=\"1\",tracepoint=\"${decimal}\".*\\^done" \
+	    "tfind"
+
+	mi_gdb_test "tfind end" \
+	    ".*=traceframe-changed,end.*\\^done" \
+	    "tfind end"
+
+	mi_gdb_exit
+    }
+}
+
+test_tfind_remote

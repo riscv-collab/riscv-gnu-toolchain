@@ -1,0 +1,162 @@
+# Copyright (C) 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that:
+#
+# - setting a breakpoint while a thread is running results in the
+#   breakpoint being inserted immediately.
+#
+# - if breakpoint always-inserted mode is off, GDB doesn't remove
+#   breakpoints from the target when a thread stops, if there are
+#   still threads running.
+
+standard_testfile
+
+if {[build_executable "failed to prepare" $testfile $srcfile {debug pthreads}] == -1} {
+    return -1
+}
+
+# The test proper.  UPDATE_THREAD_LIST indicates whether we should do
+# an "info threads" to sync the thread list after the first stop.
+# ALWAYS_INSERTED indicates whether testing in "breakpoint
+# always-inserted" mode.  NON_STOP indicates whether we're testing in
+# non-stop, or all-stop mode.
+
+proc test { update_thread_list always_inserted non_stop } {
+    global srcfile binfile
+    global gdb_prompt
+    global decimal
+
+    clean_restart $binfile
+
+    gdb_test_no_output "set non-stop $non_stop"
+    gdb_test_no_output "set breakpoint always-inserted $always_inserted"
+
+    if ![runto_main] {
+	return -1
+    }
+
+    # In all-stop, check whether we're testing with the remote or
+    # extended-remote targets.  If so, skip the tests, as with the
+    # RSP, we can't issue commands until the target replies to vCont.
+    # Not an issue with the non-stop RSP variant, which has a
+    # non-blocking vCont.
+    if {$non_stop=="off" && [gdb_is_target_remote]} {
+	return -1
+    }
+
+    gdb_breakpoint [gdb_get_line_number "set wait-thread breakpoint here"]
+    gdb_continue_to_breakpoint "run to wait-thread breakpoint"
+
+    delete_breakpoints
+
+    # Leave the main thread stopped, so GDB can poke at memory freely.
+    if {$non_stop == "off"} {
+	gdb_test_no_output "set scheduler-locking on"
+	gdb_test "thread 2" "Switching to .*"
+	gdb_test "continue &" "Continuing\." "continuing thread 2"
+	gdb_test "thread 3" "Switching to .*"
+	gdb_test "continue &" "Continuing\." "continuing thread 3"
+	gdb_test "thread 1" "Switching to .*" "switch back to main thread"
+    }
+
+    # Test with and without pulling the thread list explicitly with
+    # "info threads".  GDB should be able to figure out itself whether
+    # the target is running and thus breakpoints should be inserted,
+    # without the user explicitly fetching the thread list.
+    if {$update_thread_list} {
+	gdb_test "info threads" \
+	    "main .*\\\(running\\\).*\\\(running\\\).*" \
+	    "only main stopped"
+    }
+
+    # Don't use gdb_test as it's racy in this case -- gdb_test matches
+    # the prompt with an end anchor.  Sometimes expect will manage to
+    # read the breakpoint hit output while still processing this test,
+    # defeating the anchor.
+    set test "set breakpoint while a thread is running"
+    gdb_test_multiple "break breakpoint_function" $test {
+	-re "Breakpoint $decimal at .*: file .*$srcfile.*\r\n$gdb_prompt " {
+	    pass $test
+	}
+	-re "$gdb_prompt " {
+	    fail $test
+	}
+    }
+
+    # Check that the breakpoint is hit.  Can't use gdb_test here, as
+    # no prompt is expected to come out.
+    set test "breakpoint is hit"
+    gdb_test_multiple "" $test {
+	-re "Breakpoint .*, breakpoint_function \[^\r\n\]+" {
+	    pass $test
+	}
+    }
+
+    if {$non_stop == "on"} {
+	gdb_test "info threads" \
+	    "main .* breakpoint_function .*\\\(running\\\)" \
+	    "one thread running"
+
+	# Unblock the other thread, which should then trip on the same
+	# breakpoint, unless GDB removed it by mistake.  Can't use
+	# gdb_test here for the same reasons as above.
+	set test "unblock second thread"
+	gdb_test_multiple "print second_child = 1" $test {
+	    -re " = 1\r\n$gdb_prompt " {
+		pass $test
+	    }
+	    -re "$gdb_prompt " {
+		fail $test
+	    }
+	}
+
+	set test "breakpoint on second child is hit"
+	gdb_test_multiple "" $test {
+	    -re "Breakpoint .*, breakpoint_function \[^\r\n\]+" {
+		pass $test
+	    }
+	}
+
+	gdb_test "info threads" \
+	    " main .* breakpoint_function .* breakpoint_function .*" \
+	    "all threads stopped"
+    } else {
+	# This test is not merged with the non-stop one because in
+	# all-stop we don't know where the other thread stops (inside
+	# usleep, for example).
+	set test "all threads stopped"
+	gdb_test_multiple "info threads" "$test" {
+	    -re "\\\(running\\\).*$gdb_prompt $" {
+		fail $test
+	    }
+	    -re "main .* breakpoint_function .*$gdb_prompt $" {
+		pass $test
+	    }
+	}
+    }
+}
+
+foreach update_thread_list { true false } {
+    foreach always_inserted { "off" "on" } {
+	foreach non_stop { "off" "on" } {
+	    set stop_mode [expr ($non_stop=="off")?"all-stop":"non-stop"]
+	    set update_list_mode [expr ($update_thread_list)?"w/ithr":"wo/ithr"]
+	    with_test_prefix "$update_list_mode: always-inserted $always_inserted: $stop_mode" {
+		test $update_thread_list $always_inserted $non_stop
+	    }
+	}
+    }
+}

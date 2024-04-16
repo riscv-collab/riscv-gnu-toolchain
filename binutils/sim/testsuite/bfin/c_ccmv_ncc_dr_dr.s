@@ -1,0 +1,123 @@
+//Original:/testcases/core/c_ccmv_ncc_dr_dr/c_ccmv_ncc_dr_dr.dsp
+// Spec Reference: ccmv !cc dreg = dreg
+# mach: bfin
+
+.include "testutils.inc"
+	start
+R0 = 0;
+ASTAT = R0;
+
+
+imm32 r0, 0x808d2301;
+imm32 r1, 0x90021053;
+imm32 r2, 0x21041405;
+imm32 r3, 0x60261507;
+imm32 r4, 0x50447609;
+imm32 r5, 0xdfe5500b;
+imm32 r6, 0x2a0c660d;
+imm32 r7, 0xd90e1b8f;
+IF !CC R0 = R0;
+IF !CC R1 = R3;
+IF !CC R2 = R5;
+IF !CC R3 = R2;
+CC = ! CC;
+IF !CC R4 = R6;
+IF !CC R5 = R1;
+IF !CC R6 = R7;
+CC = ! CC;
+IF !CC R7 = R4;
+CHECKREG r0, 0x808D2301;
+CHECKREG r1, 0x60261507;
+CHECKREG r2, 0xDFE5500B;
+CHECKREG r3, 0xDFE5500B;
+CHECKREG r4, 0x50447609;
+CHECKREG r5, 0xDFE5500B;
+CHECKREG r6, 0x2A0C660D;
+CHECKREG r7, 0x50447609;
+
+
+imm32 r0, 0x308d2301;
+imm32 r1, 0xd4023053;
+imm32 r2, 0x2f041405;
+imm32 r3, 0x60f61507;
+imm32 r4, 0xd0487f09;
+imm32 r5, 0x300b900b;
+imm32 r6, 0x2a0cd60d;
+imm32 r7, 0xd90e189f;
+IF !CC R4 = R3;
+IF !CC R5 = R7;
+IF !CC R6 = R1;
+IF !CC R7 = R2;
+CC = ! CC;
+IF !CC R0 = R6;
+IF !CC R1 = R5;
+IF !CC R2 = R4;
+CC = ! CC;
+IF !CC R3 = R0;
+CHECKREG r0, 0x308D2301;
+CHECKREG r1, 0xD4023053;
+CHECKREG r2, 0x2F041405;
+CHECKREG r3, 0x308D2301;
+CHECKREG r4, 0x60F61507;
+CHECKREG r5, 0xD90E189F;
+CHECKREG r6, 0xD4023053;
+CHECKREG r7, 0x2F041405;
+
+
+imm32 r0, 0x708d2301;
+imm32 r1, 0xd8021053;
+imm32 r2, 0x2f041405;
+imm32 r3, 0x65b61507;
+imm32 r4, 0x59487609;
+imm32 r5, 0x3005900b;
+imm32 r6, 0x2abc660d;
+imm32 r7, 0xd90e108f;
+IF !CC R0 = R2;
+IF !CC R1 = R3;
+CC = ! CC;
+IF !CC R2 = R5;
+IF !CC R3 = R7;
+CC = ! CC;
+IF !CC R4 = R1;
+IF !CC R5 = R4;
+IF !CC R6 = R7;
+IF !CC R7 = R6;
+CHECKREG r0, 0x2F041405;
+CHECKREG r1, 0x65B61507;
+CHECKREG r2, 0x2F041405;
+CHECKREG r3, 0x65B61507;
+CHECKREG r4, 0x65B61507;
+CHECKREG r5, 0x65B61507;
+CHECKREG r6, 0xD90E108F;
+CHECKREG r7, 0xD90E108F;
+
+
+imm32 r0, 0xc08d2301;
+imm32 r1, 0xdb021053;
+imm32 r2, 0x2f041405;
+imm32 r3, 0x64b61507;
+imm32 r4, 0x50487609;
+imm32 r5, 0x30f5900b;
+imm32 r6, 0x2a4c660d;
+imm32 r7, 0x895e108f;
+IF !CC R4 = R3;
+IF !CC R5 = R7;
+CC = ! CC;
+IF !CC R6 = R2;
+IF !CC R7 = R6;
+CC = ! CC;
+IF !CC R0 = R1;
+IF !CC R1 = R2;
+IF !CC R2 = R0;
+IF !CC R3 = R4;
+CHECKREG r0, 0xDB021053;
+CHECKREG r1, 0x2F041405;
+CHECKREG r2, 0xDB021053;
+CHECKREG r3, 0x64B61507;
+CHECKREG r4, 0x64B61507;
+CHECKREG r5, 0x895E108F;
+CHECKREG r6, 0x2A4C660D;
+CHECKREG r7, 0x895E108F;
+
+
+pass

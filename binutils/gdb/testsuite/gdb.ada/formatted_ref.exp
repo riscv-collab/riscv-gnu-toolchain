@@ -1,0 +1,130 @@
+# Copyright 2007-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Author: P. N. Hilfinger, AdaCore Inc.
+
+# Note: This test is essentially a transcription of gdb.cp/formatted-ref.exp,
+# and is thus much more wordy than it needs to be. There are fewer 
+# tests because only a few parameter types in Ada are required to be 
+# passed by reference, and there is no equivalent of &(&x) for reference
+# values.
+# This also tests that some other arithmetic operations on references
+# work properly: condition expression using a reference object as one of its
+# operand.
+
+load_lib "ada.exp"
+
+require allow_ada_tests
+
+standard_ada_testfile formatted_ref
+
+if {[gdb_compile_ada "${srcfile}" "${binfile}" executable [list debug ]] != "" } {
+    untested formatted-ref.exp
+    return -1
+}
+
+proc get_address { var } {
+    global expect_out
+    global gdb_prompt
+
+    gdb_test_multiple "print $var'access" "address of $var" {
+	-re "\\$\[0-9\]+ = \\(.*\\) (0x\[0-9a-f\]+).*$gdb_prompt $" {
+            return $expect_out(1,string)
+        }
+    }
+    return ""
+}
+
+proc test_p_x { var val addr } {
+    global gdb_prompt
+
+    set test "print/x $var"
+    gdb_test_multiple "$test" $test {
+        -re "\\$\[0-9\]+ = [string_to_regexp $val].*$gdb_prompt $" {
+	    pass $test
+	} 
+	-re "\\$\[0-9\]+ = $addr.*$gdb_prompt $" {
+            fail "$test (prints just address)"
+        }
+	-re "\\$\[0-9\]+ = 0x\[a-f0-9\]+.*$gdb_prompt $" {
+            fail "$test (prints unexpected address)"
+        }
+    }
+    return 0
+}
+
+proc test_p_x_addr { var addr } {
+    global gdb_prompt
+
+    foreach attr {access unchecked_access unrestricted_access} {
+	foreach space {"" "  "} {
+	    set test "print/x $var'$space$attr"
+	    gdb_test_multiple $test $test {
+		-re "\\$\[0-9\]+ = $addr.*$gdb_prompt $" {
+		    pass $test
+		}
+		-re "\\$\[0-9\]+ = 0x\[a-f0-9+\]+.*$gdb_prompt $" {
+		    fail "$test (prints unexpected address)"
+		}
+	    }
+	}
+    }
+
+    gdb_test "complete print/x $var'unres" "print/x $var'unrestricted_access"
+    gdb_test_no_output "complete print/x $var'abcd"
+    gdb_test "complete print $var'f" "print $var'first"
+
+    return 0
+}
+
+proc test_p_op1_equals_op2 {op1 op2} {
+    set test "print $op1 = $op2"
+    gdb_test $test "\\$\[0-9\]+ = true"
+}
+
+clean_restart ${testfile}
+
+set bp_location \
+    defs.adb:[gdb_get_line_number "marker here" ${testdir}/defs.adb]
+
+# Workaround gcc PR101575.
+#runto $bp_location
+gdb_breakpoint "$bp_location"
+gdb_run_cmd
+set re "Breakpoint $decimal, defs.f1 \\(.*\\) at .*:$decimal.*"
+set re_xfail "Breakpoint $decimal, defs__struct1IP \\(\\) at .*:$decimal.*"
+set ok 1
+gdb_test_multiple "" "Runto to $bp_location" {
+    -re -wrap $re {
+	if { $ok } {
+	    pass $gdb_test_name
+	} else {
+	    xfail $gdb_test_name
+	}
+    }
+    -re -wrap $re_xfail {
+	set ok 0
+	send_gdb "continue\n"
+	exp_continue
+    }
+}
+
+set s1_address  [get_address "s1"]
+
+test_p_x "s" "(x => 0xd, y => 0x13)" $s1_address
+
+test_p_x_addr "s" $s1_address
+
+test_p_op1_equals_op2 "s.x" "13"

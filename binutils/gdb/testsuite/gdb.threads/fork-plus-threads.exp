@@ -1,0 +1,142 @@
+# Copyright (C) 2015-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test verifies that threads created by the child fork are
+# properly handled.  Specifically, GDB used to have a bug where it
+# would leave child fork threads stuck stopped, even though "info
+# threads" would show them running.
+#
+# See https://sourceware.org/bugzilla/show_bug.cgi?id=18600
+
+# In remote mode, we cannot continue debugging after all
+# inferiors have terminated, and this test requires that.
+if { [target_info exists gdb_protocol]
+     && [target_info gdb_protocol] == "remote" } {
+    return
+}
+
+standard_testfile
+
+proc do_test { detach-on-fork } {
+    global GDBFLAGS
+    global srcfile testfile
+    global gdb_prompt
+
+    set saved_gdbflags $GDBFLAGS
+    set GDBFLAGS [concat $GDBFLAGS " -ex \"set non-stop on\""]
+
+    if {[prepare_for_testing "failed to prepare" \
+	     $testfile $srcfile {debug pthreads}] == -1} {
+	set GDBFLAGS $saved_gdbflags
+	return -1
+    }
+
+    set GDBFLAGS $saved_gdbflags
+
+    if {![runto_main]} {
+	return 0
+    }
+
+    gdb_test_no_output "set detach-on-fork ${detach-on-fork}"
+    set test "continue &"
+    gdb_test_multiple $test $test {
+	-re "$gdb_prompt " {
+	    pass $test
+	}
+    }
+
+    # gdbserver had a bug that resulted in reporting the fork child's
+    # initial stop to gdb, which gdb does not expect, in turn
+    # resulting in a broken session, like:
+    #
+    #  [Thread 31536.31536] #16 stopped.                                <== BAD
+    #  [New Thread 31547.31547]
+    #  [Inferior 10 (process 31536) exited normally]
+    #  [New Thread 31547.31560]
+    #
+    #  [Thread 31547.31547] #18 stopped.                                <== BAD
+    #  Cannot remove breakpoints because program is no longer writable. <== BAD
+    #  Further execution is probably impossible.                        <== BAD
+    #  [Inferior 11 (process 31547) exited normally]
+    #  [Inferior 1 (process 31454) exited normally]
+    #
+    # These variables track whether we see such broken behavior.
+    set saw_cannot_remove_breakpoints 0
+    set saw_thread_stopped 0
+
+    set expected_num_inferior_exits [expr ${detach-on-fork} == "off" ? 11 : 1]
+
+    # Flags indicating if we have see the exit for each inferior.
+    for {set i 1} {$i <= $expected_num_inferior_exits} {incr i} {
+	set inferior_exits_seen($i) 0
+    }
+
+    # Number of inferior exits seen so far.
+    set num_inferior_exits_seen 0
+
+    set test "inferior 1 exited"
+    gdb_test_multiple "" $test {
+	-re "^Cannot remove breakpoints" {
+	    set saw_cannot_remove_breakpoints 1
+	    exp_continue
+	}
+	-re "^\\\[Thread \[^\r\n\]+ stopped\\." {
+	    set saw_thread_stopped 1
+	    exp_continue
+	}
+	-re "^\\\[Inferior ($::decimal) \(\[^\r\n\]+\) exited normally\\\]" {
+	    set infnum $expect_out(1,string)
+	    incr num_inferior_exits_seen
+	    incr inferior_exits_seen($infnum) 1
+
+	    if { $num_inferior_exits_seen == $expected_num_inferior_exits } {
+		pass $test
+	    } else {
+		exp_continue
+	    }
+	}
+	-re "^\[^\r\n]*\r\n" {
+	    # Skip line.
+	    exp_continue
+	}
+    }
+
+    # Verify that we got all the inferior exits we expected.
+    set num_ok_exits 0
+    for {set i 1} {$i <= $expected_num_inferior_exits} {incr i} {
+	if { $inferior_exits_seen($i) == 1 } {
+	    incr num_ok_exits
+	}
+    }
+
+    gdb_assert { $num_ok_exits == $expected_num_inferior_exits } \
+	"seen all expected inferior exits"
+
+    gdb_assert !$saw_cannot_remove_breakpoints \
+	"no failure to remove breakpoints"
+    gdb_assert !$saw_thread_stopped \
+	"no spurious thread stop"
+
+    gdb_test "info threads" "No threads\." \
+	"no threads left"
+
+    gdb_test "info inferiors" \
+	"Num\[ \t\]+Description\[ \t\]+Connection\[ \t\]+Executable\[ \t\]+\r\n\\* 1 \[^\r\n\]+" \
+	"only inferior 1 left"
+}
+
+foreach_with_prefix detach-on-fork {"on" "off"} {
+    do_test ${detach-on-fork}
+}

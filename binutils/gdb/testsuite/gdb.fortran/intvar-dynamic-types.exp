@@ -1,0 +1,96 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Places a value with components that have dynamic type into a GDB
+# user variable, and then prints the user variable.
+
+standard_testfile ".f90"
+load_lib "fortran.exp"
+
+if { [prepare_for_testing ${testfile}.exp ${testfile} ${srcfile} \
+    {debug f90 quiet}] } {
+    return -1
+}
+
+if ![fortran_runto_main] {
+    return -1
+}
+
+gdb_breakpoint [gdb_get_line_number "Break here"]
+gdb_continue_to_breakpoint "Break here"
+
+gdb_test_no_output "set \$a=some_var" "set \$a internal variable"
+
+foreach var { "\$a" "some_var" } {
+    with_test_prefix "print $var" {
+	gdb_test "print $var" \
+	    " = \\( array_one = \\(\\(1, 1\\) \\(1, 1\\) \\(1, 1\\)\\), a_field = 5, array_two = \\(\\(2, 2, 2\\) \\(2, 2, 2\\)\\) \\)" \
+	    "print full contents"
+
+	gdb_test "print $var%array_one" \
+	    " = \\(\\(1, 1\\) \\(1, 1\\) \\(1, 1\\)\\)" \
+	    "print array_one field"
+
+	gdb_test "print $var%a_field" \
+	    " = 5" \
+	    "print a_field field"
+
+	gdb_test "print $var%array_two" \
+	    " = \\(\\(2, 2, 2\\) \\(2, 2, 2\\)\\)" \
+	    "print array_two field"
+    }
+}
+
+# Create new user variables for the fields of some_var, and show that
+# modifying these variables does not change the original value from
+# the program.
+gdb_test_no_output "set \$b = some_var%array_one"
+gdb_test_no_output "set \$c = some_var%array_two"
+gdb_test "print \$b" \
+    " = \\(\\(1, 1\\) \\(1, 1\\) \\(1, 1\\)\\)"
+gdb_test "print \$c" \
+    " = \\(\\(2, 2, 2\\) \\(2, 2, 2\\)\\)"
+gdb_test_no_output "set \$b(2,2) = 3"
+gdb_test_no_output "set \$c(3,1) = 4"
+gdb_test "print \$b" \
+    " = \\(\\(1, 1\\) \\(1, 3\\) \\(1, 1\\)\\)" \
+    "print \$b after a change"
+gdb_test "print \$c" \
+    " = \\(\\(2, 2, 4\\) \\(2, 2, 2\\)\\)" \
+    "print \$c after a change"
+gdb_test "print some_var%array_one" \
+    " = \\(\\(1, 1\\) \\(1, 1\\) \\(1, 1\\)\\)"
+gdb_test "print some_var%array_two" \
+    " = \\(\\(2, 2, 2\\) \\(2, 2, 2\\)\\)"
+
+# Now modify the user variable '$a', which is a copy of 'some_var',
+# and then check how this change is reflected in the original
+# 'some_var', and the user variable $a.
+#
+# When we change 'a_field' which is a non-dynamic field within the
+# user variable, the change is only visible within the user variable.
+#
+# In contrast, when we change 'array_one' and 'array_two', which are
+# both fields of dynanic type, then the change is visible in both the
+# user variable and the original program variable 'some_var'.  This
+# makes sense if you consider the dynamic type as if it was a C
+# pointer with automatic indirection.
+gdb_test_no_output "set \$a%a_field = 3"
+gdb_test_no_output "set \$a%array_one(2,2) = 3"
+gdb_test_no_output "set \$a%array_two(3,1) = 4"
+gdb_test "print \$a" \
+    " = \\( array_one = \\(\\(1, 1\\) \\(1, 3\\) \\(1, 1\\)\\), a_field = 3, array_two = \\(\\(2, 2, 4\\) \\(2, 2, 2\\)\\) \\)"
+gdb_test "print some_var" \
+    " = \\( array_one = \\(\\(1, 1\\) \\(1, 3\\) \\(1, 1\\)\\), a_field = 5, array_two = \\(\\(2, 2, 4\\) \\(2, 2, 2\\)\\) \\)"

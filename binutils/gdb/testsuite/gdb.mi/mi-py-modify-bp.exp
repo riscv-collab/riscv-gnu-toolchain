@@ -1,0 +1,61 @@
+# Copyright (C) 2023-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check that the MI interpreter correctly emits breakpoint-modified
+# notifications when a breakpoint's thread or inferior is set from
+# Python code.
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+standard_testfile
+
+require allow_python_tests
+
+if {[build_executable $testfile.exp $testfile $srcfile] == -1} {
+    return -1
+}
+
+set remote_python_file [gdb_remote_download host \
+			    ${srcdir}/${subdir}/${testfile}.py]
+
+mi_clean_restart $binfile
+mi_runto_main
+
+# Delete all breakpoints.
+mi_delete_breakpoints
+
+# Create a breakpoint.  At this point the breakpoint is global, but
+# this will be adjusted from Python code.
+mi_create_breakpoint "foo" "break in foo" -disp keep -func foo
+set bpnum [mi_get_valueof "/d" "\$bpnum" "INVALID" \
+	       "get number for thread-specific breakpoint"]
+
+# Some patterns used in the expected output below.
+set thr_group_re [string_to_regexp {thread-groups=["i1"]}]
+set times_re [string_to_regexp {times="0"}]
+
+# Source the Python script, the script changes the thread then
+# inferior field of the first breakpoint, we expect to see the
+# breakpoint modified four times.
+mi_gdb_test "source $remote_python_file" \
+    [multi_line \
+	 "&\"source \[^\r\n\]+\"" \
+	 "=breakpoint-modified,bkpt=\\{number=\"$bpnum\",\[^\r\n\]+\\,$thr_group_re,thread=\"1\",$times_re,\[^\r\n\]+}" \
+	 "=breakpoint-modified,bkpt=\\{number=\"$bpnum\",\[^\r\n\]+\\,$thr_group_re,$times_re,\[^\r\n\]+}" \
+	 "=breakpoint-modified,bkpt=\\{number=\"$bpnum\",\[^\r\n\]+\\,$thr_group_re,inferior=\"1\",$times_re,\[^\r\n\]+}" \
+	 "=breakpoint-modified,bkpt=\\{number=\"$bpnum\",\[^\r\n\]+\\,$thr_group_re,$times_re,\[^\r\n\]+}" \
+	 "\\^done"] \
+    "source python script"

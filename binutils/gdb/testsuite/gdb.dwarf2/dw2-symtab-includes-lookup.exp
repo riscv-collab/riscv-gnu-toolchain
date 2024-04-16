@@ -1,0 +1,99 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Lookup a type in a partial unit with DW_AT_stmt_list.
+#
+# The test-case is setup such that the partial symtab expansion route is
+# .h partial symtab -> shared partial symtab -> toplevel symtab.
+#
+# That is, the partial symtabs (as displayed by maint print objfiles) are:
+#
+#   ../sysdeps/x86_64/crtn.S at 0x3d944e0^M
+#   elf-init.c at 0x3d94440^M
+#   dw2-symtab-includes.h at 0x3d7c7a0^M
+#   <unknown> at 0x31ef870^M
+#   bla.c at 0x33985f0^M
+#   ../sysdeps/x86_64/crti.S at 0x33e9a00^M
+#   init.c at 0x33fa600^M
+#   ../sysdeps/x86_64/start.S at 0x33f3fd0^M
+#
+# and the expansion of dw2-symtab-includes.h triggers the expansion of its
+# includer <unknown>, which triggers expansion of user bla.c.
+#
+# The problem in PR28539 was that after expansion of dw2-symtab-includes.h
+# the expansion_notify function in psymbol_functions::expand_symtabs_matching
+# should be called with the bla.c symtab, but instead it got called with
+# nullptr, which caused a segfault.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+standard_testfile main.c .S
+
+# Create the DWARF.
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    declare_labels partial_label lines_label
+    global srcdir subdir srcfile
+
+    cu {} {
+	partial_label: partial_unit {
+	    {stmt_list ${lines_label} DW_FORM_sec_offset}
+	} {
+	    DW_TAG_base_type {
+		{DW_AT_byte_size 4 DW_FORM_sdata}
+		{DW_AT_encoding  @DW_ATE_signed}
+		{DW_AT_name      myint}
+	    }
+	}
+    }
+
+    cu {} {
+	compile_unit {
+	    {language @DW_LANG_C}
+	    {DW_AT_name bla.c}
+	} {
+	    imported_unit {
+		{import $partial_label ref_addr}
+	    }
+	}
+    }
+
+    lines {version 2} lines_label {
+	include_dir "${srcdir}/${subdir}"
+	file_name "dw2-symtab-includes.h" 1
+	program {
+	    DW_LNS_advance_line 1
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" $testfile \
+	  "${asm_file} ${srcfile}" {}] } {
+    return -1
+}
+
+# Check that no symtabs are expanded.
+set test "no symtabs expanded"
+if { [readnow] } {
+    unsupported $test
+} else {
+    gdb_test_no_output "maint info symtabs" $test
+}
+
+# Lookup myint.  Regression test for PR28539.
+gdb_test "ptype myint" "type = myint"

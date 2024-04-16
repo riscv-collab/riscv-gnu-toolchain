@@ -1,0 +1,81 @@
+# Copyright (C) 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+standard_testfile
+
+require {!target_info exists gdb,nosignals}
+
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" \
+	 executable { debug }] != "" } {
+    return -1
+}
+
+# Run test proper.  COMMAND indicates whether to resume the inferior
+# with "signal 0" or "continue".
+
+proc test { command } {
+    global srcfile binfile
+
+    with_test_prefix "$command" {
+	clean_restart ${binfile}
+
+	if {![runto_main]} {
+	    return 0
+	}
+
+	gdb_test "handle SIGUSR1 stop print pass"
+
+	gdb_test "continue" "Thread 2 .*received signal SIGUSR1.*" "stop with SIGUSR1"
+
+	set pattern "\\\* 2\[ \t\]+Thread.*"
+
+	gdb_test "info threads" $pattern "thread 2 intercepted signal"
+
+	gdb_test "break handler" "Breakpoint .* at .*$srcfile.*"
+
+	gdb_test "thread 1" "Switching to thread 1.*"
+
+	if { $command == "continue" } {
+	    gdb_test "continue" "handler .*"
+	} elseif { $command == "signal 0" } {
+	    set queried 0
+	    set test "signal 0 queries"
+	    gdb_test_multiple "signal 0" $test {
+		-re "stopped with.*stopped with.*Continue anyway.*y or n. $" {
+		    fail "$test (multiple threads noted)"
+		    set queried 1
+		}
+		-re "stopped with signal SIGUSR1.*\r\nContinuing .*still deliver .*Continue anyway.*y or n. $" {
+		    pass $test
+		    set queried 1
+		}
+		-re "Continue anyway.*y or n. $" {
+		    fail "$test (no threads noted)"
+		    set queried 1
+		}
+	    }
+
+	    if {$queried} {
+		gdb_test "y" "handler .*" "signal is delivered"
+	    }
+	}
+
+	gdb_test "info threads" $pattern "thread 2 got the signal"
+    }
+}
+
+foreach command {"continue" "signal 0"} {
+    test $command
+}

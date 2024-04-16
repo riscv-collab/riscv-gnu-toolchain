@@ -1,0 +1,148 @@
+#   Copyright 2012-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test of disconnected-tracing.
+
+load_lib "trace-support.exp"
+
+standard_testfile
+set executable $testfile
+set expfile $testfile.exp
+set gdbserver_reconnect_p 1
+
+if { [info proc gdb_reconnect] == "" } {
+    unsupported "target does not support reconnect"
+    return -1
+}
+
+if [prepare_for_testing "failed to prepare" $executable $srcfile \
+        {debug nowarnings}] {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+if ![gdb_target_supports_trace] {
+    unsupported "target does not support trace"
+    return -1
+}
+
+# Disconnect in tracing.
+
+proc disconnected_tracing {  } {
+    with_test_prefix "trace" {
+	global executable
+	global decimal
+	global srcfile
+
+	# Start with a fresh gdb.
+	clean_restart ${executable}
+	if ![runto_main] {
+	    return -1
+	}
+
+	gdb_test_no_output "set confirm off"
+	gdb_test_no_output "set disconnected-tracing on"
+	gdb_test "trace start" ".*"
+	gdb_trace_setactions "collect on tracepoint 2" "2" \
+	    "collect foo" "^$"
+	gdb_breakpoint "end" qualified
+
+	gdb_test_no_output "tstart"
+
+	gdb_test "continue" "Continuing\\.\[ \r\n\]+Breakpoint.*"
+	gdb_test_no_output "tstop"
+
+	gdb_test "info tracepoints" ".*in start at.*" \
+	    "first info tracepoints"
+
+	gdb_test "disconnect" "Ending remote debugging\\." "first disconnect"
+	if { [gdb_reconnect] == 0 } {
+	    pass "first reconnect after unload"
+	} else {
+	    fail "first reconnect after unload"
+	    return 0
+	}
+	gdb_test "info tracepoints" ".*in start at.*" \
+	    "second info tracepoints"
+
+	delete_breakpoints
+	gdb_test "info tracepoints" ".*No tracepoints..*" \
+	    "third info tracepoints"
+
+	gdb_test "disconnect" "Ending remote debugging\\." "second disconnect"
+	if { [gdb_reconnect] == 0 } {
+	    pass "second reconnect after unload"
+	} else {
+	    fail "second reconnect after unload"
+	    return 0
+	}
+	gdb_test "tstatus"
+	gdb_test "info tracepoints" \
+	    "Num     Type\[ \]+Disp Enb Address\[ \]+What.*
+\[0-9\]+\[\t \]+tracepoint     keep y.* in start at .*$srcfile:\[0-9\]+.
+\[\t \]+tracepoint already hit 1 time.
+\[\t \]+trace buffer usage ${decimal} bytes.
+\[\t \]+collect foo.*" \
+	    "fourth info tracepoints"
+    }
+}
+
+disconnected_tracing
+
+# Disconnected in tfind
+
+proc disconnected_tfind {  } {
+    with_test_prefix "tfind" {
+	global executable
+	global decimal
+
+	# Start with a fresh gdb.
+	clean_restart ${executable}
+	if ![runto_main] {
+	    return -1
+	}
+
+	gdb_test_no_output "set confirm off"
+	gdb_test_no_output "set disconnected-tracing on"
+	gdb_test "trace start" ".*"
+	gdb_test_no_output "tstart"
+
+	gdb_breakpoint "end" qualified
+	gdb_test "continue" "Continuing\\.\[ \r\n\]+Breakpoint.*"
+	gdb_test_no_output "tstop"
+
+	gdb_test "tfind" "Found trace frame 0, tracepoint .*" "tfind frame 0"
+	gdb_test "p \$trace_frame" ".*\\\$${decimal} = 0.*" \
+	    "p \$trace_frame before disconnected"
+	gdb_test "p \$tracepoint" ".*\\\$${decimal} = 2.*" \
+	    "p \$tracepoint before disconnected"
+
+	gdb_test "disconnect" "Ending remote debugging\\." "first disconnect"
+
+	gdb_test "p \$trace_frame" ".*\\\$${decimal} = -1.*"
+	gdb_test "p \$tracepoint" ".*\\\$${decimal} = -1.*"
+	gdb_test "p \$trace_line" ".*\\\$${decimal} = -1.*"
+	gdb_test "p \$trace_file" ".*\\\$${decimal} = void.*"
+	gdb_test "p \$trace_func" ".*\\\$${decimal} = void.*"
+    }
+}
+
+disconnected_tfind
+
+# Reconnect for a clean gdbserver shutdown.
+gdb_reconnect

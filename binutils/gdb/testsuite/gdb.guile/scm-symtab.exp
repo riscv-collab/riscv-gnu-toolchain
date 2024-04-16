@@ -1,0 +1,161 @@
+# Copyright (C) 2010-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.
+# It tests the Guile symbol table support.
+
+load_lib gdb-guile.exp
+
+require allow_guile_tests
+
+standard_testfile scm-symtab.c scm-symtab-2.c
+
+if {[prepare_for_testing "failed to prepare" $testfile \
+	 [list $srcfile $srcfile2] debug]} {
+    return
+}
+
+if ![gdb_guile_runto_main] {
+    return
+}
+
+set debug_types [debug_types]
+
+# Setup and get the symbol table.
+set line_no [gdb_get_line_number "Block break here."]
+gdb_breakpoint $line_no
+gdb_continue_to_breakpoint "Block break here."
+gdb_scm_test_silent_cmd "guile (define frame (selected-frame))" \
+    "get frame"
+gdb_scm_test_silent_cmd "guile (define sal (frame-sal frame))" \
+    "get sal"
+gdb_scm_test_silent_cmd "guile (define symtab (sal-symtab sal))" \
+    "get symtab"
+gdb_scm_test_silent_cmd "guile (define global-block (symtab-global-block symtab))" \
+    "get global block"
+gdb_scm_test_silent_cmd "guile (define static-block (symtab-static-block symtab))" \
+    "get static block"
+
+gdb_scm_test_silent_cmd "guile (define global-symbols (map symbol-name (block-symbols global-block)))" \
+    "get global symbol names"
+gdb_scm_test_silent_cmd "guile (define static-symbols (map symbol-name (block-symbols static-block)))" \
+    "get static symbol names"
+gdb_scm_test_silent_cmd "guile (define global-isymbols '()) (define static-isymbols '())" \
+    "set up iterated symbol name lists"
+# TODO: iterated symbols
+gdb_scm_test_silent_cmd "step" "Step to the next line"
+gdb_scm_test_silent_cmd "guile (define new-pc (sal-pc (frame-sal (selected-frame))))" \
+    "get new pc"
+
+# Test sal.
+gdb_test "guile (print (sal-symtab sal))" \
+    " (.*/)?scm-symtab.c.*" "Test sal-symtab"
+gdb_test "guile (print (sal-pc sal))" \
+    "${decimal}" "test sal-pc"
+gdb_test "guile (print (= (sal-last sal) (- new-pc 1)))" \
+    "#t" "test sal-last"
+gdb_test "guile (print (sal-line sal))" \
+    "$line_no" "test sal-line"
+gdb_test "guile (print (sal-valid? sal))" \
+    "#t" "test sal-valid?"
+
+# Test eq? on symtabs.
+gdb_scm_test_silent_cmd "guile (define sal1 (frame-sal frame))" \
+    "get sal1"
+gdb_scm_test_silent_cmd "guile (define sal2 (frame-sal (frame-older frame)))" \
+    "get sal2"
+gdb_test "guile (print (eq? symtab (sal-symtab sal1)))" \
+    "= #t" "test eq? of equal symtabs"
+gdb_test "guile (print (eq? symtab (sal-symtab sal2)))" \
+    "= #t" "test eq? of equal symtabs from different sals"
+gdb_test "guile (print (eq? symtab (symbol-symtab (lookup-global-symbol \"func1\"))))" \
+    "= #f" "test eq? of not-equal symtabs"
+
+# Test symbol table.
+gdb_test "guile (print (symtab-filename symtab))" \
+    " (.*/)?scm-symtab.c.*" "test symtab-filename"
+gdb_test "guile (print (symtab-objfile symtab))" \
+    "#<gdb:objfile .*scm-symtab>" "test symtab-objfile"
+if { [is_remote host] } {
+    gdb_test "guile (print (symtab-fullname symtab))" \
+	" (.*/)scm-symtab.c.*" "test symtab-fullname"
+} else {
+    gdb_test "guile (print (symtab-fullname symtab))" \
+	"testsuite/gdb.guile/scm-symtab.c.*" "test symtab-fullname"
+}
+gdb_test "guile (print (symtab-valid? symtab))" \
+    "#t" "test symtab-valid?"
+gdb_test "guile (print (->bool (member \"qq\" global-symbols)))" \
+    "#t" "test qq in global symbols"
+gdb_test "guile (print (->bool (member \"func\" global-symbols)))" \
+    "#t" "test func in global symbols"
+gdb_test "guile (print (->bool (member \"main\" global-symbols)))" \
+    "#t" "test main in global symbols"
+gdb_test "guile (print (->bool (member \"int\" static-symbols)))" \
+    "#t" "test int in static symbols"
+gdb_test "guile (print (->bool (member \"char\" static-symbols)))" \
+    "#t" "test char in static symbols"
+gdb_test_multiple \
+    "guile (print (->bool (member \"simple_struct\" static-symbols)))" \
+    "test simple_struct in static symbols" {
+	-re -wrap "#t" {
+	    pass $gdb_test_name
+	}
+	-re -wrap "#f" {
+	    if { $debug_types } {
+		# Xfail for PR gcc/90232.
+		xfail $gdb_test_name
+	    } else {
+		fail $gdb_test_name
+	    }
+	}
+    }
+
+# Test is_valid when the objfile is unloaded.  This must be the last
+# test as it unloads the object file in GDB.
+gdb_unload
+gdb_test "guile (print (sal-valid? sal))" \
+    "#f" "test sal-valid? after unloading"
+gdb_test "guile (print (symtab-valid? symtab))" \
+    "#f" "test symtab-valid? after unloading"
+
+gdb_test_no_output "guile (set! sal #f)" \
+    "test sal destructor"
+gdb_test_no_output "guile (set! symtab #f)" \
+    "test symtab destructor"
+gdb_test_no_output "guile (gc)" "GC to trigger destructors"
+
+# Start with a fresh gdb.
+clean_restart ${testfile}
+
+# Test find-pc-line.
+# The following tests require execution.
+
+if ![gdb_guile_runto_main] {
+    return
+}
+
+runto [gdb_get_line_number "Break at func2 call site."]
+
+gdb_scm_test_silent_cmd "guile (define line (sal-line (frame-sal (selected-frame))))" \
+    "get line number of func2 call site"
+gdb_test "guile (print (= (sal-line (find-pc-line (frame-pc (selected-frame)))) line))" \
+    "#t" "test find-pc-line at func2 call site"
+
+gdb_scm_test_silent_cmd "step" "step into func2"
+gdb_scm_test_silent_cmd "up" "step out of func2"
+
+gdb_test "guile (print (>= (sal-line (find-pc-line (frame-pc (selected-frame)))) line))" \
+    "#t" "test find-pc-line with resume address"

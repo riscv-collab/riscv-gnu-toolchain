@@ -1,0 +1,78 @@
+# Copyright (C) 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+# Test that an explicit "signal FOO" delivers FOO even if "handle" for
+# that same signal is set to "nopass".  Also make sure the signal is
+# delivered to the right thread, even if GDB has to step over a
+# breakpoint in some other thread first.
+
+standard_testfile
+
+require {!target_info exists gdb,nosignals}
+
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" \
+	 executable { debug }] != "" } {
+    return -1
+}
+
+# Run the test proper.  STEP_OVER indicates whether we leave in place
+# a breakpoint that needs to be stepped over when we explicitly
+# request a signal be delivered with the "signal" command.
+
+proc test { step_over } {
+    global srcfile binfile
+
+    with_test_prefix "step-over $step_over" {
+	clean_restart ${binfile}
+
+	if {![runto_main]} {
+	    return 0
+	}
+
+	gdb_test "handle SIGUSR1 stop print nopass"
+
+	gdb_test "b thread_function" "Breakpoint .* at .*$srcfile.*"
+	gdb_test "continue" "thread_function.*" "stopped in thread"
+
+	# Thread 2 is stopped at a breakpoint.  If we leave the
+	# breakpoint in place, GDB needs to move thread 2 past the
+	# breakpoint before delivering the signal to thread 1.  We
+	# want to be sure that GDB doesn't mistakenly deliver the
+	# signal to thread 1 while doing that.
+	if { $step_over == "no" } {
+	    delete_breakpoints
+	}
+
+	gdb_test "break handler" "Breakpoint .* at .*$srcfile.*"
+
+	gdb_test "thread 1" "Switching to thread 1.*"
+
+	set pattern "\\\* 1\[ \t\]+Thread.*"
+
+	gdb_test "info threads" $pattern "thread 1 selected"
+
+	gdb_test "signal SIGUSR1" "handler .*"
+
+	# Make sure it was thread 1 that got the signal.  Note we list
+	# all threads instead of just thread 1, so that if something
+	# goes wrong and another thread ends up selected, we can
+	# easily see which in the logs.
+	gdb_test "info threads" $pattern "thread 1 got the signal"
+    }
+}
+
+foreach stepover {"yes" "no"} {
+    test $stepover
+}

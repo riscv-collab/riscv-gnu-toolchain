@@ -1,0 +1,208 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/> .
+
+# This test covers some basic functionality for debugging mixed
+# Fortran, C, and C++ applications.  Features tested include examining
+# the backtrace, and printing frame arguments in frames of different
+# languages.
+#
+# One important aspect of this test is that we set the language in
+# turn to auto, fortran, c, and c++, and carry out the full test in
+# each case to ensure that trying to print objects or types from one
+# language, while GDB's language is set to another, doesn't crash GDB.
+
+require allow_fortran_tests
+
+standard_testfile mixed-lang-stack.c mixed-lang-stack.cpp mixed-lang-stack.f90
+
+if {[prepare_for_testing_full "failed to prepare" \
+	 [list ${binfile} {debug f90 additional_flags=-lstdc++} \
+	      $srcfile {debug} \
+	      $srcfile2 {debug c++ additional_flags=-std=c++11} \
+	      $srcfile3 {debug f90}]]} {
+    return -1
+}
+
+set have_index [exec_has_index_section $binfile]
+
+# Runs the test program and examins the stack.  LANG is a string, the
+# value to pass to GDB's 'set language ...' command.
+proc run_tests { lang } {
+    with_test_prefix "lang=${lang}" {
+	global binfile hex have_index
+
+	clean_restart ${binfile}
+
+	if ![runto_main] {
+	    return -1
+	}
+
+	gdb_breakpoint "breakpt"
+	gdb_continue_to_breakpoint "breakpt"
+
+	if { $lang == "c" || $lang == "c++" } {
+	    gdb_test "set language c" \
+		"Warning: the current language does not match this frame."
+	} else {
+	    gdb_test_no_output "set language $lang"
+	}
+
+	# Check the backtrace.
+	set e_arg "\['\"\]abcdef\['\"\]"
+	set 1b_args "\[^\r\n\]+$e_arg\[^\r\n\]+"
+	set 1g_args "obj=\[^\r\n\]+"
+	set bt_stack \
+	    [multi_line \
+		 "#0\\s+breakpt \\(\\) at \[^\r\n\]+" \
+		 "#1\\s+$hex in mixed_func_1h \\(\\) at \[^\r\n\]+" \
+		 "#2\\s+$hex in mixed_func_1g \\($1g_args\\) at \[^\r\n\]+" \
+		 "#3\\s+$hex in mixed_func_1f \\(\\) at \[^\r\n\]+" \
+		 "#4\\s+$hex in mixed_func_1e \\(\\) at \[^\r\n\]+" \
+		 "#5\\s+$hex in mixed_func_1d \\(\[^\r\n\]+\\) at \[^\r\n\]+" \
+		 "#6\\s+$hex in mixed_func_1c \\(\[^\r\n\]+\\) at \[^\r\n\]+" \
+		 "#7\\s+$hex in mixed_func_1b \\($1b_args\\) at \[^\r\n\]+" \
+		 "#8\\s+$hex in mixed_func_1a \\(\\) at \[^\r\n\]+" \
+		 "#9\\s+$hex in mixed_stack_main \\(\\) at \[^\r\n\]+" ]
+	set main_args "argc=1, argv=${hex}( \[^\r\n\]+)?"
+	set bt_stack_kfail \
+	    [multi_line \
+		 $bt_stack \
+		 "#10\\s+$hex in main \\($main_args\\) at \[^\r\n\]+"]
+	gdb_test_multiple "bt -frame-arguments all" "" {
+	    -re -wrap $bt_stack {
+		pass $gdb_test_name
+	    }
+	    -re -wrap $bt_stack_kfail {
+		if { $have_index } {
+		    setup_kfail "gdb/24549" *-*-*
+		}
+		fail $gdb_test_name
+	    }
+	}
+
+	# Check backtrace arguments in MI mode.
+	set mi_a "\{name=\"a\",value=\"1\"\}"
+	set mi_b "\{name=\"b\",value=\"2\"\}"
+	set mi_c "\{name=\"c\",value=\"3\"\}"
+	set mi_d "\{name=\"d\",value=\"\\(4,5\\)\"\}"
+	set mi_e "\{name=\"e\",value=\"$e_arg\"\}"
+	set mi_g "\{name=\"g\",value=\"\\( a = 1.5, b = 2.5 \\)\"\}"
+	# Hidden argument name changes depending on compiler.
+	set mi_hidden "\{name=\"\[^\r\n\]+\",value=\"6\"\}"
+	gdb_test "interpreter-exec mi '-stack-list-arguments --no-frame-filters --all-values 7 7'" \
+		 "\\^done,stack-args=\\\[frame=\{level=\"7\",args=\\\[$mi_a,$mi_b,$mi_c,$mi_d,$mi_e,$mi_g,$mi_hidden\\\]\}\\\]"
+
+	# Check the language for frame #0.
+	gdb_test "info frame" "source language fortran\..*" \
+	    "info frame in frame #0"
+
+	# Move up to the C++ frames and check the frame state, print a
+	# C++ object.
+	gdb_test "frame 2" "#2\\s+$hex in mixed_func_1g .*" \
+	    "select frame #2"
+	gdb_test "info frame" "source language c\\+\\+\..*" \
+	    "info frame in frame #2"
+	if { $lang == "fortran" } {
+	    set obj_pattern " = \\( base_one = \\( num1 = 1, num2 = 2, num3 = 3 \\), base_two = \\( string = $hex 'Something in C\\+\\+\\\\000', val = 3.5 \\), xxx = 9, yyy = 10.5 \\)"
+	} else {
+	    set obj_pattern " = \\{<base_one> = \\{num1 = 1, num2 = 2, num3 = 3\\}, <base_two> = \\{string = $hex \"Something in C\\+\\+\", val = 3.5\\}, xxx = 9, yyy = 10.5\\}"
+	}
+	gdb_test "print obj" "${obj_pattern}"
+
+	# Move up the stack a way, and check frame and the frame
+	# arguments.
+	gdb_test "frame 5" "#5\\s+$hex in mixed_func_1d .*" \
+	    "select frame #5"
+	gdb_test "info frame" "source language fortran\..*" \
+	    "info frame in frame #5"
+
+	gdb_test "up" "#6\\s+$hex in mixed_func_1c .*" \
+	    "up to frame #6"
+	gdb_test "info frame" "source language c\..*" \
+	    "info frame in frame #6"
+
+	if { $lang == "fortran" } {
+	    set d_pattern "\\(4,5\\)"
+	    set f_pattern "$hex 'abcdef\\\\000'"
+	} else {
+	    set d_pattern "4 \\+ 5i"
+	    set f_pattern "$hex \"abcdef\""
+	}
+
+	# When value-printing pointers in GDB, GDB will try and look for any
+	# associated symbol and print it after the pointer as "<SYMBOL>". For
+	# this test Intel and LLVM compilers move g to the .bss section, thus
+	# creating a symbol, while the GNU compiler stack keeps g purely on the
+	# stack.
+	set g_pattern "$hex\( <\[^\r\n\]+>\)?"
+
+	set args_pattern [multi_line \
+			      "a = 1" \
+			      "b = 2" \
+			      "c = 3" \
+			      "d = ${d_pattern}" \
+			      "f = ${f_pattern}" \
+			      "g = ${g_pattern}" ]
+
+	gdb_test "info args" $args_pattern \
+	    "info args in frame #6"
+	if { $lang == "fortran" } {
+	    set g_val_pattern " = \\( a = 1\\.5, b = 2\\.5 \\)"
+	} else {
+	    set g_val_pattern " = \\{a = 1\\.5, b = 2\\.5\\}"
+	}
+	gdb_test "print *g" "${g_val_pattern}" \
+	    "print object pointed to by g"
+
+	gdb_test "up" "#7\\s+$hex in mixed_func_1b .*" \
+	    "up to frame #7"
+	gdb_test "info frame" "source language fortran\..*" \
+	    "info frame in frame #7"
+
+	if { $lang == "c" || $lang == "c++" } {
+	    set d_pattern "4 \\+ 5i"
+	    set e_pattern "\"abcdef\""
+	    set g_val_pattern "\{a = 1.5, b = 2.5\}"
+	} else {
+	    set d_pattern "\\(4,5\\)"
+	    set e_pattern "'abcdef'"
+	    set g_val_pattern "\\( a = 1.5, b = 2.5 \\)"
+	}
+
+	# The last argument here in info args is compiler generated.  It
+	# contains length of the passed array e (we are in mixed_func_1b here).
+	# For gfortran and ifx the compilers conveniently named this '_e',
+	# ifort however prints .tmp.E.len_V$4a.  As is seems unreasonable to
+	# test for an artificially created name and as at the same time all
+	# 3 tested compilers emit this argument, we only check for its
+	# existence and its value (6).
+	set args_pattern [multi_line \
+			      "a = 1" \
+			      "b = 2" \
+			      "c = 3" \
+			      "d = ${d_pattern}" \
+			      "e = ${e_pattern}" \
+			      "g = ${g_val_pattern}" \
+			      ".* = 6" ]
+
+	gdb_test "info args" $args_pattern \
+	    "info args in frame #7"
+    }
+}
+
+run_tests "auto"
+run_tests "fortran"
+run_tests "c"
+run_tests "c++"

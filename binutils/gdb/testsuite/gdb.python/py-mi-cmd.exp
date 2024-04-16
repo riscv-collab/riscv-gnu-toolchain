@@ -1,0 +1,341 @@
+# Copyright (C) 2019-2024 Free Software Foundation, Inc.
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test custom MI commands implemented in Python.
+
+load_lib gdb-python.exp
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+gdb_exit
+if {[mi_gdb_start]} {
+    return
+}
+
+if {[lsearch -exact [mi_get_features] python] < 0} {
+    unsupported "python support is disabled"
+    return -1
+}
+
+standard_testfile
+
+mi_gdb_test "set python print-stack full" \
+    ".*\\^done" \
+    "set python print-stack full"
+
+mi_gdb_test "source ${srcdir}/${subdir}/${testfile}.py" \
+    ".*\\^done" \
+    "load python file"
+
+mi_gdb_test "python pycmd1('-pycmd')" \
+    ".*\\^done" \
+    "define -pycmd MI command"
+
+mi_gdb_test "-pycmd int" \
+    "\\^done,result=\"42\"" \
+    "-pycmd int"
+
+mi_gdb_test "-pycmd str" \
+    "\\^done,result=\"Hello world!\"" \
+    "-pycmd str"
+
+mi_gdb_test "-pycmd ary" \
+    "\\^done,result=\\\[\"Hello\",\"42\"\\\]" \
+    "-pycmd ary"
+
+set re_order1 "\\^done,result={hello=\"world\",times=\"42\"}"
+set re_order2 "\\^done,result={times=\"42\",hello=\"world\"}"
+mi_gdb_test "-pycmd dct" \
+    "($re_order1|$re_order2)" \
+    "-pycmd dct"
+
+mi_gdb_test "-pycmd bk1" \
+    "\\^error,msg=\"Error occurred in Python: non-string object used as key: Bad Key\"" \
+    "-pycmd bk1"
+
+mi_gdb_test "-pycmd bk2" \
+    "\\^error,msg=\"Error occurred in Python: non-string object used as key: 1\"" \
+    "-pycmd bk2"
+
+mi_gdb_test "-pycmd bk3" \
+    [multi_line \
+	 "&\"TypeError: __repr__ returned non-string \\(type BadKey\\)..\"" \
+	 "\\^error,msg=\"Error occurred in Python: __repr__ returned non-string \\(type BadKey\\)\""] \
+    "-pycmd bk3"
+
+mi_gdb_test "-pycmd tpl" \
+    "\\^done,result=\\\[\"42\",\"Hello\"\\\]" \
+    "-pycmd tpl"
+
+mi_gdb_test "-pycmd itr" \
+    "\\^done,result=\\\[\"1\",\"2\",\"3\"\\\]" \
+    "-pycmd itr"
+
+mi_gdb_test "-pycmd nn1" \
+    "\\^done" \
+    "-pycmd nn1"
+
+mi_gdb_test "-pycmd nn2" \
+    "\\^done,result=\\\[\"None\"\\\]" \
+    "-pycmd nn2"
+
+mi_gdb_test "-pycmd bogus" \
+    "\\^error,msg=\"Invalid parameter: bogus\"" \
+    "-pycmd bogus"
+
+# Check that the top-level result from 'invoke' must be a dictionary.
+foreach test_name { nd1 nd2 nd3 } {
+    mi_gdb_test "-pycmd ${test_name}" \
+	"\\^error,msg=\"Error occurred in Python: Result from invoke must be a dictionary\""
+}
+
+# Check for invalid strings in the result.
+foreach test_desc { {ik1 "xxx yyy"} {ik2 "xxx yyy"} {ik3 "xxx\\+yyy"} \
+			{ik4 "xxx\\.yyy"} {ik5 "123xxxyyy"} } {
+    lassign $test_desc name pattern
+
+    mi_gdb_test "-pycmd ${name}" \
+	"\\^error,msg=\"Error occurred in Python: Invalid key in MI result: ${pattern}\""
+}
+
+mi_gdb_test "-pycmd empty_key" \
+    "\\^error,msg=\"Error occurred in Python: Invalid empty key in MI result\""
+
+# Check that a dash ('-') can be used in a key name.
+mi_gdb_test "-pycmd dash-key" \
+    "\\^done,the-key=\"123\""
+
+# With this argument the command raises a gdb.GdbError with no message
+# string.  GDB considers this a bug in the user program, so prints a
+# backtrace, and a generic error message.
+mi_gdb_test "-pycmd exp" \
+    [multi_line ".*&\"Traceback \\(most recent call last\\):..\"" \
+	 "&\"\[^\r\n\]+${testfile}.py\[^\r\n\]+\"" \
+	 "&\"\[^\r\n\]+raise gdb.GdbError\\(\\)..\"" \
+	 "&\"gdb.GdbError..\"" \
+	 "\\^error,msg=\"Error occurred in Python\\.\""] \
+    "-pycmd exp"
+
+mi_gdb_test "python pycmd2('-pycmd')" \
+    ".*\\^done" \
+    "redefine -pycmd MI command from CLI command"
+
+mi_gdb_test "-pycmd str" \
+    "\\^done,result=\"Ciao!\"" \
+    "-pycmd str - redefined from CLI"
+
+mi_gdb_test "-pycmd int" \
+    "\\^error,msg=\"Invalid parameter: int\"" \
+    "-pycmd int - redefined from CLI"
+
+mi_gdb_test "-pycmd new" \
+    "\\^done" \
+    "Define new command -pycmd-new MI command from Python MI command"
+
+mi_gdb_test "-pycmd red" \
+    "\\^error,msg=\"Command redefined but we failing anyway\"" \
+    "redefine -pycmd MI command from Python MI command"
+
+mi_gdb_test "-pycmd int" \
+    "\\^done,result=\"42\"" \
+    "-pycmd int - redefined from MI"
+
+mi_gdb_test "-pycmd-new int" \
+    "\\^done,result=\"42\"" \
+    "-pycmd-new int - defined from MI"
+
+mi_gdb_test "python pycmd1('')" \
+    ".*&\"ValueError: MI command name is empty\\...\".*\\^error,msg=\"Error while executing Python code\\.\"" \
+    "empty MI command name"
+
+mi_gdb_test "python pycmd1('-')" \
+    [multi_line \
+	 ".*" \
+	 "&\"ValueError: MI command name does not start with '-' followed by at least one letter or digit\\...\"" \
+	 "&\"Error while executing Python code\\...\"" \
+	 "\\^error,msg=\"Error while executing Python code\\.\""] \
+    "invalid MI command name"
+
+mi_gdb_test "python pycmd1('-bad-character-@')" \
+    [multi_line \
+	 ".*" \
+	 "&\"ValueError: MI command name contains invalid character: @\\...\"" \
+	 "&\"Error while executing Python code\\...\"" \
+	 "\\^error,msg=\"Error while executing Python code\\.\""] \
+    "invalid character in MI command name"
+
+mi_gdb_test "python cmd=pycmd1('-abc')" \
+    ".*\\^done" \
+    "create command -abc, stored in a python variable"
+
+mi_gdb_test "python print(cmd.name)" \
+    ".*\r\n~\"-abc\\\\n\"\r\n\\^done" \
+    "print the name of the stored mi command"
+
+mi_gdb_test "python print(cmd.installed)" \
+    ".*\r\n~\"True\\\\n\"\r\n\\^done" \
+    "print the installed status of the stored mi command"
+
+mi_gdb_test "-abc str" \
+    "\\^done,result=\"Hello world!\"" \
+    "-abc str"
+
+mi_gdb_test "python cmd.installed = False" \
+    ".*\\^done" \
+    "uninstall the mi command"
+
+mi_gdb_test "-abc str" \
+    "\\^error,msg=\"Undefined MI command: abc\",code=\"undefined-command\"" \
+    "-abc str, but now the command is gone"
+
+mi_gdb_test "python cmd.installed = True" \
+    ".*\\^done" \
+    "re-install the mi command"
+
+mi_gdb_test "-abc str" \
+    "\\^done,result=\"Hello world!\"" \
+    "-abc str, the command is back again"
+
+mi_gdb_test "python other=pycmd2('-abc')" \
+    ".*\\^done" \
+    "create another command called -abc, stored in a separate python variable"
+
+mi_gdb_test "python print(other.installed)" \
+    ".*\r\n~\"True\\\\n\"\r\n\\^done" \
+    "print the installed status of the other stored mi command"
+
+mi_gdb_test "python print(cmd.installed)" \
+    ".*\r\n~\"False\\\\n\"\r\n\\^done" \
+    "print the installed status of the original stored mi command"
+
+mi_gdb_test "-abc str" \
+    "\\^done,result=\"Ciao!\"" \
+    "-abc str, when the other command is in place"
+
+mi_gdb_test "python cmd.installed = True" \
+    ".*\\^done" \
+    "re-install the original mi command"
+
+mi_gdb_test "-abc str" \
+    "\\^done,result=\"Hello world!\"" \
+    "-abc str, the original command is back again"
+
+mi_gdb_test "python print(other.installed)" \
+    ".*\r\n~\"False\\\\n\"\r\n\\^done" \
+    "the other command is now not installed"
+
+mi_gdb_test "python print(cmd.installed)" \
+    ".*\r\n~\"True\\\\n\"\r\n\\^done" \
+    "the original command is now installed"
+
+mi_gdb_test "python aa = pycmd3('-aa', 'message one', 'xxx')" \
+    ".*\\^done" \
+    "created a new -aa command"
+
+mi_gdb_test "-aa" \
+    ".*\\^done,xxx={msg=\"message one\"}" \
+    "call the -aa command"
+
+mi_gdb_test "python aa.__init__('-aa', 'message two', 'yyy')" \
+    ".*\\^done" \
+    "reinitialise -aa command with a new message"
+
+mi_gdb_test "-aa" \
+    ".*\\^done,yyy={msg=\"message two\"}" \
+    "call the -aa command, get the new message"
+
+mi_gdb_test "python aa.__init__('-bb', 'message three', 'zzz')" \
+    [multi_line \
+	 ".*" \
+	 "&\"ValueError: can't reinitialize object with a different command name..\"" \
+	 "&\"Error while executing Python code\\...\"" \
+	 "\\^error,msg=\"Error while executing Python code\\.\""] \
+    "attempt to reinitialise aa variable to a new command name"
+
+mi_gdb_test "-aa" \
+    ".*\\^done,yyy={msg=\"message two\"}" \
+    "check the aa object has not changed after failed initialization"
+
+mi_gdb_test "python aa.installed = False" \
+    ".*\\^done" \
+    "uninstall the -aa command"
+
+mi_gdb_test "python aa.__init__('-bb', 'message three', 'zzz')" \
+    [multi_line \
+	 ".*" \
+	 "&\"ValueError: can't reinitialize object with a different command name..\"" \
+	 "&\"Error while executing Python code\\...\"" \
+	 "\\^error,msg=\"Error while executing Python code\\.\""] \
+    "attempt to reinitialise aa variable to a new command name while uninstalled"
+
+mi_gdb_test "python aa.__init__('-aa', 'message three', 'zzz')" \
+    ".*\\^done" \
+    "reinitialise -aa command with a new message while uninstalled"
+
+mi_gdb_test "python aa.installed = True" \
+    ".*\\^done" \
+    "install the -aa command"
+
+mi_gdb_test "-aa" \
+    ".*\\^done,zzz={msg=\"message three\"}" \
+    "call the -aa command looking for message three"
+
+# Try to register a command object that is missing an invoke method.
+# This is accepted, but will give an error when the user tries to run
+# the command.
+mi_gdb_test "python no_invoke('-no-invoke')" ".*\\^done" \
+    "attempt to register command with no invoke method"
+mi_gdb_test "-no-invoke" \
+    [multi_line \
+	 ".*" \
+	 "&\"AttributeError: 'no_invoke' object has no attribute 'invoke'..\"" \
+	 "\\^error,msg=\"Error occurred in Python: 'no_invoke' object has no attribute 'invoke'\""] \
+    "execute -no-invoke command, which is missing the invoke method"
+
+# Register a command, then delete its invoke method.  What is the user thinking!!
+mi_gdb_test "python setattr(no_invoke, 'invoke', free_invoke)" ".*\\^done"
+mi_gdb_test "python cmd = no_invoke('-hello')" ".*\\^done"
+mi_gdb_test "-hello" ".*\\^done,result=\\\[\\\]" \
+    "execute no_invoke command, while it still has an invoke attribute"
+mi_gdb_test "python delattr(no_invoke, 'invoke')" ".*\\^done"
+mi_gdb_test "-hello" \
+    [multi_line \
+	 ".*" \
+	 "&\"AttributeError: 'no_invoke' object has no attribute 'invoke'..\"" \
+	 "\\^error,msg=\"Error occurred in Python: 'no_invoke' object has no attribute 'invoke'\""] \
+    "execute -hello command, that had its invoke method removed"
+mi_gdb_test "python cmd.invoke = 'string'" ".*\\^done"
+mi_gdb_test "-hello" \
+    [multi_line \
+	 ".*" \
+	 "&\"TypeError: 'str' object is not callable..\"" \
+	 "\\^error,msg=\"Error occurred in Python: 'str' object is not callable\""] \
+    "execute command with invoke set to a string"
+
+# Try to create a new MI command that uses the name of a builtin MI command.
+mi_gdb_test "python cmd = pycmd2('-data-disassemble')" \
+    [multi_line \
+	 ".*" \
+	 "&\"RuntimeError: unable to add command, name is already in use..\"" \
+	 "&\"Error while executing Python code\\...\"" \
+	 "\\^error,msg=\"Error while executing Python code\\.\""] \
+    "try to register a command that replaces -data-disassemble"
+
+
+
+mi_gdb_test "python run_exception_tests()" \
+    [multi_line \
+	 ".*" \
+	 "~\"PASS..\"" \
+	 "\\^done"]

@@ -1,0 +1,70 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Valgrind gdbserver requires gdb with xml support.
+require allow_xml_test
+
+load_lib valgrind.exp
+
+require {!is_remote target}
+
+standard_testfile .c
+if {[build_executable $testfile.exp $testfile $srcfile {debug}] == -1} {
+    return -1
+}
+
+if { [vgdb_start] == -1 } {
+    return -1
+}
+
+set continue_count 1
+set loop 1
+while {$loop && $continue_count < 100} {
+    set test "continue #$continue_count"
+    gdb_test_multiple "continue" "" {
+	-re "Invalid free\\(\\).*: main .*\r\n$gdb_prompt $" {
+	    pass $test
+	    set loop 0
+	}
+	-re "Remote connection closed.*\r\n$gdb_prompt $" {
+	    fail "$test (remote connection closed)"
+	    # Only if valgrind got stuck.
+	    kill_wait_spawned_process $valgrind_spawn_id
+	    return -1
+	}
+	-re "The program is not being run\\.\r\n$gdb_prompt $" {
+	    fail "$test (valgrind vgdb has terminated)"
+	    # Only if valgrind got stuck.
+	    kill_wait_spawned_process $valgrind_spawn_id
+	    return -1
+	}
+	-re "\r\n$gdb_prompt $" {
+	    pass "$test (false warning)"
+	}
+    }
+    set continue_count [expr $continue_count + 1]
+}
+
+set test "p gdb_test_infcall ()"
+gdb_test_multiple $test $test {
+    -re "unhandled instruction bytes.*\r\n$gdb_prompt $" {
+	fail $test
+    }
+    -re "Continuing \\.\\.\\..*\r\n\\\$1 = 2\r\n$gdb_prompt $" {
+	pass $test
+    }
+}
+
+vgdb_stop

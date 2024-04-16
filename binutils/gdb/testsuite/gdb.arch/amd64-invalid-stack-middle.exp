@@ -1,0 +1,74 @@
+# Copyright (C) 2014-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# In this test we're looking at how gdb handles backtraces and
+# investigating the stack depth when confronted with an "invalid" stack,
+# that is a stack where the first few frames are normal, and then there's a
+# frame where the stack in unreadable.
+#
+# One interesting bug that has been observed is that gdb will sometime
+# exhibit different behaviour the first time a stack command is run
+# compared to the second (and later) times a command is run.  This is
+# because the first time a command is run gdb actually tries to figure out
+# the answer, while the second (and later) times gdb relies on the answer
+# cached from the first time.  As a result in this test each command is
+# run twice, and we restart gdb before testing each different command to
+# ensure that nothing is being cached.
+
+standard_testfile .S
+
+require is_x86_64_m64_target
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile} {nopie}] } {
+    return -1
+}
+
+if ![runto breakpt] {
+    return -1
+}
+
+gdb_test "bt" "^#0 +breakpt *\\(\\) \[^\r\n\]*\r\n#1 +0x\[0-9a-f\]+ in func5\[^\r\n\]*\r\n#2 +0x\[0-9a-f\]+ in func4\[^\r\n\]*\r\n#3 +0x\[0-9a-f\]+ in func3\[^\r\n\]*\r\nBacktrace stopped: Cannot access memory at address 0x\[0-9a-f\]+" \
+	 "first backtrace, with error message"
+
+gdb_test "bt" "^#0 +breakpt *\\(\\) \[^\r\n\]*\r\n#1 +0x\[0-9a-f\]+ in func5\[^\r\n\]*\r\n#2 +0x\[0-9a-f\]+ in func4\[^\r\n\]*\r\n#3 +0x\[0-9a-f\]+ in func3\[^\r\n\]*\r\nBacktrace stopped: Cannot access memory at address 0x\[0-9a-f\]+" \
+	 "second backtrace, with error message"
+
+clean_restart ${binfile}
+
+if ![runto breakpt] {
+    return -1
+}
+
+gdb_test "interpreter-exec mi \"-stack-info-depth\"" \
+    "\\^done,depth=\"4\"" \
+    "check mi -stack-info-depth command, first time"
+
+gdb_test "interpreter-exec mi \"-stack-info-depth\"" \
+    "\\^done,depth=\"4\"" \
+    "check mi -stack-info-depth command, second time"
+
+clean_restart ${binfile}
+
+if ![runto breakpt] {
+    return -1
+}
+
+gdb_test "interpreter-exec mi \"-stack-list-frames\"" \
+    "\\^done,stack=\\\[frame=\{level=\"0\",addr=\"$hex\",func=\"breakpt\",file=\"\[^\"\]+\",fullname=\"\[^\"\]+\",line=\"${decimal}\"(,arch=\"\[^\"\]+\")?\},frame=\{level=\"1\",addr=\"$hex\",func=\"func5\",file=\"\[^\"\]+\",fullname=\"\[^\"\]+\",line=\"${decimal}\"(,arch=\"\[^\"\]+\")?\},frame=\{level=\"2\",addr=\"$hex\",func=\"func4\",file=\"\[^\"\]+\",fullname=\"\[^\"\]+\",line=\"${decimal}\"(,arch=\"\[^\"\]+\")?\},frame=\{level=\"3\",addr=\"$hex\",func=\"func3\",file=\"\[^\"\]+\",fullname=\"\[^\"\]+\",line=\"${decimal}\"(,arch=\"\[^\"\]+\")?\}\\\]" \
+    "check mi -stack-list-frames command, first time"
+
+gdb_test "interpreter-exec mi \"-stack-list-frames\"" \
+    "\\^done,stack=\\\[frame=\{level=\"0\",addr=\"$hex\",func=\"breakpt\",file=\"\[^\"\]+\",fullname=\"\[^\"\]+\",line=\"${decimal}\"(,arch=\"\[^\"\]+\")?\},frame=\{level=\"1\",addr=\"$hex\",func=\"func5\",file=\"\[^\"\]+\",fullname=\"\[^\"\]+\",line=\"${decimal}\"(,arch=\"\[^\"\]+\")?\},frame=\{level=\"2\",addr=\"$hex\",func=\"func4\",file=\"\[^\"\]+\",fullname=\"\[^\"\]+\",line=\"${decimal}\"(,arch=\"\[^\"\]+\")?\},frame=\{level=\"3\",addr=\"$hex\",func=\"func3\",file=\"\[^\"\]+\",fullname=\"\[^\"\]+\",line=\"${decimal}\"(,arch=\"\[^\"\]+\")?\}\\\]" \
+    "check mi -stack-list-frames command, second time"

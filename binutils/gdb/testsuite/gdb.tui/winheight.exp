@@ -1,0 +1,129 @@
+# Copyright 2019-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test the "winheight" command.
+
+tuiterm_env
+
+standard_testfile tui-layout.c
+
+if {[build_executable "failed to prepare" ${testfile} ${srcfile}] == -1} {
+    return -1
+}
+
+Term::clean_restart 24 80 $testfile
+if {![Term::enter_tui]} {
+    unsupported "TUI not supported"
+    return
+}
+
+Term::check_box "source box" 0 0 80 15
+
+Term::command "winheight cmd +5"
+Term::check_box "smaller source box" 0 0 80 10
+
+Term::command "winheight cmd -5"
+Term::check_box "larger source box" 0 0 80 15
+
+Term::command "winheight src -5"
+Term::check_box "smaller source box again" 0 0 80 10
+
+Term::command "winheight src +5"
+Term::check_box "larger source box again" 0 0 80 15
+
+# Check that attempting a window to be too large gives an error.
+Term::command "winheight src 100"
+Term::check_box "source box has not changed" 0 0 80 15
+Term::check_region_contents "check error message about src size 100" 0 16 80 8 \
+    [multi_line "$gdb_prompt winheight src 100\\s+" \
+     "warning: Invalid window height specified\\s+" \
+     "$gdb_prompt"]
+
+# Check that incrementing to a size that is "too big" will trigger an
+# error, and that the window doesn't resize.
+Term::command "winheight src 20"
+Term::check_box "source box is at its max size" 0 0 80 20
+Term::command "winheight src +1"
+Term::check_box "source box is still at its max size" 0 0 80 20
+Term::check_region_contents "check error message about src +1" 0 21 80 3 \
+    [multi_line "$gdb_prompt winheight src \\+1\\s+" \
+     "warning: Invalid window height specified\\s+" \
+     "$gdb_prompt"]
+
+# Reset the cmd window to a sane size.
+Term::command "winheight cmd 8"
+
+Term::command "layout regs"
+Term::check_box "register window" 0 0 80 8
+Term::check_box "source window" 0 7 80 8
+
+Term::command "winheight cmd 10"
+Term::check_box "register window after resize" 0 0 80 7
+Term::check_box "source window after resize" 0 6 80 7
+
+# At one point we had a bug where adjusting the winheight would result
+# in GDB keeping hold of duplicate window pointers, which it might
+# then try to delete when the layout was changed.  Running this test
+# under valgrind would expose that bug.
+Term::command "layout asm"
+Term::command "winheight cmd 8"
+Term::check_box "check for asm window" 0 0 80 15
+
+
+# Check what happens when we switch from src layout to split layout.
+# The interesting thing here is that the src layout has one flexible
+# window (the src), the status window, which is of fixed size, and the
+# cmd window, which tries to retain its size when a layout changes.
+#
+# In contrast, the split layout has both a src and asm window, plus
+# the same status and cmd windows.
+#
+# Of particular interest here is the first test, where we maximise the
+# cmd window before switching to split.  This requires gdb to realise
+# that it has to shrink the cmd window, even though this is something
+# gdb usually avoids doing.
+#
+# Each test here is a size for the src window in the 'src' layout.
+# The test then switches to the 'split' layout, and calculates the
+# expected window sizes.
+foreach_with_prefix cmd_size {20 12 5} {
+    set src_size_before [expr 24 - ${cmd_size} - 1]
+    set split_size [expr (24 - ${cmd_size}) / 2]
+
+    if { $split_size < 3 } {
+	# The minimum window size is 3, so force that.
+	set src_size_after 3
+	set asm_size_after 3
+    } elseif { [expr $split_size % 2] == 0 } {
+	# The remaining space can be divided evenly between the two
+	# windows.
+	set src_size_after ${split_size}
+	set asm_size_after ${split_size}
+    } else {
+	# The space can't be divided evenly, the asm window will get
+	# the extra line.
+	set src_size_after ${split_size}
+	set asm_size_after [expr ${split_size} + 1]
+    }
+
+    Term::command "layout src"
+    Term::command "winheight cmd ${cmd_size}"
+    Term::check_box "check for src window" 0 0 80 ${src_size_before}
+
+    # Both windows should be of equal size, which will be their minimum.
+    Term::command "layout split"
+    Term::check_box "check for src window in split" 0 0 80 ${src_size_after}
+    Term::check_box "check for asm window in split" 0 [expr ${src_size_after} - 1] 80 ${asm_size_after}
+}

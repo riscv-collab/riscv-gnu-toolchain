@@ -1,0 +1,193 @@
+# Copyright 2016-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile
+
+set compile_options "debug"
+if {[build_executable $testfile.exp $testfile ${srcfile} ${compile_options}] == -1} {
+    untested "failed to compile"
+    return -1
+}
+
+# Ensure no output has been sent.  Use MESSAGE as test message.
+
+proc ensure_no_output {message} {
+    global decimal
+
+    # Run a command and use an anchor to make sure no output appears
+    # before the command's expected output.
+    gdb_test "print 999" "^\\\$$decimal = 999" $message
+}
+
+# Run a few execution-related commands on CON1, and ensure the proper
+# output, or none, if appropriate, is sent to CON2.  CON1_NAME and
+# CON2_NAME are the names of the consoles.
+
+proc do_execution_tests {con1 con1_name con2 con2_name} {
+    global srcfile
+    global decimal
+
+    set bp_lineno [gdb_get_line_number "set break $con1_name here"]
+
+    with_spawn_id $con1 {
+	gdb_test "next" "global = 1;"
+    }
+    with_spawn_id $con2 {
+	ensure_no_output "next causes no spurious output on other console"
+    }
+
+    with_spawn_id $con1 {
+	gdb_test "break $srcfile:$bp_lineno" \
+	    "Breakpoint $decimal .*$srcfile, line $bp_lineno\\." \
+	    "set breakpoint"
+    }
+    with_spawn_id $con2 {
+	ensure_no_output "break causes no spurious output on other console"
+    }
+
+    with_spawn_id $con1 {
+	gdb_test "continue" "set break $con1_name here .*" "continue to breakpoint"
+    }
+
+    with_spawn_id $con2 {
+	set test "breakpoint hit reported on other console"
+	gdb_test_multiple "" $test {
+	    -re "Breakpoint $decimal, .* set break $con1_name here " {
+		pass $test
+	    }
+	}
+    }
+}
+
+# The test proper.
+
+proc_with_prefix do_test {} {
+    global srcfile testfile
+    global gdb_prompt
+    global gdb_spawn_id
+    global gdb_main_spawn_id extra_spawn_id
+
+    clean_restart $testfile
+
+    if ![runto_main] {
+	return -1
+    }
+
+    gdb_test "new-ui" \
+	"Usage: new-ui INTERPRETER TTY" \
+	"new-ui without arguments"
+
+    set test "new-ui does not repeat"
+    send_gdb "\n"
+    gdb_test_multiple "" $test {
+	-re "^\r\n$gdb_prompt $" {
+	    pass $test
+	}
+    }
+
+    # Save the main UI's spawn ID.
+    set gdb_main_spawn_id $gdb_spawn_id
+
+    # Create the new PTY for the secondary console UI.
+    spawn -pty
+    set extra_spawn_id $spawn_id
+    set extra_tty_name $spawn_out(slave,name)
+    gdb_test_multiple "new-ui console $extra_tty_name" "new-ui" {
+	-re "New UI allocated\r\n$gdb_prompt $" {
+	}
+    }
+
+    with_spawn_id $extra_spawn_id {
+	set test "initial prompt on extra console"
+	gdb_test_multiple "" $test {
+	    -re "$gdb_prompt $" {
+		pass $test
+	    }
+	}
+    }
+
+    # Ensure non-execution commands in one console don't cause output
+    # in the other consoles.
+    with_spawn_id $gdb_main_spawn_id {
+	gdb_test "print 1" "^\\\$1 = 1" "print on main console"
+    }
+    with_spawn_id $extra_spawn_id {
+	gdb_test "print 2" "^\\\$2 = 2" "print on extra console"
+    }
+
+    # Verify that we get proper queries on the main UI, but that they are
+    # auto-answered on secondary UIs.
+    with_spawn_id $gdb_main_spawn_id {
+	gdb_test "delete" "" "delete all breakpoint on main console" \
+		 "Delete all breakpoints. .y or n. $" "n"
+    }
+    with_spawn_id $extra_spawn_id {
+	# Check output in two stages in order to override
+	# gdb_test_multiple's internal "got interactive prompt" fail
+	# that would otherwise match if the expect buffer happens to
+	# fill with partial output that ends in "(y or n) ".
+	set test "delete all breakpoints on extra console"
+	gdb_test_multiple "delete" $test {
+	    -re "Delete all breakpoints. .y or n. " {
+		gdb_test "" \
+		    ".answered Y; input not from terminal." \
+		    $test
+	    }
+	}
+    }
+
+    # Run a few execution tests with the main console as the driver
+    # console.
+    with_test_prefix "main console" {
+	do_execution_tests \
+	    $gdb_main_spawn_id "main console" \
+	    $extra_spawn_id "extra console"
+    }
+    # Same, but with the extra console as driver.
+    with_test_prefix "extra console" {
+	do_execution_tests \
+	    $extra_spawn_id "extra console" \
+	    $gdb_main_spawn_id "main console"
+    }
+}
+
+# Test missing / invalid arguments.
+
+proc_with_prefix do_test_invalid_args {} {
+    global testfile
+
+    clean_restart $testfile
+
+    spawn -pty
+    set extra_tty_name $spawn_out(slave,name)
+
+    # Test bad terminal path.
+    gdb_test "new-ui console /non/existent/path" \
+	     "opening terminal failed: No such file or directory\." \
+	     "new-ui with bad terminal path"
+
+    # Test bad interpreter name.
+    gdb_test "new-ui bloop $extra_tty_name" \
+	     "Interpreter `bloop' unrecognized" \
+	     "new-ui with bad interpreter name"
+
+    # Test that we can continue working normally.
+    if ![runto_main] {
+	return
+    }
+}
+
+do_test
+do_test_invalid_args

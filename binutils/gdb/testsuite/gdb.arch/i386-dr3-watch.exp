@@ -1,0 +1,88 @@
+# Copyright 2011-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# x86 and amd64 gdbserver had a bug where a watchpoint triggered by
+# the DR3 debug register would trip on a bogus assertion.
+
+# This test relies on being able to set 4 hardware watchpoints.  Since
+# that is not a valid assumption across most targets, and we're
+# testing a x86 specific bug, skip everywhere else.
+require {is_any_target "i?86-*-*" "x86_64-*-*"}
+
+standard_testfile
+
+if [prepare_for_testing "failed to prepare" ${binfile} ${srcfile} {debug $additional_flags}] {
+    return -1
+}
+
+if {![runto_main]} {
+    return -1
+}
+
+gdb_test_no_output "set breakpoint always-inserted on"
+
+# Test that we handle watchpoints in all of DR0-DR3.
+
+gdb_test "watch i1" "Hardware watchpoint .*: i1"
+gdb_test "watch i2" "Hardware watchpoint .*: i2"
+gdb_test "watch i3" "Hardware watchpoint .*: i3"
+gdb_test "watch i4" "Hardware watchpoint .*: i4"
+
+gdb_test "c" "Hardware watchpoint.*: i1.*" "continue to i1 watchpoint"
+gdb_test "c" "Hardware watchpoint.*: i2.*" "continue to i2 watchpoint"
+gdb_test "c" "Hardware watchpoint.*: i3.*" "continue to i3 watchpoint"
+gdb_test "c" "Hardware watchpoint.*: i4.*" "continue to i4 watchpoint"
+
+delete_breakpoints
+
+# Regression test for a bug where the i386 watchpoints support backend
+# would leave some debug registers occupied even if not enough debug
+# registers were available to cover a single watchpoint location.
+
+gdb_test "watch i1" \
+    "Hardware watchpoint .*: i1" \
+    "set watchpoint occuping one debug register"
+
+# gap1 too long to fit the 3 left over debug registers (but would fit
+# 4 if all were available).
+set test "watchpoint on gap1 does not fit debug registers"
+gdb_test_multiple "watch gap1" "$test" {
+    -re "Hardware watchpoint .*: gap1.*Warning:.*Could not insert hardware watchpoint.*You may have requested too many.*\r\n$gdb_prompt $" {
+	pass $test
+    }
+    -re "Hardware watchpoint .*: gap1\r\n$gdb_prompt $" {
+	pass "$test (target emulates hardware watchpoints)"
+	return
+    }
+    -re "Watchpoint .*: gap1\r\n$gdb_prompt $" {
+	pass "$test (gdb figured out itself the watchpoint does not fit)"
+	return
+    }
+}
+
+# Start over.
+gdb_test "delete" \
+    "" \
+    "delete all watchpoints" \
+    {Delete all breakpoints\? \(y or n\) $} \
+    "y"
+
+# If debug registers were left occupied by mistake, we'll fail to set
+# some of these watchpoints.  Each watchpoint should fit in one of the
+# 4 debug registers available.
+gdb_test "watch i1" "Hardware watchpoint .*: i1" "watch i1 still fits"
+gdb_test "watch i2" "Hardware watchpoint .*: i2" "watch i2 still fits"
+gdb_test "watch i3" "Hardware watchpoint .*: i3" "watch i3 still fits"
+gdb_test "watch i4" "Hardware watchpoint .*: i4" "watch i4 still fits"

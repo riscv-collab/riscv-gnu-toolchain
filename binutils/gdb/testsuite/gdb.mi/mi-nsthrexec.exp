@@ -1,0 +1,82 @@
+# Copyright 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that when a thread other than the main thread execs, and the
+# main thread was stopped due to user request, the new incarnation of
+# the main thread doesn't just silently stop at the first internal
+# breakpoint (usually the _dl_debug_state breakpoint).
+
+require support_displaced_stepping
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+#
+# Start here
+#
+standard_testfile nsthrexec.c
+
+set options [list debug]
+if {[gdb_compile_pthreads "$srcdir/$subdir/$srcfile" $binfile executable $options] != "" } {
+    return -1
+}
+
+save_vars { GDBFLAGS } {
+    append GDBFLAGS " -ex \"set non-stop on\""
+    mi_clean_restart $binfile
+}
+
+mi_gdb_test "-gdb-set mi-async 1" ".*"
+mi_detect_async
+
+if { [mi_runto_main] < 0 } {
+    return
+}
+
+mi_create_breakpoint thread_execler \
+    "breakpoint at thread_execler" \
+    -number 2 -function thread_execler
+
+# All threads should stop, except the main thread.
+mi_send_resuming_command "exec-continue --all" "resume all"
+mi_expect_stop "breakpoint-hit" "thread_execler" "\[^\n\]*" "$srcfile" \
+    "\[0-9\]*" {"" "disp=\"keep\""} "stop at thread_execler"
+
+mi_check_thread_states \
+    {"running" "stopped"} \
+    "thread state, execler stopped, main running"
+
+mi_gdb_test "200-exec-interrupt --thread 1" "200\\^done" "interrupt main thread"
+mi_expect_interrupt "main thread interrupted"
+
+mi_check_thread_states {"stopped" "stopped"} "thread state, all stopped"
+
+# now that we know about all the threads, we can get rid of the breakpoints
+mi_delete_breakpoints
+
+mi_create_breakpoint main \
+    "insert breakpoint at main" \
+    -number 3 -func main
+
+
+# Now resume the execler thread.  Eventually, it execs.
+mi_send_resuming_command "exec-continue --thread 2" "resume execler thread"
+
+# Check that the main thread passes by the _dl_debug_state internal
+# breakpoint without silently stopping.
+mi_expect_stop "breakpoint-hit" "main" "\[^\n\]*" "$srcfile" \
+    "\[0-9\]*" {"" "disp=\"keep\""} "stop at main after exec"
+
+mi_gdb_exit

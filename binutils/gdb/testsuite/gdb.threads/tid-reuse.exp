@@ -1,0 +1,77 @@
+# Copyright 2015-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test running a program that spawns enough threads that the tid of an
+# exited thread is reused.  GDB should not crash when this happens.
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile { debug pthreads }] == -1} {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+delete_breakpoints
+
+# Avoid dumping a ton of thread create/exit info in the logs.
+gdb_test_no_output "set print thread-events off"
+
+gdb_breakpoint "after_count"
+gdb_continue_to_breakpoint "after_count"
+
+# Get value of VARIABLE in the inferior.
+
+proc getvar {variable} {
+    global decimal
+    global gdb_prompt
+
+    set value 0
+
+    set msg "get $variable"
+    gdb_test_multiple "print $variable" $msg {
+	-re " = ($decimal)\r\n$gdb_prompt $" {
+	    set value $expect_out(1,string)
+	    pass $msg
+	}
+    }
+    return $value
+}
+
+set reuse_time [getvar "reuse_time"]
+
+# Now the real test.  Run to a breakpoint in a thread that exits
+# immediately once resumed.  The thread ends up left on the thread
+# list, marked exited (exactly because it's the selected thread).
+gdb_breakpoint "do_nothing_thread_func"
+gdb_continue_to_breakpoint "do_nothing_thread_func"
+
+delete_breakpoints
+
+# Let the program continue, constantly spawning short-lived threads
+# (one at a time).  On some targets, after a bit, a new thread reuses
+# the tid of the old exited thread that we still have selected.  GDB
+# should not crash in this situation.  Of course, if the tid number
+# space is shared between all processes in the system (such as on
+# Linux), there's a chance that some other process grabs the TID, but
+# that can never cause a spurious test fail.
+gdb_breakpoint "after_reuse_time"
+
+# Higher than what the test program sleeps before exiting.
+set timeout [expr $reuse_time * 2]
+
+gdb_continue_to_breakpoint "after_reuse_time"

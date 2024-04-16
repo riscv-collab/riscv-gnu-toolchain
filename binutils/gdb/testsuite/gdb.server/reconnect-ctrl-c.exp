@@ -1,0 +1,82 @@
+# This testcase is part of GDB, the GNU debugger.
+#
+# Copyright 2017-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that Ctrl-C works after reconnecting.
+
+load_lib gdbserver-support.exp
+
+require allow_gdbserver_tests
+
+require {!target_info exists gdb,nointerrupts}
+
+standard_testfile
+
+save_vars { GDBFLAGS } {
+    # If GDB and GDBserver are both running locally, set the sysroot to avoid
+    # reading files via the remote protocol.
+    if { ![is_remote host] && ![is_remote target] } {
+	set GDBFLAGS "$GDBFLAGS -ex \"set sysroot\""
+    }
+
+    if [prepare_for_testing "failed to prepare" $testfile $srcfile] {
+	return -1
+    }
+}
+
+set target_binfile [gdb_remote_download target $binfile]
+
+# Make sure we're disconnected, in case we're testing with an
+# extended-remote board, therefore already connected.
+with_test_prefix "preparation" {
+  gdb_test "disconnect" ".*"
+}
+
+# Connect, continue, send Ctrl-C and expect a SIGINT stop.
+
+proc connect_continue_ctrl_c {} {
+    global gdbserver_protocol gdbserver_gdbport
+
+    set res [gdb_target_cmd $gdbserver_protocol $gdbserver_gdbport]
+    if ![gdb_assert {$res == 0} "connect"] {
+	return
+    }
+
+    set test "continue for ctrl-c"
+    gdb_test_multiple "continue" $test {
+	-re "Continuing" {
+	    pass $test
+	}
+    }
+
+    after 1000 {send_gdb "\003"}
+    gdb_test "" "Program received signal SIGINT.*" "stop with control-c"
+}
+
+with_test_prefix "first" {
+    # Start GDBserver.
+    set gdbserver_reconnect_p 1
+    set res [gdbserver_start "" $target_binfile]
+    set gdbserver_protocol [lindex $res 0]
+    set gdbserver_gdbport [lindex $res 1]
+
+    connect_continue_ctrl_c
+}
+
+with_test_prefix "second" {
+    gdb_test "disconnect" "Ending remote debugging."
+    connect_continue_ctrl_c
+}

@@ -1,0 +1,94 @@
+# Copyright 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the gdb testsuite.
+
+# This test verifies that setting breakpoint on line in inline
+# function will fire in all instantiations of that function.
+
+require allow_cplus_tests
+
+standard_testfile mb-inline1.cc mb-inline2.cc
+set hdrfile "${testfile}.h"
+include_file $hdrfile
+
+if {[prepare_for_testing "failed to prepare" $testfile \
+	 [list $srcfile $srcfile2] {debug c++}]} {
+    return -1
+}
+
+set bp_location [gdb_get_line_number "set breakpoint here" $hdrfile]
+
+# Set a breakpoint with multiple locations.
+
+gdb_test "break $hdrfile:$bp_location" \
+    "Breakpoint.*at.*: $hdrfile:$bp_location. \\(2 locations\\).*" \
+    "set breakpoint"
+
+# Do "info break" now so we can easily compare it with the later "info break"
+# if problems arise.
+gdb_test "info break" \
+    "\[\r\n\]1\.1.* y .* at .*$hdrfile:$bp_location.*\[\r\n\]1\.2.* y .* at .*$hdrfile:$bp_location.*"
+
+gdb_run_cmd
+gdb_test "" "Breakpoint $bkptno_num_re,.*foo \\(i=0\\).*" "run to breakpoint"
+
+gdb_test "continue" \
+    ".*Breakpoint.*foo \\(i=1\\).*" \
+    "run to breakpoint 2"
+
+# Try disabling a single location. We also test
+# that at least in simple cases, the enable/disable
+# state of locations survive "run".
+# Early bug would disable 1.1 and enable 1.2 when program is run.
+gdb_test_no_output "disable 1.2" "disabling location: disable"
+
+gdb_run_cmd
+gdb_test "" "Breakpoint $bkptno_num_re,.*foo \\(i=0\\).*" "disabling location: run to breakpoint"
+
+gdb_test_multiple "info break" "disabled breakpoint 1.2" {
+    -re "1\.2.* n .* at .*$hdrfile:$bp_location.*$gdb_prompt $" {
+	pass "disabled breakpoint 1.2"
+    }
+    -re "1\.2.* y .* at .*$hdrfile:$bp_location.*$gdb_prompt $" {
+	# When inferior is restarted, breakpoint locations will be updated.
+	# On uclinux, it is not guaranteed that new inferior is located the
+	# same address as previous one, so status/state of breakpoint location
+	# will loose.  The heuristic of GDB should be improved.
+	setup_kfail gdb/12924 "*-*-uclinux*"
+	fail "disabled breakpoint 1.2"
+    }    
+}
+
+# Make sure we can set a breakpoint on a source statement that spans
+# multiple lines.
+
+delete_breakpoints
+
+set bp_location [gdb_get_line_number "set multi-line breakpoint here" $hdrfile]
+
+if { ![runto_main] } {
+    return 0
+}
+
+gdb_test "break $hdrfile:$bp_location" \
+    "Breakpoint.*at.*: $hdrfile:$bp_location. \\(2 locations\\).*" \
+    "set multi_line_foo breakpoint"
+gdb_test "continue" \
+    ".*Breakpoint.*multi_line_foo \\(i=0\\).*" \
+    "run to multi_line_foo breakpoint 4 afn"
+gdb_test "continue" \
+    ".*Breakpoint.*multi_line_foo \\(i=1\\).*" \
+    "run to multi_line_foo breakpoint 4 bfn"

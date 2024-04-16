@@ -1,0 +1,486 @@
+# Copyright 2015-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test thread ID parsing and display.
+
+load_lib gdb-python.exp
+
+standard_testfile
+
+# Multiple inferiors are needed, therefore both native and extended
+# gdbserver modes are supported.  Only non-extended gdbserver is not
+# supported.
+require !use_gdb_stub
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile} {pthreads debug}] } {
+    return -1
+}
+
+if {![runto_main]} {
+    return -1
+}
+
+# Issue "thread apply TID_LIST p 1234" and expect EXP_TID_LIST (a list
+# of thread ids) to be displayed.
+proc thread_apply {tid_list exp_tid_list {message ""}} {
+    global decimal
+    set any "\[^\r\n\]*"
+    set expected [string_to_regexp $exp_tid_list]
+
+    set r ""
+    foreach tid $expected {
+	append r "\[\r\n\]+"
+	append r "Thread $tid $any:\r\n"
+	append r "\\$$decimal = 1234"
+    }
+
+    set cmd "thread apply $tid_list"
+    if {$message != ""} {
+	gdb_test "$cmd p 1234" $r $message
+	return
+    }
+
+    gdb_test "$cmd p 1234" $r
+}
+
+# Issue "info threads TID_LIST" and expect EXP_TID_LIST (a list of
+# thread ids) to be displayed.
+proc info_threads {tid_list exp_tid_list {message ""}} {
+    set any "\[^\r\n\]*"
+    set expected [string_to_regexp $exp_tid_list]
+    set r [join $expected " ${any}\r\n${any} "]
+    set r "${any} $r ${any}"
+    set cmd "info threads $tid_list"
+    if {$message != ""} {
+	gdb_test $cmd $r $message
+	return
+    }
+    gdb_test $cmd $r
+}
+
+# Issue "info threads TID_LIST" and expect INFO_THR output.  Then
+# issue "thread apply TID_LIST" and expect THR_APPLY output.  If
+# THR_APPLY is omitted, INFO_THR is expected instead.
+proc thr_apply_info_thr {tid_list info_thr {thr_apply ""}} {
+    if {$thr_apply == ""} {
+	set thr_apply $info_thr
+    }
+
+    info_threads $tid_list $info_thr
+    thread_apply $tid_list $thr_apply
+}
+
+# Issue both "thread apply TID_LIST" and "info threads TID_LIST" and
+# expect commands to error out with EXP_ERROR_APPLY and EXP_ERROR_INFO.
+# If EXP_ERROR_INFO is missing, default to EXP_ERROR_APPLY.
+proc thr_apply_info_thr_error {tid_list exp_error_apply {exp_error_info ""}} {
+    if { "$exp_error_info" == "" } {
+	set exp_error_info "$exp_error_apply"
+    }
+
+    gdb_test "info threads $tid_list" \
+	$exp_error_info
+
+    gdb_test "thread apply $tid_list" \
+	$exp_error_apply
+}
+
+# Issue both "info threads TID_LIST" and "thread apply TID_LIST" and
+# expect the command to error out with "Invalid thread ID: $EXPECTED".
+# EXPECTED is a literal string, not a regexp.  If EXPECTED is omitted,
+# TID_LIST is expected instead.
+proc thr_apply_info_thr_invalid {tid_list {expected ""}} {
+    if {$expected == ""} {
+	set expected $tid_list
+    }
+    set expected [string_to_regexp $expected]
+    gdb_test "info threads $tid_list" \
+	"Invalid thread ID: $expected"
+
+    gdb_test "thread apply $tid_list p 1234" \
+	"Invalid thread ID: $expected p 1234" \
+	"thread apply $tid_list"
+}
+
+# "info threads" while there's only inferior 1 should show
+# single-number thread IDs.
+with_test_prefix "single inferior" {
+    info_threads "" "1"
+
+    gdb_test "thread" "Current thread is 1 .*"
+
+    gdb_test "print \$_inferior_thread_count" " = 1"
+}
+
+# "info threads" while there are multiple inferiors should show
+# qualified thread IDs.
+with_test_prefix "two inferiors" {
+    # Add another inferior.
+    gdb_test "add-inferior" "Added inferior 2.*" "add empty inferior 2"
+
+    # Now that we've added another inferior, thread IDs now show the
+    # inferior number.
+    info_threads "" "1.1"
+
+    gdb_test "thread" "Current thread is 1\.1 .*"
+
+    gdb_test "inferior 2" "Switching to inferior 2 .*" "switch to inferior 2"
+    gdb_test "file ${binfile}" ".*" "load file in inferior 2"
+
+    gdb_test "print \$_inferior_thread_count" " = 0" \
+	"no threads before we start the second inferior"
+
+    runto_main
+
+    gdb_test "print \$_inferior_thread_count" " = 1" \
+	"no other threads started yet"
+
+    # Now that we've added another inferior, thread IDs now show the
+    # inferior number.
+    info_threads "" "1.1 2.1" \
+	"info threads show inferior numbers"
+
+    gdb_test "thread" "Current thread is 2\.1 .*" \
+	"switch to thread using extended thread ID"
+
+    gdb_breakpoint "thread_function1"
+
+    gdb_continue_to_breakpoint "once"
+    gdb_test "print \$_inferior_thread_count" " = 2" \
+	"second thread started in inferior 2"
+    gdb_test "inferior 1" "Switching to inferior 1 .*"
+    gdb_test "print \$_inferior_thread_count" " = 1" \
+	"still only one thread in inferior 1"
+    gdb_continue_to_breakpoint "twice"
+    gdb_test "print \$_inferior_thread_count" " = 2" \
+	"second thread started in inferior 1"
+
+    info_threads "" "1.1 1.2 2.1 2.2" \
+	"info threads again"
+
+    # Same, but show the global ID.
+    gdb_test "info threads -gid" \
+	[multi_line \
+	     "  1\.1 +1 +.*" \
+	     "\\* 1\.2 +4 +.* thread_function1 .* at .*$srcfile:.*" \
+	     "  2\.1 +2 +.*" \
+	     "  2\.2 +3 +.* thread_function1 .* at .*$srcfile:.*"]
+
+    # Confirm the convenience variables show the expected numbers.
+    gdb_test "p \$_thread == 2" " = 1"
+    gdb_test "p \$_gthread == 4" " = 1"
+
+    # Without an explicit inferior component, GDB defaults to the
+    # current inferior.  Make sure we don't refer to a thread by
+    # global ID by mistake.
+    gdb_test "thread 4" "Unknown thread 1.4\\."
+
+    # Test thread ID list parsing.  Test qualified and unqualified
+    # IDs; qualified and unqualified ranges; invalid IDs and invalid
+    # ranges.
+
+    # First spawn a couple more threads so ranges includes more than
+    # two threads.
+    with_test_prefix "more threads" {
+	gdb_breakpoint "thread_function2"
+
+	gdb_test "inferior 2" "Switching to inferior 2 .*"
+	gdb_continue_to_breakpoint "once"
+	gdb_test "print \$_inferior_thread_count" " = 3" \
+	    "third thread started in inferior 2"
+
+	gdb_test "inferior 1" "Switching to inferior 1 .*"
+	gdb_test "print \$_inferior_thread_count" " = 2" \
+	    "still only two threads in inferior 1"
+	gdb_continue_to_breakpoint "twice"
+	gdb_test "print \$_inferior_thread_count" " = 3" \
+	    "third thread started in inferior 1"
+    }
+
+    thr_apply_info_thr "1" \
+	"1.1"
+
+    thr_apply_info_thr "1.1" \
+	"1.1"
+
+    thr_apply_info_thr "1 2 3" \
+	"1.1 1.2 1.3"
+
+    # Same, but with qualified thread IDs.
+    thr_apply_info_thr "1.1 1.2 1.3 2.1 2.2" \
+	"1.1 1.2 1.3 2.1 2.2"
+
+    # Test a thread number range.
+    thr_apply_info_thr "1-3" \
+	"1.1 1.2 1.3"
+
+    # Same, but using a qualified range.
+    thr_apply_info_thr "1.1-3" \
+	"1.1 1.2 1.3"
+
+    # A mix of qualified and unqualified thread IDs/ranges.
+    thr_apply_info_thr "1.1 2-3" \
+	"1.1 1.2 1.3"
+
+    thr_apply_info_thr "1 1.2-3" \
+	"1.1 1.2 1.3"
+
+    # Likewise, but mix inferiors too.
+    thr_apply_info_thr "2.1 2-3" \
+	"1.2 1.3 2.1" \
+	"2.1 1.2 1.3"
+
+    # Multiple ranges with mixed explicit inferiors.
+    thr_apply_info_thr "1.1-2 2.2-3" \
+	"1.1 1.2 2.2 2.3"
+
+    # All threads.
+    thread_apply "all" \
+	"2.3 2.2 2.1 1.3 1.2 1.1"
+    thread_apply "all -ascending" \
+	"1.1 1.2 1.3 2.1 2.2 2.3"
+
+    # Now test using GDB convenience variables.
+
+    gdb_test "p \$inf = 1" " = 1"
+    gdb_test "p \$thr_start = 2" " = 2"
+    gdb_test "p \$thr_end = 3" " = 3"
+
+    # Convenience variable for the inferior number, only.
+    thr_apply_info_thr "\$inf.2" \
+	"1.2"
+    thr_apply_info_thr "\$inf.2-3" \
+	"1.2 1.3"
+
+    # Convenience variables for thread numbers as well.
+    foreach prefix {"" "1." "\$inf."} {
+	thr_apply_info_thr "${prefix}\$thr_start" \
+	    "1.2"
+	thr_apply_info_thr "${prefix}\$thr_start-\$thr_end" \
+	    "1.2 1.3"
+	thr_apply_info_thr "${prefix}2-\$thr_end" \
+	    "1.2 1.3"
+	thr_apply_info_thr "${prefix}\$thr_start-3" \
+	    "1.2 1.3"
+
+	# Undefined convenience variable.
+	set prefix_re [string_to_regexp $prefix]
+	thr_apply_info_thr_error "${prefix}\$conv123" \
+	    [multi_line \
+		 "Convenience variable must have integer value\." \
+		 "Invalid thread ID: ${prefix_re}\\\$conv123"]
+    }
+
+    # Convenience variables pointing at an inexisting thread and/or
+    # inferior.
+    gdb_test "p \$inf = 30" " = 30"
+    gdb_test "p \$thr = 20" " = 20"
+    # Try both the convenience variable and the literal number.
+    foreach thr {"\$thr" "20" "1.20" "\$inf.1" "30.1" } {
+	set expected [string_to_regexp $thr]
+	gdb_test "info threads $thr" "No threads match '${expected}'."
+	# "info threads" works like a filter.  If there's any other
+	# valid thread in the list, there's no error.
+	info_threads "$thr 1.1" "1.1"
+	info_threads "1.1 $thr" "1.1"
+    }
+
+    gdb_test "thread apply \$thr p 1234" \
+	"warning: Unknown thread 1.20" \
+	"thread apply \$thr"
+
+    gdb_test "thread apply \$inf.1 p 1234" \
+	"warning: Unknown thread 30.1" \
+	"thread apply \$inf.1"
+
+    # Star ranges.
+
+    thr_apply_info_thr "1.*" \
+	"1.1 1.2 1.3"
+
+    thr_apply_info_thr "*" \
+	"1.1 1.2 1.3"
+
+    thr_apply_info_thr "1.* 2.1" \
+	"1.1 1.2 1.3 2.1"
+
+    thr_apply_info_thr "2.1 1.*" \
+	"1.1 1.2 1.3 2.1" \
+	"2.1 1.1 1.2 1.3"
+
+    thr_apply_info_thr "1.* 2.*" \
+	"1.1 1.2 1.3 2.1 2.2 2.3"
+
+    thr_apply_info_thr "2.* 1.*" \
+	"1.1 1.2 1.3 2.1 2.2 2.3" \
+	"2.1 2.2 2.3 1.1 1.2 1.3"
+
+    # There's no inferior 3, but "info threads" treats the thread list
+    # as a filter, so it's OK.  "thread apply" complains about the
+    # unknown inferior through.
+    info_threads "1.1 3.*" \
+	"1.1"
+    gdb_test "thread apply 1.1 3.* p 1" \
+	"Thread 1.1.*warning: Unknown inferior 3"
+
+    # Now test a set of invalid thread IDs/ranges.
+
+    thr_apply_info_thr_invalid "1." \
+	"1."
+
+    thr_apply_info_thr_invalid "1-3 1." \
+	"1."
+
+    thr_apply_info_thr_invalid "1.1.1" \
+	"1.1.1"
+
+    thr_apply_info_thr_invalid "2 1.1.1" \
+	"1.1.1"
+
+    thr_apply_info_thr_invalid "1.1.1 2" \
+	"1.1.1 2"
+
+    thr_apply_info_thr_invalid "1-2.1" \
+	"1-2.1"
+
+    gdb_test "p \$zero = 0" " = 0"
+    gdb_test "p \$one = 1" " = 1"
+    gdb_test "p \$minus_one = -11" " = -11"
+    foreach prefix {"" "1." "$one."} {
+	set prefix_re [string_to_regexp $prefix]
+
+	thr_apply_info_thr_invalid "${prefix}foo"
+	thr_apply_info_thr_invalid "${prefix}1foo"
+	thr_apply_info_thr_invalid "${prefix}foo1"
+
+	thr_apply_info_thr_error "${prefix}1-0" "inverted range"
+	thr_apply_info_thr_error "${prefix}1-\$zero" "inverted range"
+	thr_apply_info_thr_error "${prefix}\$one-0" "inverted range"
+	thr_apply_info_thr_error "${prefix}\$one-\$zero" "inverted range"
+	thr_apply_info_thr_error "${prefix}1-" "inverted range"
+	thr_apply_info_thr_error "${prefix}2-1" "inverted range"
+	thr_apply_info_thr_error "${prefix}2-\$one" "inverted range"
+	if {$prefix == ""} {
+	    thr_apply_info_thr_error "${prefix}-1" "Invalid thread ID: -1" \
+		"Unrecognized option at: -1"
+	    thr_apply_info_thr_error "${prefix}-\$one" \
+		"Invalid thread ID: -\\\$one" "Unrecognized option at: -\\\$one"
+	} else {
+	    thr_apply_info_thr_error "${prefix}-1" "negative value"
+	    thr_apply_info_thr_error "${prefix}-\$one" "negative value"
+	}
+	thr_apply_info_thr_error "${prefix}\$minus_one" \
+	    "negative value: ${prefix_re}\\\$minus_one"
+
+	thr_apply_info_thr_error "${prefix}1-*" "inverted range"
+	thr_apply_info_thr_invalid "${prefix}*1"
+	thr_apply_info_thr_invalid "${prefix}*foo"
+	thr_apply_info_thr_invalid "${prefix}foo*"
+    }
+
+    # Check that a valid thread ID list with a missing command errors
+    # out.
+    with_test_prefix "missing command" {
+	set output "Please specify a command following the thread ID list"
+	gdb_test "thread apply 1" $output
+	gdb_test "thread apply 1.1" $output
+	gdb_test "thread apply 1.1 1.2" $output
+	gdb_test "thread apply 1-2" $output
+	gdb_test "thread apply 1.1-2" $output
+	gdb_test "thread apply $thr" $output
+	gdb_test "thread apply 1.*" $output
+    }
+
+    # Check that thread ID list parsing stops at the non-number token
+    # "foo" in a corner case where the "foo" is followed by hyphens.
+    # In this corner case, GDB used to skip past "foo", and then parse
+    # "--1" as a tid range for the current inferior.
+    gdb_test "thread apply 1 foo --1" \
+	"Undefined command: \"foo\".  Try \"help\"\\."
+
+    # Check that we do parse the inferior number and don't confuse it.
+    gdb_test "info threads 3.1" \
+	"No threads match '3.1'\."
+}
+
+if { [allow_python_tests] } {
+    with_test_prefix "python" {
+	# Check that InferiorThread.num and InferiorThread.global_num
+	# return the expected numbers.
+	gdb_py_test_silent_cmd "python t0 = gdb.selected_thread ()" \
+	    "test gdb.selected_thread" 1
+	gdb_test "python print ('result = %s' % t0.num)" " = 3" \
+	    "test InferiorThread.num"
+	gdb_test "python print ('result = %s' % t0.global_num)" " = 6" \
+	    "test InferiorThread.global_num"
+
+	# Breakpoint.thread expects global IDs.  Confirm that that
+	# works as expected.
+	delete_breakpoints
+	gdb_breakpoint "thread_function1"
+
+	gdb_py_test_silent_cmd "python bp = gdb.breakpoints()\[0\]" \
+	    "get python breakpoint" 0
+	gdb_test "python bp.thread = 6" "thread = 6" \
+	    "make breakpoint thread-specific with python"
+	# Check that the inferior-qualified ID is correct.
+	gdb_test "info breakpoint" \
+	    "stop only in thread 1.3\r\n.*" \
+	    "thread specific breakpoint right thread"
+    }
+}
+
+# Remove the second inferior and confirm that GDB goes back to showing
+# single-number thread IDs.
+with_test_prefix "back to one inferior" {
+    gdb_test "kill inferior 2" "" "kill inferior 2"
+    gdb_test "thread 1.1" "Switching to thread 1\.1 .*"
+    gdb_test "remove-inferior 2" ".*" "remove inferior 2"
+
+    # "info threads" while there's only inferior 1 should show
+    # single-number thread IDs.
+    info_threads "" "1 2 3"
+
+    gdb_test "thread" "Current thread is 1 .*"
+}
+
+# Add another inferior and remove inferior 1.  Since even though
+# there's a single inferior, its number is not 1, GDB should show
+# inferior-qualified thread IDs.
+with_test_prefix "single-inferior but not initial" {
+    # Add another inferior.
+    gdb_test "add-inferior" "Added inferior 3.*" "add empty inferior"
+
+    # Now that we'd added another inferior, thread IDs should show the
+    # inferior number.
+    info_threads "" "1.1 1.2 1.3" \
+	"info threads with multiple inferiors"
+
+    gdb_test "thread" "Current thread is 1\.1 .*"
+
+    gdb_test "inferior 3" "Switching to inferior 3 .*" "switch to inferior 3"
+    gdb_test "file ${binfile}" ".*" "load file in inferior 3"
+
+    runto_main
+
+    gdb_test "remove-inferior 1" ".*" "remove inferior 1"
+
+    # Even though we have a single inferior, its number is > 1, so
+    # thread IDs should include the inferior number.
+    info_threads "" "3.1" \
+	"info threads with single inferior"
+
+    gdb_test "thread" "Current thread is 3\.1 .*" "thread again"
+}

@@ -1,0 +1,144 @@
+# Copyright (C) 2007-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file was written by Chris Demetriou (cgd@google.com).
+# It tests printing of thread event (start, exit) information, and
+# disabling of those messages.
+#
+# Note: the format of thread event messages (and also whether or not
+# messages are printed and can be disabled) is dependent on the target
+# thread support code.
+
+# This test has only been verified with Linux targets, and would need
+# to be generalized to support other targets
+if {![istarget *-*-linux*]} {
+    return
+}
+
+# When using the RSP, we don't get notifications about new threads.
+# This is expected, so don't test for that.
+if {[target_info gdb_protocol] == "remote"
+    || [target_info gdb_protocol] == "extended-remote"} {
+    return
+}
+
+
+standard_testfile
+
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable debug] != "" } {
+    return -1
+}
+
+proc gdb_test_thread_start {messages_enabled command pattern message} {
+  global gdb_prompt
+
+  if { $messages_enabled } {
+    set events_expected 1
+  } else {
+    set events_expected 0
+  }
+  set events_seen 0
+
+  return [gdb_test_multiple $command $message {
+    -re "\\\[New Thread \[^\]\]*\\\]\r\n" {
+      incr events_seen
+      exp_continue
+    }
+    -re "\[\r\n\]*($pattern)\[\r\n\]+$gdb_prompt $" {
+      if { $events_seen != $events_expected } {
+        fail "$message (saw $events_seen, expected $events_expected)"
+      } else {
+        pass "$message"
+      }
+    }
+  }]
+}
+
+proc gdb_test_thread_exit {messages_enabled command pattern message} {
+  global gdb_prompt
+
+  if { $messages_enabled } {
+    set events_expected 1
+  } else {
+    set events_expected 0
+  }
+  set events_seen 0
+
+  return [gdb_test_multiple $command $message {
+    -re "\\\[Thread \[^\]\]* exited\\\]\r\n" {
+      incr events_seen
+      exp_continue
+    }
+    -re "\[\r\n\]*($pattern)\[\r\n\]+$gdb_prompt $" {
+      if { $events_seen != $events_expected } {
+        fail "$message (saw $events_seen, expected $events_expected)"
+      } else {
+        pass "$message"
+      }
+    }
+  }]
+}
+
+proc test_thread_messages {enabled} {
+  global srcdir subdir binfile srcfile
+
+  if { $enabled } {
+    set enabled_string "with messages enabled"
+  } else {
+    set enabled_string "with messages disabled"
+  }
+
+  gdb_start
+  gdb_reinitialize_dir $srcdir/$subdir
+  gdb_load ${binfile}
+
+  if { $enabled } {
+     gdb_test "set print thread-events on"
+  } else {
+     gdb_test "set print thread-events off"
+  }
+
+  # The initial thread may log a 'New Thread' message, but we don't
+  # check for it.
+  if {![runto_main]} {
+     return 1
+  }
+
+  gdb_test "break threadfunc" \
+      "Breakpoint.*at.* file .*$srcfile, line.*" \
+      "breakpoint at threadfunc $enabled_string"
+  gdb_test "break after_join_func" \
+      "Breakpoint.*at.* file .*$srcfile, line.*" \
+      "breakpoint at after_join_func $enabled_string"
+
+  # continue to threadfunc breakpoint.  A thread will start.
+  # Expect to see a thread start message, if messages are enabled.
+  gdb_test_thread_start $enabled "continue" \
+       ".*Breakpoint .*,.*threadfunc.*at.*$srcfile:.*" \
+       "continue to threadfunc $enabled_string"
+
+  # continue to after_join_func breakpoint.  A thread will exit.
+  # Expect to see a thread exit message, if messages are enabled.
+  gdb_test_thread_exit $enabled "continue" \
+       ".*Breakpoint .*,.*after_join_func.*at.*$srcfile:.*" \
+       "continue to after_join_func $enabled_string"
+
+  delete_breakpoints
+
+  gdb_exit
+}
+
+test_thread_messages 0
+test_thread_messages 1

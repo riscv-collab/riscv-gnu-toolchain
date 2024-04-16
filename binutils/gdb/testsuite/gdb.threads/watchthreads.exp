@@ -1,0 +1,185 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2004-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check that GDB can support multiple watchpoints across threads.
+
+
+# This test verifies that a watchpoint is detected in the proper thread
+# so the test is only meaningful on a system with hardware watchpoints.
+require allow_hw_watchpoint_multi_tests
+
+proc target_no_stopped_data { } {
+    return [istarget s390*-*-*]
+}
+
+standard_testfile
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable debug] != "" } {
+    return -1
+}
+
+clean_restart $binfile
+gdb_test_no_output "set can-use-hw-watchpoints 1" ""
+
+#
+# Run to `main' where we begin our tests.
+#
+
+if {![runto_main]} {
+    return 0
+}
+
+set args_0 0
+set args_1 0
+
+# Watch values that will be modified by distinct threads.
+gdb_test "watch args\[0\]" "Hardware watchpoint 2: args\\\[0\\\]"
+gdb_test "watch args\[1\]" "Hardware watchpoint 3: args\\\[1\\\]"
+set hwwp_2_enabled 1
+set hwwp_3_enabled 1
+
+set init_line [gdb_get_line_number "Init value"]
+set inc_line [gdb_get_line_number "Loop increment"]
+set main_loc "main \\\(\\\) at .*watchthreads.c:$init_line"
+set thread0_loc "thread_function \\\(arg=0x0\\\) at .*watchthreads.c:$inc_line"
+set thread1_loc "thread_function \\\(arg=0x1\\\) at .*watchthreads.c:$inc_line"
+
+# Loop and continue to allow both watchpoints to be triggered.
+for {set i 0} {$i < 30} {incr i} {
+  set test_flag_0 0
+  set test_flag_1 0
+  set test_flag 0
+  gdb_test_multiple "continue" "threaded watch loop" {
+    -re "(.*Hardware watchpoint.*)$gdb_prompt $" {
+	# At least one hardware watchpoint was hit.  Check if both were.
+	set string $expect_out(1,string)
+
+	if [regexp "Hardware watchpoint 2: args\\\[0\\\]\[^\r\]*\r\[^\r\]*\r\[^\r\]*Old value = $args_0\[^\r\]*\r\[^\r\]*New value = [expr $args_0+1]\r" $string] {
+	    incr args_0
+	    incr test_flag_0
+	}
+	if [regexp "Hardware watchpoint 3: args\\\[1\\\]\[^\r\]*\r\[^\r\]*\r\[^\r\]*Old value = $args_1\[^\r\]*\r\[^\r\]*New value = [expr $args_1+1]\r" $string] {
+	    incr args_1
+	    incr test_flag_1
+	}
+
+	set expected_loc "bogus location"
+	if { $test_flag_0 == 1 && $test_flag_1 == 0 && $args_0 == 1 } {
+	    set expected_loc $main_loc
+	} elseif { $test_flag_0 == 0 && $test_flag_1 == 1 && $args_1 == 1 } {
+	    set expected_loc $main_loc
+	} elseif { $test_flag_0 == 1 && $test_flag_1 == 0 } {
+	    set expected_loc $thread0_loc
+	} elseif { $test_flag_0 == 0 && $test_flag_1 == 1 } {
+	    set expected_loc $thread1_loc
+	} elseif { $test_flag_0 + $test_flag_1 == 2 } {
+	    # On S/390, or any other system which can not report the
+	    # stopped data address, it is OK to report two watchpoints
+	    # at once in this test.  Make sure the reported location
+	    # corresponds to at least one of the watchpoints (and not,
+	    # e.g., __nptl_create_event).  On other systems, we should
+	    # report the two watchpoints serially.
+	    if { [target_no_stopped_data] } {
+		set expected_loc "($main_loc|$thread0_loc|$thread1_loc)"
+	    }
+	}
+
+	if [ regexp "$expected_loc" $string ] {
+	    set test_flag 1
+	} else {
+	    fail "threaded watch loop"
+	}
+
+	# If one of the watchpoints is disabled, we'd better not stop there.
+	if { !$hwwp_2_enabled && $test_flag_0 } {
+	    fail "disabled hw watchpoint 2 triggered"
+	}
+	if { !$hwwp_3_enabled && $test_flag_1 } {
+	    fail "disabled hw watchpoint 3 triggered"
+	}
+
+	# If we get to 10 in one of the watched locations disable it so we
+	# see some of the other watched location.
+	# 10 is chosen so we're guaranteed to come through here.
+	if { $hwwp_2_enabled && $hwwp_3_enabled } {
+	    if { $args_0 >= 10 && $hwwp_2_enabled } {
+		gdb_test_no_output "disable 2" "disable first watchpoint at 10"
+		set hwwp_2_enabled 0
+	    } elseif { $args_1 >= 10 && $hwwp_3_enabled } {
+		gdb_test_no_output "disable 3" "disable first watchpoint at 10"
+		set hwwp_3_enabled 0
+	    }
+	}
+    }
+  }
+
+  # If we fail above, don't bother continuing loop
+  if { $test_flag == 0 } {
+    set i 30
+  }
+}
+
+# Print success message if loop succeeded.
+if { $test_flag == 1 } {
+  pass "threaded watch loop"
+}
+
+# Verify that we hit first watchpoint in main thread.
+set message "first watchpoint on args\[0\] hit"
+if { $args_0 > 0 } {
+  pass $message 
+} else {
+  fail $message 
+}
+
+# Verify that we hit second watchpoint in main thread.
+set message "first watchpoint on args\[1\] hit"
+if { $args_1 > 0 } {
+  pass $message 
+} else {
+  fail $message 
+}
+
+# Verify that we hit first watchpoint in child thread.
+set message "watchpoint on args\[0\] hit in thread"
+if { $args_0 > 1 } {
+  pass $message 
+} else {
+  fail $message
+}
+
+# Verify that we hit second watchpoint in child thread.
+set message "watchpoint on args\[1\] hit in thread"
+if { $args_1 > 1 } {
+  pass $message 
+} else {
+  fail $message 
+}
+
+# Verify that all watchpoint hits are accounted for.
+set message "combination of threaded watchpoints = 30"
+if { [target_no_stopped_data] } {
+    # See above.  If we allow two watchpoints to be hit at once, we
+    # may have more than 30 hits total.
+    set result [expr $args_0 + $args_1 >= 30]
+} else {
+    set result [expr $args_0 + $args_1 == 30]
+}
+if { $result } {
+  pass $message 
+} else {
+  fail $message 
+}

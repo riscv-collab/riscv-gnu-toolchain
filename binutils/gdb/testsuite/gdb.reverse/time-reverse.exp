@@ -1,0 +1,84 @@
+# Copyright 2015-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the gdb testsuite.
+
+#
+# This test tests time syscall for reverse execution.
+#
+
+require supports_reverse
+
+standard_testfile
+
+# MODE is either "syscall" for testing the time syscall explicitly, or
+# "c" for testing the C time(2) function.
+proc test {mode} {
+    set options {debug}
+
+    if {$mode == "syscall"} {
+	lappend options additional_flags=-DUSE_SYSCALL
+    } elseif {$mode != "c"} {
+	error "unrecognized mode: $mode"
+    }
+
+    if { [prepare_for_testing "failed to prepare" $::testfile-$mode $::srcfile $options] } {
+	return
+    }
+
+    runto_main
+
+    if [supports_process_record] {
+	# Activate process record/replay
+	gdb_test_no_output "record" "turn on process record"
+    }
+
+    gdb_test "break marker2" \
+	"Breakpoint $::decimal at $::hex: file .*$::srcfile, line $::decimal.*" \
+	"set breakpoint at marker2"
+
+    gdb_continue_to_breakpoint "marker2" ".*$::srcfile:.*"
+
+    gdb_test "break marker1" \
+	"Breakpoint $::decimal at $::hex: file .*$::srcfile, line $::decimal.*" \
+	"set breakpoint at marker1"
+
+    gdb_test "reverse-continue" ".*$::srcfile:$::decimal.*" "reverse to marker1"
+
+    # If the variable was recorded properly, the old contents (-1)
+    # will be remembered.  If not, new contents (current time) will be
+    # used, and the test will fail.
+
+    gdb_test "print time_global" ".* = -1" "check time record"
+}
+
+# Test both using the syscall explicitly, and using the time(2) C
+# function.
+#
+# The C variant ensures that if some platform uses some syscall we are
+# not aware of yet, we'll still exercise it (and likely fail).
+#
+# The explicit syscall variant is useful on platforms where the C
+# function does not call a syscall at all by default, e.g., on some
+# systems the C time function wraps an implementation provided by the
+# vDSO.
+
+foreach_with_prefix mode {syscall c} {
+    if {$mode == "syscall" && ![have_syscall time]} {
+	continue
+    }
+
+    test $mode
+}

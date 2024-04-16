@@ -1,0 +1,109 @@
+# Copyright 2015-2024 Free Software Foundation, Inc.
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "trace-support.exp"
+
+standard_testfile insn-reloc.c
+
+# Some targets have leading underscores on assembly symbols.
+set additional_flags [gdb_target_symbol_prefix_flags]
+
+if [prepare_for_testing "failed to prepare" $testfile-no-ipa $srcfile \
+	[list debug $additional_flags]] {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+if ![gdb_target_supports_trace] {
+    unsupported "target does not support trace"
+    return -1
+}
+
+set libipa [get_in_proc_agent]
+
+# Can't use prepare_for_testing, because that splits compiling into
+# building objects and then linking, and we'd fail with "linker input
+# file unused because linking not done" when building the object.
+
+if { [gdb_compile "$srcdir/$subdir/$srcfile" $binfile \
+	  executable [list debug $additional_flags shlib=$libipa] ] != "" } {
+    untested "failed to compile"
+    return -1
+}
+clean_restart $testfile
+set remote_libipa [gdb_load_shlib $libipa]
+
+if ![runto_main] {
+    return 0
+}
+
+gdb_reinitialize_dir $srcdir/$subdir
+
+if { [gdb_test "info sharedlibrary" ".*[file tail $libipa].*" "IPA loaded"] != 0 } {
+    untested "could not find IPA lib loaded"
+    return 1
+}
+
+# Read function name from testcases[N].
+
+proc read_testcase { n } {
+    global gdb_prompt
+
+    set result -1
+    gdb_test_multiple "print testcases\[${n}\]" "read name of test case ${n}" {
+	-re "\[$\].*= .*<(.*)>.*$gdb_prompt $" {
+	    set result $expect_out(1,string)
+	}
+	-re "$gdb_prompt $" { }
+    }
+
+    return $result
+}
+
+set n_testcases [gdb_readexpr "n_testcases"]
+
+if { ${n_testcases} == 0 } {
+    untested "no instruction relocation to test"
+    return 1
+}
+
+# Set a fast tracepoint on each set_point${i} symbol.  There is one for
+# each testcase.
+for { set i 0 } { ${i} < ${n_testcases} } { incr i } {
+    set testcase [read_testcase $i]
+
+    gdb_test "ftrace *set_point$i" "Fast tracepoint .*" \
+	"fast tracepoint on ${testcase}"
+}
+
+gdb_test "break pass" ".*" ""
+gdb_test "break fail" ".*" ""
+
+gdb_test_no_output "tstart" "start trace experiment"
+
+# Make sure we have hit the pass breakpoint for each testcase.
+for { set i 0 } { ${i} < ${n_testcases} } { incr i } {
+    set testcase [read_testcase $i]
+
+    gdb_test "continue" \
+	".*Breakpoint \[0-9\]+, pass \(\).*" \
+	"relocated instruction at ${testcase}"
+}
+
+gdb_test "tstatus" ".*Collected ${n_testcases} trace frames.*" "check on trace status"
+
+gdb_test "tstop" "" ""

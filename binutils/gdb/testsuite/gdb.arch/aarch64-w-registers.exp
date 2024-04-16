@@ -1,0 +1,97 @@
+# Copyright (C) 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check if the W registers have the expected size and if setting/fetching
+# values from W registers works correctly for both big and little endian.
+
+require is_aarch64_target
+
+standard_testfile
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile {nodebug}]} {
+    return -1
+}
+
+if ![runto_main] {
+    untested "could not run to main"
+    return -1
+}
+
+array set w_values {
+    0 0x0
+    1 0x10
+    2 0x2010
+    3 0x302010
+    4 0x40302010
+    5 0x40302010
+    6 0x40302010
+    7 0x40302010
+    8 0x40302010
+}
+
+array set x_values {
+    0 0x0
+    1 0x10
+    2 0x2010
+    3 0x302010
+    4 0x40302010
+    5 0x5040302010
+    6 0x605040302010
+    7 0x70605040302010
+    8 0x8070605040302010
+}
+
+# Exercise various things for register w<rn>
+
+proc test_register { rn } {
+    gdb_test "ptype \$w${rn}" "type = uint32_t"
+    gdb_test "p sizeof(\$w${rn})" " = 4"
+
+    # Set all bits of x<rn>
+    gdb_test_no_output "set \$x${rn}=0xffffffffffffffff" \
+		       "set all bits of x${rn}"
+
+    # Test setting/fetching values
+    for {set i 0} {$i < 9} {incr i} {
+	global w_values
+	global x_values
+
+	with_test_prefix "set w${rn} to $x_values($i)" {
+	    # Set value of W and see the effects on W and X.
+	    gdb_test_no_output "set \$w${rn}=$x_values($i)"
+	    gdb_test "p/x \$w${rn}" "= $w_values($i)"
+	    gdb_test "p/x \$x${rn}" "= $w_values($i)"
+	}
+
+	with_test_prefix "set x${rn} to $x_values($i)" {
+	    # Set value of X and see the effects on W and X.
+	    gdb_test_no_output "set \$x${rn}=$x_values($i)"
+	    gdb_test "p/x \$w${rn}" "= $w_values($i)"
+	    gdb_test "p/x \$x${rn}" "= $x_values($i)"
+
+	    # Set all bits of x<rn>
+	    gdb_test_no_output "set \$x${rn}=0xffffffffffffffff" \
+			       "set all bits of x${rn}"
+	}
+    }
+}
+
+# Run tests
+foreach_with_prefix endian {"little" "big"} {
+    gdb_test "set endian ${endian}" "The target is set to ${endian} endian\."
+
+    for {set i 0} {$i < 31} {incr i} {
+	test_register $i
+    }
+}

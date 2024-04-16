@@ -1,0 +1,398 @@
+# Copyright (C) 2017-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+
+require {is_any_target "i?86-*-*" "x86_64-*-*"}
+
+standard_testfile
+
+require supports_mpx_check_pointer_bounds have_mpx
+
+set comp_flags "-mmpx -fcheck-pointer-bounds -I${srcdir}/../nat"
+
+if {[prepare_for_testing "failed to prepare" ${testfile} ${srcfile} \
+    [list debug additional_flags=${comp_flags}]] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+set bounds_table 0
+gdb_test_multiple "disassemble upper" "" {
+    -re -wrap "bndldx.*" {
+	set bounds_table 1
+    }
+    -re -wrap "" {
+    }
+}
+
+# Convenience for returning from an inferior call that causes a BND violation.
+#
+gdb_test_no_output "set confirm off"
+
+# Convenience variable.
+#
+set bound_reg " = \\\{lbound = $hex, ubound = $hex\\\}.*"
+set int_braw_reg " = \\\{lbound = 0x0, ubound_raw = 0x0\\\}.*"
+set bndcfg_reg " = \\\{raw = $hex, config = \\\{base = $hex, reserved = $hex,\
+               preserved = $hex, enabled = $hex\\\}\\\}"
+set bndstatus_reg  " = \\\{raw = $hex, status = \\\{bde = $hex,\
+                    error = $hex\\\}\\\}"
+set u_fault [multi_line "Program received signal SIGSEGV, Segmentation fault" \
+                        "Upper bound violation while accessing address $hex" \
+                        "Bounds: \\\[lower = $hex, upper = $hex\\\]"]
+
+
+# Simplify the tests below.
+#
+proc sanity_check_bndregs {arglist} {
+
+    global int_braw_reg
+
+    foreach a $arglist {
+        gdb_test "p /x $a" "$int_braw_reg"\
+            "$a"
+    }
+}
+
+# Set bnd register to have no access to memory.
+#
+proc remove_memory_access {reg} {
+    global hex
+
+    sanity_check_bndregs {"\$bnd0raw" "\$bnd1raw" "\$bnd2raw" "\$bnd3raw"}
+
+    gdb_test "p /x $reg.lbound = $reg.ubound" "= $hex"\
+        "$reg lower bound set"
+    gdb_test "p /x $reg.ubound = 0" " = 0x0"\
+        "$reg upper bound set"
+}
+
+
+# Prepare convenience variables for bndconfig and status
+# for posterior comparison.
+#
+proc prepare_bndcfg_bndstatus {} {
+
+    global bndcfg_reg
+    global bndstatus_reg
+
+    gdb_test "p /x \$temp_bndcfgu = \$bndcfgu" "$bndcfg_reg"\
+        "bndcfgu should not change"
+
+    gdb_test "p /x \$temp_bndstatus = \$bndstatus" "$bndstatus_reg"\
+        "bndstatus should not change"
+}
+
+# Compare values set for convenience variables and actual values of bndconfig
+# and bndstatus registers.
+#
+proc compare_bndstatus_with_convenience {} {
+
+    gdb_test "p \$temp_bndcfgu == \$bndcfgu" "= 1"\
+        "bndcfgu compare before and after"
+    gdb_test "p \$temp_bndstatus == \$bndstatus" "= 1"\
+        "bndstatus compare before and after"
+}
+
+# Perform an inferior call defined in func.
+#
+proc perform_a_call {func} {
+
+    global inf_call_stopped
+    global gdb_prompt
+
+    gdb_test "p /x $func" [multi_line "The program being debugged\
+                          stopped while in a function called from GDB." \
+                          "Evaluation of the expression containing the\
+                          function.*" \
+                          ] "inferior call stopped"
+}
+
+# Perform an inferior call defined in func.
+#
+proc check_bound_violation {parm parm_type is_positive} {
+
+    global u_fault bounds_table
+
+    set have_bnd_violation 0
+    gdb_test_multiple "continue" "continue to a bnd violation" {
+	-re -wrap "Continuing\." {
+	    if { $bounds_table } {
+		pass $gdb_test_name
+	    } else {
+		fail $gdb_test_name
+	    }
+	}
+	-re -wrap "$u_fault.*" {
+	    pass $gdb_test_name
+	    set have_bnd_violation 1
+	}
+    }
+    if { ! $have_bnd_violation } {
+	return
+    }
+
+    set message "access only one position"
+    if {$is_positive == 1} {
+        gdb_test "p (((void *)\$_siginfo._sifields._sigfault.si_addr\
+                  - (void*)$parm))/sizeof($parm_type) == 1"\
+                  " = 1" $message
+    } else {
+        gdb_test "p ((void*)$parm\
+                  - (void *)\$_siginfo._sifields._sigfault.si_addr)\
+                  /sizeof($parm_type) == 1"\
+                  " = 1" $message
+    }
+    gdb_test "return" "\\\#.*main.*i386-mpx-call\\\.c:.*" "return from the fault"
+}
+
+
+# Start testing!
+#
+
+# Set up for stopping in the middle of main for calling a function in the
+# inferior.
+#
+set break "bkpt 1."
+gdb_breakpoint [gdb_get_line_number "${break}"]
+gdb_continue_to_breakpoint "${break}" ".*${break}.*"
+
+
+# Consistency:
+#    default run execution of call should succeed without violations.
+#
+with_test_prefix "default_run" {
+
+    gdb_test "p \$keep_bnd0_value=\$bnd0" $bound_reg\
+        "store bnd0 register in a convenience variable"
+
+    gdb_test "p /x upper (a, b, c, d, 0)" " = $hex"\
+        "default inferior call"
+
+    gdb_test "p ((\$bnd0.lbound==\$keep_bnd0_value.lbound) &&\
+        (\$bnd0.ubound==\$keep_bnd0_value.ubound))" "= 1" \
+        "bnd register value after and before call"
+}
+
+# Consistency:  Examine bnd registers values before and after the call.
+#
+#
+with_test_prefix "verify_default_values" {
+
+    prepare_bndcfg_bndstatus
+
+    gdb_breakpoint "*upper"
+    perform_a_call "upper (a, b, c, d, 1)"
+
+    sanity_check_bndregs {"\$bnd0raw" "\$bnd1raw" "\$bnd2raw" "\$bnd3raw"}
+
+    compare_bndstatus_with_convenience
+
+    gdb_test_multiple "continue" "inferior call test" {
+        -re ".*Continuing.\r\n$gdb_prompt " {
+            pass "inferior call performed"
+        }
+    }
+}
+
+# Examine:  Cause an upper bound violation changing BND0.
+#
+#
+with_test_prefix "upper_bnd0" {
+
+    prepare_bndcfg_bndstatus
+
+    gdb_breakpoint "*upper"
+    perform_a_call "upper (a, b, c, d, 1)"
+
+    remove_memory_access "\$bnd0"
+
+    compare_bndstatus_with_convenience
+
+    check_bound_violation "a" "int" 1
+}
+
+# Examine:  Cause an upper bound violation changing BND1.
+#
+#
+with_test_prefix "upper_bnd1" {
+
+    prepare_bndcfg_bndstatus
+
+    gdb_breakpoint "*upper"
+    perform_a_call "upper (a, b, c, d, 1)"
+
+    remove_memory_access "\$bnd1"
+
+    compare_bndstatus_with_convenience
+
+    check_bound_violation "b" "int" 1
+}
+
+# Examine:  Cause an upper bound violation changing BND2.
+#
+#
+with_test_prefix "upper_bnd2" {
+
+    prepare_bndcfg_bndstatus
+
+    gdb_breakpoint "*upper"
+    perform_a_call "upper (a, b, c, d, 1)"
+
+    remove_memory_access "\$bnd2"
+
+    compare_bndstatus_with_convenience
+
+    check_bound_violation "c" "int" 1
+}
+
+# Examine:  Cause an upper bound violation changing BND3.
+#
+#
+with_test_prefix "upper_bnd3" {
+    prepare_bndcfg_bndstatus
+
+    gdb_breakpoint "*upper"
+    perform_a_call "upper (a, b, c, d, 1)"
+
+    remove_memory_access "\$bnd3"
+
+    compare_bndstatus_with_convenience
+
+    check_bound_violation "d" "int" 1
+}
+
+# Examine:  Cause a lower bound violation changing BND0.
+#
+#
+with_test_prefix "lower_bnd0" {
+
+    prepare_bndcfg_bndstatus
+
+    gdb_breakpoint "*lower"
+    perform_a_call "lower (a, b, c, d, 1)"
+
+    remove_memory_access "\$bnd0"
+
+    compare_bndstatus_with_convenience
+
+    check_bound_violation "a" "int" 0
+}
+
+# Examine:  Cause a lower bound violation changing BND1.
+#
+#
+with_test_prefix "lower_bnd1" {
+
+    prepare_bndcfg_bndstatus
+
+    gdb_breakpoint "*lower"
+    perform_a_call "lower (a, b, c, d, 1)"
+
+    remove_memory_access "\$bnd1"
+
+    compare_bndstatus_with_convenience
+
+    check_bound_violation "b" "int" 0
+}
+
+# Examine:  Cause a lower bound violation changing BND2.
+#
+#
+with_test_prefix "lower_bnd2" {
+
+    prepare_bndcfg_bndstatus
+
+    gdb_breakpoint "*lower"
+    perform_a_call "lower (a, b, c, d, 1)"
+
+    remove_memory_access "\$bnd2"
+
+    compare_bndstatus_with_convenience
+
+    check_bound_violation "c" "int" 0
+}
+
+# Examine:  Cause a lower bound violation changing BND3.
+#
+#
+with_test_prefix "lower_bnd3" {
+
+    prepare_bndcfg_bndstatus
+
+    gdb_breakpoint "*lower"
+    perform_a_call "lower (a, b, c, d, 1)"
+
+    remove_memory_access "\$bnd3"
+
+    compare_bndstatus_with_convenience
+
+    check_bound_violation "d" "int" 0
+}
+
+# Examine:  String causing a upper bound violation changing BND0.
+#
+#
+with_test_prefix "chars_up" {
+
+    prepare_bndcfg_bndstatus
+
+    gdb_breakpoint "*char_upper"
+    perform_a_call "char_upper (hello, 1)"
+
+    remove_memory_access "\$bnd0"
+
+    compare_bndstatus_with_convenience
+
+    check_bound_violation "str" "char" 1
+}
+
+
+# Examine:  String causing an lower bound violation changing BND0.
+#
+#
+with_test_prefix "chars_low" {
+
+    prepare_bndcfg_bndstatus
+
+    gdb_breakpoint "*char_lower"
+    perform_a_call "char_lower (hello, 1)"
+
+    remove_memory_access "\$bnd0"
+
+    compare_bndstatus_with_convenience
+
+    check_bound_violation "str" "char" 0
+}
+
+# Examine:  String causing an lower bound violation changing BND0.
+#
+#
+with_test_prefix "chars_low_adhoc_parm" {
+
+    prepare_bndcfg_bndstatus
+
+    gdb_breakpoint "*char_lower"
+    perform_a_call "char_lower (\"tryme\", 1)"
+
+    remove_memory_access "\$bnd0"
+
+    compare_bndstatus_with_convenience
+
+    check_bound_violation "str" "char" 0
+}

@@ -1,0 +1,81 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+load_lib dwarf.exp
+
+# Test with two aranges entries referring to the same CU.
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+standard_testfile .c -dw.S
+
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    global srcdir subdir srcfile srcfile2
+    declare_labels ranges_label
+
+    get_func_info main
+    get_func_info frame2
+
+    cu { label cu_label } {
+	compile_unit {
+	    {language @DW_LANG_C}
+	    {name $srcfile}
+	} {
+	    subprogram {
+		{external 1 flag}
+		{name main}
+		{low_pc $main_start addr}
+		{high_pc $main_len DW_FORM_data4}
+	    }
+	    subprogram {
+		{external 1 flag}
+		{name frame2}
+		{low_pc $frame2_start addr}
+		{high_pc $frame2_len DW_FORM_data4}
+	    }
+	}
+    }
+
+    aranges {} cu_label {
+	arange {} $main_start $main_len
+    }
+    aranges {} cu_label {
+	arange {} $frame2_start $frame2_len
+    }
+}
+
+save_vars { GDBFLAGS } {
+    append GDBFLAGS " -iex \"maint set dwarf synchronous on\""
+    if { [prepare_for_testing "failed to prepare" ${testfile} \
+	      [list $srcfile $asm_file] {nodebug}] } {
+	return -1
+    }
+}
+
+set readnow_p [readnow]
+
+set test "file command warnings"
+if { $readnow_p } {
+    set re "warning:"
+    gdb_assert { ![regexp $re $gdb_file_cmd_msg] } $test
+} else {
+    set re \
+	[concat \
+	     "warning: Section .debug_aranges in \[^\r\n\]* has" \
+	     "duplicate debug_info_offset $hex," \
+	     "ignoring \\.debug_aranges\\."]
+    gdb_assert { [regexp $re $gdb_file_cmd_msg] } $test
+}

@@ -1,0 +1,95 @@
+# Copyright 2001-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Copied from gdb.base/huge.exp, written by Michael Snyder
+# (msnyder@redhat.com).
+
+# Define if you want to skip this test
+# (could be very time-consuming on remote targets with slow connection).
+#
+require {!target_info exists gdb,skip_huge_test}
+
+require allow_fortran_tests
+
+load_lib fortran.exp
+
+standard_testfile .F90
+
+set max [expr 2 * 1024 * 1024]
+set min 16
+
+set opts {}
+lappend opts debug
+lappend opts f90
+
+set compilation_succeeded 0
+for { set size [expr $max] } { $size >= $min } { set size [expr $size / 2] } {
+    set try_opts [concat $opts [list additional_flags=-DCRASH_GDB=$size]]
+    if { [build_executable $testfile.exp $testfile $srcfile $try_opts] == -1 } {
+	continue
+    }
+
+    set compilation_succeeded 1
+    break
+}
+require {expr $compilation_succeeded}
+
+# Start with a fresh gdb.
+clean_restart ${binfile}
+
+save_vars { timeout } {
+    set timeout 30
+
+    if {![fortran_runto_main]} {
+	return -1
+    }
+
+    gdb_test_no_output "set max-value-size unlimited"
+
+    # Not needed for the C variant, see PR exp/30817.
+    gdb_test_no_output "set print elements unlimited"
+
+    gdb_test_no_output "maint set per-command space on"
+    set re1 \
+	[list \
+	     [string_to_regexp $] \
+	     $decimal \
+	     " = " \
+	     [string_to_regexp "(0, <repeats "] \
+	     $decimal \
+	     [string_to_regexp " times>)"]]
+    set re2 \
+	[list \
+	     "Space used: $decimal" \
+	     [string_to_regexp " (+"] \
+	     "($decimal) for this command" \
+	     [string_to_regexp ")"]]
+    set re [multi_line [join $re1 ""]  [join $re2 ""]]
+    set space_used -1
+    gdb_test_multiple "print array1" "print a very large data object" {
+	-re -wrap $re {
+	    set space_used $expect_out(1,string)
+	    pass $gdb_test_name
+	}
+    }
+
+    set test "not too much space used"
+    if { $space_used == -1 } {
+	unsupported $test
+    } else {
+	# At 112 passes with and without the fix, so use 111.
+	gdb_assert {$space_used < [expr 111 * 4 * $size] } $test
+    }
+}

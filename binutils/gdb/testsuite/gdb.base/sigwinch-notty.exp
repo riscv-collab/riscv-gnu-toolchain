@@ -1,0 +1,67 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that GDB does not crash when it is started without a terminal /
+# without readline, and, it receives a SIGWINCH.  Regression test for
+# PR gdb/26056.
+
+require {!target_info exists gdb,nosignals}
+
+# The testfile relies on "run" from the command line, so only works
+# with "target native".
+if { [target_info gdb_protocol] != "" } {
+    return
+}
+
+gdb_exit
+
+# Start GDB without a terminal, running sleep for a while.  Before the
+# sleep exits, we'll send a SIGWINCH.  "show editing" to double check
+# that readline is disabled.
+save_vars { GDB GDBFLAGS } {
+    set GDB "$srcdir/lib/notty-wrap $GDB"
+    set GDBFLAGS "$GDBFLAGS -ex \"show editing\" -ex run --args sleep 3"
+
+    gdb_spawn
+}
+
+set gdb_pid [exp_pid -i $gdb_spawn_id]
+
+verbose -log "gdb_spawn_id=$gdb_spawn_id"
+verbose -log "gdb_pid=$gdb_pid"
+
+after 1000 {
+    # Note, GDB is started under a shell, so PID is actually the
+    # shell's pid, not GDB's.  Use "-PID" to send the signal to the
+    # whole process group and reach GDB, instead of just to the shell.
+    remote_exec host "kill -WINCH -${gdb_pid}"
+}
+
+# If GDB mishandles the SIGWINCH and crashes, that happens before we
+# see the "inferior exited normally" message, so this will ERROR with
+# eof.
+gdb_test_multiple "" "wait for sleep exit" {
+    -re "Editing of command lines as they are typed is off.*$inferior_exited_re normally.*$gdb_prompt " {
+	pass $gdb_test_name
+    }
+}
+
+gdb_test_multiple "" "wait for gdb exit" {
+    eof {
+	set wait_status [wait -i $gdb_spawn_id]
+	verbose -log "GDB process exited with wait status $wait_status"
+	pass $gdb_test_name
+    }
+}

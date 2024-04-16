@@ -1,0 +1,202 @@
+# Copyright 2013-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib trace-support.exp
+
+standard_testfile trace-unavailable.c
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile} {debug nopie}] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+if ![gdb_target_supports_trace] {
+    unsupported "current target does not support trace"
+    return -1
+}
+
+gdb_exit
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+mi_clean_restart $binfile
+mi_runto_main
+
+mi_gdb_test "-break-insert marker" \
+    "\\^done,bkpt=\{number=\"${decimal}\",type=\"breakpoint\".*\"\}" \
+    "insert tracepoint on marker"
+mi_gdb_test "-break-insert -a bar" \
+    "\\^done,bkpt=\{number=\"${decimal}\",type=\"tracepoint\".*\"\}" \
+    "insert tracepoint on bar"
+
+# Define an action.
+mi_gdb_test "-break-commands 3 \"collect array\" \"collect j\" \"end\" " \
+    {\^done} "set action"
+
+mi_gdb_test "-break-insert -a foo" \
+    "\\^done,bkpt=\{number=\"${decimal}\",type=\"tracepoint\".*\"\}" \
+    "insert tracepoint on foo"
+
+# Collect 'main' to make sure no registers are collected except PC.
+mi_gdb_test "-break-commands 4 \"collect main\" \"end\" " \
+    {\^done} "set action on tracepoint 4"
+
+mi_gdb_test "-trace-start" {.*\^done} "trace start"
+mi_send_resuming_command "exec-continue" "continuing to marker"
+mi_expect_stop \
+    "breakpoint-hit" "marker" ".*" ".*" ".*" {"" "disp=\"keep\""} \
+    "stop at marker"
+mi_gdb_test "-trace-stop" {.*} "trace stop"
+
+# Save trace frames to tfile.
+set tracefile [standard_output_file ${testfile}]
+mi_gdb_test "-trace-save ${tracefile}.tf" ".*\\^done" \
+    "save tfile trace file"
+# Save trace frames to ctf.
+mi_gdb_test "-trace-save -ctf ${tracefile}.ctf" ".*\\^done" \
+    "save ctf trace file"
+
+proc test_trace_unavailable { data_source } {
+    global decimal
+
+    with_test_prefix "$data_source" {
+
+	# Test MI commands '-stack-list-locals', '-stack-list-arguments',
+	#  and '-stack-list-variables'.
+	mi_gdb_test "-trace-find frame-number 0" \
+	    ".*\\^done,found=\"1\",tracepoint=\"${decimal}\",traceframe=\"0\",frame=\{.*" \
+	    "-trace-find frame-number 0"
+
+	# The "print entry-values" option shouldn't affect the output of
+	# '-stack-list-locals'.
+	foreach entry_values { no only preferred if-needed both compact default } {
+	    mi_gdb_test "-gdb-set print entry-values $entry_values" {\^done} ""
+
+	    with_test_prefix "$entry_values" {
+		# Test MI command '-stack-list-locals'.
+		mi_gdb_test "-stack-list-locals --simple-values" \
+		    ".*\\^done,locals=\\\[\{name=\"array\",type=\"unsigned char \\\[2\\\]\"\},\{name=\"i\",type=\"int\",value=\"<unavailable>\"\}\\\]" \
+		    "-stack-list-locals --simple-values"
+	    }
+	}
+
+	mi_gdb_test "-gdb-set print entry-values no" {\^done} \
+	    "-gdb-set print entry-values no"
+
+	# Test MI command '-stack-list-locals'.
+	mi_gdb_test "-stack-list-locals --simple-values" \
+	    ".*\\^done,locals=\\\[\{name=\"array\",type=\"unsigned char \\\[2\\\]\"\},\{name=\"i\",type=\"int\",value=\"<unavailable>\"\}\\\]" \
+	    "-stack-list-locals --simple-values"
+	mi_gdb_test "-stack-list-locals --skip-unavailable --simple-values" \
+	    ".*\\^done,locals=\\\[\{name=\"array\",type=\"unsigned char \\\[2\\\]\"\}\\\]" \
+	    "-stack-list-locals --skip-unavailable --simple-values"
+
+	# Test MI command '-stack-list-arguments'.
+	mi_gdb_test "-stack-list-arguments --simple-values" \
+	    ".*\\^done,stack-args=\\\[frame=\{level=\"0\",args=\\\[\{name=\"j\",type=\"int\",value=\"4\"\},\{name=\"s\",type=\"char \\\*\",value=\"<unavailable>\"\}\\\]\},.*\}.*" \
+	    "-stack-list-arguments --simple-values"
+	mi_gdb_test "-stack-list-arguments --skip-unavailable --simple-values" \
+	    ".*\\^done,stack-args=\\\[frame=\{level=\"0\",args=\\\[\{name=\"j\",type=\"int\",value=\"4\"\}\\\]\},.*\}.*" \
+	    "-stack-list-arguments --skip-unavailable --simple-values"
+
+	# Test MI command '-stack-list-variables'.
+	mi_gdb_test "-stack-list-variables --simple-values" \
+	    ".*\\^done,variables=\\\[\{name=\"j\",arg=\"1\",type=\"int\",value=\"4\"\},\{name=\"s\",arg=\"1\",type=\"char \\\*\",value=\"<unavailable>\"\},\{name=\"array\",type=\"unsigned char \\\[2\\\]\"\},\{name=\"i\",type=\"int\",value=\"<unavailable>\"\}\\\]" \
+	    "-stack-list-variables --simple-values"
+	mi_gdb_test "-stack-list-variables --skip-unavailable --simple-values" \
+	    ".*\\^done,variables=\\\[\{name=\"j\",arg=\"1\",type=\"int\",value=\"4\"\},\{name=\"array\",type=\"unsigned char \\\[2\\\]\"\}\\\]" \
+	    "-stack-list-variables --skip-unavailable --simple-values"
+
+	mi_gdb_test "-trace-find frame-number 1" \
+	    ".*\\^done,found=\"1\",tracepoint=\"${decimal}\",traceframe=\"1\",frame=\{.*" \
+	    "-trace-find frame-number 1"
+
+	set pcnum -1
+	set gpr0num -1
+	if [is_amd64_regs_target] {
+	    set pcnum 16
+	    set gpr0num 0
+	} elseif [is_x86_like_target] {
+	    set pcnum 8
+	    set gpr0num 0
+	} elseif [is_aarch64_target] {
+	    set pcnum 32
+	    set gpr0num 0
+	} elseif [istarget "powerpc*-*-*"] {
+	    set pcnum 64
+	    set gpr0num 0
+	} elseif { [istarget "s390*-*-*"] } {
+	    # Strictly speaking, this is PSWA, not PC.
+	    set pcnum 1
+	    set gpr0num 2
+	} else {
+	    # Other ports support tracepoint should define the number
+	    # of its own pc register.
+	}
+
+	if { $pcnum != -1 } {
+	    global hex
+	    # Test that register 0 and PC are displayed, and register
+	    # 0 is unavailable.
+	    mi_gdb_test "-data-list-register-values x ${gpr0num} ${pcnum}" \
+		".*\\^done,register-values=\\\[\{number=\"${gpr0num}\",value=\"<unavailable>\"\},\{number=\"${pcnum}\",value=\"${hex}\"\}\\\]" \
+		"-data-list-register-values x"
+
+	    # Test that only available register PC is displayed.
+	    mi_gdb_test "-data-list-register-values --skip-unavailable x ${gpr0num} ${pcnum}" \
+		".*\\^done,register-values=\\\[\{number=\"${pcnum}\",value=\"${hex}\"\}\\\]" \
+		"-data-list-register-values --skip-unavailable x"
+	}
+
+	# Don't issue command '-trace-find none' to return from
+	# tfind mode (examining trace frames) on purpose, in order
+	# to test that GDB is able to clear its tracing-related local state
+	# in the next -target-select.
+	# mi_gdb_test "-trace-find none" ".*\\^done,found=\"0\".*" "-trace-find none"
+    }
+}
+
+test_trace_unavailable "live"
+
+# Change target to ctf if GDB supports it.
+set msg "-target-select ctf"
+send_gdb "-target-select ctf ${tracefile}.ctf\n"
+gdb_expect {
+    -re ".*\\^connected.*${mi_gdb_prompt}$" {
+	# GDB supports ctf, do the test.
+	test_trace_unavailable "ctf"
+    }
+    -re ".*\\^error,msg=\"Undefined target command.*${mi_gdb_prompt}$" {
+	# GDB doesn't support ctf, skip the test.
+	unsupported "gdb does not support ctf target"
+    }
+    -re ".*$mi_gdb_prompt$" {
+	fail "$msg"
+    }
+    timeout {
+	fail "$msg (timeout)"
+    }
+}
+
+# Change target to tfile.
+mi_gdb_test "-target-select tfile ${tracefile}.tf" ".*\\^connected.*" \
+    "-target-select tfile"
+test_trace_unavailable "tfile"
+
+mi_gdb_exit

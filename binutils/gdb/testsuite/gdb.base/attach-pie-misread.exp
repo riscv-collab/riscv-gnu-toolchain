@@ -1,0 +1,202 @@
+# Copyright 2010-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test only works on GNU/Linux.
+require !use_gdb_stub isnative allow_shlib_tests
+require {!is_remote host}
+require {istarget *-linux*}
+
+load_lib prelink-support.exp
+
+standard_testfile .c
+set genfile [standard_output_file ${testfile}-gen.h]
+set executable $testfile
+
+if {[build_executable_own_libs ${testfile}.exp $executable $srcfile \
+	 {pie}] == ""} {
+    return -1
+}
+
+# Program Headers:
+#   Type           Offset   VirtAddr           PhysAddr           FileSiz  MemSiz   Flg Align
+#   LOAD           0x000000 0x0000000000400000 0x0000000000400000 0x134f5ec 0x134f5ec R E 0x200000
+#   LOAD           0x134f5f0 0x000000000194f5f0 0x000000000194f5f0 0x1dbc60 0x214088 RW  0x200000
+#   DYNAMIC        0x134f618 0x000000000194f618 0x000000000194f618 0x000200 0x000200 RW  0x8
+#
+proc read_phdr {binfile test} {
+    set readelf_program [gdb_find_readelf]
+    set command "exec $readelf_program -Wl $binfile"
+    verbose -log "command is $command"
+    set result [catch $command output]
+    verbose -log "result is $result"
+    verbose -log "output is $output"
+    if {$result != 0} {
+	fail $test
+	return
+    }
+    if ![regexp {\nProgram Headers:\n *Type [^\n]* Align\n(.*?)\n\n} $output trash phdr] {
+	fail "$test (no Program Headers)"
+	return
+    }
+    if ![regexp -line {^ *DYNAMIC +0x[0-9a-f]+ +(0x[0-9a-f]+) } $phdr trash dynamic_vaddr] {
+	fail "$test (no DYNAMIC found)"
+	return
+    }
+    verbose -log "dynamic_vaddr is $dynamic_vaddr"
+    set align_max -1
+    foreach {trash align} [regexp -line -all -inline {^ *LOAD .* (0x[0-9]+)$} $phdr] {
+	if {$align_max < $align} {
+	    set align_max $align
+	}
+    }
+    verbose -log "align_max is $align_max"
+    if {$align_max == -1} {
+	fail "$test (no LOAD found)"
+	return
+    }
+    pass $test
+    return [list $dynamic_vaddr $align_max]
+}
+
+set phdr [read_phdr $binfile "readelf initial scan"]
+set dynamic_vaddr [lindex $phdr 0]
+set align_max [lindex $phdr 1]
+
+set stub_size [format 0x%x [expr "2 * $align_max - ($dynamic_vaddr & ($align_max - 1))"]]
+verbose -log "stub_size is $stub_size"
+
+# On x86_64 it is commonly about 4MB.
+if {$stub_size > 25000000} {
+    xfail "stub size $stub_size is too large"
+    return
+}
+
+set test "generate stub"
+set command "exec $binfile $stub_size >$genfile"
+verbose -log "command is $command"
+set result [catch $command output]
+verbose -log "result is $result"
+verbose -log "output is $output"
+if {$result == 0} {
+    pass $test
+} else {
+    fail $test
+}
+
+with_test_prefix "rebuild with DGEN defined" {
+    set prelink_args [build_executable_own_libs ${testfile}.exp $executable $srcfile \
+			  [list pie "additional_flags=-DGEN=\"$genfile\""]]
+    if {$prelink_args == ""} {
+	return -1
+    }
+}
+
+# x86_64 file has 25MB, no need to keep it.
+file delete -- $genfile
+
+set phdr [read_phdr $binfile "readelf rebuilt with stub_size"]
+set dynamic_vaddr_prelinkno [lindex $phdr 0]
+
+if ![prelink_yes $prelink_args] {
+    return -1
+}
+
+set phdr [read_phdr $binfile "readelf with prelink -R"]
+set dynamic_vaddr_prelinkyes [lindex $phdr 0]
+
+set first_offset [format 0x%x [expr $dynamic_vaddr_prelinkyes - $dynamic_vaddr_prelinkno]]
+verbose -log "first_offset is $first_offset"
+
+set test "first offset is non-zero"
+if {$first_offset == 0} {
+    fail "$test (failing because PIE is not effect?)"
+} else {
+    pass $test
+}
+
+set test "start inferior"
+gdb_exit
+
+set test_spawn_id [remote_spawn host $binfile]
+if { $test_spawn_id < 0 || $test_spawn_id == "" } {
+    perror "Spawning $binfile failed."
+    fail $test
+    return
+}
+set testpid [spawn_id_get_pid $test_spawn_id]
+gdb_expect {
+    -re "sleeping\r\n" {
+	pass $test
+    }
+    eof {
+	fail "$test (eof)"
+	wait -i $test_spawn_id
+	return
+    }
+    timeout {
+	fail "$test (timeout)"
+	kill_wait_spawned_process $test_spawn_id
+	return
+    }
+}
+
+# Due to alignments it was reproducible with 1 on x86_64 but 2 on i686.
+foreach align_mult {1 2} { with_test_prefix "shift-by-$align_mult" {
+
+    # FIXME: We believe there is enough room under FIRST_OFFSET.
+    set shifted_offset [format 0x%x [expr "$first_offset - $align_mult * $align_max"]]
+    verbose -log "shifted_offset is $shifted_offset"
+
+    # For normal prelink (prelink_yes call), we need to supply $prelink_args.
+    # For the prelink `-r' option below, $prelink_args is not required.
+    # Moreover, if it was used, the problem would not longer be reproducible
+    # as the libraries would also get relocated.
+    set command "exec /usr/sbin/prelink -q -N --no-exec-shield -r $shifted_offset $binfile"
+    verbose -log "command is $command"
+    set result [catch $command output]
+    verbose -log "result is $result"
+    verbose -log "output is $output"
+
+    set test "prelink -r"
+    if {$result == 0 && $output == ""} {
+	pass $test
+    } else {
+	fail $test
+    }
+
+    clean_restart $executable
+
+    set test "attach"
+    gdb_test_multiple "attach $testpid" $test {
+	-re "Attaching to program: .*, process $testpid\r\n" {
+	    # Missing "$gdb_prompt $" is intentional.
+	    pass $test
+	}
+    }
+
+    set test "error on Cannot access memory at address"
+    gdb_test_multiple "" $test {
+	-re "\r\nCannot access memory at address .*$gdb_prompt $" {
+	    fail $test
+	}
+	-re "$gdb_prompt $" {
+	    pass $test
+	}
+    }
+
+    gdb_test "detach" "Detaching from program: .*"
+}}
+
+kill_wait_spawned_process $test_spawn_id

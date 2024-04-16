@@ -1,0 +1,157 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that GDB/MI commands preserve user selected context when
+# passed --thread and/or --frame.
+
+load_lib mi-support.exp
+
+standard_testfile
+
+if {[build_executable $testfile.exp $testfile ${srcfile} "debug pthreads"] == -1} {
+    untested "failed to compile"
+    return -1
+}
+
+set main_break_line [gdb_get_line_number "main break line"]
+
+set any "\[^\r\n\]*"
+
+mi_clean_restart $binfile
+mi_create_breakpoint "$srcfile:$main_break_line" "set breakpoint in main"
+mi_run_cmd
+mi_expect_stop "breakpoint-hit" "main" "" $srcfile $main_break_line \
+	 { "" "disp=\"keep\"" } "run to breakpoint in main"
+
+mi_gdb_test "thread" \
+	".*Current thread is 1.*" \
+	"info thread 1"
+
+# Run -stack-info-depth in a different thread, the current thread
+# should not change.
+
+mi_gdb_test "-stack-info-depth --thread 3" \
+    "\\^done,depth=.*" \
+    "-stack-info-depth --thread 3"
+
+mi_gdb_test "thread" \
+    ".*Current thread is 1.*" \
+    "info thread 2"
+
+# Expect GDB to switch to thread 3.
+mi_gdb_test "-thread-select 3" \
+    "\\^done,${any}new-thread-id=\"3\"${any}" \
+    "-thread-select 3"
+
+mi_gdb_test "thread" \
+    ".*Current thread is 3.*" \
+    "info thread 3"
+
+# Expect GDB to switch to thread 1.
+mi_gdb_test "-thread-select --thread 2 1" \
+    "\\^done,${any}new-thread-id=\"1\"${any}" \
+    "-thread-select --thread 2 1"
+
+mi_gdb_test "thread" \
+    ".*Current thread is 1.*" \
+    "info thread 4"
+
+# Expect GDB to switch to thread 2.
+mi_gdb_test "-thread-select --thread 2 2" \
+    "\\^done,.*" \
+    "-thread-select --thread 2 2"
+
+mi_gdb_test "thread" \
+    ".*Current thread is 2.*" \
+    "info thread 5"
+
+# Check we're in frame 0.
+mi_gdb_test "frame" \
+    ".*#0  .*child_sub_function .*" \
+    "frame 1"
+
+# Ask about a different frame in the current thread, the current frame
+# should not change.
+mi_info_frame "-stack-info-frame 1" \
+    -thread 2 -frame 1 \
+    -level 1
+
+mi_gdb_test "thread" \
+    ".*Current thread is 2.*" \
+    "info thread 6"
+
+mi_gdb_test "frame" \
+    ".*#0  .*child_sub_function.*" \
+    "frame 2"
+
+
+# Ask about a different frame in a different thread.  After this the
+# current thread and frame should not have changed.
+mi_info_frame "-stack-info-frame 2" \
+    -thread 3 -frame 1 \
+    -level 1
+
+mi_gdb_test "thread" \
+    ".*Current thread is 2.*" \
+    "info thread 7"
+
+mi_gdb_test "frame" \
+    ".*#0  .*child_sub_function.*" \
+    "frame 3"
+
+# Select a different frame in the current thread.  Despite the use of
+# the --frame option, we do expect the currently selected frame to
+# change.
+mi_gdb_test "-stack-select-frame --thread 2 --frame 0 1" \
+    "\\^done" \
+    "--stack-select-frame 1"
+
+mi_gdb_test "thread" \
+    ".*Current thread is 2.*" \
+    "info thread 8"
+
+mi_gdb_test "frame" \
+    ".*#1  .*child_function.*" \
+    "frame 4"
+
+# Similar to the previous test, but this time the --frame option is
+# the same as the frame we are selecting.  We still expect GDB to
+# update the currently selected frame.
+mi_gdb_test "-stack-select-frame --thread 2 --frame 2 2" \
+    "\\^done" \
+    "--stack-select-frame 2"
+
+mi_gdb_test "thread" \
+    ".*Current thread is 2.*" \
+    "info thread 9"
+
+mi_gdb_test "frame" \
+    ".*#2  0x.*" \
+    "frame 5"
+
+# Now select a frame in a different thread.  We expect both the
+# currently selected thread, and the currently selected frame to be
+# updated.
+mi_gdb_test "-stack-select-frame --thread 1 --frame 0 0" \
+    "\\^done" \
+    "--stack-select-frame 3"
+
+mi_gdb_test "thread" \
+    ".*Current thread is 1.*" \
+    "info thread 10"
+
+mi_gdb_test "frame" \
+    ".*#0  main.*" \
+    "frame 6"

@@ -1,0 +1,75 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test our workaround for a GCC 11 bug, where it sometimes puts a -1 value for
+# DW_AT_data_member_location:
+#
+#   Negative DW_AT_data_member_location
+#   https://gcc.gnu.org/bugzilla/show_bug.cgi?id=101378
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+standard_testfile .c -dw.S
+
+set asm_file [standard_output_file ${srcfile2}]
+
+Dwarf::assemble ${asm_file} {
+    cu {} {
+	DW_TAG_compile_unit {
+	    {DW_AT_language @DW_LANG_C99}
+	    {DW_AT_producer "GNU C++17 11.1.0 -mtune=generic -march=x86-64 -g3 -O0"}
+	    {name ${::srcfile}}
+	} {
+	    declare_labels int_label struct_label
+
+	    int_label: DW_TAG_base_type {
+		{DW_AT_byte_size 4 DW_FORM_udata}
+		{DW_AT_encoding @DW_ATE_signed}
+		{DW_AT_name "int"}
+	    }
+
+	    struct_label: DW_TAG_structure_type {
+		{DW_AT_name "the_struct"}
+		{DW_AT_byte_size 4 DW_FORM_udata}
+	    } {
+		DW_TAG_member {
+		    {DW_AT_name "field"}
+		    {DW_AT_type :$int_label}
+		    {DW_AT_data_member_location -1 DW_FORM_sdata}
+		}
+	    }
+
+	    DW_TAG_variable {
+		{DW_AT_name "s"}
+		{DW_AT_type :$struct_label}
+		{DW_AT_location {DW_OP_addr [gdb_target_symbol "s"]} SPECIAL_expr}
+	    }
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} [list $srcfile $asm_file] {nodebug}] } {
+    return
+}
+
+if { ![runto_main] } {
+    return
+}
+
+gdb_test "print /x s" " = {field = 0x11222211}"
+gdb_test "print /x s.field" " = 0x11222211"

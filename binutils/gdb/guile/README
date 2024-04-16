@@ -1,0 +1,229 @@
+README for gdb/guile
+====================
+
+This file contains important notes for gdb/guile developers.
+["gdb/guile" refers to the directory you found this file in]
+
+Nomenclature:
+
+  In the implementation we use "Scheme" or "Guile" depending on context.
+  And sometimes it doesn't matter.
+  Guile is Scheme, and for the most part this is what we present to the user
+  as well.  However, to highlight the fact that it is Guile, the GDB commands
+  that invoke Scheme functions are named "guile" and "guile-repl",
+  abbreviated "gu" and "gr" respectively.
+
+Co-existence with Python:
+
+  Keep the user interfaces reasonably consistent, but don't shy away from
+  providing a clearer (or more Scheme-friendly/consistent) user interface
+  where appropriate.
+
+  Additions to Python support or Scheme support don't require corresponding
+  changes in the other scripting language.
+
+  Scheme-wrapped breakpoints are created lazily so that if the user
+  doesn't use Scheme s/he doesn't pay any cost.
+
+Importing the gdb module into Scheme:
+
+  To import the gdb module:
+  (gdb) guile (use-modules (gdb))
+
+  If you want to add a prefix to gdb module symbols:
+  (gdb) guile (use-modules ((gdb) #:renamer (symbol-prefix-proc 'gdb:)))
+  This gives every symbol a "gdb:" prefix which is a common convention.
+  OTOH it's more to type.
+
+Implementation/Hacking notes:
+
+  Don't use scm_is_false.
+  For this C function, () == #f (a la Lisp) and it's not clear how treating
+  them as equivalent for truth values will affect the GDB interface.
+  Until the effect is clear avoid them.
+  Instead use gdbscm_is_false, gdbscm_is_true, gdbscm_is_bool.
+  There are macros in guile-internal.h to enforce this.
+
+  Use gdbscm_foo as the name of functions that implement Scheme procedures
+  to provide consistent naming in error messages.  The user can see "gdbscm"
+  in the name and immediately know where the function came from.
+
+  All smobs contain gdb_smob or chained_gdb_smob as the first member.
+  This provides a mechanism for extending them in the Scheme side without
+  tying GDB to the details.
+
+  The lifetime of a smob, AIUI, is decided by the containing SCM.
+  When there is no longer a reference to the containing SCM then the
+  smob can be GC'd.  Objects that have references from outside of Scheme,
+  e.g., breakpoints, need to be protected from GC.
+
+  Don't do something that can cause a Scheme exception inside a TRY_CATCH,
+  and, in code that can be called from Scheme, don't do something that can
+  cause a GDB exception outside a TRY_CATCH.
+  This makes the code a little tricky to write sometimes, but it is a
+  rule imposed by the programming environment.  Bugs often happen because
+  this rule is broken.  Learn it, follow it.
+
+Coding style notes:
+
+  - If you find violations to these rules, let's fix the code.
+    Some attempt has been made to be consistent, but it's early.
+    Over time we want things to be more consistent, not less.
+
+  - None of this really needs to be read.  Instead, do not be creative:
+    Monkey-See-Monkey-Do hacking should generally Just Work.
+
+  - Absence of the word "typically" means the rule is reasonably strict.
+
+  - The gdbscm_initialize_foo function (e.g., gdbscm_initialize_values)
+    is the last thing to appear in the file, immediately preceded by any
+    tables of exported variables and functions.
+
+  - In addition to these of course, follow GDB coding conventions.
+
+General naming rules:
+
+  - The word "object" absent any modifier (like "GOOPS object") means a
+    Scheme object (of any type), and is never used otherwise.
+    If you want to refer to, e.g., a GOOPS object, say "GOOPS object".
+
+  - Do not begin any function, global variable, etc. name with scm_.
+    That's what the Guile implementation uses.
+    (kinda obvious, just being complete).
+
+  - The word "invalid" carries a specific connotation.  Try not to use it
+    in a different way.  It means the underlying GDB object has disappeared.
+    For example, a <gdb:objfile> smob becomes "invalid" when the underlying
+    objfile is removed from GDB.
+
+  - We typically use the word "exception" to mean Scheme exceptions,
+    and we typically use the word "error" to mean GDB errors.
+
+Comments:
+
+  - function comments for functions implementing Scheme procedures begin with
+    a description of the Scheme usage.  Example:
+    /* (gsmob-aux gsmob) -> object */
+
+  - the following comment appears after the copyright header:
+    /* See README file in this directory for implementation notes, coding
+       conventions, et.al.  */
+
+Smob naming:
+
+  - gdb smobs are named, internally, "gdb:foo"
+  - in Guile they become <gdb:foo>, that is the convention for naming classes
+    and smobs have rudimentary GOOPS support (they can't be inherited from,
+    but generics can work with them)
+  - in comments use the Guile naming for smobs,
+    i.e., <gdb:foo> instead of gdb:foo.
+    Note: This only applies to smobs.  Exceptions are also named gdb:foo,
+    but since they are not "classes" they are not wrapped in <>.
+  - smob names are stored in a global, and for simplicity we pass this
+    global as the "expected type" parameter to SCM_ASSERT_TYPE, thus in
+    this instance smob types are printed without the <>.
+    [Hmmm, this rule seems dated now.  Plus I18N rules in GDB are not always
+    clear, sometimes we pass the smob name through _(), however it's not
+    clear that's actually a good idea.]
+
+Type naming:
+
+  - smob structs are typedefs named foo_smob
+
+Variable naming:
+
+  - "scm" by itself is reserved for arbitrary Scheme objects
+
+  - variables that are pointers to smob structs are named <char>_smob or
+    <char><char>_smob, e.g., f_smob for a pointer to a frame smob
+
+  - variables that are gdb smob objects are typically named <char>_scm or
+    <char><char>_scm, e.g., f_scm for a <gdb:frame> object
+
+  - the name of the first argument for method-like functions is "self"
+
+Function naming:
+
+  General:
+
+  - all non-static functions have a prefix,
+    either gdbscm_ or <char><char>scm_ [or <char><char><char>scm_]
+
+  - all functions that implement Scheme procedures have a gdbscm_ prefix,
+    this is for consistency and readability of Scheme exception text
+
+  - static functions typically have a prefix
+    - the prefix is typically <char><char>scm_ where the first two letters
+      are unique to the file or class the function works with.
+      E.g., the scm-arch.c prefix is arscm_.
+      This follows something used in gdb/python in some places,
+      we make it formal.
+
+  - if the function is of a general nature, or no other prefix works,
+    use gdbscm_
+
+  Conversion functions:
+
+  - the from/to in function names follows from libguile's existing style
+  - conversions from/to Scheme objects are named:
+      prefix_scm_from_foo: converts from foo to scm
+      prefix_scm_to_foo: converts from scm to foo
+
+  Exception handling:
+
+  - functions that may throw a Scheme exception have an _unsafe suffix
+    - This does not apply to functions that implement Scheme procedures.
+    - This does not apply to functions whose explicit job is to throw
+      an exception.  Adding _unsafe to gdbscm_throw is kinda superfluous. :-)
+  - functions that can throw a GDB error aren't adorned with _unsafe
+
+  - "_safe" in a function name means it will never throw an exception
+    - Generally unnecessary, since the convention is to mark the ones that
+      *can* throw an exception.  But sometimes it's useful to highlight the
+      fact that the function is safe to call without worrying about exception
+      handling.
+
+  - except for functions that implement Scheme procedures, all functions
+    that can throw exceptions (GDB or Scheme) say so in their function comment
+
+  - functions that don't throw an exception, but still need to indicate to
+    the caller that one happened (i.e., "safe" functions), either return
+    a <gdb:exception> smob as a result or pass it back via a parameter.
+    For this reason don't pass back <gdb:exception> smobs for any other
+    reason.  There are functions that explicitly construct <gdb:exception>
+    smobs.  They're obviously the, umm, exception.
+
+  Internal functions:
+
+  - internal Scheme functions begin with "%" and are intentionally undocumented
+    in the manual
+
+  Standard Guile/Scheme conventions:
+
+  - predicates that return Scheme values have the suffix _p and have suffix "?"
+    in the Scheme procedure's name
+  - functions that implement Scheme procedures that modify state have the
+    suffix _x and have suffix "!" in the Scheme procedure's name
+  - object predicates that return a C truth value are named prefix_is_foo
+  - functions that set something have "set" at the front (except for a prefix)
+    write this: gdbscm_set_gsmob_aux_x implements (set-gsmob-aux! ...)
+    not this: gdbscm_gsmob_set_aux_x implements (gsmob-set-aux! ...)
+
+Doc strings:
+
+  - there are lots of existing examples, they should be pretty consistent,
+    use them as boilerplate/examples
+  - begin with a one line summary (can be multiple lines if necessary)
+  - if the arguments need description:
+    - blank line
+    - "  Arguments: arg1 arg2"
+      "    arg1: blah ..."
+      "    arg2: blah ..."
+  - if the result requires more description:
+    - blank line
+    - "  Returns:"
+      "    Blah ..."
+  - if it's important to list exceptions that can be thrown:
+    - blank line
+    - "  Throws:"
+      "    exception-name: blah ..."

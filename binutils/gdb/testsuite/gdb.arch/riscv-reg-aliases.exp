@@ -1,0 +1,196 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require {istarget "riscv*-*-*"}
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+if {![runto_main]} {
+   return 0
+}
+
+
+# A list for all the integer register names and their aliases.  The format is
+# a list with each entry being itself a list, the first item being the primary
+# name of a register (the name GDB uses by default), and the second entry
+# being a list of register aliases.
+set xreg_names \
+{ { ra {x1} } { sp {x2} } { gp {x3} } { tp {x4} } { t0 {x5} } \
+  { t1 {x6} } { t2 {x7} } { fp {x8 s0} } { s1 {x9} } { a0 {x10} } \
+  { a1 {x11} } { a2 {x12} } { a3 {x13} } { a4 {x14} } { a5 {x15} } \
+  { a6 {x16} } { a7 {x17} } { s2 {x18} } { s3 {x19} } { s4 {x20} } \
+  { s5 {x21} } { s6 {x22} } { s7 {x23} } { s8 {x24} } { s9 {x25} } \
+  { s10 {x26} } { s11 {x27} } { t3 {x28} } { t4 {x29} } { t5 {x30} } \
+  { t6 {x31} } }
+
+# This is just like XREG_NAMES, except it contains all the floating point
+# register names and their aliases.
+set freg_names \
+{ { ft0 {f0} } { ft1 {f1} } { ft2 {f2} } { ft3 {f3} } { ft4 {f4} } \
+  { ft5 {f5} } { ft6 {f6} } { ft7 {f7} } { fs0 {f8} } { fs1 {f9} } \
+  { fa0 {f10} } { fa1 {f11} } { fa2 {f12} } { fa3 {f13} } { fa4 {f14} } \
+  { fa5 {f15} } { fa6 {f16} } { fa7 {f17} } { fs2 {f18} } { fs3 {f19} } \
+  { fs4 {f20} } { fs5 {f21} } { fs6 {f22} } { fs7 {f23} } { fs8 {f24} } \
+  { fs9 {f25} } { fs10 {f26} } { fs11 {f27} } { ft8 {f28} } { ft9 {f29} } \
+  { ft10 {f30} } { ft11 {f31} } }
+
+# Check that the zero register (and its x0 alias) both contain the
+# value 0.
+proc check_zero_register_value {testname} {
+    gdb_test "p/d \$zero" " = 0" "check \$zero: ${testname}"
+    gdb_test "p/d \$x0" " = 0" "check \$x0: ${testname}"
+}
+
+# Set all of the registers in REG_SET to zero.  Confirm that the value of zero
+# can be read back using the primary name, and from all of the alias names.
+#
+# For some architectures (RV64, RV128) the float registers have union type,
+# and we need to read/write using a ".float" extension.  This is passed in
+# REG_EXTENSION.  If no extension is needed then REG_EXTENSION is the empty
+# string.
+#
+# PRINT_FMT is used when inspecting the registers, and should be a
+# character that can be used in a GDB print command as an output
+# format, e.g. 'd' (decimal), or 'f' (float).
+proc check_setting_registers_to_zero { reg_set reg_extension print_fmt } {
+    foreach reg_desc ${reg_set} {
+	set primary_name [lindex ${reg_desc} 0]
+	set alias_names [lindex ${reg_desc} 1]
+
+	gdb_test_no_output "set \$${primary_name}${reg_extension} = 0" \
+	    "set register ${primary_name} to an initial value of zero"
+	gdb_test "p/${print_fmt} \$${primary_name}${reg_extension}" " = 0" \
+	    "check the initial value of ${primary_name} is now zero"
+
+	foreach reg_alias ${alias_names} {
+	    gdb_test "p/${print_fmt} \$${reg_alias}${reg_extension}" " = 0" \
+		"check the initial value of ${reg_alias} is now zero"
+	}
+    }
+}
+
+# Set all of the registers in REG_SET to a new value (the value starts at
+# REG_VALUE and is incremented after each test).  Then confirm that the new
+# value can be read back using the primary name, and from all of the alias
+# names.
+#
+# Next, set each register in REG_SET using each of its alias names, then
+# confirm that the value can be read back using both the primary name, and all
+# of the aliases.
+#
+# The REG_EXTENSION field is used as in CHECK_SETTING_REGISTERS_TO_ZERO.
+#
+# PRINT_FMT is used when inspecting the registers, and should be a
+# character that can be used in a GDB print command as an output
+# format, e.g. 'd' (decimal), or 'f' (float).
+proc check_setting_registers_to_value { reg_set reg_extension reg_value print_fmt } {
+    foreach reg_desc ${reg_set} {
+	set primary_name [lindex ${reg_desc} 0]
+	set alias_names [lindex ${reg_desc} 1]
+
+	# Set value through the primary register name, and check that all
+	# the aliases see the same value.
+	set reg_value [incr reg_value]
+	gdb_test_no_output "set \$${primary_name}${reg_extension} = $reg_value" \
+	    "write non-zero value to ${primary_name}"
+	gdb_test "p/${print_fmt} \$${primary_name}${reg_extension}" " = $reg_value" \
+	    "read ${primary_name} after non-zero write to ${primary_name}"
+	foreach reg_alias ${alias_names} {
+	    gdb_test "p/${print_fmt} \$${reg_alias}${reg_extension}" " = $reg_value" \
+		"read ${reg_alias} after non-zero write to ${primary_name}"
+	}
+
+	# For each alias, set a new value, and check that the primary
+	# register name, and all the other aliases, see the new value.
+	foreach reg_alias ${alias_names} {
+	    set reg_value [incr reg_value]
+
+	    gdb_test_no_output "set \$${reg_alias}${reg_extension} = $reg_value" \
+		"write non-zero value to ${reg_alias}"
+
+	    gdb_test "p/${print_fmt} \$${primary_name}${reg_extension}" " = $reg_value" \
+		"read ${primary_name} after non-zero write to ${reg_alias}"
+
+	    foreach other_reg_alias ${alias_names} {
+		gdb_test "p/${print_fmt} \$${other_reg_alias}${reg_extension}" " = $reg_value" \
+		    "read ${other_reg_alias} after non-zero write to ${reg_alias}"
+	    }
+	}
+    }
+}
+
+# First, some testing of the zero register.  This register should
+# always read as zero, and should swallow any attempt to write a
+# non-zero value to the register.
+
+check_zero_register_value "before any writes"
+
+gdb_test_no_output "set \$zero = 123" \
+    "write to the \$zero register"
+
+check_zero_register_value "after write to \$zero"
+
+gdb_test_no_output "set \$x0 = 123" \
+    "write to the \$x0 register"
+
+check_zero_register_value "after write to \$x0"
+
+# Some RISC-V variants model the fregs as a union (RV64, RV128).  In this case
+# we should access the register using 'REG_NAME.float'.  In the following we
+# figure out if the field name is needed or not by looking at how GDB prints
+# on register.
+set skip_freg_tests 0
+set freg_extension "INVALID"
+set message "check format of float registers"
+gdb_test_multiple "info registers \$ft0" $message {
+    -re "Invalid register `ft0'\r\n$gdb_prompt $" {
+	set skip_freg_tests 1
+	set freg_extension "NONE"
+	pass $message
+    }
+    -re "ft0 \+\[0-9\]\+.*\r\n$gdb_prompt $" {
+	set freg_extension ""
+	pass $message
+    }
+    -re "ft0 \+\{float = .*\r\n$gdb_prompt $" {
+	set freg_extension ".float"
+	pass $message
+    }
+}
+gdb_assert ![string eq "${freg_extension}" "INVALID"] \
+    "check that floating point format has been understood"
+
+# Now check that we can write zero, and read zero back to all of the integer
+# and floating point registers.
+check_setting_registers_to_zero ${xreg_names} "" "d"
+
+if { ! $skip_freg_tests } {
+    check_setting_registers_to_zero ${freg_names} ${freg_extension} "f"
+}
+
+# Set each register in turn to a new value, and confirm that the new value can
+# be read back from the primary name, and from all of the alias names.  The
+# value passed in to each test invocation here is arbitrary, they are
+# significantly different so that the float tests don't reuse value from the
+# integer tests.
+check_setting_registers_to_value ${xreg_names} "" 100 "d"
+
+if { ! $skip_freg_tests } {
+    check_setting_registers_to_value ${freg_names} ${freg_extension} 500 "f"
+}

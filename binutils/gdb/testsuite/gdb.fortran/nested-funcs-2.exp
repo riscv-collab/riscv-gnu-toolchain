@@ -1,0 +1,175 @@
+# Copyright 2019-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/> .
+
+# Further testing of placing breakpoints in nested subroutines.
+
+require allow_fortran_tests
+load_lib "fortran.exp"
+
+standard_testfile ".f90"
+
+if {[build_executable ${testfile}.exp ${testfile} \
+	 ${srcfile} {debug f90}]} {
+    return -1
+}
+
+set int4 [fortran_int4]
+
+# When WITH_SRC_PREFIX_P is true then some symbol references will be
+# prefixed with the filename.  When WITH_NEST_PREFIX_P is true then
+# nested subroutine symbols will be prefixed with their parent
+# subroutine scope.
+proc do_bp_tests {with_src_prefix_p with_nest_prefix_p} {
+    global testfile srcfile
+    global int4
+    global hex
+
+    clean_restart ${testfile}
+
+    if { $with_src_prefix_p } {
+	set src_prefix "${srcfile}:"
+    } else {
+	set src_prefix ""
+    }
+
+    if { $with_nest_prefix_p } {
+	set nest_prefix "contains_keyword::"
+    } else {
+	set nest_prefix ""
+    }
+
+    # Normally, info symbol prints the symbol table name for any fortran
+    # symbols (since symbol lookup happens via the minimal symbol
+    # table).  This would correspond to the linkage name in the full symbol
+    # table.
+    # For gfortran (and maybe others) these names currently have the form
+    # XXXX.NUMBER where XXXX is the symbol name and NUMBER a compiler generated
+    # appendix for mangling.  This mangled name gets recognized by the Ada
+    # demangler/decoder and decoded as Ada (setting the symbol language to Ada)
+    # to XXXX.  This leads to the somewhat unexpected output of XXXX over
+    # XXXX.NUMBER for info symbol.
+    # For ifort and ifx the generated linkage names have the form
+    # SCOPEA_SCOPEB_XXXX_ which is not recognized by the Ada demangler and thus
+    # printed as is.
+    # Note that there is no Fortran mangling standard.  We keep the
+    # gfortran behavior as is and extend the test to reflect ifx and ifort
+    # mangling.
+    proc get_linkage_name_pattern {symbol_name} {
+
+	if { [test_compiler_info {ifort-*} f90]
+	     || [test_compiler_info {ifx-*} f90] } {
+	    return "\(?:.*_\)?${symbol_name}_?"
+	} else {
+	    return ${symbol_name}
+	}
+    }
+
+    # Test setting up breakpoints and otherwise examining nested
+    # functions before the program starts.
+    with_test_prefix "before start" {
+	foreach entry \
+	    [list \
+		 [list "increment" "${int4} \\\(${int4}\\\)"] \
+		 [list "increment_program_global" "${int4} \\\(void\\\)"] \
+		 [list "hidden_variable" "void \\\(void\\\)"]] {
+		     set function [lindex $entry 0]
+		     set type [lindex $entry 1]
+
+		     # Currently referencing symbols using 'info',
+		     # 'whatis' and 'ptype' before the program is
+		     # started doesn't work.  This is the same
+		     # behaviour we see in C++ so I don't think this
+		     # is a failure, just a limitation in current GDB.
+		     if { ${with_nest_prefix_p} } {
+			 gdb_test "info symbol ${nest_prefix}${function}" \
+			     "[get_linkage_name_pattern ${function}] in section .*"
+			 gdb_test "whatis ${nest_prefix}${function}" \
+			     "type = ${type}"
+			 gdb_test "ptype ${nest_prefix}${function}" \
+			     "type = ${type}"
+			 gdb_test "print ${nest_prefix}${function}" \
+			     "{${type}} $hex <contains_keyword::${function}>"
+		     }
+
+		     gdb_breakpoint "${src_prefix}${nest_prefix}${function}"
+		 }
+    }
+
+    # Break on a contained function and run to it.
+    if {![runto ${src_prefix}[gdb_get_line_number "pre_init"]]} {
+	return
+    }
+
+    # Call a contained function.
+    if { ${with_nest_prefix_p} } {
+	gdb_test_stdio "call ${nest_prefix}subroutine_to_call()" " called" ""
+    }
+
+    # Break on another contained function and run to it.
+    gdb_breakpoint "${src_prefix}${nest_prefix}increment"
+    gdb_continue_to_breakpoint "increment" ".*increment = i \\\+ 1"
+    gdb_breakpoint ${src_prefix}[gdb_get_line_number "post_increment"]
+    gdb_continue_to_breakpoint "post_increment"
+
+    # Check arguments and locals report the correct values. 12 is
+    # passed in and 13 is the result after adding 1.
+    gdb_test "info args" "i = 12"
+    gdb_test "info locals" " = 13"
+
+    # Check we can see variables from an outer program scope.
+    gdb_breakpoint ${src_prefix}[gdb_get_line_number "post_increment_global"]
+    gdb_continue_to_breakpoint "post_increment_global" \
+	".*print \\\*, program_i ! post_increment_global"
+    gdb_test "info args" "No arguments." \
+	"no argument subroutine has no arguments"
+    gdb_test "p program_i" " = 7" "printing outer scoped variable"
+
+    # Stepping into a contained subroutine.
+    gdb_breakpoint ${src_prefix}[gdb_get_line_number "pre_step"]
+    gdb_continue_to_breakpoint "pre_step" ".*call step\\\(\\\) ! pre_step"
+    gdb_test "step" \
+	".*print '\\\(A\\\)', \\\"step\\\" ! post_step" \
+	"step into the correct place"
+
+    # Local hides program global.
+    gdb_breakpoint ${src_prefix}[gdb_get_line_number "post_hidden"]
+    gdb_continue_to_breakpoint "post_hidden" \
+	".*print \\\*, program_i ! post_hidden"
+    gdb_test "p program_i" " = 30" "printing hidden global"
+
+    # Check info symbol, whatis and ptype can find information on
+    # these nested functions.
+    foreach entry \
+	[list \
+	     [list "increment" "${int4} \\\(${int4}\\\)"] \
+	     [list "increment_program_global" "${int4} \\\(void\\\)"]] {
+		 set function [lindex $entry 0]
+		 set type [lindex $entry 1]
+		 with_test_prefix $function {
+		     gdb_test "info symbol ${nest_prefix}$function" \
+			 "[get_linkage_name_pattern $function] in section .*"
+		     gdb_test "whatis ${nest_prefix}$function" \
+			 "type = ${type}"
+		     gdb_test "ptype ${nest_prefix}$function" \
+			 "type = ${type}"
+		 }
+	     }
+}
+
+foreach_with_prefix src_prefix { 0 1 } {
+    foreach_with_prefix nest_prefix { 0 1 } {
+	do_bp_tests ${src_prefix} ${nest_prefix}
+    }
+}

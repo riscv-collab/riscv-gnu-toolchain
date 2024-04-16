@@ -1,0 +1,165 @@
+# Copyright 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It tests reverse debugging
+# with shared libraries.
+
+require supports_reverse allow_shlib_tests
+
+standard_testfile
+set lib1file "shr1"
+set lib1src  ${lib1file}.c
+set library1 [standard_output_file ${lib1file}.sl]
+set lib2file "shr2"
+set lib2src  ${lib2file}.c
+set library2 [standard_output_file ${lib2file}.sl]
+
+# Compile the first without debug info so that
+# stepping and reverse stepping doesn't end up inside them.
+if { [gdb_compile_shlib ${srcdir}/${subdir}/${lib1src} ${library1} ""] != "" } {
+    untested "failed to compile shared library 1"
+    return -1
+}
+
+if { [gdb_compile_shlib ${srcdir}/${subdir}/${lib2src} ${library2} "debug"] != "" } {
+    untested "failed to compile shared library 2"
+    return -1
+}
+
+set exec_opts [list debug shlib=${library1} shlib=${library2}]
+
+if { [gdb_compile ${srcdir}/${subdir}/${srcfile} ${binfile} executable $exec_opts] != "" } {
+    untested "failed to compile"
+    return -1
+}
+     
+# Note: The test previously did "set debug-file-directory" to (try to)
+# ensure the debug info for the dynamic loader and libc weren't found.
+# This doesn't work if the debug info is in the .debug subdirectory.
+# Avoiding debug info for system libraries is not germaine to this test
+# and is no longer attempted.  Instead, the test does not make assumptions
+# about whether the debug info is present or not.
+
+clean_restart $binfile
+gdb_load_shlib $library1
+gdb_load_shlib $library2
+
+runto_main
+
+if [supports_process_record] {
+    # Activate process record/replay
+    gdb_test_no_output "record" "turn on process record"
+}
+
+#
+# Test reverse-step over undebuggable solib functions.
+#
+
+# Run forward past some solib function calls.
+
+set end_part_one [gdb_get_line_number " end part one" "$srcfile"]
+set end_part_two [gdb_get_line_number " end part two" "$srcfile"]
+gdb_test_multiple "until $end_part_one" "run until end part one" {
+    -wrap -re " end part one.*" {
+	pass $gdb_test_name
+    }
+    -wrap -re "Process record does not support instruction 0xfae64 at.*" {
+	kfail "gdb/25038" $gdb_test_name
+	return -1
+    }
+}
+
+gdb_test "reverse-step" " shr1 three .*" "reverse-step third shr1"
+gdb_test "reverse-step" " shr1 two .*"   "reverse-step second shr1"
+gdb_test "reverse-step" " shr1 one .*"   "reverse-step first shr1"
+
+gdb_test "reverse-step" " generic statement.*" "reverse-step generic"
+
+
+#
+# Test reverse-next over undebuggable solib functions.
+#
+
+# Run forward again...
+
+gdb_test "until $end_part_one" " end part one.*" "forward to end part one"
+
+gdb_test "reverse-next" " shr1 three .*" "reverse-next third shr1"
+gdb_test "reverse-next" " shr1 two .*"   "reverse-next second shr1"
+gdb_test "reverse-next" " shr1 one .*"   "reverse-next first shr1"
+
+gdb_test "reverse-next" " generic statement.*" "reverse-next generic"
+
+
+#
+# Test reverse-step into debuggable solib function
+#
+
+gdb_test_multiple "reverse-step" "reverse-step into solib function one" {
+    -re -wrap "middle part two.*" {
+	send_gdb "reverse-step\n"
+	exp_continue
+    }
+    -re -wrap "${lib2src}.*" {
+	pass $gdb_test_name
+    }
+}
+# Depending on wether the closing } has a line associated, we might have
+# different acceptable results here
+gdb_test_multiple "reverse-step" "reverse-step within solib function one" {
+    -re -wrap "return y;.*" {
+	pass $gdb_test_name
+    }
+    -re -wrap "int y =.*" {
+	pass $gdb_test_name
+    }
+}
+repeat_cmd_until "reverse-step" "" "main .. at" "reverse-step back to main one"
+
+gdb_test_multiple "reverse-step" "reverse-step into solib function two" {
+    -re -wrap "begin part two.*" {
+	send_gdb "reverse-step\n"
+	exp_continue
+    }
+    -re -wrap "${lib2src}.*" {
+	pass $gdb_test_name
+    }
+}
+gdb_test_multiple "reverse-step" "reverse-step within solib function two" {
+    -re -wrap "return y;.*" {
+	pass $gdb_test_name
+    }
+    -re -wrap "int y =.*" {
+	pass $gdb_test_name
+    }
+}
+repeat_cmd_until "reverse-step" "" "main .. at" "reverse-step back to main two"
+
+#
+# Test reverse-next over debuggable solib function
+#
+
+gdb_test "until $end_part_two" " end part two.*" "run until end part two"
+
+gdb_test "reverse-next" " middle part two.*" "reverse-next over solib function one"
+gdb_test_multiple "reverse-next" "reverse-next over solib function two" {
+    -re -wrap "middle part two.*" {
+	send_gdb "reverse-next\n"
+	exp_continue
+    }
+    -re -wrap " begin part two.*" {
+	pass $gdb_test_name
+    }
+}

@@ -1,0 +1,366 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test left and right bit shifting, in all languages that have such
+# operator.
+
+clean_restart
+
+# Test a print command that prints out RESULT_RE.  If WARNING_OR_ERROR
+# is non-empty, it is expected that for languages other than Go, GDB
+# prints this warning before the print result.  For Go, this is an
+# expected error.  If WARNING_OR_ERROR is empty, it is expected that
+# GDB prints no text other than the print result.
+proc test_shift {lang cmd result_re {warning_or_error ""}} {
+    if {$lang == "go"} {
+	if {$warning_or_error != ""} {
+	    set error_re "[string_to_regexp $warning_or_error]"
+	    gdb_test_multiple $cmd "" {
+		-re -wrap "^$error_re" {
+		    pass $gdb_test_name
+		}
+	    }
+	} else {
+	    gdb_test_multiple $cmd "" {
+		-re -wrap "^\\$$::decimal$result_re" {
+		    pass $gdb_test_name
+		}
+	    }
+	}
+    } else {
+	if {$warning_or_error != ""} {
+	    set warning_re "warning: [string_to_regexp $warning_or_error]\r\n"
+	} else {
+	    set warning_re ""
+	}
+
+	gdb_test_multiple $cmd "" {
+	    -re -wrap "^$warning_re\\$$::decimal$result_re" {
+		pass $gdb_test_name
+	    }
+	}
+    }
+}
+
+# Some warnings/errors GDB outputs.
+set rs_negative_shift_count "right shift count is negative"
+set rs_too_large_shift_count "right shift count >= width of type"
+set ls_negative_shift_count "left shift count is negative"
+set ls_too_large_shift_count "left shift count >= width of type"
+
+# Test a left shift that results in a too-large shift count warning in
+# all languages except Go.
+proc test_lshift_tl {lang cmd result_re} {
+    if {$lang != "go"} {
+	test_shift $lang $cmd $result_re $::ls_too_large_shift_count
+    } else {
+	test_shift $lang $cmd $result_re
+    }
+}
+
+# Test a right shift that results in a too-large shift count warning
+# in all languages except Go.
+proc test_rshift_tl {lang cmd result_re} {
+    if {$lang != "go"} {
+	test_shift $lang $cmd $result_re $::rs_too_large_shift_count
+    } else {
+	test_shift $lang $cmd $result_re
+    }
+}
+
+# Return VAL, an integer value converted/cast to the right type for
+# LANG.  SIGNED indicates whether the type should be signed or
+# unsigned.  BITS indicates the bit width of the type.  E.g., signed=0
+# and bits=32 results in:
+#   Go            =>  "uint($VAL)"
+#   D             =>  "cast(uint) $VAL"
+#   Rust          =>  "$VAL as i32"
+#   C/C++/others  =>  "(unsigned int) $VAL"
+proc make_val_cast {lang signed bits val} {
+    if {$lang == "go"} {
+	if {$signed} {
+	    set sign_prefix ""
+	} else {
+	    set sign_prefix "u"
+	}
+	return "${sign_prefix}int${bits}($val)"
+    } elseif {$lang == "d"} {
+	if {$signed} {
+	    set sign_prefix ""
+	} else {
+	    set sign_prefix "u"
+	}
+	if {$bits == 8} {
+	    set type "byte"
+	} elseif {$bits == 16} {
+	    set type "short"
+	} elseif {$bits == 32} {
+	    set type "int"
+	} elseif {$bits == 64} {
+	    set type "long"
+	} else {
+	    error "$lang: unsupported bits"
+	}
+	return "cast(${sign_prefix}$type) $val"
+    } elseif {$lang == "rust"} {
+	if {$signed} {
+	    set sign_prefix "i"
+	} else {
+	    set sign_prefix "u"
+	}
+	return "$val as ${sign_prefix}$bits"
+    } else {
+	# C-like cast.
+	if {$signed} {
+	    set sign_prefix ""
+	} else {
+	    set sign_prefix "un"
+	}
+	if {$bits == 8} {
+	    set type "char"
+	} elseif {$bits == 16} {
+	    set type "short"
+	} elseif {$bits == 32} {
+	    set type "int"
+	} elseif {$bits == 64} {
+	    if {$lang == "opencl"} {
+		set type "long"
+	    } else {
+		set type "long long"
+	    }
+	} else {
+	    error "$lang: unsupported bits"
+	}
+	return "(${sign_prefix}signed $type) $val"
+    }
+}
+
+# Generate make_int8 ... make_uint64 convenience procs, wrappers
+# around make_val_cast.
+foreach signed {0 1} {
+    if {$signed} {
+	set sign_prefix ""
+    } else {
+	set sign_prefix "u"
+    }
+    foreach bits {8 16 32 64} {
+	proc make_${sign_prefix}int${bits} {lang val} \
+	    "make_val_cast \$lang $signed $bits \$val"
+    }
+}
+
+# Test bitshifting, particularly with negative shift counts and
+# too-large-for-type shift counts.  Exercises all C-like-ish
+# languages.
+proc test_shifts {} {
+    global ls_negative_shift_count rs_negative_shift_count
+
+    # Extract the set of all supported languages.  We try all except
+    # languages we know wouldn't work.  We do this instead of
+    # hardcoding the set of languages that we know work, so that if
+    # GDB gains a new language, it is automatically exercised.
+    set supported_langs [get_set_option_choices "set language"]
+
+    foreach_with_prefix lang $supported_langs {
+	set skip_langs {
+	    "unknown" "ada" "modula-2" "pascal" "fortran"
+	}
+	if {[lsearch -exact $skip_langs $lang] >= 0} {
+	    return
+	}
+
+	gdb_test_no_output "set language $lang"
+
+	# Make sure a signed left shift that overflows, i.e., whose
+	# result isn't representable in the signed type of the lhs,
+	# which is actually undefined, doesn't crash GDB when is it
+	# built with UBSan.
+
+	with_test_prefix "lsh overflow" {
+	    test_shift $lang "print /x 0x0fffffffffffffff << 8" \
+		" = 0xffffffffffffff00"
+	    test_shift $lang "print /x 0x0fffffff << 8" \
+		" = 0xffffff00"
+
+	    # Make sure the result is still signed when the lhs was
+	    # signed.
+	    test_shift $lang "print 0x0fffffffffffffff << 8" " = -256"
+	    test_shift $lang "print 0x0fffffff << 8" " = -256"
+	}
+
+	# 8-bit and 16-bit are promoted to int.
+	with_test_prefix "8-bit, promoted" {
+	    foreach lhs \
+		[list \
+		     [make_int8 $lang 0x0f] \
+		     [make_uint8 $lang 0x0f]] \
+	    {
+		test_shift $lang "print /x $lhs << 8" " = 0xf00"
+		test_shift $lang "print $lhs << 8" " = 3840"
+	    }
+	}
+	with_test_prefix "16-bit, promoted" {
+	    foreach lhs \
+		[list \
+		     [make_int16 $lang 0x0fff] \
+		     [make_uint16 $lang 0x0fff]] \
+	    {
+		test_shift $lang "print /x $lhs << 8" " = 0xfff00"
+		test_shift $lang "print $lhs << 8" " = 1048320"
+	    }
+	}
+
+	# Similarly, test shifting with both negative and too-large
+	# rhs.  Both cases are undefined, but GDB lets them go through
+	# anyhow, similarly to how compilers don't error out.  Try
+	# both signed and unsigned lhs.
+
+	# 8-bit lhs, signed and unsigned.  These get promoted to
+	# 32-bit int.
+	with_test_prefix "8-bit, invalid" {
+	    foreach lhs \
+		[list \
+		     [make_int8 $lang 0x7f] \
+		     [make_uint8 $lang 0xff]] \
+	    {
+		test_shift $lang "print $lhs << -1" " = 0" \
+		    $ls_negative_shift_count
+		test_shift $lang "print $lhs >> -1" " = 0" \
+		    $rs_negative_shift_count
+
+		test_shift $lang "print/x $lhs << 8" " = 0x(7|f)f00"
+		test_shift $lang "print/x $lhs >> 8" " = 0x0"
+
+		test_lshift_tl $lang "print $lhs << 32" " = 0"
+		test_rshift_tl $lang "print $lhs >> 32" " = 0"
+		test_lshift_tl $lang "print $lhs << 33" " = 0"
+		test_rshift_tl $lang "print $lhs >> 33" " = 0"
+	    }
+	}
+
+	# 16-bit lhs, signed and unsigned.  These get promoted to 32-bit int.
+	with_test_prefix "16-bit, invalid" {
+	    foreach {lhs res} \
+		[list \
+		     [make_int16 $lang 0x7fff] 0x7fff \
+		     [make_uint16 $lang 0xffff] 0xffff] \
+	    {
+		test_shift $lang "print $lhs << -1" " = 0" \
+		    $ls_negative_shift_count
+		test_shift $lang "print $lhs >> -1" " = 0" \
+		    $rs_negative_shift_count
+
+		# Confirm shifting by 0 doesn't warn.
+		test_shift $lang "print/x $lhs << 0" " = $res"
+		test_shift $lang "print/x $lhs >> 0" " = $res"
+
+		# These don't overflow due to promotion.
+		test_shift $lang "print/x $lhs << 16" " = 0x(7|f)fff0000"
+		test_shift $lang "print/x $lhs >> 16" " = 0x0"
+
+		test_lshift_tl $lang "print $lhs << 32" " = 0"
+		test_rshift_tl $lang "print $lhs >> 32" " = 0"
+		test_lshift_tl $lang "print $lhs << 33" " = 0"
+		test_rshift_tl $lang "print $lhs >> 33" " = 0"
+	    }
+	}
+
+	# 32-bit lhs, signed and unsigned.
+	with_test_prefix "32-bit, invalid" {
+	    foreach {lhs res} \
+		[list \
+		     [make_int32 $lang 0x7fffffff] 0x7fffffff \
+		     [make_uint32 $lang 0xffffffff] 0xffffffff] \
+	    {
+		test_shift $lang "print $lhs << -1" " = 0" \
+		    $ls_negative_shift_count
+		test_shift $lang "print $lhs >> -1" " = 0" \
+		    $rs_negative_shift_count
+
+		# Confirm shifting by 0 doesn't warn.
+		test_shift $lang "print/x $lhs << 0" " = $res"
+		test_shift $lang "print/x $lhs >> 0" " = $res"
+
+		test_lshift_tl $lang "print $lhs << 32" " = 0"
+		test_rshift_tl $lang "print $lhs >> 32" " = 0"
+
+		test_lshift_tl $lang "print $lhs << 33" " = 0"
+		test_rshift_tl $lang "print $lhs >> 33" " = 0"
+	    }
+	}
+
+	# 64-bit lhs, signed and unsigned.
+	with_test_prefix "64-bit, invalid" {
+	    foreach {lhs res} \
+		[list \
+		     [make_int64 $lang 0x7fffffffffffffff] \
+		     0x7fffffffffffffff \
+		     \
+		     [make_uint64 $lang 0xffffffffffffffff] \
+		     0xffffffffffffffff] \
+	    {
+		test_shift $lang "print $lhs << -1" " = 0" \
+		    $ls_negative_shift_count
+		test_shift $lang "print $lhs >> -1" " = 0" \
+		    $rs_negative_shift_count
+
+		# Confirm shifting by 0 doesn't warn.
+		test_shift $lang "print/x $lhs << 0" " = $res"
+		test_shift $lang "print/x $lhs >> 0" " = $res"
+
+		test_lshift_tl $lang "print $lhs << 64" " = 0"
+		test_rshift_tl $lang "print $lhs >> 64" " = 0"
+
+		test_lshift_tl $lang "print $lhs << 65" " = 0"
+		test_rshift_tl $lang "print $lhs >> 65" " = 0"
+	    }
+	}
+
+	# Right shift a negative number by a negative amount.
+	with_test_prefix "neg lhs/rhs" {
+	    test_shift $lang "print -1 >> -1" " = -1" $rs_negative_shift_count
+	    test_shift $lang "print -4 >> -2" " = -1" $rs_negative_shift_count
+	}
+
+	# Check right shifting a negative value.  For C++, this is
+	# implementation-defined, up until C++20.  In most
+	# implementations, this performs an arithmetic right shift, so
+	# that the result remains negative.  Currently, GDB does
+	# whatever the host's compiler does.  If that turns out wrong
+	# for some host/target, then GDB should be taught to ask the
+	# target gdbarch what to do.
+	with_test_prefix "rsh neg lhs" {
+	    test_shift $lang "print -1 >> 0" " = -1"
+	    test_shift $lang "print -1 >> 1" " = -1"
+	    test_shift $lang "print -8 >> 1" " = -4"
+	    test_shift $lang "print [make_int64 $lang -8] >> 1" " = -4"
+	}
+
+	# Make sure an unsigned 64-bit value with high bit set isn't
+	# confused for a negative shift count in the warning messages.
+	with_test_prefix "max-uint64" {
+	    test_lshift_tl $lang \
+		"print 1 << [make_uint64 $lang 0xffffffffffffffff]" " = 0"
+	    test_rshift_tl $lang \
+		"print 1 >> [make_uint64 $lang 0xffffffffffffffff]" " = 0"
+	    test_lshift_tl $lang \
+		"print -1 << [make_uint64 $lang 0xffffffffffffffff]" " = 0"
+	    test_rshift_tl $lang \
+		"print -1 >> [make_uint64 $lang 0xffffffffffffffff]" " = -1"
+	}
+    }
+}
+
+test_shifts

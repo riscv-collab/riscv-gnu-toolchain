@@ -1,0 +1,100 @@
+# Copyright (C) 2011-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Specialized subroutines for launching gdb and testing the very first prompt.
+
+
+#
+# start gdb -- start gdb running, prompt procedure
+# this procedure differs from the default in that you must pass 'set height 0',
+# and 'set width 0', yourself in GDBFLAGS, and it has a gdb_prompt_fail variable,
+#
+# uses pass if it sees $gdb_prompt, and fail if it sees $gdb_prompt_fail.
+#
+proc default_prompt_gdb_start { } {
+    global use_gdb_stub
+    global GDB
+    global INTERNAL_GDBFLAGS GDBFLAGS
+    global gdb_prompt
+    global gdb_prompt_fail
+    global timeout
+    global gdb_spawn_id
+
+    # Set the default value, it may be overriden later by specific testfile.
+    #
+    # Use `set_board_info use_gdb_stub' for the board file to flag the inferior
+    # is already started after connecting and run/attach are not supported.
+    # This is used for the "remote" protocol.  After GDB starts you should
+    # check global $use_gdb_stub instead of the board as the testfile may force
+    # a specific different target protocol itself.
+    set use_gdb_stub [target_info exists use_gdb_stub]
+
+    verbose "Spawning $GDB $INTERNAL_GDBFLAGS $GDBFLAGS"
+    gdb_write_cmd_file "$GDB $INTERNAL_GDBFLAGS $GDBFLAGS"
+
+    if [info exists gdb_spawn_id] {
+	return 0
+    }
+
+    if ![is_remote host] {
+	if {[which $GDB] == 0} {
+	    perror "$GDB does not exist."
+	    exit 1
+	}
+    }
+    set res [remote_spawn host "$GDB $INTERNAL_GDBFLAGS $GDBFLAGS [host_info gdb_opts]"]
+    if { $res < 0 || $res == "" } {
+	perror "Spawning $GDB failed."
+	return 1
+    }
+    gdb_expect 360 {
+	-re ".*$gdb_prompt_fail.*$gdb_prompt_fail.*" {
+	    fail "double prompted fail prompt"
+	}
+	-re ".*$gdb_prompt.*$gdb_prompt.*" {
+	    fail "double prompted"
+	}
+	-re "\[\r\n\]$gdb_prompt_fail $" {
+	    fail "GDB initializing first prompt"
+	}
+	-re "\[\r\n\]$gdb_prompt $" {
+	    pass "GDB initializing first prompt"
+	}
+	-re "$gdb_prompt $"	{
+	    perror "GDB never initialized."
+	    return -1
+	}
+	-re "$gdb_prompt_fail $"	{
+	    perror "GDB never initialized."
+	    return -1
+	}
+	timeout	{
+	    perror "(timeout) GDB never initialized after 10 seconds."
+	    remote_close host
+	    return -1
+	}
+    }
+    set gdb_spawn_id $res
+    return 0
+}
+
+#
+# Overridable function. You can override this function in your
+# baseboard file.
+#
+proc prompt_gdb_start { } {
+    default_prompt_gdb_start
+}
+

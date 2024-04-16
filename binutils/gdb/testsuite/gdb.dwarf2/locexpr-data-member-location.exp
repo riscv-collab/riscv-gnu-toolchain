@@ -1,0 +1,366 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test case uses the DWARF assembler to reproduce the problem
+# described by PR28030.  The bug turned out to be that
+# FIELD_LOC_KIND_DWARF_BLOCK was not handled when recursively copying
+# a value's type when preserving the value history during the freeing
+# up of objfiles associated with a shared object.  (Yes, figuring out
+# how to make this happen in a concise test case turned out to be
+# challenging.)
+#
+# The following elements proved to be necessary for reproducing the
+# problem:
+#
+# 1) A location expression needed to be used with
+#    DW_AT_data_member_location rather than a simple offset.
+#    Moreover, this location expression needed to use opcodes
+#    which GDB's DWARF reader could not convert to a simple
+#    offset.  (Note, however, that GDB could probably be improved
+#    to handle the opcodes chosen for this test; if decode_locdesc()
+#    in dwarf2/read.c is ever updated to handle both DW_OP_pick and
+#    DW_OP_drop, then this test could end up passing even if
+#    the bug it's intended to test has not been fixed.)
+#
+# 2) The debug info containing the above DWARF info needed
+#    to be associated with a shared object since the problem
+#    occurred while GDB was preserving values during the
+#    purging of shared objects.
+#
+# 3) After performing some simple gdb commands, the program is
+#    run again.  In the course of running the objfile destructor
+#    associated with the shared object, values are preserved
+#    along with their types.  As noted earlier, it was during
+#    the recursive type copy that the bug was observed.
+#
+# Therefore, due to #2 above, this test case creates debug info
+# which is then used by a shared object.
+
+# This test can't be run on targets lacking shared library support.
+require allow_shlib_tests
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+# gdb_test_file_name is the name of this file without the .exp
+# extension.  Use it to form basenames for the main program
+# and shared object.
+set main_basename ${::gdb_test_file_name}-main
+set lib_basename ${::gdb_test_file_name}-lib
+
+# We're generating DWARF assembly for the shared object;
+# The output of Dwarf::assemble will be placed in $lib_basename.S
+# which will be ${srcfile3} after the execution of standard_testfile.
+
+standard_testfile $main_basename.c $lib_basename.c $lib_basename.S
+include_file locexpr-data-member-location.h
+
+set libsrc "${::srcdir}/${::subdir}/${::srcfile2}"
+set lib_so [standard_output_file ${lib_basename}.so]
+set asm_file [standard_output_file ${::srcfile3}]
+
+# Compile the shared library for the first GDB session.  Note that debugging
+# symbols will be present for this compilation, because we want to print some
+# type information.
+if {[gdb_compile_shlib $libsrc $lib_so \
+                       {debug}] != ""} {
+    untested "failed to compile shared library"
+    return
+}
+
+# Compile the main program for use with the shared object.  Note we're using
+# debug, such that "finish out of foo" prints:
+#   Value returned is $1 = (class B *) $hex <g_>
+# instead of:
+#   Value returned is $1 = (B *) $hex <g_>
+# Note that this compilation is used for all GDB sessions.
+set exec_options [list debug shlib=$lib_so]
+if [prepare_for_testing "failed to prepare" ${testfile} \
+                        ${::srcfile} $exec_options] {
+    return -1
+}
+
+### First GDB session.
+
+with_test_prefix "first session" {
+    # Do whatever is necessary to make sure that the shared library is
+    # loaded for remote targets.
+    gdb_load_shlib ${lib_so}
+
+    # Run to foo to make sure foo refers to the function, and not foo@PLT.
+    if {![runto foo qualified]} {
+	return
+    }
+
+    with_shared_gdb {
+
+	set session_options $exec_options
+
+	# Rather than start a new session, declare the current session the
+	# shared one.  Otherwise, get_func_info would compile an executable
+	# in a temp dir, which means -Wl,-rpath,\\\$ORIGIN no longer finds
+	# the shared lib.
+	share_gdb ${srcdir}/${subdir}/$srcfile $session_options
+
+	get_func_info foo $session_options
+	get_func_info bar $session_options
+
+	# Using our running GDB session, determine sizes of several types.
+	set long_size [get_sizeof "long" -1]
+	set addr_size [get_sizeof "void *" -1]
+	set struct_A_size [get_sizeof "g_A" -1]
+	set struct_B_size [get_sizeof "g_B" -1]
+
+	# Retrieve struct offset of MBR in struct TP
+	proc get_offsetof { tp mbr } {
+	    return [get_integer_valueof "&((${tp} *) 0)->${mbr}" -1]
+	}
+
+	# Use running GDB session to get struct offsets
+	set A_a [get_offsetof A a]
+	set A_x [get_offsetof A x]
+	set B_a [get_offsetof B a]
+	set B_b [get_offsetof B b]
+	set B_x2 [get_offsetof B x2]
+    }
+}
+
+if { $long_size == -1 || $addr_size == -1 \
+	 || $struct_A_size == -1 || $struct_B_size == -1} {
+    perror "Can't determine type sizes"
+    return
+}
+
+# Create the DWARF.
+Dwarf::assemble ${asm_file} {
+    declare_labels L
+    global foo_start foo_end
+    global bar_start bar_end
+    global libsrc
+
+    cu { label cu_label } {
+	DW_TAG_compile_unit {
+	    {DW_AT_language @DW_LANG_C_plus_plus}
+	    {name ${::srcfile}}
+	    {stmt_list $L DW_FORM_sec_offset}
+        } {
+	    declare_labels int_label class_A_label class_B_label \
+	                   B_ptr_label
+
+	    int_label: DW_TAG_base_type {
+		{DW_AT_byte_size ${::long_size} DW_FORM_udata}
+		{DW_AT_encoding @DW_ATE_signed}
+		{DW_AT_name "int"}
+	    }
+
+	    class_A_label: DW_TAG_class_type {
+		{DW_AT_name "A"}
+		{DW_AT_byte_size ${::struct_A_size} DW_FORM_sdata}
+	    } {
+		DW_TAG_member {
+		    {DW_AT_name "a"}
+		    {DW_AT_type :$int_label}
+		    {DW_AT_data_member_location ${::A_a} DW_FORM_udata}
+		}
+		DW_TAG_member {
+		    {DW_AT_name "x"}
+		    {DW_AT_type :$int_label}
+		    {DW_AT_data_member_location ${::A_x} DW_FORM_udata}
+		}
+	    }
+
+	    class_B_label: DW_TAG_class_type {
+		{DW_AT_name "B"}
+		{DW_AT_byte_size ${::struct_B_size} DW_FORM_sdata}
+	    } {
+		# While there are easier / better ways to specify an
+		# offset used by DW_AT_data_member_location than that
+		# used below, we need a location expression here in
+		# order to reproduce the bug.  Moreover, this location
+		# expression needs to use opcodes that aren't handled
+		# by decode_locdesc() in dwarf2/read.c; if we use
+		# opcodes that _are_ handled by that function, the
+		# location expression will be converted into a simple
+		# offset - which will then (again) not reproduce the
+		# bug.  At the time that this test was written,
+		# neither DW_OP_pick nor DW_OP_drop were being handled
+		# by decode_locdesc(); this is why those opcodes were
+		# chosen.
+		DW_TAG_inheritance {
+		    {DW_AT_type :$class_A_label}
+		    {DW_AT_data_member_location {
+			DW_OP_constu ${::B_a}
+			DW_OP_plus
+			DW_OP_pick 0
+			DW_OP_drop} SPECIAL_expr}
+		    {DW_AT_accessibility 1 DW_FORM_data1}
+		}
+		DW_TAG_member {
+		    {DW_AT_name "b"}
+		    {DW_AT_type :$int_label}
+		    {DW_AT_data_member_location ${::B_b} DW_FORM_udata}
+		}
+		DW_TAG_member {
+		    {DW_AT_name "x2"}
+		    {DW_AT_type :$int_label}
+		    {DW_AT_data_member_location ${::B_x2} DW_FORM_udata}
+		}
+	    }
+
+	    B_ptr_label: DW_TAG_pointer_type {
+		{DW_AT_type :$class_B_label}
+		{DW_AT_byte_size ${::addr_size} DW_FORM_sdata}
+	    }
+
+	    DW_TAG_variable {
+		{DW_AT_name "g_A"}
+		{DW_AT_type :$class_A_label}
+		{DW_AT_external 1 flag}
+		{DW_AT_location {DW_OP_addr [gdb_target_symbol "g_A"]} \
+		                 SPECIAL_expr}
+	    }
+
+	    DW_TAG_variable {
+		{DW_AT_name "g_B"}
+		{DW_AT_type :$class_B_label}
+		{DW_AT_external 1 flag}
+		{DW_AT_location {DW_OP_addr [gdb_target_symbol "g_B"]} \
+		                 SPECIAL_expr}
+	    }
+
+	    # We can't use MACRO_AT for the definitions of foo and bar
+	    # because it doesn't provide a way to pass the appropriate
+	    # flags.  Therefore, we list the name, low_pc, and high_pc
+	    # explicitly.
+	    DW_TAG_subprogram {
+		{DW_AT_name foo}
+		{DW_AT_low_pc $foo_start DW_FORM_addr}
+		{DW_AT_high_pc $foo_end DW_FORM_addr}
+		{DW_AT_type :${B_ptr_label}}
+		{DW_AT_external 1 flag}
+	    }
+
+	    DW_TAG_subprogram {
+		{DW_AT_name bar}
+		{DW_AT_low_pc $bar_start DW_FORM_addr}
+		{DW_AT_high_pc $bar_end DW_FORM_addr}
+		{DW_AT_type :${B_ptr_label}}
+		{DW_AT_external 1 flag}
+	    } {
+		DW_TAG_formal_parameter {
+		    {DW_AT_name v}
+		    {DW_AT_type :${B_ptr_label}}
+		}
+	    }
+	}
+    }
+
+    lines {version 2} L {
+	include_dir "${::srcdir}/${::subdir}"
+	file_name "${::srcfile2}" 1
+
+	# Generate a line table program.
+	program {
+	    DW_LNE_set_address $foo_start
+	    line [gdb_get_line_number "foo prologue" $libsrc]
+	    DW_LNS_copy
+	    DW_LNE_set_address foo_label
+	    line [gdb_get_line_number "foo return" $libsrc]
+	    DW_LNS_copy
+	    line [gdb_get_line_number "foo end" $libsrc]
+	    DW_LNS_copy
+	    DW_LNE_set_address $foo_end
+	    DW_LNS_advance_line 1
+	    DW_LNS_copy
+	    DW_LNE_end_sequence
+
+	    DW_LNE_set_address $bar_start
+	    line [gdb_get_line_number "bar prologue" $libsrc]
+	    DW_LNS_copy
+	    DW_LNE_set_address bar_label
+	    line [gdb_get_line_number "bar return" $libsrc]
+	    DW_LNS_copy
+	    line [gdb_get_line_number "bar end" $libsrc]
+	    DW_LNS_copy
+	    DW_LNE_set_address $bar_end
+	    DW_LNS_advance_line 1
+	    DW_LNS_copy
+	    DW_LNE_end_sequence
+	}
+    }
+
+    aranges {} cu_label {
+	# This 0,0 entry tests that the .debug_aranges reader can
+	# handle an apparent terminator before the end of the ranges.
+	arange {} 0 0
+	arange {} $foo_start $foo_end
+	arange {} $bar_start $bar_end
+    }
+}
+
+# Compile the shared object again, but this time include / use the
+# DWARF info that we've created above.  Note the use of the "nodebug" option.
+# Any debugging information that we need will be provided by the DWARF info
+# created above.
+if {[gdb_compile_shlib [list $libsrc $asm_file] $lib_so \
+                       {nodebug}] != ""} {
+    untested "failed to compile shared library"
+    return
+}
+
+### Second GDB session.
+
+with_test_prefix "second session" {
+    clean_restart $binfile
+
+    # Again, do whatever is necessary to make sure that the shared library is
+    # loaded for remote targets.
+    gdb_load_shlib ${lib_so}
+
+    if {![runto_main]} {
+	return
+    }
+
+    # Step into foo so that we can finish out of it.
+    gdb_test "step" "foo .. at .* foo end.*" "step into foo"
+
+    # Finishing out of foo will create a value that will later need to
+    # be preserved when restarting the program.
+    gdb_test "finish" "= \\(class B \\*\\) ${::hex} .*" "finish out of foo"
+
+    # Dereferencing and printing the return value isn't necessary
+    # for reproducing the bug, but we should make sure that the
+    # return value is what we expect it to be.
+    gdb_test "p *$" { = {<A> = {a = 8, x = 9}, b = 10, x2 = 11}} \
+	"dereference return value"
+
+    # The original PR28030 reproducer stepped back into the shared object,
+    # so we'll do the same here:
+    gdb_test "step" "bar \\(.*" "step into bar"
+}
+
+### Third GDB session.
+
+with_test_prefix "third session" {
+    # We don't want a clean restart here since that will be too clean.
+    # The original reproducer for PR28030 set a breakpoint in the shared
+    # library and then restarted via "run".  The command below does roughly
+    # the same thing.  It's at this step that an internal error would
+    # occur for PR28030.  The "message" argument tells runto to turn on
+    # the printing of PASSes while runto is doing its job.
+    runto "bar" message
+}

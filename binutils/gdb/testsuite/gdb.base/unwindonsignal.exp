@@ -1,0 +1,72 @@
+# Copyright 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require {!target_info exists gdb,nosignals}
+
+
+# Some targets can't do function calls, so don't even bother with this
+# test.
+require {!target_info exists gdb,cannot_call_functions}
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+if { ![runto_main] } {
+    return 0
+}
+
+gdb_test "break stop_here" "Breakpoint \[0-9\]* at .*"
+gdb_test "continue" "Continuing.*Breakpoint \[0-9\]*, stop_here.*" \
+    "continue to breakpoint at stop_here"
+
+# Turn on unwindonsignal.
+gdb_test_no_output "set unwindonsignal on" \
+	"setting unwindonsignal"
+
+gdb_test "show unwindonsignal" \
+	"Unwinding of stack .* is on." \
+	"showing unwindonsignal"
+
+# Call function (causing the program to get a signal), and see if gdb handles
+# it properly.
+if {[gdb_test "call gen_signal ()"  \
+	 [multi_line \
+	      "The program being debugged received signal SIGABRT, Aborted" \
+	      "while in a function called from GDB\\.  GDB has restored the context" \
+	      "to what it was before the call\\.  To change this behavior use" \
+	      "\"set unwindonsignal off\"\\.  Evaluation of the expression containing" \
+	      "the function \\(gen_signal\\) will be abandoned\\."] \
+	 "unwindonsignal, inferior function call signaled"] != 0} {
+    return 0
+}
+
+# Verify the stack got unwound.
+gdb_test "bt" \
+    "#0 *\[x0-9a-f in\]*stop_here \\(.*\\) at .*#1 *\[x0-9a-f in\]*main \\(.*\\) at .*" \
+	"unwindonsignal, stack unwound"
+
+# Verify the dummy frame got removed from dummy_frame_stack.
+gdb_test_multiple "maint print dummy-frames" \
+	"unwindonsignal, dummy frame removed" {
+    -re "\[\r\n\]*.*stack=.*code=.*\[\r\n\]+$gdb_prompt $" {
+	fail "unwindonsignal, dummy frame removed"
+    }
+    -re "\[\r\n\]+$gdb_prompt $" {
+	pass "unwindonsignal, dummy frame removed"
+    }
+}

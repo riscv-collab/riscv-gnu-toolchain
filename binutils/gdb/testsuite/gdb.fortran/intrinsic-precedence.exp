@@ -1,0 +1,74 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require allow_fortran_tests
+require allow_shlib_tests
+
+standard_testfile .f90
+load_lib fortran.exp
+
+set srcfile_lib ${srcdir}/${subdir}/${testfile}.c
+set binfile_lib [standard_output_file ${testfile}.so]
+set lib_flags [list debug]
+set bin_flags [list f90 debug shlib=${binfile_lib}]
+
+if {[gdb_compile_shlib ${srcfile_lib} ${binfile_lib} $lib_flags] != "" } {
+    return -1
+}
+
+if {[prepare_for_testing ${testfile}.exp ${testfile} ${srcfile} \
+     ${bin_flags}]} {
+    return -1
+}
+
+if ![fortran_runto_main] {
+    return -1
+}
+
+gdb_breakpoint [gdb_get_line_number "all-assigned"]
+gdb_continue_to_breakpoint "all-assigned"
+
+# Variable in source is upper case.
+gdb_test "print LOC" "17"
+gdb_test "print loc" "17"
+
+# Variable in source is lower case
+gdb_test "print UBOUND" "79"
+gdb_test "print ubound" "79"
+
+# Intrinsic hides a C symbol that has debug information.  This mimics the abs
+# scenario, where it can exist as a function in C, a Fortran intrinsic and a
+# user defined variable/function.
+gdb_test "print kind(minus)" "4"
+# Confirm that the C symbol is there to be chosen if the precedence order is
+# incorrect.
+gdb_test "set lang c" \
+    "Warning: the current language does not match this frame."
+gdb_test "print kind(3)" "7"
+gdb_test_no_output "set lang fortran"
+
+# User defined abs function hides the intrinsic.
+gdb_breakpoint [gdb_get_line_number "user-abs"]
+gdb_continue_to_breakpoint "user-abs"
+set integer4 [fortran_int4]
+gdb_test "whatis abs" "void \\\(${integer4}(, uinteger\\\*8)?\\\)"
+
+# Test the scenario where the C defined version of kind is not returned by
+# lookup_symbol.
+gdb_test_no_output "set confirm off"
+# breakpoints cannot be reset without symbol information.
+gdb_test_no_output "delete"
+gdb_test "symbol-file" "No symbol file now."
+gdb_test "print kind(0)" "4"

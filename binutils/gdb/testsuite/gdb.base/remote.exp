@@ -1,0 +1,215 @@
+# Copyright 1999-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test only on boards that actually use the remote protocol.
+if {[target_info gdb_protocol] != "remote"
+    && [target_info gdb_protocol] != "extended-remote"} {
+    unsupported "requires remote protocol"
+    return
+}
+
+standard_testfile .c
+
+set result [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug}]
+if {$result != ""} {
+    untested "failed to compile"
+    return -1
+}
+
+gdb_start
+
+# Make sure we're disconnected, in case we're testing with an
+# extended-remote board, therefore already connected.
+gdb_test "disconnect" ".*"
+
+#
+# Part ONE: Check the down load commands
+#
+
+gdb_test "show remote memory-write-packet-size" \
+	"The memory-write-packet-size on future remote targets is 0 \\(default\\). The actual limit will be further reduced dependent on the target\." \
+	"write-packet default"
+
+gdb_test "set remote memory-write-packet-size" \
+	"Argument required .integer, \"fixed\" or \"limit\".\." \
+	"set write-packet - NULL"
+
+gdb_test "set remote memory-write-packet-size 20" \
+	"The memory-write-packet-size on future remote targets is set to \"20\"."
+
+gdb_test "show remote memory-write-packet-size" \
+	"The memory-write-packet-size on future remote targets is 20. The actual limit will be further reduced dependent on the target\." \
+	"set write-packet - small"
+
+gdb_test "set remote memory-write-packet-size 1" \
+	"The memory-write-packet-size on future remote targets is set to \"1\"."
+
+gdb_test "show remote memory-write-packet-size" \
+	"The memory-write-packet-size on future remote targets is 1. The actual limit will be further reduced dependent on the target\." \
+	"set write-packet - very-small"
+
+gdb_test "set remote memory-write-packet-size 0" \
+	"The memory-write-packet-size on future remote targets is set to \"0\"."
+
+gdb_test "show remote memory-write-packet-size" \
+	"The memory-write-packet-size on future remote targets is 0 \\(default\\). The actual limit will be further reduced dependent on the target\." \
+	"write-packet default again"
+
+set test "set remote memory-write-packet-size fixed"
+gdb_test_multiple $test $test {
+    -re "Change the packet size for future remote targets. .y or n. " {
+	gdb_test_multiple "y" $test {
+	    -re "$gdb_prompt $" {
+		pass $test
+	    }
+	}
+    }
+}
+
+gdb_test "show remote memory-write-packet-size" \
+	"The memory-write-packet-size on future remote targets is 0 \\(default\\). Packets are fixed at 16384 bytes\." \
+	"write-packet default fixed"
+
+gdb_test "set remote memory-write-packet-size limit" \
+	"The memory-write-packet-size on future remote targets is set to \"limit\"."
+
+gdb_test "show remote memory-write-packet-size" \
+	"The memory-write-packet-size on future remote targets is 0 \\(default\\). The actual limit will be further reduced dependent on the target\." \
+	"write-packet default limit again"
+
+#
+# Part TWO: Check the download behavior.
+#
+
+proc gdb_load_timed {executable class writesize} {
+    global test gdb_prompt
+    set test "timed download `[file tail $executable]' - $class, $writesize"
+
+    if {$writesize != ""} {
+	gdb_test "set remote memory-write-packet-size $writesize" \
+	    "The memory-write-packet-size on future remote targets is set to \"$writesize\"." \
+	    "$test - set packet size"
+
+	send_gdb "set remote memory-write-packet-size $class\n"
+	gdb_expect 5 {
+	    -re ".*Change the packet size.*$" {
+		send_gdb "y\n"
+		gdb_expect 5 {
+		    -re ".*$gdb_prompt $" {
+			pass "$test - set write size class"
+		    }
+		    timeout {
+			fail "$test - set write size class"
+			return
+		    }
+		}
+	    }
+	    -re ".*$gdb_prompt $" { }
+	    timeout {
+		fail "$test - set write size class"
+		return
+	    }
+	}
+    }
+
+    # Do not try to load using fixed sizes; we may overflow the remote target.
+    if { $class == "fixed" } {
+	return
+    }
+
+    set load_begin_time [clock clicks]
+    set result [gdb_load $executable]
+    set load_end_time [clock clicks]
+    if {$result != 0} {
+	fail "$test - loading executable"
+	return
+    }
+    verbose "$test - time [expr ($load_end_time - $load_begin_time) / 1000] ms"
+    pass $test
+}
+
+# These download tests won't actually download anything on !is_remote
+# target boards, but we run them anyway because it's simpler, and
+# harmless.
+
+# Typically about 400-1 bytes can be downloaded
+gdb_load_timed $binfile "limit" 398
+gdb_load_timed $binfile "limit" 400
+
+# Absolute max is 16384
+gdb_load_timed $binfile "fixed" 0
+gdb_load_timed $binfile "fixed" 16385
+
+# fall back to the default
+gdb_load_timed $binfile "limit" 0
+
+# Get size of data uploaded
+
+#
+# Query GDB for the size of various types
+#
+
+# Get the size of random_data table (defaults to 48K).
+set sizeof_random_data [get_sizeof "random_data" 48*1024]
+
+clean_restart $binfile
+
+#
+# Part THREE: Check the upload behavour
+#
+if {![runto_main]} {
+    return
+}
+
+# Carefully check memory around each of the most common packet edge
+# conditions
+
+gdb_test "x/8ub random_data" \
+	"<random_data>:\[ \t\]+60\[ \t\]+74\[ \t\]+216\[ \t\]+38\[ \t\]+149\[ \t\]+49\[ \t\]+207\[ \t\]+44"
+
+gdb_test "x/8ub random_data + 400 - 4" \
+	"<random_data\\+396>:\[ \t\]+185\[ \t\]+255\[ \t\]+50\[ \t\]+140\[ \t\]+237\[ \t\]+172\[ \t\]+143\[ \t\]+93"
+
+if {$sizeof_random_data > 16380} {
+    gdb_test "x/8ub random_data + 16384 - 4" \
+	"<random_data\\+16380>:\[ \t\]+178\[ \t\]+180\[ \t\]+135\[ \t\]+93\[ \t\]+70\[ \t\]+62\[ \t\]+205\[ \t\]+76"
+}
+
+# Read a chunk just larger than the packet size (reduce the packet
+# size to make life easier)
+gdb_test "set remote memory-read-packet-size 16" \
+	"The memory-read-packet-size on the current remote target is set to \"16\"."
+
+gdb_test "show remote memory-read-packet-size" \
+	"The memory-read-packet-size on the current remote target is 16. Packets are limited to 20 bytes."
+gdb_test "x/17ub random_data" \
+	"<random_data>:\[ \t\]+60\[ \t\]+74\[ \t\]+216\[ \t\]+38\[ \t\]+149\[ \t\]+49\[ \t\]+207\[ \t\]+44.*<random_data\\+8>:\[ \t\]+124\[ \t\]+38\[ \t\]+93\[ \t\]+125\[ \t\]+232\[ \t\]+67\[ \t\]+228\[ \t\]+56.*<random_data\\+16>:\[ \t\]+161"
+
+# Regression test for gdb/15289.  Make sure -1 is accepted and handled
+# as "unlimited".
+gdb_test_no_output "set remote hardware-watchpoint-limit -1"
+gdb_test_no_output "set remote hardware-breakpoint-limit -1"
+
+# This is just being thorough.  Assume (at least) a 32-bit host int,
+# and make sure 32-bit INT_MAX is accepted by a zinteger command.
+gdb_test_no_output "set remote hardware-watchpoint-limit 2147483647"
+gdb_test_no_output "set remote hardware-breakpoint-limit 2147483647"
+
+# Check the X/P/p alias commands display the correct packet names.
+foreach pkt {X P p} {
+    gdb_test "show remote ${pkt}-packet" "Support for the '${pkt}' packet on the current remote target is .*"
+}
+
+gdb_exit

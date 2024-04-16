@@ -1,0 +1,146 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test "info inferiors" and "info connections" with multiple targets.
+
+load_lib gdb-python.exp
+
+source $srcdir/$subdir/multi-target.exp.tcl
+
+if {![multi_target_prepare]} {
+    return
+}
+
+# Cache the result of calling allow_python_tests into a local variable.
+set run_python_tests [allow_python_tests]
+
+# Test "info inferiors" and "info connections".  MULTI_PROCESS
+# indicates whether the multi-process feature of remote targets is
+# turned off or on.
+proc test_info_inferiors {multi_process} {
+
+    setup "off" $multi_process
+
+    if { $::run_python_tests } {
+	gdb_test_no_output "source ${::remote_python_file}" "load python file"
+    }
+
+    # Get the description for inferior INF for when the current
+    # inferior id is CURRENT.
+    proc inf_desc {inf current} {
+	set ws "\[ \t\]+"
+	global decimal
+	upvar multi_process multi_process
+
+	if {($multi_process == "off") && ($inf == 2 || $inf == 5)} {
+	    set desc "Remote target"
+	} else {
+	    set desc "process ${decimal}"
+	}
+
+	set desc "${inf}${ws}${desc}${ws}"
+	if {$inf == $current} {
+	    return "\\* $desc"
+	} else {
+	    return "  $desc"
+	}
+    }
+
+    # Get the "Num" column for CONNECTION for when the current
+    # inferior id is CURRENT_INF.
+    proc connection_num {connection current_inf} {
+	switch $current_inf {
+	    "4" { set current_connection "1"}
+	    "5" { set current_connection "4"}
+	    "6" { set current_connection "5"}
+	    default { set current_connection $current_inf}
+	}
+	if {$connection == $current_connection} {
+	    return "\\* $connection"
+	} else {
+	    return "  $connection"
+	}
+    }
+
+    set ws "\[ \t\]+"
+    global decimal binfile
+
+    # Test "info connections" and "info inferior" by switching to each
+    # inferior one by one.
+    for {set inf 1} {$inf <= 6} {incr inf} {
+	with_test_prefix "inferior $inf" {
+	    gdb_test "inferior $inf" "Switching to inferior $inf.*"
+
+	    gdb_test "info connections" \
+		[multi_line \
+		     "Num${ws}What${ws}Description${ws}" \
+		     "[connection_num 1 $inf]${ws}native${ws}Native process${ws}" \
+		     "[connection_num 2 $inf]${ws}extended-remote localhost:$decimal${ws}Extended remote target using gdb-specific protocol${ws}" \
+		     "[connection_num 3 $inf]${ws}core${ws}Local core dump file${ws}" \
+		     "[connection_num 4 $inf]${ws}extended-remote localhost:$decimal${ws}Extended remote target using gdb-specific protocol${ws}" \
+		     "[connection_num 5 $inf]${ws}core${ws}Local core dump file${ws}" \
+		    ]
+
+	    if { $::run_python_tests } {
+		gdb_test "python info_connections()" \
+		    [multi_line \
+			 "Num${ws}What${ws}Description" \
+			 "[connection_num 1 $inf]${ws}native${ws}Native process" \
+			 "[connection_num 2 $inf]${ws}extended-remote localhost:$decimal${ws}Extended remote target using gdb-specific protocol" \
+			 "[connection_num 3 $inf]${ws}core${ws}Local core dump file" \
+			 "[connection_num 4 $inf]${ws}extended-remote localhost:$decimal${ws}Extended remote target using gdb-specific protocol" \
+			 "[connection_num 5 $inf]${ws}core${ws}Local core dump file" \
+			]
+	    }
+
+	    gdb_test "info inferiors" \
+		[multi_line \
+		     "Num${ws}Description${ws}Connection${ws}Executable${ws}" \
+		     "[inf_desc 1 $inf]1 \\(native\\)${ws}${binfile}${ws}" \
+		     "[inf_desc 2 $inf]2 \\(extended-remote localhost:$decimal\\)${ws}${binfile}${ws}" \
+		     "[inf_desc 3 $inf]3 \\(core\\)${ws}${binfile}${ws}" \
+		     "[inf_desc 4 $inf]1 \\(native\\)${ws}${binfile}${ws}" \
+		     "[inf_desc 5 $inf]4 \\(extended-remote localhost:$decimal\\)${ws}${binfile}${ws}" \
+		     "[inf_desc 6 $inf]5 \\(core\\)${ws}${binfile}${ws}" \
+		    ]
+
+	    if { $::run_python_tests } {
+		gdb_test "python info_inferiors()" \
+		    [multi_line \
+		     "Inferior 1, Connection #1: native" \
+		     "Inferior 2, Connection #2: extended-remote localhost:$decimal" \
+		     "Inferior 3, Connection #3: core" \
+		     "Inferior 4, Connection #1: native" \
+		     "Inferior 5, Connection #4: extended-remote localhost:$decimal" \
+		     "Inferior 6, Connection #5: core" \
+		    ]
+	    }
+	}
+    }
+}
+
+if { $run_python_tests } {
+    set remote_python_file [gdb_remote_download host \
+				${srcdir}/${subdir}/${testfile}.py]
+}
+
+# Test "info inferiors" and "info connections" commands.
+with_test_prefix "info-inferiors" {
+    foreach_with_prefix multi_process {"on" "off"} {
+	test_info_inferiors $multi_process
+    }
+}
+
+multi_target_cleanup

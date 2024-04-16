@@ -1,0 +1,105 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test setting breakpoints in C functions with some uppercase letters
+# in their name, using the "<...>" notation.  See gdb/22670.  While at
+# it, also try evaluating expressions involving calls to such
+# functions.
+
+load_lib "ada.exp"
+
+require allow_ada_tests
+
+standard_ada_testfile foo_h731_021
+
+set cfile "bar"
+set csrcfile ${srcdir}/${subdir}/${testdir}/${cfile}.c
+set cobject [standard_output_file ${cfile}.o]
+
+set cfile2 "qux"
+set csrcfile2 ${srcdir}/${subdir}/${testdir}/${cfile2}.c
+set cobject2 [standard_output_file ${cfile2}.o]
+
+gdb_compile "${csrcfile}" "${cobject}" object [list debug]
+gdb_compile "${csrcfile2}" "${cobject2}" object ""
+
+set options [list debug \
+		 additional_flags=-largs \
+		 additional_flags=${cobject} \
+		 additional_flags=${cobject2} \
+		 additional_flags=-margs]
+if {[gdb_compile_ada "${srcfile}" "${binfile}" executable $options] != "" } {
+  return -1
+}
+
+clean_restart ${testfile}
+
+if {![runto "foo_h731_021"]} {
+  return
+}
+
+# Verify that the current language is Ada.
+gdb_test "show lang" \
+         "\"auto; currently ada\"\\."
+
+# Before running to the C function (and thus switching out of Ada
+# mode), try printing the function using the "<...>" notation.
+gdb_test "p <MixedCaseFunc>" \
+         " = void" \
+         "p <MixedCaseFunc>, in Ada"
+
+gdb_test "p <NoDebugMixedCaseFunc>" \
+         " = {<text variable, no debug info>} $hex <NoDebugMixedCaseFunc>" \
+         "p <NoDebugMixedCaseFunc>, in Ada"
+
+# Try inserting a breakpoint inside a C function. Because the function's
+# name has some uppercase letters, we need to use the "<...>" notation.
+# The purpose of this testcase is to verify that we can in fact do so
+# and that it inserts the breakpoint at the expected location.
+gdb_test "break <MixedCaseFunc>" \
+         "Breakpoint $decimal at $hex: file .*bar.c, line $decimal\\."
+
+# Same, but this time on the function with no debug info.
+gdb_test "break <NoDebugMixedCaseFunc>" \
+         "Breakpoint $decimal at $hex"
+
+# Resume the program's execution, verifying that it lands at the expected
+# location.
+gdb_test "continue" \
+         "Breakpoint $decimal, MixedCaseFunc \\(\\) at .*bar\\.c:$decimal.*"
+
+# Try printing again using the "<...>" notation.  This shouldn't work
+# now, since the current frame is a C function.
+gdb_test "p <MixedCaseFunc>" \
+         "A syntax error in expression, near `<MixedCaseFunc>'\\." \
+         "p <MixedCaseFunc>, in C"
+
+gdb_test "p <NoDebugMixedCaseFunc>" \
+         "A syntax error in expression, near `<NoDebugMixedCaseFunc>'\\." \
+         "p <NoDebugMixedCaseFunc>, in C"
+
+set test "break <MixedCaseFunc>, in C"
+gdb_test_multiple "break <MixedCaseFunc>" $test {
+	-re "Function \"<MixedCaseFunc>\" not defined\..*Make breakpoint pending on future shared library load.*y or .n.. $" {
+		gdb_test_no_output "n" $test
+	}
+}
+
+set test "break <NoDebugMixedCaseFunc>, in C"
+gdb_test_multiple "break <NoDebugMixedCaseFunc>" $test {
+	-re "Function \"<NoDebugMixedCaseFunc>\" not defined\..*Make breakpoint pending on future shared library load.*y or .n.. $" {
+		gdb_test_no_output "n" $test
+	}
+}

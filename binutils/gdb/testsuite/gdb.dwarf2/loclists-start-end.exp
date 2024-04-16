@@ -1,0 +1,137 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test support for DW_LLE_start_end (PR symtab/27999).
+
+load_lib dwarf.exp
+
+require dwarf2_support
+
+# Test with 32-bit and 64-bit DWARF.
+foreach_with_prefix is_64 {false true} {
+    if { $is_64 } {
+	standard_testfile .c -dw64.S
+	set testfile ${testfile}-dw64
+    } else {
+	standard_testfile .c -dw32.S
+	set testfile ${testfile}-dw32
+    }
+
+    # Get the addresses / lengths of func1 and func2.
+    lassign [function_range func1 $srcdir/$subdir/$srcfile] func1_addr func1_len
+    lassign [function_range func2 $srcdir/$subdir/$srcfile] func2_addr func2_len
+
+    set asm_file [standard_output_file $srcfile2]
+    Dwarf::assemble $asm_file {
+	global func1_addr func1_len
+	global func2_addr func2_len
+	global is_64
+
+	# The CU uses the DW_FORM_loclistx form to refer to the .debug_loclists
+	# section.
+	cu {
+	    version 5
+	    is_64 $is_64
+	} {
+	    declare_labels int_type
+
+	    DW_TAG_compile_unit {
+		{DW_AT_loclists_base cu_table DW_FORM_sec_offset}
+	    } {
+		int_type: DW_TAG_base_type {
+		    {DW_AT_byte_size 4 DW_FORM_data1}
+		    {DW_AT_encoding @DW_ATE_signed}
+		    {DW_AT_name "int"}
+		}
+
+		DW_TAG_variable {
+		    {DW_AT_name "foo"}
+		    {DW_AT_location 1 DW_FORM_loclistx}
+		    {DW_AT_type :$int_type}
+		}
+
+		DW_TAG_subprogram {
+		    {DW_AT_name "func1"}
+		    {DW_AT_low_pc $func1_addr}
+		    {DW_AT_high_pc $func1_len DW_FORM_udata}
+		}
+
+		DW_TAG_subprogram {
+		    {DW_AT_name "func2"}
+		    {DW_AT_low_pc $func2_addr}
+		    {DW_AT_high_pc $func2_len DW_FORM_udata}
+		}
+	    }
+	}
+
+	loclists {is-64 $is_64} {
+	    # This table is unused, but exists so that the used table is not at
+	    # the beginning of the section.
+	    table {} {
+		list_ {
+		    start_end 0x1000 0x2000 { DW_OP_addr 0x100000 }
+		}
+	    }
+
+	    # The lists in this table are accessed by index (DW_FORM_rnglistx).
+	    table {post-header-label cu_table} {
+		# This list is unused, but exists to offset the next ones.
+		list_ {
+		    start_end 0x1000 0x2000 { DW_OP_addr 0x100000 }
+		}
+
+		# For variable foo.
+		list_ {
+		    # This should not affect the following addresses.
+		    base_address 0xffff
+
+		    # When in func1.
+		    start_end $func1_addr "$func1_addr + $func1_len" {
+			DW_OP_constu 0x123456
+			DW_OP_stack_value
+		    }
+
+		    # When in func2.
+		    start_end $func2_addr "$func2_addr + $func2_len" {
+			DW_OP_constu 0x234567
+			DW_OP_stack_value
+		    }
+		}
+	    }
+	}
+    }
+
+    if { [prepare_for_testing "failed to prepare" ${testfile} \
+	      [list $srcfile $asm_file] {nodebug}] } {
+	return -1
+    }
+
+    if { ![runto_main] } {
+	return
+    }
+
+    gdb_breakpoint "func1"
+    gdb_breakpoint "func2"
+
+    gdb_continue_to_breakpoint "func1"
+    with_test_prefix "at func1" {
+	gdb_test "print /x foo" " = 0x123456"
+    }
+
+    gdb_continue_to_breakpoint "func2"
+    with_test_prefix "at func2" {
+	gdb_test "print /x foo" " = 0x234567"
+    }
+}

@@ -1,0 +1,265 @@
+# Copyright 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the gdb testsuite.
+
+# Test amd64 displaced stepping.
+
+require is_x86_64_m64_target
+
+set newline "\[\r\n\]*"
+
+set opts {debug nopie}
+standard_testfile .S -signal.c
+
+if { [prepare_for_testing "failed to prepare" $testfile "$srcfile $srcfile2" $opts] } {
+    return -1
+}
+
+gdb_test "set displaced-stepping on" ""
+gdb_test "show displaced-stepping" ".* displaced stepping .* is on.*"
+
+if {![runto_main]} {
+    return 0
+}
+
+##########################################
+
+# Test call/ret.
+
+gdb_test "break test_call" \
+    "Breakpoint.*at.* file .*$srcfile, line.*"
+gdb_test "break test_call_end" \
+    "Breakpoint.*at.* file .*$srcfile, line.*"
+
+gdb_test "break test_ret" \
+    "Breakpoint.*at.* file .*$srcfile, line.*"
+gdb_test "break test_ret_end" \
+    "Breakpoint.*at.* file .*$srcfile, line.*"
+
+gdb_test "continue" \
+    "Continuing.*Breakpoint.*, test_call ().*" \
+    "continue to test_call"
+gdb_test "continue" \
+    "Continuing.*Breakpoint.*, test_call_end ().*" \
+    "continue to test_call_end"
+
+gdb_test "continue" \
+    "Continuing.*Breakpoint.*, test_ret ().*" \
+    "continue to test_ret"
+gdb_test "continue" \
+    "Continuing.*Breakpoint.*, test_ret_end ().*" \
+    "continue to test_ret_end"
+
+##########################################
+
+# Test abs-jmp/rep-ret.
+
+gdb_test "break test_abs_jmp" \
+    "Breakpoint.*at.* file .*$srcfile, line.*"
+gdb_test "break test_abs_jmp_end" \
+    "Breakpoint.*at.* file .*$srcfile, line.*"
+
+gdb_test "break test_rep_ret" \
+    "Breakpoint.*at.* file .*$srcfile, line.*"
+gdb_test "break test_rep_ret_end" \
+    "Breakpoint.*at.* file .*$srcfile, line.*"
+
+gdb_test "continue" \
+    "Continuing.*Breakpoint.*, test_abs_jmp ().*" \
+    "continue to test_abs_jmp"
+gdb_test "continue" \
+    "Continuing.*Breakpoint.*, test_abs_jmp_end ().*" \
+    "continue to test_abs_jmp_end"
+
+gdb_test "continue" \
+    "Continuing.*Breakpoint.*, test_rep_ret ().*" \
+    "continue to test_rep_ret"
+gdb_test "continue" \
+    "Continuing.*Breakpoint.*, test_rep_ret_end ().*" \
+    "continue to test_rep_ret_end"
+
+##########################################
+
+# Test syscall.
+
+gdb_test "break test_syscall" \
+    "Breakpoint.*at.* file .*$srcfile, line.*"
+gdb_test "break test_syscall_end" \
+    "Breakpoint.*at.* file .*$srcfile, line.*"
+
+gdb_test "continue" \
+    "Continuing.*Breakpoint.*, test_syscall ().*" \
+    "continue to test_syscall"
+gdb_test "continue" \
+    "Continuing.*Breakpoint.*, test_syscall_end ().*" \
+    "continue to test_syscall_end"
+
+##########################################
+
+# int3 (with prefixes)
+# These don't occur in normal code, but gdb should still DTRT.
+
+gdb_test "break test_int3" \
+    "Breakpoint.*at.* file .*$srcfile, line.*"
+gdb_test "break test_int3_end" \
+    "Breakpoint.*at.* file .*$srcfile, line.*"
+
+gdb_test "continue" \
+    "Continuing.*Breakpoint.*, test_int3 ().*" \
+    "continue to test_int3"
+
+gdb_test "continue" \
+    "Continuing.*Breakpoint.*, test_int3_end ().*" \
+    "continue to test_int3_end"
+
+##########################################
+
+# Test rip-relative.
+# GDB picks a spare register to hold the rip-relative address.
+# Exercise all the possibilities (rax-rdi, sans rsp).
+
+# The order must much the order in srcfile.
+set rip_regs { "rax" "rbx" "rcx" "rdx" "rbp" "rsi" "rdi" }
+
+# Assign val to all specified regs.
+
+proc set_regs { regs val } {
+    global gdb_prompt
+
+    foreach reg ${regs} {
+	# Use send_gdb/gdb_expect so that these aren't logged as pass/fail.
+	send_gdb "set \$${reg} = ${val}\n"
+	gdb_expect 10 {
+	    -re "$gdb_prompt $" { 
+		verbose "Setting ${reg} to ${val}." 2
+	    }
+	    timeout {
+		warning "Couldn't set ${reg} to ${val}."
+	    }
+	}
+    }
+}
+
+# Verify all REGS equal VAL, except EXCEPT_REG which equals
+# EXCEPT_REG_VAL.
+#
+# It is fine for EXCEPT_REG to be the empty string, in which case no
+# register will be checked for EXCEPT_REG_VAL.
+
+proc_with_prefix verify_regs { regs val except_reg except_reg_val } {
+    global newline
+
+    foreach reg ${regs} {
+	set expected ${val}
+	if { "${reg}" == "${except_reg}" } {
+	    set expected ${except_reg_val}
+	}
+	# The cast to (int) is because RBP is printed as a pointer.
+	gdb_test "p (int) \$${reg}" " = ${expected}${newline}" "${reg} expected value"
+    }
+}
+
+# Run the rip-relative tests.
+#
+# TEST_START_LABEL and TEST_END_LABEL are two labels that delimit the
+# test in the srcfile.
+#
+# REG is either the name of a register which is the destination
+# location (when testing the add instruction), otherwise REG should be
+# the empty string, when testing the 'jmpq*' instruction.
+#
+# SIGNAL_MODES is a list which always contains 'off' and optionally
+# might also contain 'on'.  The 'on' value is only included if the
+# target supports sending SIGALRM to the inferior.  The test is
+# repeated for each signal mode.  With signal mode 'on' we send a
+# signal to the inferior while it is performing a displaced step.
+proc rip_test { reg test_start_label test_end_label signal_modes } {
+    global srcfile rip_regs
+
+    gdb_test "break ${test_start_label}" \
+	"Breakpoint.*at.* file .*$srcfile, line.*"
+    gdb_test "break ${test_end_label}" \
+	"Breakpoint.*at.* file .*$srcfile, line.*"
+
+    foreach_with_prefix send_signal $signal_modes {
+	if {$send_signal eq [lindex $signal_modes 0]} {
+	    # The first time through we can just continue to the
+	    # breakpoint.
+	    gdb_test "continue" \
+		"Continuing.*Breakpoint.*, ${test_start_label} ().*" \
+		"continue to ${test_start_label}"
+	} else {
+	    # For the second time through the test we need to jump
+	    # back to the beginning.
+	    gdb_test "jump ${test_start_label}" \
+		"Breakpoint.*, ${test_start_label} ().*" \
+		"jump back to ${test_start_label}"
+	}
+
+	set_regs ${rip_regs} 0
+
+	if {$send_signal} {
+	    # The signal sending tests require that the signal appear to
+	    # arrive from an outside source, i.e. we can't use GDB's 'signal'
+	    # command to deliver it.
+	    #
+	    # The signal must arrive while GDB is processing the displaced
+	    # step instruction.
+	    #
+	    # If we use 'signal' to send the signal GDB doesn't actually do
+	    # the displaced step, but instead just delivers the signal.
+	    set inferior_pid [get_inferior_pid]
+	    # Ensure that $inferior_pid refers to a single process.
+	    gdb_assert {[expr $inferior_pid > 0]} \
+		"check for a sane inferior pid"
+	    if {$inferior_pid > 0} {
+		remote_exec target "kill -ALRM $inferior_pid"
+	    }
+	}
+
+	gdb_test "continue" \
+	    "Continuing.*Breakpoint.*, ${test_end_label} ().*" \
+	    "continue to ${test_end_label}"
+
+	verify_regs ${rip_regs} 0 ${reg} 42
+    }
+}
+
+if {![target_info exists gdb,nosignals] && ![istarget "*-*-mingw*"]} {
+    # Only targets that support SIGALRM can run the signal tests.
+    set signal_modes { off on }
+} else {
+    set signal_modes { off }
+}
+
+# The rip-relative add instructions.  There's a test writing to
+# each register in RIP_REGS in turn.
+foreach reg ${rip_regs} {
+    with_test_prefix "add into ${reg}" {
+	rip_test $reg "test_rip_${reg}" "test_rip_${reg}_end" $signal_modes
+    }
+}
+
+# Now test the rip-relative 'jmpq*' instruction.
+with_test_prefix "rip-relative jmpq*" {
+    rip_test "" "test_jmp" "test_jmp_end" $signal_modes
+}
+
+##########################################
+
+# Done, run program to exit.
+
+gdb_continue_to_end "amd64-disp-step"

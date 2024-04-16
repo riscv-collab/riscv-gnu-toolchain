@@ -1,0 +1,195 @@
+# Copyright 2013-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test PR 18258.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+standard_testfile main.c -1.S -2.c
+
+# Create the DWARF.
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    declare_labels partial_unit_defining_a partial_unit_defining_b
+    declare_labels partial_unit_with_opaque
+    declare_labels struct_a_label struct_b_label
+    declare_labels opaque_struct_a_label opaque_struct_b_label
+    declare_labels char_type1_label char_type2_label
+
+    # The partial units are laid out so we're not dependent on the order that
+    # they appear in compunit_symtab.includes.  We need the one with the
+    # opaque definition to appear first to gdb, so we put it in the middle.
+    # Either the handling of variable_a or variable_b will be broken (in an
+    # unpatched gdb).
+    #
+    # However, once a partial unit with a non-opaque type is read in we can
+    # no longer see the bug as gdb will keep looking until it eventually gets
+    # to the defining partial unit, setting aside the symbol lookup cache.
+    # So heads up!
+
+    cu {} {
+	compile_unit {
+	    {language @DW_LANG_C}
+	    {name opaque_before}
+	} {
+	    imported_unit {
+		{import $partial_unit_with_opaque ref_addr}
+	    }
+
+	    imported_unit {
+		{import $partial_unit_defining_a ref_addr}
+	    }
+	}
+    }
+
+    cu {} {
+	compile_unit {
+	    {language @DW_LANG_C}
+	    {name opaque_after}
+	} {
+	    imported_unit {
+		{import $partial_unit_defining_b ref_addr}
+	    }
+
+	    imported_unit {
+		{import $partial_unit_with_opaque ref_addr}
+	    }
+	}
+    }
+
+    cu {} {
+	partial_unit_with_opaque: partial_unit {
+	    {name "partial_unit_with_opaque"}
+	} {
+	    # Normally gdb doesn't add opaque types to the symbol table
+	    # but there are times when it will, and in order to exercise
+	    # this bug we need this entry in the symbol table.
+	    # By giving it a size of 1 we achieve this.
+
+	    opaque_struct_a_label: structure_type {
+		{name struct_a}
+		{declaration 1 flag}
+		{byte_size 1 DW_FORM_sdata}
+	    }
+
+	    opaque_struct_b_label: structure_type {
+		{name struct_b}
+		{declaration 1 flag}
+		{byte_size 1 DW_FORM_sdata}
+	    }
+
+	    DW_TAG_variable {
+		{name variable_a}
+		{type :$opaque_struct_a_label}
+		{external 1 flag}
+		{declaration 1 flag}
+	    }
+
+	    DW_TAG_variable {
+		{name variable_b}
+		{type :$opaque_struct_b_label}
+		{external 1 flag}
+		{declaration 1 flag}
+	    }
+	}
+    }
+
+    cu {} {
+	partial_unit_defining_a: partial_unit {
+	    {name "partial_unit_defining_a"}
+	} {
+	    char_type1_label: base_type {
+		{name "signed char"}
+		{encoding @DW_ATE_signed}
+		{byte_size 1 DW_FORM_sdata}
+	    }
+
+	    struct_a_label: structure_type {
+		{name struct_a}
+		{byte_size 1 DW_FORM_sdata}
+	    } {
+		member {
+		    {name xyz}
+		    {type :$char_type1_label}
+		    {data_member_location 0 DW_FORM_sdata}
+		}
+	    }
+
+	    DW_TAG_variable {
+		{name variable_a}
+		{type :$struct_a_label}
+		{external 1 flag}
+		{linkage_name variable_a}
+	    }
+	}
+    }
+
+    cu {} {
+	partial_unit_defining_b: partial_unit {
+	    {name "partial_unit_defining_b"}
+	} {
+	    char_type2_label: base_type {
+		{name "signed char"}
+		{encoding @DW_ATE_signed}
+		{byte_size 1 DW_FORM_sdata}
+	    }
+
+	    struct_b_label: structure_type {
+		{name struct_b}
+		{byte_size 1 DW_FORM_sdata}
+	    } {
+		member {
+		    {name xyz}
+		    {type :$char_type2_label}
+		    {data_member_location 0 DW_FORM_sdata}
+		}
+	    }
+
+	    DW_TAG_variable {
+		{name variable_b}
+		{type :$struct_b_label}
+		{external 1 flag}
+		{linkage_name variable_b}
+	    }
+	}
+    }
+
+    # GDB expands the symbol table with main at start up,
+    # so keep this separate.
+    cu {} {
+	compile_unit {
+	    {language @DW_LANG_C}
+	    {name main}
+	} {
+	    subprogram {
+		{MACRO_AT_func { main }}
+	    }
+	}
+    }
+}
+
+if [prepare_for_testing "failed to prepare" $testfile "${asm_file} ${srcfile} ${srcfile3}" {nodebug}] {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+gdb_test "p variable_a" " = {xyz = 97 'a'}"
+gdb_test "p variable_b" " = {xyz = 98 'b'}"

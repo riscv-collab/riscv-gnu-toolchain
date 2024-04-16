@@ -1,0 +1,323 @@
+# Copyright 2002-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+# relocate.exp -- Expect script to test loading symbols from unrelocated
+#		  object files.
+
+standard_testfile .c
+append binfile .o
+
+remote_exec build "rm -f ${binfile}"
+if { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" object {debug}] != "" } {
+     untested "failed to compile"
+     return -1
+}
+
+clean_restart
+
+#Check that invalid options are rejected.
+foreach x {"-raednow" "readnow" "foo" "-readnow s"} {
+    set word [lindex $x [expr [llength $x]-1]]
+    gdb_test "add-symbol-file ${binfile} 0 $x" \
+	"Unrecognized argument \"$word\"" \
+	"add-symbol-file: unknown option $word"
+}
+
+# Check that we can pass parameters using any position in the command
+# line.
+set test "add-symbol-file positionless -readnow"
+gdb_test_multiple "add-symbol-file -readnow $binfile 0x100 -s .bss 0x3" $test {
+    -re "add symbol table from file \"${binfile}\" at\r\n\t\.text_addr = 0x100\r\n\t\.bss_addr = 0x3\r\n\\(y or n\\) " {
+	gdb_test "n" "Not confirmed\." $test
+    }
+}
+# When we use -s as the first argument, the section will be printed
+# first as well.
+set test "add-symbol-file positionless -s"
+gdb_test_multiple "add-symbol-file -s .bss 0x3 -readnow $binfile 0x100" $test {
+    -re "add symbol table from file \"${binfile}\" at\r\n\t\.text_addr = 0x100\r\n\t\.bss_addr = 0x3\r\n\\(y or n\\) " {
+	gdb_test "n" "Not confirmed\." $test
+    }
+}
+set test "add-symbol-file positionless -s, no -readnow"
+gdb_test_multiple "add-symbol-file $binfile 0x100 -s .bss 0x3" $test {
+    -re "add symbol table from file \"${binfile}\" at\r\n\t\.text_addr = 0x100\r\n\t\.bss_addr = 0x3\r\n\\(y or n\\) " {
+	gdb_test "n" "Not confirmed\." $test
+    }
+}
+# Check that passing "-s .text", no matter the position, always has
+# the same result.
+set test "add-symbol-file different -s .text, after file"
+gdb_test_multiple "add-symbol-file $binfile 0x100 -s .text 0x200" $test {
+    -re "add symbol table from file \"${binfile}\" at\r\n\t\.text_addr = 0x100\r\n\t\.text_addr = 0x200\r\n\\(y or n\\) " {
+	gdb_test "n" "Not confirmed\." $test
+    }
+}
+set test "add-symbol-file different -s .text, before file"
+gdb_test_multiple "add-symbol-file -s .text 0x200 $binfile 0x100" $test {
+    -re "add symbol table from file \"${binfile}\" at\r\n\t\.text_addr = 0x100\r\n\t\.text_addr = 0x200\r\n\\(y or n\\) " {
+	gdb_test "n" "Not confirmed\." $test
+    }
+}
+# Check that passing a single "-s .text" is equivalent to passing
+# the text address in a positional argument.
+set test "add-symbol-file -s .text, no address"
+gdb_test_multiple "add-symbol-file $binfile -s .text 0x100" $test {
+    -re "add symbol table from file \"${binfile}\" at\r\n\t\.text_addr = 0x100\r\n\\(y or n\\) " {
+	gdb_test "n" "Not confirmed\." $test
+    }
+}
+# Check section addresses can be omitted.
+set test "add-symbol-file no address"
+gdb_test_multiple "add-symbol-file $binfile" $test {
+    -re "add symbol table from file \"${binfile}\"\r\n\\(y or n\\) " {
+	gdb_test "n" "Not confirmed\." $test
+    }
+}
+# Test that passing "--" disables option processing.
+gdb_test "add-symbol-file -- $binfile 0x100 -s .bss 0x3" \
+    "Unrecognized argument \"-s\"" \
+    "add-symbol-file with -- disables option processing"
+set test "add-symbol-file with -- disables option processing, non-existent filename"
+gdb_test_multiple "add-symbol-file -- -non-existent-file 0x100" $test {
+    -re "add symbol table from file \"-non-existent-file\" at\r\n\t\.text_addr = 0x100\r\n\\(y or n\\) " {
+	gdb_test "y" "-non-existent-file: No such file or directory\." $test
+    }
+}
+# Test that passing the wrong number of arguments to '-s' leads to an
+# error.
+gdb_test "add-symbol-file $binfile -s" \
+    "Missing section name after \"-s\"" \
+    "add-symbol-file with -s without section name"
+gdb_test "add-symbol-file $binfile -s .bss" \
+    "Missing section address after \"-s\"" \
+    "add-symbol-file with -s without section address"
+# Test that '-s' accepts section names with '-'
+set test "add-symbol-file with -s using section name starting with dash"
+gdb_test_multiple "add-symbol-file -s -section-name 0x200 $binfile 0x100" $test {
+    -re "add symbol table from file \"${binfile}\" at\r\n\t\.text_addr = 0x100\r\n\t\-section-name_addr = 0x200\r\n\\(y or n\\) " {
+	gdb_test "n" "Not confirmed\." $test
+    }
+}
+# Since we're here, might as well test the 'symbol-file' command and
+# if its arguments can also be passed at any position.
+gdb_test "symbol-file -readnow $binfile" \
+    "Reading symbols from ${binfile}\.\.\.\r\nExpanding full symbols from ${binfile}\.\.\." \
+    "symbol-file with -readnow first"
+clean_restart
+gdb_test "symbol-file $binfile -readnow" \
+    "Reading symbols from ${binfile}\.\.\.\r\nExpanding full symbols from ${binfile}\.\.\." \
+    "symbol-file with -readnow second"
+gdb_test "symbol-file -readnow" \
+    "no symbol file name was specified" \
+    "symbol-file without filename"
+gdb_test "symbol-file -- -non-existent-file" \
+    "-non-existent-file: No such file or directory\." \
+    "symbol-file with -- disables option processing"
+clean_restart
+gdb_test "symbol-file -readnow -- $binfile" \
+    "Reading symbols from ${binfile}\.\.\.\r\nExpanding full symbols from ${binfile}\.\.\." \
+    "symbol-file with -- and -readnow"
+gdb_test "symbol-file -- $binfile -readnow" \
+    "Unrecognized argument \"-readnow\"" \
+    "symbol-file with -- and -readnow, invalid option"
+
+clean_restart
+
+gdb_test "add-symbol-file ${binfile} 0 -s" \
+    "Missing section name after .-s." \
+    "add-symbol-file bare -s"
+gdb_test "add-symbol-file ${binfile} 0 -s .whatever" \
+    "Missing section address after .-s." \
+    "add-symbol-file missing address"
+
+# Load the object file.
+gdb_test "add-symbol-file ${binfile} 0" \
+	"Reading symbols from .*${testfile}\\.o\\.\\.\\.(|\r\nUsing host libthread_db library .*libthread_db.so.*\\.)" \
+	"add-symbol-file ${testfile}.o 0" \
+	"add symbol table from file \".*${testfile}\\.o\" at\[ \t\r\n\]+\.text_addr = 0x0\[\r\n\]+\\(y or n\\) " \
+	"y"
+
+with_test_prefix "print addresses, static vars" {
+    # Print the addresses of static variables.
+    set static_foo_addr [get_var_address static_foo]
+    set static_bar_addr [get_var_address static_bar]
+}
+
+# Make sure they have different addresses.
+if { "${static_foo_addr}" == "${static_bar_addr}" } {
+  fail "static variables have different addresses"
+} else {
+  pass "static variables have different addresses"
+}
+
+with_test_prefix "print addresses, global vars" {
+    # Print the addresses of global variables.
+    set global_foo_addr [get_var_address global_foo]
+    set global_bar_addr [get_var_address global_bar]
+}
+
+# Make sure they have different addresses.
+if { "${global_foo_addr}" == "${global_bar_addr}" } {
+  fail "global variables have different addresses"
+} else {
+  pass "global variables have different addresses"
+}
+
+with_test_prefix "print addresses, functions" {
+    # Print the addresses of functions.
+    set function_foo_addr [get_var_address function_foo]
+    set function_bar_addr [get_var_address function_bar]
+}
+
+# Make sure they have different addresses.
+if { "${function_foo_addr}" == "${function_bar_addr}" } {
+  fail "functions have different addresses"
+} else {
+  pass "functions have different addresses"
+}
+
+# Now use a variable as an offset to add-symbol-file, and check that
+# the functions' addresses change.
+
+clean_restart
+
+gdb_test_no_output "set \$offset = 0x10000"
+
+# Load the object file.
+gdb_test "add-symbol-file ${binfile} \$offset" \
+	"Reading symbols from .*${testfile}\\.o\\.\\.\\.(|\r\nUsing host libthread_db library .*libthread_db.so.*\\.)" \
+	"add-symbol-file ${testfile}.o \$offset" \
+	"add symbol table from file \".*${testfile}\\.o\" at\[ \t\r\n\]+\.text_addr = 0x10000\[\r\n\]+\\(y or n\\) " \
+	"y"
+
+# Print the addresses of functions.
+set new_function_foo_addr [get_var_address function_foo]
+
+# Make sure they have different addresses.
+if { "${function_foo_addr}" == "${new_function_foo_addr}" } {
+  fail "function foo has a different address"
+} else {
+  pass "function foo has a different address"
+}
+
+# Load the object using symbol-file with an offset and check that
+# all addresses are moved by that offset.
+
+set offset 0x10000
+clean_restart
+set readnow_re "Expanding full symbols from ${binfile}\.\.\."
+gdb_test "symbol-file -o $offset $binfile" \
+    "Reading symbols from ${binfile}\.\.\.(\r\n$readnow_re)?" \
+    "symbol-file with offset"
+
+with_test_prefix "static vars" {
+    # Make sure the address of a static variable is moved by offset.
+    set new_static_foo_addr [get_var_address static_foo]
+    gdb_assert {${new_static_foo_addr} == ${static_foo_addr} + $offset} \
+	"static variable foo is moved by offset"
+}
+
+with_test_prefix "global vars" {
+    # Make sure the address of a global variable is moved by offset.
+    set new_global_foo_addr [get_var_address global_foo]
+    gdb_assert {${new_global_foo_addr} == ${global_foo_addr} + $offset} \
+	"global variable foo is moved by offset"
+}
+
+with_test_prefix "functions" {
+    # Make sure the address of a function is moved by offset.
+    set new_function_foo_addr [get_var_address function_foo]
+    gdb_assert {${new_function_foo_addr} == ${function_foo_addr} + $offset} \
+	"function foo is moved by offset"
+}
+
+# Load the object using add-symbol-file with an offset and check that
+# all addresses are moved by that offset.
+
+set offset 0x10000
+clean_restart
+gdb_test "add-symbol-file -o $offset $binfile" \
+    "Reading symbols from ${binfile}\.\.\.(\r\n$readnow_re)?" \
+    "add-symbol-file with offset" \
+    "add symbol table from file \".*${testfile}\\.o\" with all sections offset by $offset\[\r\n\]+\\(y or n\\) " \
+    "y"
+
+with_test_prefix "static scope, 2nd" {
+    # Make sure the address of a static variable is moved by offset.
+    set new_static_foo_addr [get_var_address static_foo]
+    gdb_assert { ${new_static_foo_addr} == ${static_foo_addr} + $offset } \
+	"static variable foo is moved by offset"
+}
+
+with_test_prefix "global vars, 2nd" {
+    # Make sure the address of a global variable is moved by offset.
+    set new_global_foo_addr [get_var_address global_foo]
+    gdb_assert { ${new_global_foo_addr} == ${global_foo_addr} + $offset } \
+	"global variable foo is moved by offset"
+}
+
+with_test_prefix "functions, 2nd" {
+    # Make sure the address of a function is moved by offset.
+    set new_function_foo_addr [get_var_address function_foo]
+    gdb_assert { ${new_function_foo_addr} == ${function_foo_addr} + $offset } \
+	"function foo is moved by offset"
+}
+
+# Re-load the object giving an explicit address for .text
+
+set text [ format "0x%x" [expr ${function_foo_addr} + 0x20000] ]
+clean_restart
+gdb_test "add-symbol-file $binfile -o $offset $text" \
+    "Reading symbols from ${binfile}\.\.\.(\r\n$readnow_re)?" \
+    "add-symbol-file with offset, text address given" \
+    "add symbol table from file \".*${testfile}\\.o\" at\[ \t\r\n\]+\.text_addr = ${text}\[\r\n\]+with other sections offset by ${offset}\[\r\n\]+\\(y or n\\) " \
+    "y"
+
+with_test_prefix "functions, 3rd" {
+    # Make sure function has a different addresses now.
+    set function_foo_addr [get_var_address function_foo]
+    gdb_assert { ${function_foo_addr} != ${new_function_foo_addr} } \
+	"function foo has a different address"
+}
+
+# Re-load the object giving an explicit address for .data
+
+set data [ format "0x%x" [expr ${global_foo_addr} + 0x20000] ]
+clean_restart
+gdb_test "add-symbol-file $binfile -o $offset -s .data $data" \
+    "Reading symbols from ${binfile}\.\.\.(\r\n$readnow_re)?" \
+    "add-symbol-file with offset, data address given" \
+    "add symbol table from file \".*${testfile}\\.o\" at\[ \t\r\n\]+\.data_addr = ${data}\[\r\n\]+with other sections offset by ${offset}\[\r\n\]+\\(y or n\\) " \
+    "y"
+
+with_test_prefix "global vars, 3rd" {
+    # Make sure variable has a different addresses now.
+    set global_foo_addr [get_var_address global_foo]
+    gdb_assert { ${global_foo_addr} != ${new_global_foo_addr} } \
+	"global variable foo has a different address"
+}
+
+# Now try loading the object as an exec-file; we should be able to print
+# the values of variables after we do this.
+
+clean_restart
+gdb_file_cmd ${binfile}
+
+# Check the values of the variables.
+gdb_test "print static_foo" "\\\$$decimal = 1"
+gdb_test "print static_bar" "\\\$$decimal = 2"
+gdb_test "print global_foo" "\\\$$decimal = 3"
+gdb_test "print global_bar" "\\\$$decimal = 4"

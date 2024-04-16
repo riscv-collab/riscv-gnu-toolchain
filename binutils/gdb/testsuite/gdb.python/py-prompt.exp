@@ -1,0 +1,122 @@
+# Copyright (C) 2011-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It tests the mechanism
+# for defining the prompt in Python.
+
+standard_testfile
+
+load_lib gdb-python.exp
+load_lib prompt.exp
+
+require allow_python_tests
+
+if {[build_executable $testfile.exp $testfile $srcfile debug] == -1} {
+    return -1
+}
+
+save_vars { INTERNAL_GDBFLAGS } {
+    set INTERNAL_GDBFLAGS [string map {"-q" ""} $INTERNAL_GDBFLAGS]
+
+    global GDBFLAGS
+    set saved_gdbflags $GDBFLAGS
+    set GDBFLAGS [concat $GDBFLAGS " -ex \"set height 0\""]
+    set GDBFLAGS [concat $GDBFLAGS " -ex \"set width 0\""]
+    set GDBFLAGS [concat $GDBFLAGS " -ex \"python p = list()\""]
+    set prompt_func "python def foo(x): global p; p.append(x);  return \'(Foo) \'"
+    set GDBFLAGS [concat $GDBFLAGS " -ex \"$prompt_func\""]
+    set GDBFLAGS [concat $GDBFLAGS " -ex \"python gdb.prompt_hook=foo\""]
+
+    set tmp_gdbflags $GDBFLAGS
+    set gdb_prompt_fail $gdb_prompt
+
+    global gdb_prompt
+    # Does not include the space at the end of the prompt.
+    # gdb_test expects it not to be there.
+    set gdb_prompt "\[(\]Foo\[)\]"
+
+    with_test_prefix "set editing on" {
+	set GDBFLAGS [concat $tmp_gdbflags " -ex \"set editing on\""]
+	prompt_gdb_start
+	gdb_test "python x = len(p); print (gdb.execute(\"show prompt\", to_string = True))" \
+	    ".*prompt is \"$gdb_prompt \".*" \
+	    "show prompt gets the correct result"
+	gdb_test "python print ('%d %d' % (x, len(p)))" "1 2" \
+	    "retrieving the prompt causes no extra prompt_hook calls"
+	gdb_test "python print (\"'\" + str(p\[0\]) + \"'\")" "'$gdb_prompt_fail '" \
+	    "prompt_hook argument is default prompt."
+	gdb_exit
+    }
+
+    with_test_prefix "set editing off" {
+	set GDBFLAGS [concat $tmp_gdbflags " -ex \"set editing off\""]
+	prompt_gdb_start
+	gdb_test "python x = len(p); print (gdb.execute(\"show prompt\", to_string = True))" \
+	    ".*prompt is \"$gdb_prompt \".*" \
+	    "show prompt gets the correct result 2"
+	gdb_test "python print ('%d %d' % (x, len(p)))" "1 2" \
+	    "retrieving the prompt causes no extra prompt_hook calls 2"
+	gdb_test "python print (\"'\" + str(p\[0\]) + \"'\")" "'$gdb_prompt_fail '" \
+	    "prompt_hook argument is default prompt. 2"
+	gdb_exit
+    }
+
+    if {![can_spawn_for_attach]} {
+	set GDBFLAGS $saved_gdbflags
+	return 0
+    }
+
+    set test_spawn_id [spawn_wait_for_attach $binfile]
+    set testpid [spawn_id_get_pid $test_spawn_id]
+
+    set GDBFLAGS [concat $tmp_gdbflags " -ex \"set pagination off\""]
+    set GDBFLAGS [concat $GDBFLAGS " -ex \"set editing on\""]
+    set GDBFLAGS [concat $GDBFLAGS " -ex \"attach $testpid\""]
+    set GDBFLAGS [concat $GDBFLAGS " -ex \"continue&\""]
+
+    # sync_execution = 1 is_running = 1
+    with_test_prefix "sync_execution = 1, is_running = 1" {
+	prompt_gdb_start
+	gdb_test "python x = len(p); print (gdb.execute(\"show prompt\", to_string = True))" \
+	    ".*prompt is \"$gdb_prompt \".*" \
+	    "show prompt gets the correct result 3"
+	gdb_test "python print ('%d %d' % (x, len(p)))" "1 2" \
+	    "retrieving the prompt causes no extra prompt_hook calls 3"
+	gdb_test "python print (\"'\" + str(p\[0\]) + \"'\")" "'$gdb_prompt_fail '" \
+	    "prompt_hook argument is default prompt. 3"
+	gdb_exit
+    }
+
+    set GDBFLAGS [concat $tmp_gdbflags " -ex \"set pagination off\""]
+    set GDBFLAGS [concat $GDBFLAGS " -ex \"set editing on\""]
+    set GDBFLAGS [concat $GDBFLAGS " -ex \"attach $testpid\""]
+    set GDBFLAGS [concat $GDBFLAGS " -ex \"interrupt\""]
+
+    # sync_execution = 1 is_running = 0
+    with_test_prefix "sync_execution = 1, is_running = 0" {
+	prompt_gdb_start
+	gdb_test "python x = len(p); print (gdb.execute(\"show prompt\", to_string = True))" \
+	    ".*prompt is \"$gdb_prompt \".*" \
+	    "show prompt gets the correct result 4"
+	gdb_test "python print ('%d %d' % (x, len(p)))" "1 2" \
+	    "retrieving the prompt causes no extra prompt_hook calls 4"
+	gdb_test "python print (\"'\" + str(p\[0\]) + \"'\")" "'$gdb_prompt_fail '" \
+	    "prompt_hook argument is default prompt. 4"
+	gdb_exit
+    }
+
+    set GDBFLAGS $saved_gdbflags
+    kill_wait_spawned_process $test_spawn_id
+}

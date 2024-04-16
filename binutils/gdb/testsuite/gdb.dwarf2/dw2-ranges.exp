@@ -1,0 +1,75 @@
+# Copyright 2007-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+load_lib dwarf.exp
+
+# Test DW_TAG_compile_unit with no children and with neither DW_AT_low_pc nor
+# DW_AT_high_pc but with DW_AT_ranges instead.
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+# The .c files use __attribute__.
+require is_c_compiler_gcc
+
+standard_testfile .c -2.c -3.c
+set asmfile [standard_output_file ${testfile}.s]
+set asmfile2 [standard_output_file ${testfile}2.s]
+set objfile [standard_output_file ${testfile}.o]
+set objfile2 [standard_output_file ${testfile}2.o]
+set objfile3 [standard_output_file ${testfile}3.o]
+
+# Generate .s without debug info but provide debug info by the assembler.
+# This way we get DW_TAG_compile_unit DIE and only that DIE.
+
+if {[gdb_compile "${srcdir}/${subdir}/${srcfile}" "${asmfile}" assembly {}] != ""
+    || [gdb_compile "${asmfile}" "${objfile}" object {additional_flags=-gdwarf-2}] != "" } {
+    return -1
+}
+if {[gdb_compile "${srcdir}/${subdir}/${srcfile2}" "${asmfile2}" assembly {}] != ""
+    || [gdb_compile "${asmfile2}" "${objfile2}" object {additional_flags=-gdwarf-2}] != "" } {
+    return -1
+}
+
+# STABS compilation is intentional as it tests the STABS lookup where is no
+# partial_symtab->psymtabs_addrmap supported for that CU (Compilation Unit) in
+# a file containing psymtabs_addrmap-supporting DWARF CUs.
+if {[gdb_compile "${srcdir}/${subdir}/${srcfile3}" "${objfile3}" object {additional_flags=-gstabs quiet}] != "" } {
+    return -1
+}
+
+if {[gdb_compile "${objfile} ${objfile2} ${objfile3}" "${binfile}" executable {}] != "" } {
+    return -1
+}
+
+clean_restart ${testfile}
+
+# Test also objfile->psymtabs_addrmap relocations for -fPIE -pie builds below.
+# On some targets it may possibly fail but the program is being started only
+# for the PIE build so try it anyway.
+
+runto_main
+
+# Correct output:
+# 	Line 39 of "../.././gdb/testsuite/gdb.dwarf2/dw2-ranges.S" starts at address 0x4 and ends at 0x8.
+# Wrong output:
+# 	No line number information available for address 0x4
+
+gdb_test "info line main" "Line \[0-9\]* of .* starts at address .* and ends at .*"
+gdb_test "info line func" "Line \[0-9\]* of .* starts at address .* and ends at .*"
+gdb_test "info line main2" "Line \[0-9\]* of .* starts at address .* and ends at .*"
+gdb_test "info line func2" "Line \[0-9\]* of .* starts at address .* and ends at .*"
+
+gdb_test "info line main3" \
+    "Line \[0-9\]* of .* starts at address .* and ends at .*"

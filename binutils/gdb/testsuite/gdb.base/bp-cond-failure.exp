@@ -1,0 +1,116 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check the format of the error message given when a breakpoint
+# condition fails.
+#
+# In this case the breakpoint condition does not make use of inferior
+# function calls, instead, the expression used for the breakpoint
+# condition will throw an error when evaluated.
+#
+# We check that the correct breakpoint number appears in the error
+# message, and that the error is reported at the correct source
+# location.
+
+standard_testfile
+
+if { [prepare_for_testing "failed to prepare" ${binfile} "${srcfile}" \
+	  {debug}] == -1 } {
+    return
+}
+
+# Run to main so that we connect to the target if using 'target
+# remote'.  This means that the is_address_zero_readable, and the
+# 'show breakpoint condition-evaluation' checks below will be
+# performed with the remote connection in place.
+if { ![runto_main] } {
+    return -1
+}
+
+# This test relies on reading address zero triggering a SIGSEGV.
+if { [is_address_zero_readable] } {
+    return
+}
+
+proc run_test { cond_eval access_type lineno nloc } {
+    clean_restart ${::binfile}
+
+    if { ![runto_main] } {
+	return -1
+    }
+
+    if { $cond_eval ne "auto" } {
+	gdb_test_no_output "set breakpoint condition-evaluation ${cond_eval}"
+    }
+
+    # Setup the conditional breakpoint and record its number.
+    gdb_breakpoint "${::srcfile}:${lineno} if (*(${access_type} *) 0) == 0"
+    set bp_num [get_integer_valueof "\$bpnum" "*UNKNOWN*"]
+
+    if { $nloc > 1 } {
+	set bp_num_pattern "${bp_num}.1"
+    } else {
+	set bp_num_pattern "${bp_num}"
+    }
+
+    gdb_test "continue" \
+	[multi_line \
+	     "Continuing\\." \
+	     "Error in testing condition for breakpoint ${bp_num_pattern}:" \
+	     "Cannot access memory at address 0x0" \
+	     "" \
+	     "Breakpoint ${bp_num_pattern}, \(foo\|bar\) \\(\\) at \[^\r\n\]+:${lineno}" \
+	     "${::decimal}\\s+\[^\r\n\]+ breakpoint here\\. \[^\r\n\]+"]
+}
+
+# If we're using a remote target then conditions could be evaulated
+# locally on the host, or on the remote target.  Otherwise, conditions
+# are always evaluated locally.
+#
+# Using "auto" will select the target if the target supports condition
+# evaluation, otherwise, the local host will be used.
+#
+# So, we always include "auto", but then we look at the output of
+# 'show breakpoint condition-evaluation', if this tells us that "auto"
+# is using the target, then we specifically add "host" to the list of
+# modes to check.
+
+set cond_eval_modes { "auto" }
+
+gdb_test_multiple "show breakpoint condition-evaluation" "" {
+    -re -wrap "Breakpoint condition evaluation mode is auto \\(currently target\\)\\." {
+	lappend cond_eval_modes "host"
+	pass $gdb_test_name
+    }
+
+    -re -wrap "Breakpoint condition evaluation mode is auto \\(currently host\\)\\." {
+	pass $gdb_test_name
+    }
+}
+
+# Where the breakpoint will be placed.
+set bp_line_multi_loc [gdb_get_line_number "Multi-location breakpoint here"]
+set bp_line_single_loc [gdb_get_line_number "Single-location breakpoint here"]
+
+foreach_with_prefix access_type { "char" "short" "int" "long long" } {
+    foreach_with_prefix cond_eval $cond_eval_modes {
+	with_test_prefix "multi-loc" {
+	    run_test $cond_eval $access_type $bp_line_multi_loc 2
+	}
+	with_test_prefix "single-loc" {
+	    run_test $cond_eval $access_type $bp_line_single_loc 1
+	}
+    }
+}

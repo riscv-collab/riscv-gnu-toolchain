@@ -1,0 +1,108 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "ada.exp"
+load_lib "gdb-python.exp"
+
+require allow_ada_tests
+
+standard_ada_testfile p
+
+set old_gcc [expr [test_compiler_info {gcc-[0-7]-*}]]
+
+proc gdb_test_with_xfail { cmd re re_xfail msg } {
+    global scenario old_gcc
+    set have_xfail [expr $old_gcc && [string equal "$scenario" "minimal"]]
+
+    gdb_test_multiple $cmd $msg {
+	-re -wrap $re  {
+	    pass $gdb_test_name
+	}
+	-re -wrap $re_xfail {
+	    if { $have_xfail } {
+		# gcc/101633
+		setup_xfail *-*-*
+	    }
+	    fail $gdb_test_name
+	}
+    }
+}
+
+foreach_with_prefix scenario {all minimal} {
+    set flags [list debug additional_flags=-fgnat-encodings=$scenario]
+
+    if {[gdb_compile_ada "${srcfile}" "${binfile}-${scenario}" executable $flags] != ""} {
+	return -1
+    }
+
+    clean_restart ${testfile}-${scenario}
+
+    set bp_location [gdb_get_line_number "START" ${testdir}/p.adb]
+    runto "p.adb:$bp_location"
+
+    set v1 "(tag => object, values => (2, 2, 2, 2, 2))"
+    set v1_xfail "(tag => object, values => ())"
+    set v2 "(tag => unused)"
+
+    set re [string_to_regexp " = ($v1, $v2)"]
+    set re_xfail [string_to_regexp " = ($v1_xfail, $v2)"]
+    gdb_test_with_xfail "print objects" $re $re_xfail "print entire array"
+
+    set re [string_to_regexp " = $v1"]
+    set re_xfail [string_to_regexp " = $v1_xfail"]
+    gdb_test_with_xfail "print objects(1)" $re $re_xfail \
+	"print first array element"
+
+    set re [string_to_regexp " = ($v1)"]
+    set re_xfail [string_to_regexp " = ($v1_xfail)"]
+    gdb_test_with_xfail "print objects(1 .. 1)" $re $re_xfail \
+	"print first array slice"
+
+    gdb_test "print objects(2)" \
+	[string_to_regexp " = $v2"] \
+	"print second array element"
+    gdb_test "print objects(2 .. 2)" \
+	[string_to_regexp " = (2 => $v2)"] \
+	"print second array slice"
+
+    # This is only supported for the DWARF encoding.
+    if {$scenario == "minimal" && [allow_python_tests]} {
+	gdb_test_no_output \
+	    "python o = gdb.parse_and_eval('objects')" \
+	    "fetch value for python"
+	set re [string_to_regexp "($v1, $v2)"]
+	set re_xfail [string_to_regexp "($v1_xfail, $v2)"]
+	gdb_test_with_xfail "python print(o)" $re $re_xfail \
+	    "python print array"
+	set re [string_to_regexp "$v1"]
+	set re_xfail [string_to_regexp "$v1_xfail"]
+	gdb_test_with_xfail "python print(o\[1\])" $re $re_xfail \
+	    "python print first array element"
+	gdb_test "python print(o\[2\])" \
+	    [string_to_regexp "$v2"] \
+	    "python print second array element"
+    }
+
+    set av1 "(initial => 0, rest => (tag => unused, cval => 88 'X'))"
+    set av2 "(initial => 0, rest => (tag => object, ival => 88))"
+    set full "($av1, $av2)"
+
+    gdb_test "print another_array(1)" " = [string_to_regexp $av1]" \
+	"print first element of another_array"
+    gdb_test "print another_array(2)" " = [string_to_regexp $av2]" \
+	"print second element of another_array"
+    gdb_test "print another_array" " = [string_to_regexp $full]" \
+	"print another_array"
+}

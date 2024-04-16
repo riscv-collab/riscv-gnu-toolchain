@@ -1,0 +1,84 @@
+# Copyright 2016-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# The purpose of this testcase is to verify that, when using a breakpoint
+# location of the form "*<EXPR>" (Eg: "*main"), GDB is able to start
+# the program and stop at the correct location.  With programs built
+# as PIE, this means that GDB needs to re-evaluate the location once
+# the program as started, since PIE ensures that the address of all
+# symbols have changed after load.
+#
+# PIE is not always supported by the target system, so instead of
+# creating a testcase building executables with PIE, this testcase
+# takes a slightly different approach.  It builds a first program,
+# breaks on *main, and then runs to that breakpoint. It then builds
+# a second program, different from the first one, and loads that
+# executable within the same GDB session.  Similarly to the PIE case,
+# the address of main should be different, and therefore GDB should
+# recalculate it.  We verify that by checking that running to that
+# breakpoint still works, and that we land at the first instruction
+# of that function in both cases.
+
+set testfile1 "break-fun-addr1"
+set srcfile1 ${testfile1}.c
+set binfile1 [standard_output_file ${testfile1}]
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile1}" "${binfile1}" executable {debug}] != "" } {
+    untested "failed to compile first testcase"
+    return -1
+}
+
+# Start the debugger with the first executable, put a breakpoint
+# on the first instruction of function "main" ("*main"), then
+# run to that breakpoint.
+
+clean_restart ${binfile1}
+
+with_test_prefix "${testfile1}" {
+
+    gdb_test "break *main" \
+        "Breakpoint.*at.* file .*$srcfile1, line .*" \
+
+    gdb_run_cmd
+    gdb_test "" \
+             "Breakpoint.* main \\(\\) at .*$srcfile1:.*" \
+             "run to breakpoint at *main"
+
+    # Verify also that we stopped at the start of the function...
+    gdb_test "p \$pc == main" " = 1"
+}
+
+set testfile2 "break-fun-addr2"
+set srcfile2 ${testfile2}.c
+set binfile2 [standard_output_file ${testfile2}]
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile2}" "${binfile2}" executable {debug}] != "" } {
+    untested "failed to compile second testcase"
+    return -1
+}
+
+# Now, keeping the same GDB process (so as to keep the same breakpoint),
+# start a new debugging session with a different executable.
+gdb_load ${binfile2}
+
+with_test_prefix "${testfile2}" {
+
+    gdb_run_cmd
+    gdb_test "" \
+             "Breakpoint.* main \\(\\) at .*$srcfile2:.*" \
+             "run to breakpoint at *main"
+
+    gdb_test "p \$pc == main" " = 1"
+}

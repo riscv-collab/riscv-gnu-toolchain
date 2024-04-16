@@ -1,0 +1,101 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2010-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the gdb testsuite.
+
+#
+# Tests involving read watchpoints, and other kinds of watchpoints
+# watching the same memory as read watchpoints.
+#
+
+standard_testfile .c
+
+require allow_hw_watchpoint_access_tests
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+    return -1
+}
+
+if {![runto_main]} {
+    return
+}
+
+set read_line [gdb_get_line_number "read line" $srcfile]
+
+# Test running to a read of `global', with a read watchpoint set
+# watching it.
+
+gdb_test "rwatch global" \
+    "Hardware read watchpoint .*: global" \
+    "set hardware read watchpoint on global variable"
+
+# The first read is on entry to the loop.
+
+gdb_test "continue" \
+    "read watchpoint .*: global.*.*Value = 0.*in main.*$srcfile:$read_line.*" \
+    "read watchpoint triggers on first read"
+
+# The second read happens on second loop iteration, after `global'
+# having been incremented.  On architectures where gdb has to emulate
+# read watchpoints with access watchpoints, this tests the
+# only-report-if-value-changed logic.  On targets that support real
+# read watchpoints, this tests that GDB ignores the watchpoint's old
+# value, knowing that some untrapped write could have changed it, and
+# so reports the read watchpoint unconditionally.
+
+gdb_test "continue" \
+    "read watchpoint .*: global.*.*Value = 1.*in main.*$srcfile:$read_line.*" \
+    "read watchpoint triggers on read after value changed"
+
+# The following tests check that when the user sets a write or access
+# watchpoint watching the same memory as a read watchpoint, GDB also
+# applies the only-report-if-value-changed logic even on targets that
+# support real read watchpoints.
+
+# The program should be stopped at the read line.  Set a write
+# watchpoint (leaving the read watchpoint) and continue.  Only the
+# write watchpoint should be reported as triggering.
+
+gdb_test "watch global" \
+    "atchpoint .*: global" \
+    "set write watchpoint on global variable"
+
+gdb_test "continue" \
+    "atchpoint .*: global.*Old value = 1.*New value = 2.*" \
+    "write watchpoint triggers"
+
+set exp ""
+set exp "${exp}2.*read watchpoint.*keep y.*global.*breakpoint already hit 2 times.*"
+set exp "${exp}3.*watchpoint.*keep y.*global.*breakpoint already hit 1 time.*"
+gdb_test "info watchpoints" \
+    "$exp" \
+    "only write watchpoint triggers when value changes"
+
+# The program is now stopped at the write line.  Continuing should
+# stop at the read line, and only the read watchpoint should be
+# reported as triggering.
+
+gdb_test "continue" \
+    "read watchpoint .*: global.*Value = 2.*in main.*$srcfile:$read_line.*" \
+    "read watchpoint triggers when value doesn't change, trapping reads and writes"
+
+set exp ""
+set exp "${exp}2.*read watchpoint.*keep y.*global.*breakpoint already hit 3 times.*"
+set exp "${exp}3.*watchpoint.*keep y.*global.*breakpoint already hit 1 time.*"
+gdb_test "info watchpoints" \
+    "$exp" \
+    "only read watchpoint triggers when value doesn't change"

@@ -1,0 +1,86 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require allow_shlib_tests
+require {!is_remote target}
+
+# Library file.
+set libname "info-fun-solib"
+set srcfile_lib ${srcdir}/${subdir}/${libname}.c
+set binfile_lib [standard_output_file ${libname}.so]
+set lib_flags {}
+# Binary file.
+standard_testfile .c
+set executable ${testfile}
+set bin_flags [list debug shlib=${binfile_lib}]
+
+foreach_with_prefix n_flag { 0 1 } {
+
+    # SEP must be last for the possible `unsupported' error path.
+    foreach libsepdebug {NO IN SEP} { with_test_prefix "$libsepdebug" {
+
+	set sep_lib_flags $lib_flags
+	if {$libsepdebug != "NO"} {
+	    lappend sep_lib_flags {debug}
+	}
+	if { [gdb_compile_shlib ${srcfile_lib} ${binfile_lib} $sep_lib_flags] != ""
+	     || [gdb_compile $srcdir/$subdir/${srcfile} ${binfile} \
+		     executable $bin_flags] != "" } {
+	    untested "failed to compile"
+	    return -1
+	}
+
+	if {$libsepdebug == "SEP"} {
+	    if {[gdb_gnu_strip_debug $binfile_lib] != 0} {
+		unsupported "could not split debug of $binfile_lib."
+		return
+	    } else {
+		pass "split solib"
+	    }
+	}
+
+	clean_restart $executable
+
+	if {![runto_main]} {
+	    return 0
+	}
+
+	set match_str {All functions matching regular expression "foo":[\r\n]*}
+	if { "$libsepdebug" != "NO"  } {
+	    append match_str {File .*/info-fun-solib[.]c:[\r\n]*}
+	    append match_str {\d+:\tint foo\(void\);[\r\n]*}
+	}
+
+	set opt ""
+	if { !$n_flag } {
+	    append match_str {Non-debugging symbols:[\r\n]*}
+	    # Note: Targets like {m68k,ppc64,s390x}-linux also have, e.g.,
+	    # 00000011.plt_call.foo+0 (m68k).
+	    set plt_foo_match "($hex \[^\r\n\]*plt\[^\r\n\]*foo\[^\r\n\]*\[\r\n\]*)?"
+	    append match_str $plt_foo_match
+	    # This text we want to match precisely.
+	    append match_str "$hex *foo(@plt)?\[\r\n\]*"
+	    # Watch for again to not have to worry about the order of appearance.
+	    append match_str $plt_foo_match
+	    if { "$libsepdebug" == "NO"  } {
+		# Note: The ".?" is for targets like m68k-linux that have ".foo" here.
+		append match_str "$hex *.?foo\[\r\n\]*"
+	    }
+	} else {
+	    set opt "-n"
+	}
+
+	gdb_test "info fun $opt foo" "$match_str"
+    }}
+}

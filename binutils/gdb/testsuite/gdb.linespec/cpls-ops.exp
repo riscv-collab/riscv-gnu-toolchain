@@ -1,0 +1,575 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the gdb testsuite.
+
+load_lib completion-support.exp
+
+standard_testfile cpls-ops.cc
+
+if {[prepare_for_testing "failed to prepare" $testfile \
+	 [list $srcfile] {debug}]} {
+    return -1
+}
+
+# Tests below are about tab-completion, which doesn't work if readline
+# library isn't used.  Check it first.
+
+if { ![readline_is_used] } {
+    untested "no tab completion support without readline"
+    return -1
+}
+
+gdb_test_no_output "set max-completions unlimited"
+
+# Check that the explicit location completer manages to find the next
+# option name after a "-function function" option.  A useful test when
+# the -function options's argument is a C++ operator, which can
+# include characters like '-'.
+
+proc check_explicit_skips_function_argument {function} {
+    test_gdb_complete_unique \
+	"b -function $function -sour" \
+	"b -function $function -source"
+}
+
+# Helper function for the operator new/new[] tests.  CLASS_NAME is the
+# name of the class that contains the operator we're testing.
+# BRACKETS is set to [] if testing operator new[], and to empty if
+# testing operator new.
+
+proc test_operator_new {class_name brackets} {
+    global gdb_prompt
+
+    # Extract the type size_t is typedef-ed to.
+    set size_t ""
+    set test "get size_t underlying type"
+    gdb_test_multiple "ptype size_t" $test {
+	-re " = (\[ a-z\]*)\r\n$gdb_prompt $" {
+	    set size_t $expect_out(1,string)
+	    pass "$test"
+	}
+    }
+
+    # Complete all prefixes between "operato" and the full prototype.
+    foreach cmd_prefix {"b" "b -function"} {
+	set location "${class_name}::operator new${brackets}($size_t)"
+	set line "$cmd_prefix $location"
+	set start [index_after "operato" $line]
+	test_complete_prefix_range $line $start
+	check_bp_locations_match_list "$cmd_prefix $location" [list $location]
+
+	# Same, but with extra spaces.  Note that the original spaces in
+	# the input line are preserved after completion.
+
+	test_gdb_complete_unique \
+	    "$cmd_prefix ${class_name}::operator new " \
+	    "$cmd_prefix ${class_name}::operator new ${brackets}($size_t)"
+	test_gdb_complete_unique \
+	    "$cmd_prefix ${class_name}::operator new ${brackets} (" \
+	    "$cmd_prefix ${class_name}::operator new ${brackets} ($size_t)"
+	test_gdb_complete_unique \
+	    "$cmd_prefix ${class_name}::operator new ${brackets} ( $size_t " \
+	    "$cmd_prefix ${class_name}::operator new ${brackets} ( $size_t )"
+
+	check_setting_bp_fails "$cmd_prefix ${class_name}::operator"
+
+	set location_list \
+	    [list \
+		 "${class_name}::operator new${brackets}" \
+		 "${class_name}::operator new${brackets} ($size_t)" \
+		 "${class_name}::operator new ${brackets} ( $size_t )"]
+	foreach linespec $location_list {
+	    check_bp_locations_match_list \
+		"$cmd_prefix $linespec" [list $location]
+	}
+    }
+
+    # Check that the explicit location completer manages to find the
+    # option name after -function, when the -function's argument is a
+    # C++ operator new / new[].
+    check_explicit_skips_function_argument \
+	"${class_name}::operator new ${brackets} ( $size_t )"
+}
+
+proc_with_prefix operator-new {} {
+    test_operator_new test_op_new ""
+}
+
+proc_with_prefix operator-new\[\] {} {
+    test_operator_new test_op_new_array "\[\]"
+}
+
+# Helper function for the operator delete/delete[] tests.  CLASS_NAME
+# is the name of the class that contains the operator we're testing.
+# BRACKETS is set to "[]" if testing operator delete[], and to empty
+# if testing operator delete.
+
+proc test_operator_delete {class_name brackets} {
+    # Complete all prefixes between "operato" and the full prototype.
+    foreach cmd_prefix {"b" "b -function"} {
+	set location "${class_name}::operator delete${brackets}(void*)"
+	set line "$cmd_prefix $location"
+	set start [index_after "operato" $line]
+	test_complete_prefix_range $line $start
+	check_bp_locations_match_list "$cmd_prefix $location" [list $location]
+
+	# Same, but with extra spaces.  Note that the original spaces in
+	# the input line are preserved after completion.
+
+	test_gdb_complete_unique \
+	    "$cmd_prefix ${class_name}::operator delete " \
+	    "$cmd_prefix ${class_name}::operator delete ${brackets}(void*)"
+	test_gdb_complete_unique \
+	    "$cmd_prefix ${class_name}::operator delete ${brackets} (" \
+	    "$cmd_prefix ${class_name}::operator delete ${brackets} (void*)"
+	test_gdb_complete_unique \
+	    "$cmd_prefix ${class_name}::operator delete ${brackets} ( void* " \
+	    "$cmd_prefix ${class_name}::operator delete ${brackets} ( void* )"
+	test_gdb_complete_unique \
+	    "$cmd_prefix ${class_name}::operator delete ${brackets} ( void * " \
+	    "$cmd_prefix ${class_name}::operator delete ${brackets} ( void * )"
+
+	check_setting_bp_fails "$cmd_prefix ${class_name}::operator"
+
+	set location_list \
+	    [list \
+		 "${class_name}::operator delete${brackets}" \
+		 "${class_name}::operator delete${brackets}(void *)" \
+		 "${class_name}::operator delete ${brackets} ( void * )"]
+	foreach linespec $location_list {
+	    check_bp_locations_match_list \
+		"$cmd_prefix $linespec" [list $location]
+	}
+    }
+
+    # Check that the explicit location completer manages to find the
+    # option name after -function, when the -function's argument is a
+    # C++ operator delete / delete[].
+    check_explicit_skips_function_argument \
+	"${class_name}::operator delete ${brackets} ( void * )"
+}
+
+proc_with_prefix operator-delete {} {
+    test_operator_delete test_op_delete ""
+}
+
+proc_with_prefix operator-delete\[\] {} {
+    test_operator_delete test_op_delete_array "\[\]"
+}
+
+# Helper for testing both operator() and operator[].  Tests completion
+# when the operator match is unique.  CLASS_NAME is the class that
+# holds the operator to test.  OPN and CLS are the open and close
+# characters ("()" or "[]").
+
+proc test_operator_unique {class_name opn cls} {
+    # Complete all prefixes between "oper" and the full prototype.
+    foreach cmd_prefix {"b" "b -function"} {
+	set location "${class_name}::operator${opn}${cls}(int)"
+	set line "$cmd_prefix $location"
+	set start [index_after "${class_name}" $line]
+	test_complete_prefix_range $line $start
+	check_bp_locations_match_list "$cmd_prefix $location" [list $location]
+
+	# Same, but with extra spaces.  Note that the original spaces in
+	# the input line are preserved after completion.
+
+	test_gdb_complete_unique \
+	    "$cmd_prefix ${class_name}::operator ${opn} ${cls} ( int " \
+	    "$cmd_prefix ${class_name}::operator ${opn} ${cls} ( int )"
+	test_gdb_complete_unique \
+	    "$cmd_prefix ${class_name}::operator ${opn} ${cls}" \
+	    "$cmd_prefix ${class_name}::operator ${opn} ${cls}(int)"
+	test_gdb_complete_unique \
+	    "$cmd_prefix ${class_name}::operator ${opn}${cls}" \
+	    "$cmd_prefix ${class_name}::operator ${opn}${cls}(int)"
+	test_gdb_complete_unique \
+	    "$cmd_prefix ${class_name}::operator ${opn}" \
+	    "$cmd_prefix ${class_name}::operator ${opn}${cls}(int)"
+
+	check_setting_bp_fails "$cmd_prefix ${class_name}::operator"
+
+	set location_list \
+	    [list \
+		 "${class_name}::operator${opn}${cls}" \
+		 "${class_name}::operator ${opn}${cls}" \
+		 "${class_name}::operator ${opn}${cls}(int)" \
+		 "${class_name}::operator ${opn} ${cls} ( int )"]
+	foreach linespec $location_list {
+	    check_bp_locations_match_list \
+		"$cmd_prefix $linespec" [list $location]
+	}
+    }
+
+    # Check that the explicit location completer manages to find the
+    # option name after -function, when the -function's argument is a
+    # C++ operator().
+    check_explicit_skips_function_argument \
+	"${class_name}::operator ${opn} ${cls} ( int )"
+}
+
+# Helper for testing both operator() and operator[].  Tests completion
+# when the operator match is ambiguous.  CLASS_NAME is the class that
+# holds the operator to test.  OPN and CLS are the open and close
+# characters ("()" or "[]").
+
+proc test_operator_ambiguous {class_name opn cls} {
+    foreach cmd_prefix {"b" "b -function"} {
+	check_setting_bp_fails "$cmd_prefix ${class_name}::operator"
+
+	set linespec_noparams "${class_name}::operator${opn}${cls}"
+
+	set location_list \
+	    [list \
+		 "${class_name}::operator${opn}${cls}(int)" \
+		 "${class_name}::operator${opn}${cls}(long)" \
+		 "${class_name}::operator${opn}${cls}<int>(int*)"]
+	# The operator[] test can't have a "()" overload, since that
+	# wouldn't compile.
+	if {$opn == "("} {
+	    set location_list \
+		[concat \
+		     [list "${class_name}::operator${opn}${cls}()"] \
+		     $location_list]
+	}
+	test_gdb_complete_multiple \
+	    "$cmd_prefix " "$linespec_noparams" "" $location_list
+
+	check_bp_locations_match_list "$cmd_prefix $linespec_noparams" \
+	    $location_list
+	check_bp_locations_match_list "$cmd_prefix $linespec_noparams<int>" \
+	    [list "${class_name}::operator${opn}${cls}<int>(int*)"]
+
+	# Test the template version.  Test both with and without
+	# return type.
+	set f "${class_name}::operator"
+	foreach ws1 {"" " "} {
+	    foreach ws2 {"" " "} {
+		foreach ws3 {"" " "} {
+		    test_gdb_complete_unique \
+			"$cmd_prefix ${f}${opn}${ws1}${cls}<${ws2}int${ws3}>(in" \
+			"$cmd_prefix ${f}${opn}${ws1}${cls}<${ws2}int${ws3}>(int*)"
+		    check_bp_locations_match_list \
+			"$cmd_prefix ${f}${opn}${ws1}${cls}<${ws2}int${ws3}>(int*)" \
+			[list "${f}${opn}${cls}<int>(int*)"]
+		    test_gdb_complete_unique \
+			"$cmd_prefix void ${f}${opn}${ws1}${cls}<${ws2}int${ws3}>(in" \
+			"$cmd_prefix void ${f}${opn}${ws1}${cls}<${ws2}int${ws3}>(int*)"
+		    check_bp_locations_match_list \
+			"$cmd_prefix void ${f}${opn}${ws1}${cls}<${ws2}int${ws3}>(int*)" \
+			[list "${f}${opn}${cls}<int>(int*)"]
+		}
+	    }
+	}
+
+	# Add extra spaces.
+	test_gdb_complete_unique \
+	    "$cmd_prefix ${class_name}::operator ${opn} ${cls} ( lo" \
+	    "$cmd_prefix ${class_name}::operator ${opn} ${cls} ( long)"
+	check_bp_locations_match_list \
+	    "$cmd_prefix ${class_name}::operator ${opn} ${cls} ( long )" \
+	    [list "${class_name}::operator${opn}${cls}(long)"]
+    }
+}
+
+proc_with_prefix operator()-unique {} {
+    test_operator_unique test_unique_op_call "(" ")"
+}
+
+proc_with_prefix operator\[\]-unique {} {
+    test_operator_unique test_unique_op_array "\[" "\]"
+}
+
+proc_with_prefix operator()-ambiguous {} {
+    test_operator_ambiguous test_op_call "(" ")"
+}
+
+proc_with_prefix operator\[\]-ambiguous {} {
+    test_operator_ambiguous test_op_array "\[" "\]"
+}
+
+# Test arithmetic/logical operators.  Test completing all C++
+# arithmetic/logical operators, when all the operators are in the same
+# class.
+
+proc_with_prefix ops-valid-ambiguous {} {
+    set locations {
+	"test_ops::operator!(E)"
+	"test_ops::operator!=(E, E)"
+	"test_ops::operator%(E, E)"
+	"test_ops::operator%=(E, E)"
+	"test_ops::operator&&(E, E)"
+	"test_ops::operator&(E, E)"
+	"test_ops::operator&=(E, E)"
+	"test_ops::operator*(E, E)"
+	"test_ops::operator*=(E, E)"
+	"test_ops::operator+(E, E)"
+	"test_ops::operator++(E)"
+	"test_ops::operator++(E, int)"
+	"test_ops::operator+=(E, E)"
+	"test_ops::operator,(E, E)"
+	"test_ops::operator-(E, E)"
+	"test_ops::operator--(E)"
+	"test_ops::operator--(E, int)"
+	"test_ops::operator-=(E, E)"
+	"test_ops::operator/(E, E)"
+	"test_ops::operator/=(E, E)"
+	"test_ops::operator<(E, E)"
+	"test_ops::operator<<(E, E)"
+	"test_ops::operator<<=(E, E)"
+	"test_ops::operator<=(E, E)"
+	"test_ops::operator==(E, E)"
+	"test_ops::operator>(E, E)"
+	"test_ops::operator>=(E, E)"
+	"test_ops::operator>>(E, E)"
+	"test_ops::operator>>=(E, E)"
+	"test_ops::operator^(E, E)"
+	"test_ops::operator^=(E, E)"
+	"test_ops::operator|(E, E)"
+	"test_ops::operator|=(E, E)"
+	"test_ops::operator||(E, E)"
+	"test_ops::operator~(E)"
+    }
+    foreach linespec $locations {
+	foreach cmd_prefix {"b" "b -function"} {
+	    test_gdb_complete_unique \
+		"$cmd_prefix $linespec" \
+		"$cmd_prefix $linespec"
+
+	}
+
+	check_explicit_skips_function_argument "$linespec"
+    }
+
+    foreach cmd_prefix {"b" "b -function"} {
+	test_gdb_complete_multiple \
+	    "$cmd_prefix " "test_ops::operator" "" $locations
+    }
+}
+
+# Test completing all C++ operators, with and without spaces.  The
+# test without spaces makes sure the completion matches exactly the
+# expected prototype.  The version with whitespace is a bit more lax
+# for simplicity.  In that case, we only make sure we get back the
+# terminating ')'.  Each operator is defined in a separate class so
+# that we can exercise unique completion matches.
+
+proc_with_prefix ops-valid-unique {} {
+    set locations {
+	"test_op_BIT_AND::operator&(E, E)"
+	"test_op_BIT_AND_A::operator&=(E, E)"
+	"test_op_BIT_O::operator|(E, E)"
+	"test_op_COMMA::operator,(E, E)"
+	"test_op_DIV::operator/(E, E)"
+	"test_op_DIV_A::operator/=(E, E)"
+	"test_op_EQ::operator==(E, E)"
+	"test_op_GT::operator>(E, E)"
+	"test_op_GTE::operator>=(E, E)"
+	"test_op_LAND::operator&&(E, E)"
+	"test_op_LOR::operator||(E, E)"
+	"test_op_LT::operator<(E, E)"
+	"test_op_LTE::operator<=(E, E)"
+	"test_op_MINUS::operator-(E, E)"
+	"test_op_MINUS_A::operator-=(E, E)"
+	"test_op_MOD::operator%(E, E)"
+	"test_op_MOD_A::operator%=(E, E)"
+	"test_op_MUL::operator*(E, E)"
+	"test_op_MUL_A::operator*=(E, E)"
+	"test_op_NEG::operator~(E)"
+	"test_op_NEQ::operator!=(E, E)"
+	"test_op_NOT::operator!(E)"
+	"test_op_OE::operator|=(E, E)"
+	"test_op_PLUS::operator+(E, E)"
+	"test_op_PLUS_A::operator+=(E, E)"
+	"test_op_POST_DEC::operator--(E, int)"
+	"test_op_POST_INC::operator++(E, int)"
+	"test_op_PRE_DEC::operator--(E)"
+	"test_op_PRE_INC::operator++(E)"
+	"test_op_SL::operator<<(E, E)"
+	"test_op_SL_A::operator<<=(E, E)"
+	"test_op_SR::operator>>(E, E)"
+	"test_op_SR_A::operator>>=(E, E)"
+	"test_op_XOR::operator^(E, E)"
+	"test_op_XOR_A::operator^=(E, E)"
+    }
+    set linespecs_ws {
+	"test_op_BIT_AND::operator & ( E , E )"
+	"test_op_BIT_AND_A::operator &= ( E , E )"
+	"test_op_BIT_O::operator | (E , E )"
+	"test_op_COMMA::operator , ( E , E )"
+	"test_op_DIV::operator / (E , E )"
+	"test_op_DIV_A::operator /= ( E , E )"
+	"test_op_EQ::operator == ( E , E )"
+	"test_op_GT::operator > ( E , E )"
+	"test_op_GTE::operator >= ( E , E )"
+	"test_op_LAND::operator && ( E , E )"
+	"test_op_LOR::operator || ( E , E )"
+	"test_op_LT::operator < ( E , E )"
+	"test_op_LTE::operator <= ( E , E )"
+	"test_op_MINUS::operator - ( E , E )"
+	"test_op_MINUS_A::operator -= ( E , E )"
+	"test_op_MOD::operator % ( E , E )"
+	"test_op_MOD_A::operator %= ( E , E )"
+	"test_op_MUL::operator * ( E , E )"
+	"test_op_MUL_A::operator *= ( E , E )"
+	"test_op_NEG::operator ~ ( E )"
+	"test_op_NEQ::operator != ( E , E )"
+	"test_op_NOT::operator ! ( E )"
+	"test_op_OE::operator |= ( E , E )"
+	"test_op_PLUS::operator + ( E , E )"
+	"test_op_PLUS_A::operator += ( E , E )"
+	"test_op_POST_DEC::operator -- ( E , int )"
+	"test_op_POST_INC::operator ++ ( E , int )"
+	"test_op_PRE_DEC::operator -- ( E )"
+	"test_op_PRE_INC::operator ++ ( E )"
+	"test_op_SL::operator << ( E , E )"
+	"test_op_SL_A::operator <<= ( E , E )"
+	"test_op_SR::operator >> ( E , E )"
+	"test_op_SR_A::operator >>= ( E , E )"
+	"test_op_XOR::operator ^ ( E , E )"
+	"test_op_XOR_A::operator ^= ( E , E )"
+    }
+    foreach linespec $locations linespec_ws $linespecs_ws {
+	foreach cmd_prefix {"b" "b -function"} {
+	    with_test_prefix "no-whitespace" {
+		set line "$cmd_prefix $linespec"
+		set start [index_after "::operato" $line]
+		test_complete_prefix_range $line $start
+	    }
+
+	    with_test_prefix "whitespace" {
+		set line_ws "$cmd_prefix $linespec_ws"
+		set start_ws [index_after "::operator " $line_ws]
+		test_complete_prefix_range_re \
+		    $line_ws "$cmd_prefix test_op_.*::operator .*\\\)" $start_ws
+	    }
+	}
+
+	check_explicit_skips_function_argument "$linespec"
+	check_explicit_skips_function_argument "$linespec_ws"
+    }
+}
+
+# Test completing an invalid (whitespace at the wrong place) operator
+# name.
+
+proc_with_prefix ops-invalid {} {
+    foreach linespec {
+	"test_op_BIT_AND_A::operator& =(E, E)"
+	"test_op_DIV_A::operator/ =(E, E)"
+	"test_op_EQ::operator= =(E, E)"
+	"test_op_GTE::operator> =(E, E)"
+	"test_op_LAND::operator& &(E, E)"
+	"test_op_LOR::operator| |(E, E)"
+	"test_op_LTE::operator< =(E, E)"
+	"test_op_MINUS_A::operator- =(E, E)"
+	"test_op_MOD_A::operator% =(E, E)"
+	"test_op_MUL_A::operator* =(E, E)"
+	"test_op_NEQ::operator! =(E, E)"
+	"test_op_OE::operator| =(E, E)"
+	"test_op_PLUS_A::operator+ =(E, E)"
+	"test_op_POST_DEC::operator- -(E, int)"
+	"test_op_POST_INC::operator+ +(E, int)"
+	"test_op_PRE_DEC::operator- -(E)"
+	"test_op_PRE_INC::operator+ +(E)"
+	"test_op_SL::operator< <(E, E)"
+	"test_op_SL_A::operator< < =(E, E)"
+	"test_op_SR::operator> >(E, E)"
+	"test_op_SR_A::operator> > =(E, E)"
+	"test_op_XOR_A::operator^ =(E, E)"
+    } {
+	foreach cmd_prefix {"b" "b -function"} {
+	    test_gdb_complete_tab_none "$cmd_prefix $linespec"
+	    check_setting_bp_fails "$cmd_prefix $linespec"
+	}
+    }
+}
+
+# Test completing function/method FUNCTION.  Completion is tested at
+# every point starting after START_AFTER.  FUNCTION_WS is a version of
+# FUNCTION with extra (but valid) whitespace.  FUNCTION_INVALID is a
+# version of FUNCTION with invalid whitespace.  Tests that completion
+# of FUNCTION_WS completes to self, and that a completion of
+# FUNCTION_INVALID fails.
+
+proc test_function {function start_after function_ws {function_invalid ""}} {
+    foreach cmd_prefix {"b" "b -function"} {
+	set line "$cmd_prefix $function"
+	set start [index_after $start_after $line]
+	test_complete_prefix_range $line $start
+    }
+
+    check_explicit_skips_function_argument $function
+    check_explicit_skips_function_argument $function_ws
+
+    foreach cmd_prefix {"b" "b -function"} {
+	test_gdb_complete_unique \
+	    "$cmd_prefix $function_ws" \
+	    "$cmd_prefix $function_ws"
+	if {$function_invalid != ""} {
+	    test_gdb_complete_tab_none "$cmd_prefix $function_invalid"
+	    check_setting_bp_fails "$cmd_prefix $function_invalid"
+	}
+    }
+}
+
+# Test completing a user-defined conversion operator.
+
+proc_with_prefix conversion-operator {} {
+    test_function \
+	"test_op_conversion::operator test_op_conversion_res const volatile**() const volatile" \
+	"test_op_conversio" \
+	"test_op_conversion::operator test_op_conversion_res const volatile * * ( ) const volatile"}
+
+# Test completing an assignment operator.
+
+proc_with_prefix assignment-operator {} {
+    test_function \
+	"test_op_assign::operator=(test_op_assign const&)" \
+	"test_op_assig" \
+	"test_op_assign::operator = ( test_op_assign const & )" \
+}
+
+# Test completing an arrow operator.
+
+proc_with_prefix arrow-operator {} {
+    test_function \
+	"test_op_arrow::operator->()" \
+	"test_op_arro" \
+	"test_op_arrow::operator -> ( )" \
+	"test_op_arrow::operator - > ( )"
+}
+
+# The testcase driver.  Calls all test procedures.
+
+proc test_driver {} {
+    operator-delete
+    operator-delete\[\]
+    operator-new
+    operator-new\[\]
+    operator()-unique
+    operator()-ambiguous
+    operator\[\]-unique
+    operator\[\]-ambiguous
+    ops-valid-ambiguous
+    ops-valid-unique
+    ops-invalid
+    conversion-operator
+    assignment-operator
+    arrow-operator
+}
+
+test_driver

@@ -1,0 +1,185 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the gdb testsuite.
+
+# Test initial values of x87 control registers, before any x87
+# instructions have been executed in the inferior.
+
+require is_amd64_regs_target
+
+standard_testfile .S
+
+set options [list debug \
+		 additional_flags=-static \
+		 additional_flags=-nostartfiles]
+if { [build_executable "failed to prepare" ${testfile} ${srcfile} $options] } {
+    return -1
+}
+
+# Start the test file, and check the x87 control registers (and
+# mxcsr), we expect the default values in all registers.
+#
+# Step forward until the x87 unit is enabled, recheck the register
+# values; they should still have the default values.
+#
+# Finally, step forward until the x87 state has changed, and then
+# recheck the register state to view the changes.
+proc_with_prefix check_x87_regs_around_init {} {
+    global binfile
+
+    clean_restart ${binfile}
+
+    # Get things started.
+    if {![runto_main]} {
+	return 0
+    }
+
+    # Check initial values of x87 control registers.  The MXCSR isn't part
+    # of the x87 set, it belongs with SSE/AVX, however we test it here
+    # too, it should have its default value in both cases.
+    foreach {regname regvalue} { "fctrl" "0x37f" \
+				 "fstat" "0x0" \
+				 "ftag" "0xffff" \
+				 "fiseg" "0x0" \
+				 "fioff" "0x0" \
+				 "foseg" "0x0" \
+				 "fooff" "0x0" \
+				 "fop" "0x0" \
+				 "mxcsr" "0x1f80"} {
+	gdb_test "p/x \$${regname}" " = ${regvalue}"  "check initial value of \$${regname}"
+    }
+
+    # No x87 instructions have been executed yet.  Step up to FWAIT
+    # instruction.  Executing this instruction will enable the x87 unit,
+    # causing the kernel to place the default values into all registers.
+    # After this GDB will no longer supply the default values itself but
+    # will instread read the values out of the xsave buffer.
+    gdb_test "stepi" "fwait" "step to FWAIT instruction"
+    gdb_test "stepi" "nop" "step past FWAIT instruction"
+
+    # The x87 unit is now enabled, but the register values should be
+    # unchanged.
+    foreach {regname regvalue} { "fctrl" "0x37f" \
+				 "fstat" "0x0" \
+				 "ftag" "0xffff" \
+				 "fiseg" "0x0" \
+				 "fioff" "0x0" \
+				 "foseg" "0x0" \
+				 "fooff" "0x0" \
+				 "fop" "0x0" \
+				 "mxcsr" "0x1f80"} {
+	gdb_test "p/x \$${regname}" " = ${regvalue}"  "check post FWAIT value of \$${regname}"
+    }
+
+    # Now step to an x87 instruction that modifies some state.
+    gdb_test "stepi" "fld1" "step to FLD1 instruction"
+
+    # Grab the address of this instruction, it will appear in later
+    # results.
+    set addr [get_hexadecimal_valueof "\$pc" "0"]
+
+    # Step past the FLD1 instruction.
+    gdb_test "stepi" "nop" "step past FLD1 instruction"
+
+    # Check new values of x87 control registers (and MXCSR).
+    foreach {regname regvalue} [list "fctrl" "0x37f" \
+				     "fstat" "0x3800" \
+				     "ftag" "0x3fff" \
+				     "fiseg" "0x0" \
+				     "fioff" "($addr|0x0)" \
+				     "foseg" "0x0" \
+				     "fooff" "0x0" \
+				     "fop" "0x0" \
+				     "mxcsr" "0x1f80" ] {
+	gdb_test "p/x \$${regname}" " = ${regvalue}"  "check post FLD1 value of \$${regname}"
+    }
+}
+
+# Start the test file, all FP features will be disabled.  Set a new
+# value into the MXCSR register, then step forward one instruction (a
+# nop that does not enable any FP features).  Finally check that the
+# mxcsr register still has the value we set.
+proc_with_prefix check_setting_mxcsr_before_enable {} {
+    global binfile gdb_prompt
+
+    clean_restart ${binfile}
+
+    if {![runto_main]} {
+	return 0
+    }
+
+    gdb_test_no_output "set \$mxcsr=0x9f80" "set a new value for MXCSR"
+    gdb_test "stepi" "fwait" "step forward one instruction for mxcsr test"
+
+    set test "check new value of MXCSR is still in place"
+    set pass_pattern " = 0x9f80"
+    # Pre-4.14 kernels have a bug (fixed by commit 0852b374173b "x86/fpu:
+    # Add FPU state copying quirk to handle XRSTOR failure on Intel Skylake
+    # CPUs") that causes mxcsr not to be copied, in which case we get 0 instead of
+    # the just saved value.
+    set xfail_pattern " = 0x0"
+    gdb_test_multiple "p/x \$mxcsr" $test {
+	-re "\[\r\n\]*(?:$pass_pattern)\[\r\n\]+$gdb_prompt $" {
+	    pass $test
+	}
+	-re "\[\r\n\]*(?:$xfail_pattern)\[\r\n\]+$gdb_prompt $" {
+	    xfail $test
+	}
+    }
+}
+
+# Start the test file, all FP features will be disabled.  Set new
+# values into the x87 control-registers, then step forward one
+# instruction (a nop that does not enable any FP features).  Finally
+# check that all the x87 control-registers still have the values we
+# set.
+proc_with_prefix check_setting_x87_regs_before_enable {} {
+    global binfile
+
+    clean_restart ${binfile}
+
+    if {![runto_main]} {
+	return 0
+    }
+
+    foreach {regname regvalue} [list "fctrl" "0x37f" \
+				    "fstat" "0x3800" \
+				    "ftag" "0x7777" \
+				    "fiseg" "0x12" \
+				    "fioff" "0x2418" \
+				    "foseg" "0x24" \
+				    "fooff" "0x36" \
+				    "fop" "0x100" ] {
+	gdb_test_no_output "set \$$regname=$regvalue" "set a new value for $regname"
+    }
+
+    gdb_test "stepi" "fwait" "step forward one instruction for x87 test"
+
+    foreach {regname regvalue} [list "fctrl" "0x37f" \
+				    "fstat" "0x3800" \
+				    "ftag" "0x7777" \
+				    "fiseg" "0x12" \
+				    "fioff" "0x2418" \
+				    "foseg" "0x24" \
+				    "fooff" "0x36" \
+				    "fop" "0x100" ] {
+	gdb_test "p/x \$$regname" "= $regvalue" "check new value of $regname"
+    }
+}
+
+check_x87_regs_around_init
+check_setting_mxcsr_before_enable
+check_setting_x87_regs_before_enable

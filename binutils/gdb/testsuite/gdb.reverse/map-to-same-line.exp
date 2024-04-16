@@ -1,0 +1,153 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://urldefense.proofpoint.com/v2/url?u=http-3A__www.gnu.org_licenses_&d=DwIDAg&c=jf_iaSHvJObTbx-siA1ZOg&r=RFEmMkZAk--_wFGN5tkM_A&m=hvslrRyYSFfiB2uOFjd7I62ZBKNJkGFWTdsHWVjwDIkK3MWESdWS4tI89FoblXn9&s=Ety3VhMg8aZcBncPPcPCS5XzUde9hjKVulkt8r7mD2k&e= >.
+
+# When stepping (forwards or backwards), GDB should step over the entire line
+# and not just a particular entry in the line table. This test was added to
+# verify the find_line_range_start function properly sets the step range for a
+# line that consists of multiple statements, i.e. multiple entries in the line
+# table.  This test creates a DWARF line table that contains two entries for
+# the same line to do the needed testing.
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+load_lib dwarf.exp
+require dwarf2_support
+
+# The DWARF assembler requires the gcc compiler.
+require is_c_compiler_gcc
+
+# This test suitable only for process that can do reverse execution
+require supports_reverse
+
+standard_testfile .c .S
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+    return -1
+}
+
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    global srcdir subdir srcfile
+    declare_labels integer_label L
+
+    # Find start address and length of program
+    lassign [function_range main [list ${srcdir}/${subdir}/$srcfile]] \
+	main_start main_len
+    set main_end "$main_start + $main_len"
+
+    cu {} {
+	compile_unit {
+	    {language @DW_LANG_C}
+	    {name map-to-same-line.c}
+	    {stmt_list $L DW_FORM_sec_offset}
+	    {low_pc 0 addr}
+	} {
+	    subprogram {
+		{external 1 flag}
+		{name main}
+		{low_pc $main_start addr}
+		{high_pc $main_len DW_FORM_data4}
+	    }
+	}
+    }
+
+    lines {version 2 default_is_stmt 1} L {
+	include_dir "${srcdir}/${subdir}"
+	file_name "$srcfile" 1
+
+	# Generate the line table program with distinct source lines being
+	# mapped to the same line entry. Line 1, 5 and 8 contain 1 statement
+	# each.  Line 2 contains 2 statements.  Line 3 contains 3 statements.
+	program {
+	    DW_LNE_set_address $main_start
+	    line [gdb_get_line_number "TAG: main prologue"]
+	    DW_LNS_copy
+	    DW_LNE_set_address line1
+	    line [gdb_get_line_number "TAG: line 1" ]
+	    DW_LNS_copy
+	    DW_LNE_set_address line2
+	    line [gdb_get_line_number "TAG: line 2" ]
+	    DW_LNS_copy
+	    DW_LNE_set_address line3
+	    line [gdb_get_line_number "TAG: line 2" ]
+	    DW_LNS_copy
+	    DW_LNE_set_address line4
+	    line [gdb_get_line_number "TAG: line 3" ]
+	    DW_LNS_copy
+	    DW_LNE_set_address line5
+	    line [gdb_get_line_number "TAG: line 3" ]
+	    DW_LNS_copy
+	    DW_LNE_set_address line6
+	    line [gdb_get_line_number "TAG: line 3" ]
+	    DW_LNS_copy
+	    DW_LNE_set_address line7
+	    line [gdb_get_line_number "TAG: line 5" ]
+	    DW_LNS_copy
+	    DW_LNE_set_address line8
+	    line [gdb_get_line_number "TAG: line 8" ]
+	    DW_LNS_copy
+	    DW_LNE_set_address main_return
+	    line [gdb_get_line_number "TAG: main return"]
+	    DW_LNS_copy
+	    DW_LNE_set_address end_of_sequence
+	    DW_LNE_end_sequence
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	[list $srcfile $asm_file] {nodebug} ] } {
+    return -1
+}
+
+if { ![runto_main] } {
+    return
+}
+
+# Print the line table
+gdb_test_multiple "maint info line-table ${testfile}" "" {
+    -re "\r\n$decimal\[ \t\]+$decimal\[ \t\]+($hex)\[ \t\]+Y\[^\r\n\]*" {
+	lappend is_stmt $expect_out(1,string)
+	exp_continue
+    }
+    -re -wrap "" {
+    }
+}
+
+# Do the reverse-step and reverse-next tests
+foreach_with_prefix cmd {step next} {
+    gdb_test_no_output "record" "turn on process record, test $cmd"
+
+    set bp_main_return [gdb_get_line_number "TAG: main return" $srcfile]
+    gdb_breakpoint $srcfile:$bp_main_return
+    gdb_continue_to_breakpoint  "run to end of main, reverse-$cmd test" ".*$srcfile:$bp_main_return.*"
+    gdb_test "display \$pc" ".*pc =.*" "display pc, reverse-$cmd test"
+
+    # At this point, GDB has already recorded the execution up until the return
+    # statement.  Reverse and test if GDB transitions between lines in the
+    # expected order.  It should reverse-step or reverse-next across lines 8,
+    # 5, 3, 2 and 1.
+    foreach line {8 5 3 2 1} {
+	gdb_test "reverse-$cmd" ".*TAG: line $line.*" "reverse $cmd to line $line"
+    }
+
+    if {$cmd =="step"} {
+	## Clean restart, test reverse-next command
+	clean_restart ${testfile}
+
+	if { ![runto_main] } {
+	    return
+	}
+    }
+}

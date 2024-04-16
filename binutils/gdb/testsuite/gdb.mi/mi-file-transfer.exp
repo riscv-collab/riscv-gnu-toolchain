@@ -1,0 +1,105 @@
+# This testcase is part of GDB, the GNU debugger.
+# Copyright 2007-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test gdbserver monitor commands.
+
+load_lib gdbserver-support.exp
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+require allow_gdbserver_tests
+
+standard_testfile basics.c
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+if {[mi_clean_restart]} {
+    return
+}
+mi_gdb_file_cmd ${binfile}
+
+proc mi_gdbserver_run { } {
+    mi_gdb_test "kill" ".*" ""
+
+    set res [gdbserver_spawn ""]
+    set protocol [lindex $res 0]
+    set gdbport [lindex $res 1]
+
+    if { [mi_gdb_target_cmd $protocol $gdbport] != 0 } {
+	return -1
+    }
+
+    return 0
+}
+
+proc test_file_transfer { filename description } {
+    # If we are running everything locally, then we want to be sure to
+    # put the files into the test's standard output location.  On the
+    # other hand, if the host or target is remote, then we need to
+    # continue with the "old-style" directory-less approach.
+    if {![is_remote host] && ![is_remote target]} {
+	set up_server [standard_output_file up-server]
+	set down_server [standard_output_file down-server]
+    } else {
+	set up_server up-server
+	set down_server down-server
+    }
+
+    mi_gdb_test "-target-file-put \"$filename\" \"${down_server}\"" \
+	"\\^done" "put $description"
+    mi_gdb_test "-target-file-get \"${down_server}\" \"${up_server}\"" \
+	"\\^done" "get $description"
+
+    if { ![is_remote target] } {
+	# If we can check the target copy of the file, do that too.
+	# This should catch symmetric errors in upload and download.
+	set result [remote_exec host "cmp -s $filename ${down_server}"]
+	if { [lindex $result 0] == 0 } {
+	    pass "compare intermediate $description"
+	} else {
+	    fail "compare intermediate $description"
+	}
+    }
+
+    set result [remote_exec host "cmp -s $filename ${up_server}"]
+    if { [lindex $result 0] == 0 } {
+	pass "compare $description"
+    } else {
+	fail "compare $description"
+    }
+
+    mi_gdb_test "-target-file-delete \"${down_server}\"" \
+	"\\^done" "deleted $description"
+
+    if { ![is_remote target] } {
+	if { ! [remote_file target exists ${down_server}] } {
+	    pass "verified deleted $description"
+	} else {
+	    fail "verified deleted $description"
+	}
+    }
+
+    catch { file delete ${up_server} }
+}
+
+mi_gdbserver_run
+
+test_file_transfer "$binfile" "binary file"
+
+mi_gdb_exit

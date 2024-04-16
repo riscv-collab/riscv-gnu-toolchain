@@ -1,0 +1,112 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+# Test setting a breakpoint at "f(std::string)".
+#
+# GDB should be able to expand the std::string typedef, and then set
+# the breakpoint using the resulting name.  In the Itanium ABI's
+# mangling scheme, "std::string", "std::istream", "std::iostream",
+# "std::ostream" are special, though, they have corresponding standard
+# abbreviations.  The libiberty demangler only expands these standard
+# abbreviations to their full non-typedef underlying type if the
+# DMGL_VERBOSE option is requested.  By default it expands them to the
+# user-friendly "std::string", etc. typedefs.  GDB didn't use to use
+# that option, and would instead prevent expansion of the
+# "std::string" (etc.) standard-abbreviation typedefs at
+# breakpoint-set type, such that the function name used for function
+# lookup would match the "std::string" present in the function's
+# non-DMGL_VERBOSE demangled name.
+#
+# For example (DMGL_VERBOSE):
+#
+#  $ echo "_Z1fSs" | c++filt
+#  f(std::basic_string<char, std::char_traits<char>, std::allocator<char> >)
+#
+# vs (no DMGL_VERBOSE):
+#
+#  $ echo "_Z1fSs" | c++filt --no-verbose
+#  f(std::string)
+#
+# This design broke setting a breakpoint at "f(std::string)" when the
+# libstdc++ C++11 ABI was introduced, as the "f(std::string)"
+# function's mangled name no longer uses a standard substitution for
+# std::string...
+#
+# I.e., with the libstdc++ C++11 ABI, we now have (and DMGL_VERBOSE
+# makes no difference):
+#
+#  $ echo _Z1fNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE | c++filt
+#  f(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)
+#
+# So nowadays, GDB always uses DMGL_VERBOSE and no longer prevents
+# std::string (etc.) typedef expansion.  This test exercises both
+# pre-C++11 and C++11 ABIs for this reason.  On non-libstdc++ systems
+# where _GLIBCXX_USE_CXX11_ABI has no effect, we just end up running
+# the test twice with whatever ABI is used.
+
+standard_testfile .cc
+
+require allow_cplus_tests
+
+# CXX11_ABI specifies the value to define _GLIBCXX_USE_CXX11_ABI as.
+
+proc test {cxx11_abi} {
+    global srcdir subdir srcfile binfile testfile
+
+    set options \
+	[list c++ debug additional_flags=-D_GLIBCXX_USE_CXX11_ABI=$cxx11_abi]
+    if { [gdb_compile \
+	      "${srcdir}/${subdir}/${srcfile}" "${binfile}-${cxx11_abi}.o" \
+	      object $options] != "" } {
+	untested "failed to compile"
+	return -1
+    }
+
+    clean_restart ${testfile}-${cxx11_abi}.o
+
+    # Since we're debugging an .o file, GDB doesn't figure out we're
+    # debugging C++ code and the current language when auto, is
+    # guessed as C.
+    gdb_test_no_output "set language c++"
+
+    # Get the type std::string is a typedef for.  We'll try to set a
+    # breakpoint using the expanded type too.
+    set realtype ""
+    set type "std::string"
+    gdb_test_multiple "whatis /r $type" "" {
+	-re -wrap "type = (\[^\r\n\]+)" {
+	    set realtype $expect_out(1,string)
+	    gdb_assert {![string eq "$realtype" "$type"]} \
+		$gdb_test_name
+	}
+    }
+
+    # GDB should be able to expand the std::string typedef in the
+    # function prototype using C++ logic even if the current language
+    # is C.
+    foreach_with_prefix lang {"c" "c++"} {
+	gdb_test_no_output "set language $lang"
+
+	gdb_test "break f($type)" "$srcfile, line $::decimal\\."
+
+	if { $realtype != "" } {
+	    gdb_test "break f($realtype)" "$srcfile, line $::decimal\\."
+	}
+    }
+}
+
+foreach_with_prefix _GLIBCXX_USE_CXX11_ABI {0 1} {
+    test $_GLIBCXX_USE_CXX11_ABI
+}

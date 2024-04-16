@@ -1,0 +1,140 @@
+# Copyright 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Utility procedures, shared between test suite domains.
+
+# A helper procedure to retrieve commands to send to GDB before a program
+# is started.
+
+proc gdb_init_commands {} {
+    set commands ""
+    if [target_info exists gdb_init_command] {
+	lappend commands [target_info gdb_init_command]
+    }
+    if [target_info exists gdb_init_commands] {
+	set commands [concat $commands [target_info gdb_init_commands]]
+    }
+    return $commands
+}
+
+# Given an input string, adds backslashes as needed to create a
+# regexp that will match the string.
+
+proc string_to_regexp {str} {
+    set result $str
+    regsub -all {[]?*+.|(){}^$\[\\]} $str {\\&} result
+    return $result
+}
+
+# Given a list of strings, adds backslashes as needed to each string to
+# create a regexp that will match the string, and join the result.
+
+proc string_list_to_regexp { args } {
+    set result ""
+    foreach arg $args {
+	set arg [string_to_regexp $arg]
+       append result $arg
+    }
+    return $result
+}
+
+# Wrap STR in an ANSI terminal escape sequences -- one to set the
+# style to STYLE, and one to reset the style to the default.  The
+# return value is suitable for use as a regular expression.
+
+# STYLE can either be the payload part of an ANSI terminal sequence,
+# or a shorthand for one of the gdb standard styles: "file",
+# "function", "variable", or "address".
+
+proc style {str style} {
+    switch -exact -- $style {
+	title { set style 1 }
+	file { set style 32 }
+	function { set style 33 }
+	highlight { set style 31 }
+	variable { set style 36 }
+	address { set style 34 }
+	metadata { set style 2 }
+	version { set style "35;1" }
+	none { return $str }
+    }
+    return "\033\\\[${style}m${str}\033\\\[m"
+}
+
+# gdb_get_bp_addr num
+#
+# Purpose:
+#    Get address of a particular breakpoint.
+#
+# Parameter:
+#    The parameter "num" indicates the number of the breakpoint to get.
+#    Note that *currently* this parameter must be an integer value.
+#    E.g., -1 means that we're gonna get the first internal breakpoint;
+#    2 means to get the second user-defined breakpoint.
+#
+# Return:
+#    First address for a particular breakpoint.
+#
+# TODO:
+#    It would be nice if this procedure could accept floating point value.
+#    E.g., 'gdb_get_bp_addr 1.2' means to get the address of the second
+#    location of breakpoint #1.
+#
+proc gdb_get_bp_addr { num } {
+    gdb_test_multiple "maint info break $num" "find address of specified bp $num" {
+	-re -wrap ".*(0x\[0-9a-f\]+).*" {
+	    return $expect_out(1,string)
+	}
+    }
+    return ""
+}
+
+# Compare the version numbers in L1 to those in L2 using OP, and
+# return 1 if the comparison is true.  OP can be "<", "<=", or "==".
+# It is ok if the lengths of the lists differ.
+
+proc version_compare { l1 op l2 } {
+    switch -exact $op {
+	"=="    -
+	"<="    -
+	"<"     {}
+	default { error "unsupported op: $op" }
+    }
+
+    # Handle ops < and ==.
+    foreach v1 $l1 v2 $l2 {
+	if {$v1 == ""} {
+	    # This is: "1.2 OP 1.2.1".
+	    if {$op != "=="} {
+		return 1
+	    }
+	    return 0
+	}
+	if {$v2 == ""} {
+	    # This is: "1.2.1 OP 1.2".
+	    return 0
+	}
+	if {$v1 == $v2} {
+	    continue
+	}
+	return [expr $v1 $op $v2]
+    }
+
+    if {$op == "<"} {
+	# They are equal.
+	return 0
+    }
+    return 1
+}

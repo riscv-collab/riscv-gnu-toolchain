@@ -1,0 +1,94 @@
+# Copyright 2015-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test keyword parsing in the linespec parser.
+
+standard_testfile
+set exefile $testfile
+
+if {[prepare_for_testing "failed to prepare" $exefile $srcfile {debug}]} {
+    return -1
+}
+
+if ![runto_main] {
+    return 0
+}
+
+# Turn off pending breakpoints to facilitate testing errors.
+gdb_test_no_output "set breakpoint pending off"
+
+# The linespec lexer ignores the language setting when lexing
+# keywords.
+gdb_test "break if" "Function \"if\" not defined."
+gdb_breakpoint "thread" "message"
+gdb_breakpoint "task" "message"
+
+# The lexer should prune any trailing whitesapce, so the expected
+# outcome of the following tests should be the same as the previous
+# tests.
+with_test_prefix "trailing whitespace" {
+    gdb_test "break if " "Function \"if\" not defined."
+    gdb_breakpoint "thread " "message"
+    gdb_breakpoint "task " "message"
+}
+
+# With a single keyword specified first in the location,
+# we assume we have a NULL location, i.e., the actual location
+# of the event is the current default location.
+#
+# break if XX --> okay if XX is a valid expression
+# (the lexer cannot know whether the expression is valid or not)
+# break {thread,task} NUMBER --> invalid thread/task
+# break {thread,task} STUFF --> "junk" after keyword (STUFF is not numeric)
+gdb_test "break thread 123" "Unknown thread 123\\."
+gdb_test "break thread foo" "Invalid thread ID: foo"
+gdb_test "break task 123" "Unknown task 123\\."
+gdb_test "break task foo" "Junk after task keyword\\."
+gdb_breakpoint "thread if 0" "message"
+
+# These are also NULL locations, but using a subsequent keyword
+# as the "junk".
+gdb_test "break thread thread" "Invalid thread ID: thread"
+gdb_test "break thread task" "Invalid thread ID: task"
+gdb_test "break thread if" "Invalid thread ID: if"
+gdb_test "break task task" "Junk after task keyword\\."
+gdb_test "break task thread" "Junk after task keyword\\."
+gdb_test "break task if" "Junk after task keyword\\."
+
+# Test locations containing keyword followed by keyword.
+gdb_test "break thread thread 123" "Unknown thread 123\\."
+gdb_test "break task task 123" "Unknown task 123\\."
+
+# Test NULL location with valid conditional containing a keyword.
+gdb_breakpoint "thread if thread == 0"
+gdb_breakpoint "task if task == 0"
+
+# Test the positional flexibility of the "-force-condition" flag.
+foreach prefix {"" "thread 1 "} {
+    foreach suffix {"" " " " thread 1"} {
+	foreach cond {"" " if 1"} {
+	    with_test_prefix "prefix: '$prefix', suffix: '$suffix', cond: '$cond'" {
+
+		if { [regexp thread $prefix] && [regexp thread $suffix] } {
+		    gdb_test "break main ${prefix}-force-condition${suffix}${cond}" \
+			"You can specify only one thread\\."
+		} else {
+		    gdb_breakpoint "main ${prefix}-force-condition${suffix}${cond}"\
+			"message"
+		}
+	    }
+	}
+    }
+}

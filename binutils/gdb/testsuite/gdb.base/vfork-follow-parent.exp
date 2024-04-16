@@ -1,0 +1,118 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test running into vfork while "detach-on-fork" is off and "follow-fork-mode"
+# is parent.  This shows a "Can not resume the parent process..." message.  If
+# the user wants to resume execution, they have to use either "set
+# schedule-multiple on" or "set detach-on-fork on".  Test these two resolution
+# methods.
+
+standard_testfile .c vforked-prog.c
+
+set binfile ${testfile}-exit
+set binfile2 ${testfile}-exec
+set binfile3 vforked-prog
+
+if { [build_executable "compile $binfile3" $binfile3 $srcfile2] } {
+    untested "failed to compile third test binary"
+    return -1
+}
+
+if { [is_remote target] } {
+    gdb_remote_download target [standard_output_file $binfile3]
+}
+
+set opts [list debug additional_flags=-DTEST_EXIT]
+if { [build_executable "compile ${binfile}" ${binfile} ${srcfile} ${opts}] } {
+    untested "failed to compile first test binary"
+    return
+}
+
+set opts [list debug additional_flags=-DTEST_EXEC]
+if { [build_executable "compile ${binfile2}" ${binfile2} ${srcfile} ${opts}] } {
+    untested "failed to compile second test binary"
+    return
+}
+
+# Test running to the "Can not resume the parent..." message.  Then, resolve
+# the situation using the method in RESOLUTION_METHOD, either "detach-on-fork"
+# or "schedule-multiple" (the two alternatives the message suggests to the
+# user).
+
+proc do_test { exec_file resolution_method target_non_stop non_stop } {
+    save_vars { ::GDBFLAGS } {
+	append ::GDBFLAGS " -ex \"maint set target-non-stop ${target_non_stop}\""
+	append ::GDBFLAGS " -ex \"set non-stop ${non_stop}\""
+	clean_restart $exec_file
+    }
+
+    gdb_test_no_output "set detach-on-fork off"
+
+    if { ![runto_main] } {
+	return
+    }
+
+    # Delete the breakpoint on main so we don't bit the breakpoint in
+    # the case that the vfork child performs an exec.
+    delete_breakpoints
+
+    gdb_test "break break_parent"
+
+    gdb_test "continue" \
+	"Can not resume the parent process over vfork .*" \
+	"continue to vfork"
+
+    # Try to continue again from there, expecting the same message.  It
+    # exercises a different code path in GDB.
+    gdb_test "continue" \
+	"Can not resume the parent process over vfork .*" \
+	"try to continue from vfork"
+
+    # Unblock the execution using the specified resolution method.
+    if { $resolution_method == "detach-on-fork" } {
+	# Make GDB detach the child.
+	gdb_test "set detach-on-fork on"
+	gdb_test "print unblock_parent = 1" " = 1"
+    } elseif { $resolution_method == "schedule-multiple" } {
+	# Make GDB resume both inferiors.  The parent is blocked while the
+	# children executes, so the continue will make the child reach the
+	# end.
+	gdb_test "set schedule-multiple on"
+	gdb_test "continue" "$::inferior_exited_re normally.*" \
+	    "continue to end of inferior 2"
+	gdb_test -no-prompt-anchor "inferior 1" ".*Switching to inferior 1.*"
+	gdb_test "print unblock_parent = 1" " = 1"
+    } else {
+	error "invalid resolution method: $resolution_method"
+    }
+
+    # Continue from the vfork call to the breakpoint.
+    gdb_test "continue" "Breakpoint $::decimal, break_parent .*" \
+	"continue to break_parent"
+}
+
+foreach_with_prefix exec_file [list $binfile $binfile2] {
+    foreach_with_prefix target-non-stop {on off} {
+	# This test was written assuming non-stop mode is off.
+	foreach_with_prefix non-stop {off} {
+	    if {!${target-non-stop} && ${non-stop}} {
+		continue
+	    }
+	    foreach_with_prefix resolution_method {detach-on-fork schedule-multiple} {
+		do_test $exec_file $resolution_method ${target-non-stop} ${non-stop}
+	    }
+	}
+    }
+}

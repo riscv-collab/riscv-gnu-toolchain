@@ -1,0 +1,182 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Tools which use the BFD library will output error messages of the
+# form "BFD: some messsage" when a problem with the file upon which it
+# operating is found.  E.g. an actual message (modulo some shortening
+# of the pathname) from this test is:
+#
+# BFD: bfd-errors-lib.so: invalid string offset 1154 >= 154 for section `.dynstr'
+#
+# For some problems with executable files or libraries, BFD will
+# attempt to output many identical messages.  Code has been added to
+# GDB to suppress messages which are identical to earlier messages
+# that have already been printed.
+#
+# This test makes sure that (all but the first) identical BFD messages
+# are suppresssed and also that differing messages are output at least
+# once.
+#
+# To accomplish this, a shared object with at least four symbols is
+# created.  The .dynsym section is extracted and offsets which should
+# refer to strings in the .dynstr section are changed to be
+# larger than the size of the .dynstr section.  Only two (different)
+# offsets are used; thus BFD will attempt to output at least two pairs
+# of identical messages.  (And it would do this too if not intercepted
+# by the hook placed by GDB.)  After modifying the extracted section,
+# the mangled section is placed back into the shared object.
+#
+# This test then loads the shared library's symbol table (and other
+# debug info) using the 'add-symbol-file' command.  While doing this,
+# the test observes and records the BFD errors that were output. 
+# Finally, data collected while adding the shared library symbols are
+# examined to make sure that identical messages were suppressed while
+# also making sure that at least two messages have been printed.
+
+# This test can't be run on targets lacking shared library support
+# or for non-ELF targets.
+require allow_shlib_tests is_elf_target
+
+# Library file names and flags:
+set lib_basename ${::gdb_test_file_name}-lib
+set srcfile_lib ${srcdir}/${subdir}/${lib_basename}.c
+set binfile_lib [standard_output_file ${lib_basename}.so]
+set lib_flags debug
+
+# Compile shared library:
+if { [gdb_compile_shlib ${srcfile_lib} ${binfile_lib} $lib_flags] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+# Open the shared library and determine some basic facts.  The key
+# things that we need to learn are 1) whether the solib is 32-bit or
+# 64-bit ELF file, and 2) the endianness.
+set solib_fp [open ${binfile_lib} r]
+fconfigure $solib_fp -translation binary
+
+# Read and check EI_MAG to verify that it's really an ELF file.
+set data [read $solib_fp 4]
+if { ![string equal $data "\x7fELF"] } {
+    close $solib_fp
+    untested "shared library is not an ELF file"
+    return -1
+}
+
+# Read EI_CLASS for ELF32 versus ELF64.
+set data [read $solib_fp 1]
+set is_elf64 [string equal $data "\x02"]
+
+# Read EI_DATA to determine data encoding (byte order).
+set data [read $solib_fp 1]
+set is_big_endian [string equal $data "\x02"]
+
+close $solib_fp
+
+set objcopy_program [gdb_find_objcopy]
+
+# Extract the .dynsym and .dynstr section from the shared object.
+if { [catch "exec $objcopy_program \
+              --dump-section .dynsym=${binfile_lib}.dynsym \
+	      --dump-section .dynstr=${binfile_lib}.dynstr \
+	      ${binfile_lib}" output] } {
+    untested "failed objcopy dump-section"
+    verbose -log "objcopy output: $output"
+    return -1
+}
+
+# Determine length of .dynstr.  We'll use the length for creating invalid
+# offsets into .dynstr.
+set dynstr_len [file size ${binfile_lib}.dynstr]
+
+# Open the file containing .dynsym and determine its length.  In this
+# case, we want to know the length in order to compute the total number
+# of symbols that it contains.  We also leave the file open for a
+# while so that we can write invalid offsets to it.
+set dynsym_fp [open ${binfile_lib}.dynsym r+]
+fconfigure $dynsym_fp -translation binary
+set dynsym_len [string length [read $dynsym_fp]]
+
+# SZ is the size of the Elf32_Sym / Elf64_Sym struct.  OFF is the
+# offset into the file.  CNT is one greater than the number of symbols
+# left to mangle.  Note that, in the loop below, the first symbol is
+# skipped.  This is intentional since the first symbol is defined by
+# the ELF specification to be the undefined symbol.
+set off 0
+if { $is_elf64 } {
+    set sz 24
+} else {
+    set sz 16
+}
+set cnt [expr $dynsym_len / $sz]
+
+# Create 32-bit patterns (bad offsets) to write into the st_name area.
+if { $is_big_endian } {
+    set pat(0) [binary format I [expr $dynstr_len + 1000]]
+    set pat(1) [binary format I [expr $dynstr_len + 2000]]
+} else {
+    set pat(0) [binary format i [expr $dynstr_len + 1000]]
+    set pat(1) [binary format i [expr $dynstr_len + 2000]]
+}
+
+# Mangle st_name for the symbols following the first (STN_UNDEF) entry.
+while { [incr cnt -1] > 0 } {
+    seek $dynsym_fp [incr off $sz]
+    puts $dynsym_fp $pat([expr $cnt % 2])
+}
+
+close $dynsym_fp
+
+# Replace .dynsym section in shared object with the mangled version.
+if { [catch "exec $objcopy_program \
+               --update-section .dynsym=${binfile_lib}.dynsym \
+	       ${binfile_lib}" output] } {
+    untested "failed objcopy update-section"
+    verbose -log "objcopy output: $output"
+    return -1
+}
+
+clean_restart
+
+# Count number of distinct BFD error messages via 'bfd_error_count'
+# array while using add-symbol-file to "load" the shared library.
+gdb_test_multiple "add-symbol-file -readnow $binfile_lib" \
+                  "load library with add-symbol-file" {
+    -re "add symbol table from file.*\(y or n\)" {
+	send_gdb "y\n" answer
+	exp_continue
+    }
+    -re "(BFD:\[^\r\n\]*)\[\r\n\]+" {
+	incr bfd_error_count($expect_out(1,string))
+	exp_continue
+    }
+    -re "Expanding full symbols from.*$gdb_prompt $" {
+	pass $gdb_test_name
+    }
+}
+
+# Examine counts recorded in the 'bfd_error_count' array to see if any
+# message was printed multiple times.
+set more_than_one 0
+foreach index [array names bfd_error_count] {
+    if { $bfd_error_count($index) > 1 } {
+	incr more_than_one
+    }
+}
+gdb_assert { $more_than_one == 0 } "consolidated bfd errors"
+
+# There should have been at least two distinct BFD errors printed.
+gdb_assert { [array size bfd_error_count] >= 2 } "print all unique bfd errors"
+
+gdb_exit

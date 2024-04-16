@@ -1,0 +1,138 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test for issue PR gdb/27059.  The problem was that when resolving a
+# dynamic type that was not-allocated GDB would still try to execute
+# the DWARF expressions for the upper, lower, and byte-stride values.
+#
+# The problem is that, at least in some gfortran compiled programs,
+# these values are undefined until the array is allocated.
+#
+# As a result, executing the dwarf expressions was triggering integer
+# overflow in some cases.
+#
+# This test aims to make the sometimes occurring integer overflow a
+# more noticeable error by creating an array that is always marked as
+# not-allocated.
+#
+# The dwarf expressions for the various attributes then contains an
+# infinite loop.  If GDB ever tries to execute these expressions we
+# will get a test timeout.  With this issue fixed the expressions are
+# never executed and the test completes as we'd expect.
+
+load_lib dwarf.exp
+
+require dwarf2_support
+
+standard_testfile .c -dw.S
+
+set flags {}
+lappend flags debug
+lappend_include_file flags $srcdir/lib/attributes.h
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile} $flags] } {
+    return -1
+}
+
+with_shared_gdb {
+    set func_info_vars [get_func_info main $flags]
+
+    set int_size [get_sizeof "int" "UNKNOWN"]
+    set voidp_size [get_sizeof "void *" "UNKNOWN"]
+}
+
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    global func_info_vars
+    foreach var $func_info_vars {
+       global $var
+    }
+    global int_size
+    global voidp_size
+
+    cu {} {
+	global srcfile
+
+	compile_unit {
+	    {producer "gcc" }
+            {language @DW_LANG_Fortran90}
+            {name ${srcfile}}
+            {low_pc 0 addr}
+        } {
+	    declare_labels array_type_label integer_type_label
+
+            integer_type_label: DW_TAG_base_type {
+                {DW_AT_byte_size $int_size DW_FORM_sdata}
+                {DW_AT_encoding  @DW_ATE_signed}
+                {DW_AT_name      integer}
+            }
+
+	    array_type_label: DW_TAG_array_type {
+		{DW_AT_type :$integer_type_label}
+		{DW_AT_data_location {
+		    DW_OP_push_object_address
+		    DW_OP_deref
+		} SPECIAL_expr}
+		{DW_AT_allocated {
+		    DW_OP_lit0
+		} SPECIAL_expr}
+	    } {
+		DW_TAG_subrange_type {
+		    {DW_AT_type        :$integer_type_label}
+		    {DW_AT_lower_bound {
+			DW_OP_skip -3
+		    } SPECIAL_expr}
+		    {DW_AT_upper_bound {
+			DW_OP_skip -3
+		    } SPECIAL_expr}
+		    {DW_AT_byte_stride {
+			DW_OP_skip -3
+		    } SPECIAL_expr}
+		}
+	    }
+
+	    DW_TAG_variable {
+                {DW_AT_location {
+                    DW_OP_addr [gdb_target_symbol dyn_object]
+                } SPECIAL_expr}
+		{name "dyn_object"}
+		{type :$array_type_label}
+	    }
+	   subprogram {
+	       {external 1 flag}
+	       {DW_AT_name main}
+	       {DW_AT_low_pc $main_start DW_FORM_addr}
+	       {DW_AT_high_pc $main_end DW_FORM_addr}
+	   }
+        }
+    }
+}
+
+set flags {}
+lappend flags {nodebug}
+lappend_include_file flags $srcdir/lib/attributes.h
+
+if { [prepare_for_testing "failed to prepare" "${testfile}" \
+	  [list $srcfile $asm_file] $flags] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+gdb_breakpoint "marker_label"
+gdb_continue_to_breakpoint "stop at marker_label"
+gdb_test "ptype dyn_object" "type = integer, allocatable \\(:\\)"

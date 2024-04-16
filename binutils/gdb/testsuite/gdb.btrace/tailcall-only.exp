@@ -1,0 +1,99 @@
+# This testcase is part of GDB, the GNU debugger.
+#
+# Copyright 2016-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+#
+# This is a variant of tailcall.exp where the entire trace contains only tail
+# calls.  This used to cause a crash in get_frame_type.
+#
+
+require allow_btrace_tests
+
+# This test requires the compiler to generate a tail call.  To guarantee that
+# we always get one, we use an assembly source file.
+#
+# We use different assembly sources based on the target architecture.
+#
+# Luckily, they are similar enough that a single test script can handle
+# both.
+set opts {}
+if [info exists COMPILE] {
+    # make check RUNTESTFLAGS="gdb.btrace/tailcall-only.exp COMPILE=1"
+    standard_testfile tailcall-only.c
+    lappend opts debug optimize=-O2
+} elseif {[istarget "i?86-*-*"] || [istarget "x86_64-*-*"]} {
+	if {[is_amd64_regs_target]} {
+		standard_testfile x86_64-tailcall-only.S
+	} else {
+		standard_testfile i686-tailcall-only.S
+	}
+} else {
+    unsupported "target architecture not supported"
+    return -1
+}
+
+if [prepare_for_testing "failed to prepare" $testfile $srcfile $opts] {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+# we want to see the full trace for this test
+gdb_test_no_output "set record function-call-history-size 0"
+
+# trace foo
+gdb_test "step" ".*" "prepare for recording"
+gdb_test_no_output "record btrace"
+gdb_test "stepi 4" ".*" "record branch trace"
+
+# for debugging
+gdb_test "info record" ".*"
+
+# show the branch trace with calls indented
+gdb_test "record function-call-history /c 1" [multi_line \
+  "1\tfoo" \
+  "2\t  foo_1" \
+  "3\t    bar" \
+  "4\t      bar_1"
+  ] "function-call-history"
+
+# We can step
+gdb_test "record goto begin" ".*foo.*"
+gdb_test "stepi" ".*foo_1.*" "step into foo_1"
+gdb_test "step" ".*bar.*" "step into bar"
+gdb_test "stepi" ".*bar_1.*" "step into bar_1"
+
+# We can neither finish nor return.
+gdb_test "finish" "Cannot find the caller frame.*"
+gdb_test_multiple "return" "return" {
+  -re "Make .* return now.*y or n. $" {
+    send_gdb "y\n"
+    exp_continue
+  }
+  -re "Cannot find the caller frame.*$gdb_prompt $" {
+    pass "return"
+  }
+}
+
+# But we can reverse-finish
+gdb_test "reverse-finish" ".*bar.*"
+gdb_test "reverse-step" ".*foo_1.*"
+
+# Info frame isn't useful but doesn't crash as it used to.
+gdb_test "up" ".*foo.*"
+gdb_test "info frame" ".*"

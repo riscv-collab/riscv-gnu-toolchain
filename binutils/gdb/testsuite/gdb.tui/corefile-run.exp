@@ -1,0 +1,71 @@
+# Copyright 2019-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test whether we can load a corefile, enable TUI and then invoke
+# "run" without having a segfault.
+#
+# Ref.: https://bugzilla.redhat.com/show_bug.cgi?id=1765117
+
+tuiterm_env
+
+standard_testfile tui-layout.c
+
+set core [standard_output_file "${testfile}.core"]
+
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile debug] } {
+    return -1
+}
+
+# Only run on native boards.
+require {target_can_use_run_cmd core}
+
+if { ![runto_main] } {
+    return -1
+}
+
+if { ![gdb_gcore_cmd "$core" "save a corefile"] } {
+    untested "could not generate a corefile"
+    return -1
+}
+
+set src_line "return 0;"
+set src_line_nr [gdb_get_line_number $src_line]
+
+set run_re \
+    "\\\[Inferior $decimal \\\(process $decimal\\\) exited normally\\]"
+
+if { [info exists USE_TUI] && $USE_TUI == 0 } {
+    clean_restart $testfile
+    gdb_test "core-file $core" $src_line "load corefile"
+    gdb_test "run" $run_re "run until the end"
+    return
+}
+
+Term::clean_restart 24 80 $testfile
+if {![Term::enter_tui]} {
+    unsupported "TUI not supported"
+    return
+}
+
+set text [Term::get_all_lines]
+gdb_assert {![string match "No Source Available" $text]} \
+    "initial source listing"
+
+send_gdb "core-file $core\n"
+Term::wait_for "Program terminated"
+Term::check_contents "load corefile" "$src_line_nr *$src_line.*$gdb_prompt .*"
+
+Term::command "run"
+Term::check_contents "run until the end" $run_re

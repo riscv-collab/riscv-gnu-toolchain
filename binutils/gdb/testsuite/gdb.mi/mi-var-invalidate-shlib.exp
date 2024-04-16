@@ -1,0 +1,168 @@
+# Copyright 2007-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# Test that varobj are invalidated after the shlib they point to goes
+# away.
+
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+require allow_shlib_tests
+
+standard_testfile .c -lib.c
+set shlib_path [standard_output_file ${testfile}-lib.so]
+
+if { [gdb_compile_shlib $srcdir/$subdir/$srcfile2 $shlib_path {debug}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+set shlib_path_target [gdb_download_shlib $shlib_path]
+
+set opts [list shlib_load debug additional_flags=-DSHLIB_PATH="${shlib_path_target}"]
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable $opts] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+proc do_test { separate_debuginfo } {
+    if { [mi_clean_restart] } {
+	unsupported "failed to start GDB"
+	return
+    }
+
+    # Start the process once and create varobjs referencing the loaded objfiles.
+    with_test_prefix "setup" {
+	mi_locate_shlib $::shlib_path
+	if { $separate_debuginfo } {
+	    mi_load_shlibs ${::shlib_path}.debug
+	}
+	mi_delete_breakpoints
+	mi_gdb_reinitialize_dir $::srcdir/$::subdir
+	mi_gdb_load $::binfile
+
+	mi_runto foo -pending
+
+	mi_create_varobj global_var global_var "create global global_var"
+	mi_create_varobj global_shlib_var global_shlib_var "create global gloal_shlib_var"
+	mi_create_floating_varobj floating_local local_var "create floating local_var"
+
+	# Advance to a point where the shlib's objfile have been deleted.
+	mi_continue_to "no_varobj_in_scope"
+    }
+
+    with_test_prefix "after objfile deleted" {
+	# The global shlib var was invalidated when the objfile got unloaded.
+	mi_gdb_test "-var-update global_shlib_var" \
+	    "\\^done,changelist=\\\[\{name=\"global_shlib_var\",in_scope=\"invalid\",has_more=\"0\"\}\]" \
+	    "global_shlib_var invalidated"
+
+	# The floating var is still valid but not in scope.
+	mi_gdb_test "-var-update floating_local" \
+	    "\\^done,changelist=\\\[{name=\"floating_local\",in_scope=\"false\",type_changed=\"false\",has_more=\"0\"}\\\]" \
+	    "floating_local still valid but not in scope"
+
+	mi_gdb_test "-var-update global_var" \
+	    "\\^done,changelist=\\\[\\\]" \
+	    "global_var still valid"
+
+	# The varobj can be re-evaluated if the expression is valid in the current
+	# frame.
+	mi_continue_to "floating_varobj_in_scope"
+	mi_gdb_test "-var-update floating_local" \
+	    "\\^done,changelist=\\\[{name=\"floating_local\",in_scope=\"true\",type_changed=\"true\",new_type=\"int\",new_num_children=\"0\",has_more=\"0\"}\\\]" \
+	    "floating_local in scope with new type and value"
+    }
+
+    # Reload the entire process
+    with_test_prefix "restart process" {
+	mi_delete_breakpoints
+	mi_gdb_load ${::binfile}
+	mi_runto_main
+    }
+
+    with_test_prefix "in new process" {
+	# When reloading the symbol file, only the var for the global in the main
+	# executable is re-created.
+	mi_gdb_test "-var-update global_var" \
+	    "\\^done,changelist=\\\[\\\]" \
+	    "global_var recreated"
+	mi_gdb_test "-var-update global_shlib_var" \
+	    "\\^done,changelist=\\\[{name=\"global_shlib_var\",in_scope=\"invalid\",has_more=\"0\"}\\\]" \
+	    "global_shlib_var invalid"
+
+	# Floating varobj should still be valid, but out of scope at the moment.
+	mi_gdb_test "-var-update floating_local" \
+	    "\\^done,changelist=\\\[{name=\"floating_local\",in_scope=\"false\",type_changed=\"false\",has_more=\"0\"}\\\]" \
+	    "floating_local still valid but not in scope"
+
+	# Continue inside foo
+	mi_gdb_test "299-break-insert -f -t foo" \
+	    "&\"Function \\\\\"foo\\\\\" not defined.\\\\n\"\r\n299\\^done,[mi_make_breakpoint_pending -type breakpoint -disp del -pending foo]"
+	mi_send_resuming_command "exec-continue" "continue to foo"
+	mi_expect_stop "breakpoint-hit" foo ".*" ".*" "\[0-9\]+" { "" "disp=\"del\"" } "arrived at foo"
+
+	# Floating varobj is still valid, and now in scope.
+	mi_gdb_test "-var-update floating_local" \
+	    "\\^done,changelist=\\\[{name=\"floating_local\",in_scope=\"true\",type_changed=\"true\",new_type=\"struct bar\",new_num_children=\"2\",has_more=\"0\"}\\\]" \
+	    "floating_local still valid and in scope"
+
+	# The var for the global in the shlib stays invalid even after reloading the shlib.
+	mi_gdb_test "-var-update global_shlib_var" \
+	    "\\^done,changelist=\\\[{name=\"global_shlib_var\",in_scope=\"invalid\",has_more=\"0\"}\\\]" \
+	    "global_shlib_var invalid after shlib loaded"
+    }
+}
+
+proc_with_prefix local_not_invalidated { separate_debuginfo } {
+    if { [mi_clean_restart] } {
+	unsupported "failed to start GDB"
+	return
+    }
+
+    # Start the process once and create varobjs referencing the loaded objfiles.
+    with_test_prefix "setup" {
+	mi_load_shlibs $::shlib_path
+	if { $separate_debuginfo } {
+	    mi_load_shlibs ${::shlib_path}.debug
+	}
+
+	mi_gdb_reinitialize_dir $::srcdir/$::subdir
+	mi_gdb_load $::binfile
+
+	mi_runto foo -pending
+	mi_next "next"
+	mi_create_varobj local_var local_var "create local varobj"
+    }
+
+    # At this point we are stopped in the shared library.  If we reload symbols
+    # for the main binary, symbols for the shared library remain valid.  A
+    # varobj tracking variables in the scope of the shared library only should
+    # not be invalidated.
+    mi_gdb_load ${::binfile}
+    mi_gdb_test "-var-update local_var" \
+	"\\^done,changelist=\\\[\\\]" \
+	"local_var preserved"
+}
+
+foreach_with_prefix separate_debuginfo {0 1} {
+    if { $separate_debuginfo } {
+	gdb_gnu_strip_debug $::shlib_path
+    }
+
+    do_test $separate_debuginfo
+    local_not_invalidated $separate_debuginfo
+}

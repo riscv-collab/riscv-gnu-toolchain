@@ -1,0 +1,88 @@
+# Copyright 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This testcase is for PR breakpoints/16889
+
+standard_testfile ".S"
+
+require is_x86_64_m64_target
+
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile] } {
+    return -1
+}
+
+# Helper procedure to go to probe NAME
+
+proc goto_probe { name } {
+    global decimal hex
+
+    gdb_test "break -pstap $name" "Breakpoint $decimal at $hex"
+    gdb_test "continue" "Breakpoint $decimal, main \\(\\) at .*\r\n.*STAP_PROBE1.*${name},.*\\)"
+}
+
+# Helper procedure to test the probe's argument
+
+proc test_probe_value { value reg_val } {
+    gdb_test "print \$_probe_argc" "= 1"
+    gdb_test "print \$_probe_arg0" "= $value"
+    gdb_test "print \$_probe_arg0 == *((unsigned int *) (${reg_val}))" "= 1"
+}
+
+proc test_probe_value_without_reg { value } {
+    gdb_test "print \$_probe_argc" "= 1"
+    gdb_test "print \$_probe_arg0" "= $value"
+}
+
+if { ![runto_main] } {
+    return -1
+}
+
+foreach probe_name [list "foo" "bar" "foo_prefix" "bar_prefix"] \
+    probe_val [list "42" "42" "42" "42"] \
+    probe_reg_val [list "\$rsp" "\$rbp - 8" "\$rsp" "\$rbp - 8"] {
+    with_test_prefix $probe_name {
+	goto_probe $probe_name
+	test_probe_value $probe_val $probe_reg_val
+    }
+}
+
+# Testing normal probes, with several prefixes.
+
+set normal_probes_names { }
+
+foreach bit [list 8 16 32 64] {
+    lappend normal_probes_names "uint${bit}_probe"
+    lappend normal_probes_names "int${bit}_probe"
+}
+
+foreach probe_name $normal_probes_names \
+    probe_val [list 8 -8 16 -16 32 -32 64 -64] {
+    with_test_prefix $probe_name {
+	goto_probe $probe_name
+	test_probe_value_without_reg $probe_val
+    }
+}
+
+# Testing the fail probes.
+
+with_test_prefix "fail_probe" {
+    goto_probe "fail_probe"
+    gdb_test "print \$_probe_arg0" "warning: unrecognized bitness `-7' for probe `fail_probe'\r\nInvalid probe argument 0 -- probe has 0 arguments available"
+}
+
+with_test_prefix "fail2_probe" {
+    goto_probe "fail2_probe"
+    gdb_test "print \$_probe_arg0" "Unknown numeric token on expression `23-@\\\$16'."
+}

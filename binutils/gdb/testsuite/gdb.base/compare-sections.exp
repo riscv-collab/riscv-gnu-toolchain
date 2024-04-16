@@ -1,0 +1,161 @@
+# Copyright 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test the compare-sections command.
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile {debug}]} {
+    return -1
+}
+
+set is_pie [exec_is_pie $binfile]
+
+# Run the compare-sections command along with any options as specified
+# by OPTIONS, and check that no mismatch is found.
+proc compare_sections { {options ""} } {
+    global gdb_prompt
+
+    if {$options != ""} {
+	set command "compare-sections $options"
+    } else {
+	set command "compare-sections"
+    }
+    set test $command
+    gdb_test_multiple $command $test {
+	-re "MIS-MATCHED.*$gdb_prompt $" {
+	    fail $test
+	}
+	-re "warning: One or more sections.*does not match.*loaded file.*$gdb_prompt $" {
+	    fail $test
+	}
+	-re "Section.*matched.*$gdb_prompt $" {
+	    pass $test
+	}
+    }
+}
+
+gdb_file_cmd $binfile
+
+with_test_prefix "after file" {
+    # Before starting the target, we're just comparing the
+    # executable's sections against themselves...  This should never
+    # find a mismatch.
+    compare_sections
+    compare_sections "-r"
+}
+
+# Load the file into the target.
+gdb_reload
+
+with_test_prefix "after reload" {
+    # We're presumabily still stopped at the entry point.  All
+    # sections should match.
+    compare_sections
+    compare_sections "-r"
+}
+
+# Try comparing just one section.  Assume there's a .text section,
+# which is a pretty safe bet.
+set command "compare-sections .text"
+set command_re [string_to_regexp $command]
+set test $command
+gdb_test_multiple $command $test {
+    -re "^$command_re\r\nSection .text, range $hex -- $hex. matched\.\r\n$gdb_prompt $" {
+	pass $test
+    }
+}
+
+# Now get past startup code.
+if {![runto_main]} {
+    return 0
+}
+
+with_test_prefix "after run to main" {
+    # Assume all targets' startup code changes some loaded variable.
+    gdb_test "compare-sections" \
+	"MIS-MATCHED.*warning.*One or more sections.*does not match.*loaded file"
+
+    if { $is_pie == 1 } {
+	gdb_test "compare-sections -r" \
+	    "MIS-MATCHED.*warning.*One or more sections.*does not match.*loaded file"
+    } else {
+	# Assume startup code doesn't change read-only sections.
+	compare_sections "-r"
+    }
+}
+
+# Now test that "compare-sections -r" works as expected.  Look for an
+# address in a read-only section, patch it, and check that
+# "compare-sections -r" detects a mismatch.
+with_test_prefix "read-only" {
+    set ro_address 0
+    set has_ro_sections 0
+    set test "list read-only sections"
+    gdb_test_multiple "maint info sections READONLY" $test {
+	-re "($hex)->$hex at $hex. \[^\r\n\]* READONLY.*$gdb_prompt $" {
+	    set ro_address $expect_out(1,string)
+	    set has_ro_sections 1
+	    pass $test
+	}
+	-re "$gdb_prompt $" {
+	    pass $test
+	}
+    }
+
+    if {!$has_ro_sections} {
+	unsupported "no read-only sections"
+	return -1;
+    }
+
+    set orig -1
+
+    set test "get value of read-only section"
+    gdb_test_multiple "print /u *(unsigned char *) $ro_address" "$test" {
+	-re " = (\[0-9\]*).*$gdb_prompt $" {
+	    set orig $expect_out(1,string)
+	    pass "$test"
+	}
+    }
+
+    if {$orig == -1} {
+	untested "couldn't read address of read-only section"
+	return -1
+    }
+
+    # Come up with different value.
+    set patch [expr 255 - $orig]
+
+    # Write PATCH to memory.
+    set written -1
+    set test "corrupt read-only section"
+    gdb_test_multiple "print /u *(unsigned char *) $ro_address = $patch" "$test" {
+	-re " = .*Cannot access memory at address $ro_address.*$gdb_prompt $" {
+	    pass "$test (cannot write)"
+	}
+	-re " = (\[0-9\]*).*$gdb_prompt $" {
+	    set written $expect_out(1,string)
+	    pass "$test"
+	}
+    }
+
+    if { $written != $patch } {
+	unsupported "can't patch read-only section"
+	return -1
+    }
+
+    gdb_test "compare-sections -r" \
+	"MIS-MATCHED.*warning.*One or more sections.*does not match.*loaded file.*"
+}

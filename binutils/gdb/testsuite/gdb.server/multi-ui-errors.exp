@@ -1,0 +1,160 @@
+# This testcase is part of GDB, the GNU debugger.
+#
+# Copyright 2019-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test what happens if we have multiple UIs in use, and an error
+# occurs while running a GDB command.  Specifically, do both UIs
+# return to an interactive state, or does one (or both) of them get
+# stuck in a non-interactive state.
+
+load_lib gdbserver-support.exp
+
+standard_testfile
+
+require allow_gdbserver_tests
+# The test-case uses "spawn -pty", which creates a pty on build, which gdb
+# cannot use on remote host.
+require {!is_remote host}
+
+save_vars { GDBFLAGS } {
+    # If GDB and GDBserver are both running locally, set the sysroot to avoid
+    # reading files via the remote protocol.
+    if { ![is_remote host] && ![is_remote target] } {
+	set GDBFLAGS "$GDBFLAGS -ex \"set sysroot\""
+    }
+
+    if {[prepare_for_testing "failed to prepare" ${testfile} ${srcfile}]} {
+	return -1
+    }
+}
+
+# Make sure we're disconnected, in case we're testing with an
+# extended-remote board, therefore already connected.
+gdb_test "disconnect" ".*"
+
+# Start gdbserver.
+set res [gdbserver_spawn "${binfile}"]
+set gdbserver_protocol [lindex $res 0]
+set gdbserver_gdbport [lindex $res 1]
+set gdbserver_pid [exp_pid -i $server_spawn_id]
+
+# Save the main UI's spawn ID.
+set gdb_main_spawn_id $gdb_spawn_id
+
+# Create the new PTY for the secondary console UI, issue the 'new-ui'
+# command, and wait for a prompt on the second UI.
+spawn -pty
+set extra_spawn_id $spawn_id
+set extra_tty_name $spawn_out(slave,name)
+gdb_test_multiple "new-ui console $extra_tty_name" "new-ui" {
+    -re "New UI allocated\r\n$gdb_prompt $" {
+	pass $gdb_test_name
+    }
+}
+with_spawn_id $extra_spawn_id {
+    gdb_test_multiple "" "initial prompt on extra console" {
+	-re "$gdb_prompt $" {
+	    pass $gdb_test_name
+	}
+    }
+}
+
+# Connect to the remote and continue its execution from the other UI.
+with_spawn_id $extra_spawn_id {
+    gdb_test "target $gdbserver_protocol $gdbserver_gdbport" ".*" \
+	"connect to gdbserver"
+
+    # Issue a continue and consume the response.  Don't expect a prompt.
+    gdb_test_multiple "continue" "continue - extra UI" {
+	-re  "\r\nContinuing\.\r\n" {
+	    pass $gdb_test_name
+	}
+    }
+}
+
+# We're going to kill the gdbserver, but before we do, lets make sure
+# that the inferior has started executing.
+with_spawn_id $server_spawn_id {
+    gdb_test_multiple "" "ensure inferior is running" {
+	-re "@@XX@@ Inferior Starting @@XX@@" {
+	    pass $gdb_test_name
+	}
+	timeout {
+	    fail $gdb_test_name
+	}
+    }
+}
+
+# Interact with the main UI.
+with_spawn_id $gdb_main_spawn_id {
+    gdb_test "echo hello\\n" "hello" "interact with GDB's main UI"
+}
+
+# Get the gdbserver PID.
+set gdbserver_pid 0
+with_spawn_id $gdb_main_spawn_id {
+    gdb_test -no-prompt-anchor "interrupt"
+
+    gdb_test_multiple "" "interrupt arrived" {
+	-re "Program received signal SIGINT, Interrupt\\.\r\n" {
+	    pass $gdb_test_name
+	}
+    }
+
+    gdb_test_multiple "p server_pid" "" {
+	-re -wrap " = ($decimal)" {
+	    set gdbserver_pid $expect_out(1,string)
+	    pass $gdb_test_name
+	}
+    }
+
+    gdb_test_multiple continue "" {
+	-re "Continuing\\.\r\n" {
+	    pass $gdb_test_name
+	}
+    }
+}
+
+if { $gdbserver_pid == 0 } {
+    return
+}
+
+# Now kill the gdbserver.
+remote_exec target "kill -9 $gdbserver_pid"
+
+# We expect to land back at a GDB prompt in both UIs, however there is
+# currently an issue that in the original UI GDB doesn't reprint its
+# prompt.  That said, getting a prompt isn't the point of this test.
+# The point is that we should be able to interact with GDB from either
+# interpreter now.
+
+with_spawn_id $gdb_main_spawn_id {
+    gdb_test_multiple "" "remote connection closed - main UI" {
+	-re -wrap "Remote connection closed" {
+	    pass $gdb_test_name
+	}
+    }
+}
+
+with_spawn_id $gdb_main_spawn_id {
+    gdb_test "echo" "" \
+	"main UI, prompt after gdbserver dies"
+}
+
+with_spawn_id $extra_spawn_id {
+    gdb_test "echo" "" \
+	"extra UI, prompt after gdbserver dies"
+}

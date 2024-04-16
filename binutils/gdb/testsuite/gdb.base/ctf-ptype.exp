@@ -1,0 +1,306 @@
+# Copyright 2019-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is a subset of ptype.exp written by Rob Savoye. (rob@cygnus.com)
+
+require allow_ctf_tests
+
+# Some tests require GCC.
+set gcc_compiled [is_c_compiler_gcc]
+
+standard_testfile .c
+
+# Using `-gctf` generates full-fledged CTF debug information.
+set opts {}
+lappend opts additional_flags=-gctf
+lappend opts ldflags=-Wl,--ctf-variables
+lappend opts nowarnings
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	  [list $srcfile] $opts] } {
+    return 0
+}
+
+clean_restart
+gdb_test_no_output "set always-read-ctf on"
+gdb_load $binfile
+
+# Test ptype of unnamed enumeration members before any action causes
+# the partial symbol table to be expanded to full symbols.  This fails
+# with stabs compilers which fail to use a nameless stab (such as
+# pre-2.4.5 versions of gcc and most non-gcc compilers).
+
+gdb_test_multiple "ptype red1" "ptype unnamed enumeration member" {
+    -re "type = enum primary1_tag \{red1, green1, blue1\}.*$gdb_prompt $" {
+	# The workaround is in effect.  As this is a compiler, not GDB,
+	# bug, we'll make it a PASS but perhaps it should be an XFAIL.
+	pass "ptype unnamed enumeration member (worked around)"
+    }
+    -re "type = enum \{red1, green1, blue1\}.*$gdb_prompt $" {
+	pass "ptype unnamed enumeration member"
+    }
+}
+
+#
+# test ptype command with structures
+#
+# Here and elsewhere, we accept
+# "long", "long int", or "int" for long variables (whatis.exp already
+# has an XFAIL for "int" (Sun cc bug), so no need to fail it here).
+gdb_test "ptype struct t_struct" "type = struct t_struct \{.*\[\r\n\]    (unsigned |)char v_char_member;.*\[\r\n\]    (short|short int) v_short_member;.*\[\r\n\]    int v_int_member;.*\[\r\n\]    (long|long int|int) v_long_member;.*\[\r\n\]    float v_float_member;.*\[\r\n\]    double v_double_member;.*\[\r\n\]\}.*" "ptype structure"
+
+
+# Test the equivalence between '.' and '->' for struct member references.
+
+if {[gdb_test "ptype v_struct1.v_float_member"	"type = float"] < 0} {
+    return -1
+}
+if {[gdb_test "ptype v_struct1->v_float_member"	"type = float"] < 0} {
+    return -1
+}
+if {[gdb_test "ptype v_t_struct_p.v_float_member"	"type = float"] < 0} {
+    return -1
+}
+if {[gdb_test "ptype v_t_struct_p->v_float_member"	"type = float"] < 0} {
+    return -1
+}
+
+gdb_test "ptype struct link" "type = struct link \{\[\r\n\]+\[ \t\]+struct link \\*next;\[\r\n\]+\[ \t\]+struct link \\*\\(\\*linkfunc\\)\\((struct link \\*, int|void|)\\);\[\r\n\]+\[ \t\]+struct t_struct stuff.3.;\[\r\n\]+\}.*" "ptype linked list structure"
+
+#
+# test ptype command with unions
+#
+gdb_test "ptype union t_union" "type = union t_union \{.*\[\r\n\]    (unsigned |)char v_char_member;.*\[\r\n\]    (short|short int) v_short_member;.*\[\r\n\]    int v_int_member;.*\[\r\n\]    (long|long int|int) v_long_member;.*\[\r\n\]    float v_float_member;.*\[\r\n\]    double v_double_member;.*\[\r\n\]\}.*" "ptype union"
+
+#
+# test ptype command with enums
+#
+
+gdb_test "ptype primary" "type = enum .red, green, blue.*" "ptype unnamed enumeration"
+
+gdb_test "ptype enum colors" "type = enum colors \{yellow, purple, pink\}.*" "ptype named enumeration"
+
+
+#
+# test ptype command with enums as typedef
+#
+gdb_test "ptype boolean" "type = enum (boolean |)\{FALSE, TRUE\}.*" "ptype unnamed typedef'd enumeration"
+
+gdb_test "list -q main" ".*"
+
+# Same thing with struct and union.
+gdb_test "ptype t_struct3" "type = struct (t_struct3 |)\{.*
+ *double v_double_member;.*
+ *int v_int_member;.*\}" "printing typedef'd struct"
+
+gdb_test "ptype t_union3" "type = union (t_union3 |)\{.*
+ *double v_double_member;.*
+ *int v_int_member;.*\}" "printing typedef'd union"
+
+gdb_test "ptype enum bvals" "type = enum bvals \{my_false, my_true\}.*" "ptype named typedef'd enumf'd enum"
+
+#
+# test ptype command with out-of-order enum values
+#
+gdb_test "ptype enum misordered" "type = enum misordered \{two = 2, one = 1, zero = 0, three = 3\}.*" "ptype misordered enumeration"
+
+#
+# test ptype command with a named enum's value
+#
+gdb_test "ptype three" "type = enum misordered \{two = 2, one = 1, zero = 0, three = 3\}.*" "ptype named enumeration member"
+
+gdb_test "ptype red" "type = enum \{red, green, blue\}.*" "ptype unnamed enumeration member #2"
+
+#
+# test ptype command with arrays
+#
+gdb_test "ptype v_char_array" "type = char .2..*" "ptype char array"
+
+gdb_test "ptype v_signed_char_array" "type = (|signed )char .2..*" "ptype signed char array"
+
+gdb_test "ptype v_unsigned_char_array" "type = unsigned char .2..*" "ptype unsigned char array"
+
+gdb_test "ptype v_int_array" "type = int .2..*" "ptype int array"
+
+gdb_test "ptype v_signed_int_array" "type = int .2..*" "ptype signed int array"
+
+gdb_test "ptype v_unsigned_int_array" "type = unsigned int .2..*" "ptype unsigned int array"
+
+gdb_test "ptype v_long_array" "type = (long|int|long int) .2..*" "ptype long array"
+
+gdb_test "ptype v_signed_long_array" "type = (long|int|long int) .2..*" "ptype signed long array"
+
+gdb_test "ptype v_unsigned_long_array" "type = unsigned long .2..*" "ptype unsigned long array"
+
+gdb_test "ptype v_float_array" "type = float .2..*" "ptype float array"
+
+gdb_test "ptype v_double_array" "type = double .2..*" "ptype double array"
+
+gdb_test "ptype pv_char_array" "type = (|unsigned )char \\(\\*\\)\\\[0?\\\]"
+
+#
+# test ptype command with pointers
+#
+gdb_test "ptype v_char_pointer" "type = char \*.*" "ptype char pointer"
+
+gdb_test "ptype v_short_pointer" "type = short \*.*" "ptype short pointer"
+
+gdb_test "ptype v_long_pointer" "type = long \*.*" "ptype long pointer"
+
+gdb_test "ptype v_int_pointer" "type = int \*.*" "ptype int pointer"
+
+gdb_test "ptype v_signed_long_pointer" "type = long \*.*" "ptype signed long pointer"
+
+gdb_test "ptype v_unsigned_long_pointer" "type = unsigned long \*.*" "ptype unsigned long pointer"
+
+gdb_test "ptype v_float_pointer" "type = float \*.*" "ptype float pointer"
+
+gdb_test "ptype v_double_pointer" "type = double \*.*" "ptype double pointer"
+
+#
+# test ptype command with basic C types
+#
+gdb_test "ptype v_short" "type = short(| int).*" "ptype short"
+
+gdb_test "ptype v_int" "type = int.*" "ptype int"
+
+#
+# test ptype command with nested structure and union
+#
+gdb_test "ptype struct outer_struct" "type = struct outer_struct \{.*\[\r\n\]+\
+.*int outer_int;.*\[\r\n\]+\
+.*(struct|) inner_struct inner_struct_instance;.*\[\r\n\]+\
+.*(union|) inner_union inner_union_instance;.*\[\r\n\]+\
+.*(long|long int|int) outer_long;.*\[\r\n\]\}.*" "ptype outer structure"
+
+gdb_test "ptype struct inner_struct" "type = struct inner_struct \{.*\[\r\n\]    int inner_int;.*\[\r\n\]    (long|long int|int) inner_long;.*\[\r\n\]\}.*" "ptype inner structure"
+
+gdb_test "ptype union inner_union" "type = union inner_union \{.*\[\r\n\]    int inner_union_int;.*\[\r\n\]    (long|long int|int) inner_union_long;.*\[\r\n\]\}.*" "ptype inner union"
+
+gdb_test "ptype nested_su" "type = struct outer_struct \{.*\[\r\n\]    int outer_int;.*\[\r\n\]    (struct |)inner_struct inner_struct_instance;.*\[\r\n\]    (union |)inner_union inner_union_instance;.*\[\r\n\]    (long|long int|int) outer_long;.*\[\r\n\]\}.*" "ptype nested structure"
+
+gdb_test "ptype nested_su.outer_int" "type = int.*" "ptype outer int"
+
+gdb_test "ptype nested_su.inner_struct_instance" "type = struct inner_struct \{.*\[\r\n\]    int inner_int;.*\[\r\n\]    (long|long int|int) inner_long;.*\[\r\n\]\}.*" "ptype nested structure #2"
+
+gdb_test "ptype nested_su.inner_struct_instance.inner_int" "type = int.*" "ptype inner int"
+
+gdb_test "ptype nested_su.inner_union_instance" "type = union inner_union \{.*\[\r\n\]    int inner_union_int;.*\[\r\n\]    (long|long int|int) inner_union_long;.*\[\r\n\]\}.*" "ptype nested union"
+
+# Print the type description of variable the_highest, and verify that
+# the type description for the fields whose type is anonymous are
+# correctly printed (at nesting level 1 and 2).
+
+gdb_test "ptype the_highest" \
+         "type = struct highest \{.*\[\r\n\] *int a;.*\[\r\n\] *struct \{.*\[\r\n\] *int b;.*\[\r\n\] *struct \{\.\.\.\} anonymous_level_2;.*\[\r\n\] *\} anonymous_level_1;.*\[\r\n\]}.*" \
+         "ptype the_highest"
+
+# Print the type descrption for one of the fields of variable the_highest.
+# The purpose is to verify that the type of a field that was printed above
+# as "struct {...}" is now printed in a more descriptive way (because the
+# nesting level is now one level less).
+
+gdb_test "ptype the_highest.anonymous_level_1" \
+         "type = struct \{.*\[\r\n\] *int b;.*\[\r\n\] *struct \{.*\[\r\n\] *int c;.*\[\r\n\] *\} anonymous_level_2;.*\[\r\n\]}.*" \
+         "ptype the_highest.anonymous_level_1"
+
+# Print the type of the identifier ID, and check the response:
+# - Expect to see PROTOTYPED as the type.  PROTOTYPED is not a regular
+#   expression; it's a literal string.
+# - If we instead see the unprototyped type PLAIN, and we're using STABS
+#   generated by GCC, that's an xfail; as of 9 Feb 2002, GCC never emits
+#   prototyped function types in STABS.  Like PROTOTYPED, PLAIN is a
+#   literal string, not a regular expression.
+# - If we see OVERPROTOTYPED, it's an xfail for RealView; RealView
+#   does not distinguish prototyped and unprototyped functions, and
+#   GDB defaults to prototyped.
+# - Otherwise, it's a failure.
+proc ptype_maybe_prototyped { id prototyped plain { overprototyped "NO-MATCH" } } {
+    global gdb_prompt
+    global gcc_compiled
+
+    # Turn the arguments, which are literal strings, into
+    # regular expressions by quoting any special characters they contain.
+    foreach var { prototyped plain overprototyped } {
+	eval "set val \$$var"
+	regsub -all "\[\]\[*()\]" $val "\\\\&" val
+	regsub -all "short int" $val "short( int)?" val
+	regsub -all "long int" $val "long( int)?" val
+	eval "set $var \$val"
+    }
+
+    gdb_test_multiple "ptype $id" "ptype $id" {
+        -re "type = $prototyped\[\r\n\]+$gdb_prompt $" {
+            pass "ptype $id"
+        }
+        -re "type = $plain\[\r\n\]+$gdb_prompt $" {
+            if {$gcc_compiled} { setup_xfail_format "stabs" }
+            fail "ptype $id (compiler doesn't emit prototyped types)"
+        }
+        -re "type = $overprototyped\[\r\n\]+$gdb_prompt $" {
+            if { [test_compiler_info "armcc-*"] } {
+		setup_xfail "*-*-*"
+	    }
+            fail "ptype $id (compiler doesn't emit unprototyped types)"
+        }
+    }
+}
+
+ptype_maybe_prototyped "func_type" "int (*)(int (*)(int, float), float)" \
+                                   "int (*)()"
+ptype_maybe_prototyped "old_fptr" "double (*)()" "double (*)()" \
+                                  "double (*)(void)"
+ptype_maybe_prototyped "new_fptr" "double (*)()" "double (*)()"
+ptype_maybe_prototyped "fptr" "int (*)(int, float)" "int (*)()"
+ptype_maybe_prototyped "fptr2" "int *(*)(int (*)(int, float), float)" \
+                               "int *(*)()"
+ptype_maybe_prototyped "xptr" "int (*)(int (*)(), int (*)(), int)" \
+                              "int (*)()" \
+                              "int (*)(int (*)(void), int (*)(void), int)"
+ptype_maybe_prototyped "ffptr" "int (*(*)(char))(short int)" \
+                               "int (*(*)())()"
+ptype_maybe_prototyped "fffptr" "int (*(*(*)(char))(short int))(long int)" \
+                                "int (*(*(*)())())()"
+
+# Test printing type of string constants and array constants, but
+# requires a running process.  These call malloc, and can take a long
+# time to execute over a slow serial link, so increase the timeout.
+
+if {[runto_main]} {
+
+  if [target_info exists gdb,cannot_call_functions] {
+    unsupported "this target can not call functions"
+    return
+  }
+
+  # We need to up this because this can be really slow on some boards.
+  # (malloc() is called as part of the test).
+  set prev_timeout $timeout
+  set timeout 60
+
+  gdb_test "ptype \"abc\""	"type = char \\\[4\\\]"
+  gdb_test "ptype {'a','b','c'}"	"type = char \\\[3\\\]"
+  gdb_test "ptype {0,1,2}"		"type = int \\\[3\\\]"
+  gdb_test "ptype {(long)0,(long)1,(long)2}"	  "type = long \\\[3\\\]"
+  gdb_test "ptype {(float)0,(float)1,(float)2}" "type = float \\\[3\\\]"
+  gdb_test "ptype {{0,1,2},{3,4,5}}"	"type = int \\\[2\\\]\\\[3\\\]"
+  gdb_test "ptype {4,5,6}\[2\]"	"type = int"
+  gdb_test "ptype *&{4,5,6}\[1\]"	"Attempt to take address of value not located in memory."
+
+  set timeout $prev_timeout
+
+  # Test ptype of user register
+  gdb_test "ptype \$pc" "void \\(\\*\\)\\(\\)" "ptype \$pc"
+}

@@ -1,0 +1,74 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2015-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test restarting programs with the R packet.
+
+load_lib gdbserver-support.exp
+
+standard_testfile server.c
+
+require allow_gdbserver_tests
+
+save_vars { GDBFLAGS } {
+    # If GDB and GDBserver are both running locally, set the sysroot to avoid
+    # reading files via the remote protocol.
+    if { ![is_remote host] && ![is_remote target] } {
+	set GDBFLAGS "$GDBFLAGS -ex \"set sysroot\""
+    }
+
+    if { [prepare_for_testing "failed to prepare" $testfile $srcfile debug] } {
+	return -1
+    }
+}
+
+# Make sure we're disconnected, in case we're testing with an
+# extended-remote board, therefore already connected.
+gdb_test "disconnect" ".*"
+
+set target_exec [gdbserver_download_current_prog]
+gdbserver_start_extended
+
+gdb_test_no_output "set remote exec-file $target_exec" "set remote exec-file"
+
+gdb_breakpoint main
+gdb_test "run" "Breakpoint.* main .*" "run to main"
+
+# Restart the process.
+with_test_prefix "restart" {
+    # Disable vRun packet and clear remote exec-file, so that GDB will
+    # use R packet to restart the process.
+    gdb_test \
+	"set remote run-packet off" \
+	"Support for the 'vRun' packet on the current remote target is set to \"off\"."
+
+    gdb_test_no_output "set remote exec-file"
+
+    set test "run to main"
+    gdb_test_multiple "run" $test {
+	-re {Start it from the beginning\? \(y or n\) $} {
+	    send_gdb "y\n"
+	    exp_continue
+	}
+	-re "Breakpoint.* main .*\r\n$gdb_prompt $" {
+	    pass $test
+	}
+    }
+}
+
+gdb_test "kill" "" "kill" "Kill the program being debugged. .y or n. " "y"
+
+gdb_test_no_output "monitor exit"

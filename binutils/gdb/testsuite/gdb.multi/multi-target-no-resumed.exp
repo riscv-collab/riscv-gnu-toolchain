@@ -1,0 +1,90 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that when there's a foreground execution command in progress, a
+# TARGET_WAITKIND_NO_RESUMED for a particular target is ignored when
+# other targets are still resumed.
+
+source $srcdir/$subdir/multi-target.exp.tcl
+
+if {![multi_target_prepare]} {
+    return
+}
+
+proc test_no_resumed_infs {inf_A inf_B} {
+    global gdb_prompt
+
+    if {![setup "off"]} {
+	untested "setup failed"
+	return
+    }
+
+    gdb_test "thread $inf_A.2" "Switching to thread $inf_A\.2 .*" \
+	"select thread of target A"
+
+    gdb_test_no_output "set scheduler-locking on"
+
+    gdb_test_multiple "continue &" "" {
+	-re "Continuing.*$gdb_prompt " {
+	    pass $gdb_test_name
+	}
+    }
+
+    gdb_test "thread $inf_B.2" "Switching to thread $inf_B\.2 .*" \
+	"select thread of target B"
+    gdb_test "p exit_thread = 1" " = 1" \
+	"set the thread to exit on resumption"
+
+    # Wait 3 seconds.  If we see any response from GDB, such as
+    # "No unwaited-for children left." it's a bug.
+    gdb_test_multiple "continue" "continue" {
+	-timeout 3
+	timeout {
+	    pass $gdb_test_name
+	}
+    }
+
+    # Now stop the program (all targets).
+    send_gdb "\003"
+    gdb_test_multiple "" "send_gdb control C" {
+	-re "received signal SIGINT.*$gdb_prompt $" {
+	    pass $gdb_test_name
+	}
+    }
+
+    gdb_test_multiple "info threads" "all threads stopped" {
+	-re "\\\(running\\\).*$gdb_prompt $" {
+	    fail $gdb_test_name
+	}
+	-re "$gdb_prompt $" {
+	    pass $gdb_test_name
+	}
+    }
+}
+
+# inferior 1 -> native
+# inferior 2 -> extended-remote 1
+# inferior 5 -> extended-remote 2
+set inferiors {1 2 5}
+foreach_with_prefix inf_A $inferiors {
+    foreach_with_prefix inf_B $inferiors {
+	if {$inf_A == $inf_B} {
+	    continue
+	}
+	test_no_resumed_infs $inf_A $inf_B
+    }
+}
+
+multi_target_cleanup

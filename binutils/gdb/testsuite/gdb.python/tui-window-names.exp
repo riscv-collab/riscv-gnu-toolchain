@@ -1,0 +1,82 @@
+# Copyright (C) 2022-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that GDB rejects invalid TUI window names, and that valid names
+# are allowed.
+
+load_lib gdb-python.exp
+
+require allow_python_tests allow_tui_tests
+
+tuiterm_env
+
+clean_restart
+
+# Define a function we can use as a window constructor.  If this ever
+# gets called we'll throw an error, but that's OK, this test doesn't
+# actually try to create any windows.
+gdb_test_multiline "create a window constructor" \
+    "python" "" \
+    "def failwin(win):" "" \
+    "  raise RuntimeError('failwin')" "" \
+    "end" ""
+
+# Check for some of the characters that can't be used within a window
+# name.
+foreach c {$ * \{ \} ( ) @ #} {
+    set re [string_to_regexp "$c"]
+    gdb_test "python gdb.register_window_type('te${c}st', failwin)" \
+	[multi_line \
+	     "gdb.error: invalid character '${re}' in window name" \
+	     "Error while executing Python code\\." ]
+
+    gdb_test "python gdb.register_window_type('${c}test', failwin)" \
+	[multi_line \
+	     "gdb.error: invalid character '${re}' in window name" \
+	     "Error while executing Python code\\." ]
+}
+
+# Check that whitespace within a window name is rejected.
+foreach c [list " " "\\t" "\\n" "\\r"] {
+    gdb_test "python gdb.register_window_type('te${c}st', failwin)" \
+	[multi_line \
+	     "gdb.error: invalid whitespace character in window name" \
+	     "Error while executing Python code\\." ]
+}
+
+# Check some of the characters which are allowed within a window name,
+# but are not allowed to be used as the first character.
+foreach c {1 _ - .} {
+    set re [string_to_regexp "$c"]
+    gdb_test "python gdb.register_window_type('${c}test', failwin)" \
+	[multi_line \
+	     "gdb.error: window name must start with a letter, not '${re}'" \
+	     "Error while executing Python code\\." ]
+}
+
+# Check different capitalisations.
+gdb_test_no_output "python gdb.register_window_type('TEST', failwin)"
+gdb_test_no_output "python gdb.register_window_type('test', failwin)"
+gdb_test_no_output "python gdb.register_window_type('tEsT', failwin)"
+gdb_test_no_output "python gdb.register_window_type('TeSt', failwin)"
+
+# Check a set of characters that can appear within a name, just not
+# necessarily as the first character.  We check at both the end of the
+# name, and within the name.
+foreach c {1 _ - . A} {
+    set re [string_to_regexp "$c"]
+    gdb_test_no_output "python gdb.register_window_type('test${c}', failwin)"
+    gdb_test_no_output "python gdb.register_window_type('te${c}st', failwin)"
+}

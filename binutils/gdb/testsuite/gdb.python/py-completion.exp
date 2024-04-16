@@ -1,0 +1,153 @@
+# Copyright (C) 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+set testfile "py-completion"
+
+load_lib gdb-python.exp
+
+require allow_python_tests
+
+set pyfile [gdb_remote_download host ${srcdir}/${subdir}/${testfile}.py]
+set discard 0
+gdb_exit
+gdb_start
+
+# Tab completion tests require readline support, and this set of tests
+# doesn't work on a remote host either.
+if { [readline_is_used] && ![is_remote host] } {
+    gdb_test_no_output "source ${pyfile}" "load python file"
+
+    # Create a temporary directory
+    set testdir "[standard_output_file "py-completion-testdir"]/"
+    set testdir_regex [string_to_regexp $testdir]
+    set testdir_complete [standard_output_file "py-completion-test"]
+    file mkdir $testdir
+
+    # This one should always pass.
+    send_gdb "completefileinit ${testdir_complete}\t"
+    gdb_test_multiple "" "completefileinit completion" {
+	-re "^completefileinit ${testdir_regex}$" {
+	    pass "completefileinit completion"
+	}
+    }
+
+    # Just discarding whatever we typed.
+    gdb_test " " ".*" "discard #[incr discard]"
+
+    # This should offer no suggestions - the complete() methods
+    # returns something that is neither an integer, or a sequence.
+    gdb_test_no_output "complete completefilenone ${testdir_complete}" \
+	"no suggestions given"
+
+    # This is the problematic one.
+    send_gdb "completefilemethod ${testdir_complete}\t"
+    gdb_test_multiple "" "completefilemethod completion" {
+	-re "^completefilemethod ${testdir_regex} $" {
+	    fail "completefilemethod completion (completed filename as wrong command arg)"
+	}
+	-re "^completefilemethod ${testdir_regex}$" {
+	    pass "completefilemethod completion"
+	}
+    }
+
+    # Discarding again
+    gdb_test " " ".*" "discard #[incr discard]"
+
+    # Another problematic
+    set completion_regex "[string_to_regexp [standard_output_file "py-completion-t"]]"
+    send_gdb "completefilecommandcond [standard_output_file "py-completion-t\t"]"
+    gdb_test_multiple "" "completefilecommandcond completion" {
+	-re "^completefilecommandcond ${testdir}$" {
+	    fail "completefilecommandcond completion (completed filename instead of command)"
+	}
+	-re "^completefilecommandcond ${completion_regex}\007$" {
+	    pass "completefilecommandcond completion"
+	}
+    }
+
+    # Discarding again
+    gdb_test " " ".*" "discard #[incr discard]"
+}
+
+# Start gdb over again to clear out current state.  This can interfere
+# with the expected output of the below tests in a buggy gdb.
+gdb_exit
+gdb_start
+gdb_test_no_output "source ${pyfile}" "load python file again"
+
+# Check that GDB prints exceptions raised by Command.complete calls.
+# This first command raises an exception during the brkchars phase of
+# completion.
+gdb_test "complete complete_brkchar_exception " \
+    "Python Exception <class 'gdb\\.GdbError'>: brkchars exception"
+
+# In this test the brkchars phase of completion is fine, but an
+# exception is raised during the actual completion phase.
+gdb_test "complete complete_raise_exception " \
+    "Python Exception <class 'gdb\\.GdbError'>: completion exception"
+
+gdb_test_sequence "complete completel" \
+    "list all completions of 'complete completel'" {
+	"completelimit1"
+	"completelimit2"
+	"completelimit3"
+	"completelimit4"
+	"completelimit5"
+	"completelimit6"
+	"completelimit7"
+    }
+
+# Discarding again
+gdb_test " " ".*" "discard #[incr discard]"
+
+gdb_test_sequence "complete completelimit1 c" \
+    "list all completions of 'complete completelimit1 c'" {
+	"completelimit1 cl11"
+	"completelimit1 cl12"
+	"completelimit1 cl13"
+    }
+
+# Discarding again
+gdb_test " " ".*" "discard #[incr discard]"
+
+# If using readline, we can TAB-complete.  This used to trigger a bug
+# because the cached result from the completer was being reused for
+# a different python command.
+if {[readline_is_used]} {
+    set testname "tab-complete 'completelimit1 c'"
+    send_gdb "completelimit1 c\t"
+    gdb_test_multiple "" $testname {
+	-re "^completelimit1 c\\\x07l1$" {
+	    pass $testname
+
+	    # Discard the command line
+	    gdb_test " " ".*" "discard #[incr discard]"
+	}
+    }
+
+    gdb_test_sequence "complete completelimit2 c" \
+	"list all completions of 'complete completelimit2 c'" {
+	    "completelimit2 cl21"
+	    "completelimit2 cl210"
+	    "completelimit2 cl22"
+	    "completelimit2 cl23"
+	    "completelimit2 cl24"
+	    "completelimit2 cl25"
+	    "completelimit2 cl26"
+	    "completelimit2 cl27"
+	    "completelimit2 cl28"
+	    "completelimit2 cl29"
+	}
+}

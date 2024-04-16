@@ -1,0 +1,294 @@
+#   Copyright 1999-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file was written by Elena Zannoni (ezannoni@cygnus.com)
+
+
+#
+# test running programs
+#
+
+require allow_cplus_tests
+
+standard_testfile .cc
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile \
+	 {debug c++ nowarnings}]} {
+    return -1
+}
+
+# This testcase cannot use runto_main because of the different prompt
+# we get when using annotation level 2.
+#
+require target_can_use_run_cmd
+
+set breakpoints_invalid "\r\n\032\032breakpoints-invalid\r\n"
+set frames_invalid "\r\n\032\032frames-invalid\r\n"
+
+#
+# line number where we need to stop in main
+#
+set main_line 25
+
+# The commands we test here produce many lines of output; disable "press 
+# <return> to continue" prompts.
+gdb_test_no_output "set height 0"
+
+#
+# break at main
+#
+gdb_test "break 25" \
+    "Breakpoint.*at.* file .*$srcfile, line.*" \
+    "breakpoint main"
+
+
+#
+# NOTE: this prompt is OK only when the annotation level is > 1
+# NOTE: When this prompt is in use the gdb_test procedure cannot be used because
+# it assumes that the last char of the gdb_prompt is a white space. This is not
+# true with this annotated prompt. So we must use send_gdb and gdb_expect.
+#
+
+set old_gdb_prompt $gdb_prompt
+set gdb_prompt "\r\n\032\032pre-prompt\r\n$gdb_prompt \r\n\032\032prompt\r\n"
+
+send_gdb "set annotate 2\n" 
+gdb_expect {
+    -re "set annotate 2\r\n$gdb_prompt$" { pass "annotation set at level 2" }
+    -re ".*$gdb_prompt$"       { fail "annotation set at level 2" }
+    timeout	            { fail "annotation set at level 2 (timeout)" }
+  }
+
+gdb_test_multiple "run" "run until main breakpoint, first time" {
+    -re "$main_line.*$gdb_prompt$" {
+	pass $gdb_test_name
+    }
+}
+
+#
+# print class 'a' with public fields.
+# this will test:
+# annotate-field-begin
+# annotate-field-name-end
+# annotate-field-value
+# annotate-field-end
+#
+
+set pat [multi_line "" \
+	     "\032\032post-prompt" \
+	     "" \
+	     "\032\032value-history-begin 1 -" \
+	     ".*= " \
+	     "\032\032value-history-value" \
+	     "\\{" \
+	     "\032\032field-begin -" \
+	     "x" \
+	     "\032\032field-name-end" \
+	     " = " \
+	     "\032\032field-value" \
+	     "1" \
+	     "\032\032field-end" \
+	     ", " \
+	     "\032\032field-begin -" \
+	     "y" \
+	     "\032\032field-name-end" \
+	     " = " \
+	     "\032\032field-value" \
+	     "2" \
+	     "\032\032field-end" \
+	     "\\}" \
+	     "" \
+	     "\032\032value-history-end" \
+	     $gdb_prompt$]
+
+gdb_test_multiple "print a" "print class" {
+    -re "$pat" {
+	pass "print class"
+    }
+}
+
+#
+# continue until exit
+# this will test:
+# annotate-exited
+# `a.x is 1' is asynchronous regarding to `frames-invalid'.
+#
+
+if { $gdb_spawn_id == $inferior_spawn_id } {
+    set match_output \
+	[multi_line \
+	     "\($frames_invalid\)*a.x is 1" \
+	     "\($frames_invalid\)*"]
+} else {
+    # Usually we'd handle this using gdb_test_stdio, but that looks too
+    # complicated in combination with annotations, so just ignore the inferior
+    # output.
+    set match_output "\($frames_invalid\)*"
+}
+
+set pat [multi_line "" \
+	     "\032\032post-prompt" \
+	     "Continuing." \
+	     "" \
+	     "\032\032starting" \
+	     $match_output \
+	     "\032\032exited 0" \
+	     "$inferior_exited_re normally." \
+	     "" \
+	     "\032\032thread-exited,id=\"1\",group-id=\"i1\"" \
+	     "" \
+	     "\032\032stopped" \
+	     $gdb_prompt$]
+gdb_test_multiple "continue" "continue until exit" {
+    -re "$pat" {
+	pass "continue until exit"
+    }
+}
+
+#
+# delete all breakpoints
+#
+send_gdb "delete\n"
+gdb_expect {
+  -re ".*Delete all breakpoints. \\(y or n\\) \r\n\032\032query.*$" {
+           send_gdb "y\n"
+           gdb_expect {
+	     -re "\r\n\032\032post-query\r\n${breakpoints_invalid}$gdb_prompt$" { pass "delete bps" }
+	     -re ".*$gdb_prompt$" { fail "delete bps" }
+	     timeout  { fail "delete bps (timeout)" }
+	 }
+     }
+  -re ".*$gdb_prompt$" { fail "delete bps" }
+  timeout  { fail "delete bps (timeout)" }
+}
+
+#
+# break at first line of main. 
+#
+set pat [multi_line "" \
+	     "\032\032post-prompt" \
+	     "Breakpoint.*at $hex: file.*$srcfile, line.*" \
+	     "\032\032breakpoints-invalid.*" \
+	     $gdb_prompt$]
+
+gdb_test_multiple "break 22" "break at main" {
+    -re  "$pat" {
+	pass "breakpoint at main"
+    }
+}
+
+#
+# change value of main_line
+#
+set main_line 22
+
+#
+# run program up to breakpoint.
+#
+
+gdb_test_multiple "run" "run until main breakpoint, second time" {
+    -re "$main_line.*$gdb_prompt$"    {
+	pass $gdb_test_name
+    }
+}
+
+#
+# set up a watch point on a.x 
+#
+set pat [multi_line "" \
+	     "\032\032post-prompt" \
+	     ".*atchpoint 3: a.x" \
+	     "" \
+	     "\032\032breakpoints-invalid" \
+	     $gdb_prompt$]
+gdb_test_multiple "watch a.x" "set watch on a.x" {
+    -re "$pat" {
+	pass "set watch on a.x"
+    }
+}
+
+#
+# do a next, so that the watchpoint triggers. This will test:
+# annotate-watchpoint
+#
+set pat [multi_line "" \
+	     "\032\032post-prompt" \
+	     "" \
+	     "\032\032starting" \
+	     "\(${frames_invalid}\)*${breakpoints_invalid}\(${frames_invalid}\)*" \
+	     "\032\032watchpoint 3" \
+	     ".*atchpoint 3: a.x" \
+	     "" \
+	     "Old value = 0" \
+	     "New value = 1" \
+	     "" \
+	     "\032\032frame-begin 0 $hex" \
+	     "" \
+	     "\032\032frame-function-name" \
+	     "main" \
+	     "\032\032frame-args" \
+	     " \\(\\)" \
+	     "\032\032frame-source-begin" \
+	     " at " \
+	     "\032\032frame-source-file" \
+	     ".*$srcfile" \
+	     "\032\032frame-source-file-end" \
+	     ":" \
+	     "\032\032frame-source-line" \
+	     "$decimal" \
+	     "\032\032frame-source-end" \
+	     "" \
+	     "" \
+	     "\032\032source .*$srcfile.*beg:$hex" \
+	     "" \
+	     "\032\032frame-end" \
+	     "" \
+	     "\032\032stopped" \
+	     $gdb_prompt$]
+
+gdb_test_multiple "next" "watch triggered on a.x" {
+    -re "$pat" {
+	pass "watch triggered on a.x"
+    }
+}
+
+
+#
+# send ^C to gdb, so that the quit() function gets called 
+# and annotate-quit is tested
+# test:
+# annotate-quit
+#
+if ![target_info exists gdb,nointerrupts] {
+    send_gdb "\003"
+    gdb_expect {
+	-re "\r\n\032\032error-begin\r\nQuit\r\n\r\n\032\032quit\r\n$gdb_prompt$" \
+	    { pass "annotate-quit" }
+	-re ".*$gdb_prompt$" { fail "annotate-quit" }
+	timeout { fail "annotate-quit (timeout)" }
+    }
+}
+
+#
+# FIXME: the testsuite does not currently have tests for 
+#        annotate_catchpoints and annotate_function_call
+#        and a few variants of the annotations that are 
+#        tested (marked by FIXME on the annot?.exp files)
+#
+
+# reinstall the old prompt for the rest of the testsuite.
+
+set gdb_prompt $old_gdb_prompt
+

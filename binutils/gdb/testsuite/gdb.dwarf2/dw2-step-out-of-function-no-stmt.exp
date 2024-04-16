@@ -1,0 +1,117 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check whether stepping out of a function works, in case:
+# - the first insn after the call has an is-stmt=no entry
+# - the next insn has an is-stmt=yes entry, for the same line number
+#
+# This sort of thing can occur in optimized code, f.i. here a slightly more
+# elaborate case with another is-stmt=no entry (the one with line number 12)
+# inbetween:
+# INDEX  LINE   ADDRESS            IS-STMT
+# 12     13     0x00000000004003ed
+# 13     12     0x00000000004003f2
+# 14     13     0x00000000004003f4 Y
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+# The .c files use __attribute__.
+require is_c_compiler_gcc
+
+standard_testfile .c -dw.S
+
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    declare_labels Llines
+    global srcdir subdir srcfile
+
+    lassign [function_range main [list ${srcdir}/${subdir}/$srcfile]] \
+	main_start main_len
+    set main_end "$main_start + $main_len"
+
+    lassign [function_range main [list ${srcdir}/${subdir}/$srcfile]] \
+	bar_start bar_len
+    set bar_end "$bar_start + $bar_len"
+
+    cu {} {
+	compile_unit {
+	    {language @DW_LANG_C}
+	    {name $srcfile}
+	    {stmt_list $Llines DW_FORM_sec_offset}
+	} {
+	    subprogram {
+		{external 1 flag}
+		{MACRO_AT_func {main}}
+	    }
+	    subprogram {
+		{external 1 flag}
+		{MACRO_AT_func {bar}}
+	    }
+	}
+    }
+
+    lines {version 2} Llines {
+	include_dir "${srcdir}/${subdir}"
+	file_name "$srcfile" 1
+
+	program {
+	    DW_LNE_set_address bar_label
+	    line 26
+	    DW_LNS_copy
+
+	    DW_LNE_set_address $bar_end
+	    DW_LNE_end_sequence
+
+	    DW_LNE_set_address main_label
+	    line 32
+	    DW_LNS_copy
+
+	    DW_LNE_set_address main_label_2
+	    line 36
+	    DW_LNS_negate_stmt
+	    DW_LNS_copy
+	    DW_LNS_negate_stmt
+
+	    DW_LNE_set_address main_label_3
+	    line 36
+	    DW_LNS_copy
+
+	    DW_LNE_set_address $main_end
+	    DW_LNE_end_sequence
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	  [list $srcfile $asm_file] {nodebug}] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+# Step into bar.
+gdb_breakpoint "bar"
+gdb_continue_to_breakpoint "bar"
+
+# Step out of bar.
+gdb_test "step" [multi_line \
+		     "main \\(\\) at \[^\r\n\]*$srcfile:36" \
+		     "36\t\[^\r\n\]*"]
+

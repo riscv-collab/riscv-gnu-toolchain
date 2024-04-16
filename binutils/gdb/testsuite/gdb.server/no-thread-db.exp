@@ -1,0 +1,62 @@
+# This testcase is part of GDB, the GNU debugger.
+#
+# Copyright 2012-2024 Free Software Foundation, Inc.
+#
+# Contributed by Intel Corporation.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test gdbserver to handle qGetTLSAddr requests gracefully in case
+# libthread_db could not be loaded.
+
+load_lib gdbserver-support.exp
+
+standard_testfile
+set unresolvable_thread_db_path "/foo/bar"
+
+require allow_gdbserver_tests
+
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug}] != "" } {
+    return -1
+}
+
+save_vars { GDBFLAGS } {
+    # If GDB and GDBserver are both running locally, set the sysroot to avoid
+    # reading files via the remote protocol.
+    if { ![is_remote host] && ![is_remote target] } {
+	set GDBFLAGS "$GDBFLAGS -ex \"set sysroot\""
+    }
+
+    clean_restart ${testfile}
+}
+
+# Make sure we're disconnected, in case we're testing with an
+# extended-remote board, therefore already connected.
+gdb_test "disconnect" ".*"
+
+gdbserver_run ""
+
+# Force gdbserver to fail to load libthread_db.
+gdb_test "monitor set libthread-db-search-path ${unresolvable_thread_db_path}" \
+    "libthread-db-search-path set to `${unresolvable_thread_db_path}'" \
+    "libthread-db is now unresolvable"
+
+# Continue past tls assignment to make sure tls storage is allocated.
+gdb_breakpoint ${srcfile}:[gdb_get_line_number "after tls assignment"]
+gdb_continue_to_breakpoint "after tls assignment"
+
+# Printing a tls variable should fail gracefully without a libthread_db.
+set re_exec "\[^\r\n\]*[file tail $binfile]"
+gdb_test "print foo" \
+    "Cannot find thread-local storage for Thread \[^,\]+, executable file $re_exec:\[\r\n\]+Remote target failed to process qGetTLSAddr request"

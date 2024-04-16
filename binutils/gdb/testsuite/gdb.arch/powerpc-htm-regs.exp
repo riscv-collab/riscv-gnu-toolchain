@@ -1,0 +1,325 @@
+# Copyright (C) 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the gdb testsuite.
+
+# Test access to HTM (Hardware Transactional Memory) registers.  The
+# tests read the values of various registers before stepping the
+# inferior through a "tbegin." instruction to start a transaction,
+# then the checkpointed versions of the registers are checked against
+# the pre-transactional values.  Then, new values are written to some
+# of the checkpointed registers, these values are read back and saved,
+# the inferior continues until the transaction aborts, and the regular
+# registers are then checked against the saved values, because the
+# abort should have reverted the registers to these values.
+
+require {istarget "powerpc*-*-linux*"}
+
+standard_testfile .c .gen.c
+
+# First check if our processor and kernel support access to
+# the registers we need and to the HTM facility.
+
+proc check_register_access { regname } {
+    global gdb_prompt
+
+    set test "$regname register access"
+    gdb_test_multiple "info reg $regname" "$test" {
+	-re "Invalid register.*\r\n$gdb_prompt $" {
+	    unsupported "$test"
+	    return 0
+	}
+	-re "\r\n$regname.*\r\n$gdb_prompt $" {
+	    pass "$test"
+	    return 1
+	}
+    }
+    return 0
+}
+
+proc check_htm_support {} {
+    global gdb_prompt
+    set test "htm support"
+
+    gdb_test_multiple "stepi" "$test" {
+	-re "Illegal instruction.*\r\n$gdb_prompt $" {
+	    unsupported $test
+	    return 0
+	}
+	-re "nop.*\r\n$gdb_prompt $"
+	{
+	    pass $test
+	    return 1
+	}
+    }
+    return 0;
+}
+
+with_test_prefix "check htm support" {
+    set gen_src [standard_output_file $srcfile2]
+
+    gdb_produce_source $gen_src {
+	int main () {
+	    asm volatile ("tbegin."); // marker
+	    asm volatile ("nop");
+	    return 0;
+	}
+    }
+
+    if {[build_executable "compile" $binfile $gen_src {debug}] == -1} {
+	return
+    }
+
+    clean_restart $binfile
+
+    # Displaced-stepping a tbegin. causes problems,
+    # so we make the breakpoint temporary.
+    gdb_breakpoint [gdb_get_line_number "marker" "$gen_src"] temporary
+
+    gdb_run_cmd
+
+    # Wait for the prompt.
+    if {[gdb_test "" "Temporary breakpoint.*"] != 0 } {
+	return
+    }
+
+    # Make sure that we stopped at the right place (just before tbegin. is
+    # executed).
+    if { [gdb_test "x/i \$pc" "=> $hex.*:.*tbegin\\..*" "disassemble tbegin"] != 0} {
+	return
+    }
+
+    if {![check_register_access "vs0"]} {
+	return
+    }
+
+    if {![check_register_access "texasr"]} {
+	return
+    }
+
+    if {![check_register_access "dscr"]} {
+	return
+    }
+
+    if {![check_register_access "ppr"]} {
+	return
+    }
+
+    if {![check_register_access "tar"]} {
+	return
+    }
+
+    if {![check_htm_support]} {
+	return
+    }
+}
+
+# Now do the actual test.
+if {[build_executable "compile" $binfile $srcfile {debug}] == -1} {
+    return
+}
+
+clean_restart $binfile
+
+gdb_breakpoint [gdb_get_line_number "first marker"] temporary
+
+gdb_run_cmd
+
+# Wait for the prompt.
+gdb_test "" "Temporary breakpoint.*"
+
+if {[gdb_test "x/i \$pc" "=> $hex.*:.*tbegin\\..*" "disassemble tbegin"] != 0} {
+    return
+}
+
+# Now we write non-zero values to some registers, then read the values
+# of various registers, then stepi to start the transaction.  The
+# checkpointed register state should correspond to the values we read.
+
+# Write to the GPRs
+for {set i 0} {$i < 32} {incr i 1} {
+    gdb_test_no_output "set \$r$i = $i"
+}
+
+gdb_test_no_output "set \$xer = 0xc0000000"
+
+# FPRs
+gdb_test_no_output "set \$f0 = 0.5"
+for {set i 1} {$i < 32} {incr i 1} {
+    gdb_test_no_output "set \$f$i = \$f[expr $i - 1] + 1.0"
+}
+
+gdb_test_no_output "set \$fpscr = 0x84005000"
+
+# VRs
+for {set i 0} {$i < 32} {incr i 1} {
+    for {set j 0} {$j < 4} {incr j 1} {
+	gdb_test_no_output "set \$vr$i.v4_int32\[$j\] = $i"
+    }
+}
+
+gdb_test_no_output "set \$dscr = 0x2"
+gdb_test_no_output "set \$tar = &main" "set tar"
+
+# Get the pre-transactional value of the registers.
+for {set i 0} {$i < 32} {incr i 1} {
+    set "r$i" [get_hexadecimal_valueof "\$r$i" "default0"]
+}
+
+set cr [get_hexadecimal_valueof "\$cr" "default0"]
+set xer [get_hexadecimal_valueof "\$xer" "default0"]
+set lr [get_hexadecimal_valueof "\$lr" "default0"]
+set ctr [get_hexadecimal_valueof "\$ctr" "default0"]
+
+for {set i 0} {$i < 32} {incr i 1} {
+    set "f$i" [get_valueof "" "\$f$i" "default0"]
+}
+
+set fpscr [get_hexadecimal_valueof "\$fpscr" "default0"]
+
+for {set i 0} {$i < 32} {incr i 1} {
+    set "vr$i" [get_hexadecimal_valueof "\$vr$i.uint128" "default0"]
+}
+
+set vscr [get_hexadecimal_valueof "\$vscr" "default0"]
+set vrsave [get_hexadecimal_valueof "\$vrsave" "default0"]
+
+for {set i 0} {$i < 64} {incr i 1} {
+    set "vs$i" [get_hexadecimal_valueof "\$vs$i.uint128" "default0"]
+}
+
+set dscr [get_hexadecimal_valueof "\$dscr" "default0"]
+set ppr [get_hexadecimal_valueof "\$ppr" "default0"]
+set tar [get_hexadecimal_valueof "\$tar" "default0"]
+
+gdb_test "stepi" "asm.*bc.*"
+
+proc test_register_match {reg_name reg_var_name hex} {
+    set test "$reg_name matches $reg_var_name"
+
+    # In some infrequent cases CXER doesn't match the
+    # pre-transactional XER, possibly due to a linux kernel bug.
+    set should_xfail 0
+    if [istarget "powerpc*-*-linux*" && reg_name == "cxer"] {
+	set should_xfail 1
+    }
+
+    upvar $reg_var_name expected_val
+
+    if {$hex} {
+	set actual_val [get_hexadecimal_valueof "\$$reg_name" "default1"]
+    } else {
+	set actual_val [get_valueof "" "\$$reg_name" "default1"]
+    }
+
+    if { "$expected_val" == "$actual_val" } {
+	pass $test
+    } else {
+	if {$should_xfail} {
+	    xfail $test
+	} else {
+	    fail $test
+	}
+    }
+}
+
+for {set i 0} {$i < 32} {incr i 1} {
+    test_register_match "cr$i" "r$i" 1
+}
+
+test_register_match "ccr" "cr" 1
+test_register_match "cxer" "xer" 1
+test_register_match "clr" "lr" 1
+test_register_match "cctr" "ctr" 1
+
+for {set i 0} {$i < 32} {incr i 1} {
+    test_register_match "cf$i" "f$i" 0
+}
+
+test_register_match "cfpscr" "fpscr" 1
+
+for {set i 0} {$i < 32} {incr i 1} {
+    test_register_match "cvr$i.uint128" "vr$i" 1
+}
+
+test_register_match "cvscr" "vscr" 1
+test_register_match "cvrsave" "vrsave" 1
+
+for {set i 0} {$i < 64} {incr i 1} {
+    test_register_match "cvs$i.uint128" "vs$i" 1
+}
+
+test_register_match "cdscr" "dscr" 1
+test_register_match "cppr" "ppr" 1
+test_register_match "ctar" "tar" 1
+
+# Support for writing to the checkpointed registers is not
+# currently available in the gdbserver stub.
+if [target_is_gdbserver] {
+    unsupported "write to checkpointed registers"
+    return
+}
+
+# Now write different values to some of the checkpointed registers and
+# check that the transaction abort reverts the register to these
+# values.
+for {set i 0} {$i < 32} {incr i 1} {
+    gdb_test_no_output "set \$cr$i = $i + 0xC00"
+}
+
+gdb_test_no_output "set \$cf0 = 0.25"
+for {set i 1} {$i < 32} {incr i 1} {
+    gdb_test_no_output "set \$cf$i = \$cf[expr $i - 1] + 1.0"
+}
+
+for {set i 0} {$i < 32} {incr i 1} {
+    for {set j 0} {$j < 4} {incr j 1} {
+	gdb_test_no_output "set \$cvr$i.v4_int32\[$j\] = $i + 0xF00"
+    }
+}
+
+# Read back the values.
+with_test_prefix "after write" {
+    for {set i 0} {$i < 32} {incr i 1} {
+	set "cr$i" [get_hexadecimal_valueof "\$cr$i" "default0"]
+    }
+
+    for {set i 0} {$i < 32} {incr i 1} {
+	set "cf$i" [get_valueof "" "\$cf$i" "default0"]
+    }
+
+    for {set i 0} {$i < 64} {incr i 1} {
+	set "cvs$i" [get_hexadecimal_valueof "\$cvs$i.uint128" "default0"]
+    }
+}
+
+gdb_breakpoint [gdb_get_line_number "second marker"]
+
+gdb_test "continue"
+
+with_test_prefix "after transaction failure" {
+    for {set i 0} {$i < 32} {incr i 1} {
+	test_register_match "r$i" "cr$i" 1
+    }
+
+    for {set i 0} {$i < 32} {incr i 1} {
+	test_register_match "f$i" "cf$i" 0
+    }
+
+    for {set i 0} {$i < 64} {incr i 1} {
+	test_register_match "vs$i.uint128" "cvs$i" 1
+    }
+}
+

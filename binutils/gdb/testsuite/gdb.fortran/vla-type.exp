@@ -1,0 +1,174 @@
+# Copyright 2016-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile ".f90"
+load_lib "fortran.exp"
+
+require allow_fortran_tests
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile} \
+     {debug f90 quiet}] } {
+    return -1
+}
+
+# Depending on the compiler being used, the type names can be printed differently.
+set int [fortran_int4]
+
+# Check if not allocated VLA in type does not break
+# the debugger when accessing it.
+if {![runto [gdb_get_line_number "before-allocated"]]} {
+    perror "couldn't run to breakpoint before-allocated"
+    return -1
+}
+
+gdb_test "print twov" " = \\\( ivla1 = <not allocated>, ivla2 = <not allocated> \\\)" \
+  "print twov before allocated"
+gdb_test "print twov%ivla1" " = <not allocated>" \
+  "print twov%ivla1 before allocated"
+
+# Check type with one VLA's inside
+gdb_breakpoint [gdb_get_line_number "onev-filled"]
+gdb_continue_to_breakpoint "onev-filled"
+gdb_test "print onev%ivla(5, 11, 23)" " = 1"
+gdb_test "print onev%ivla(1, 2, 3)" " = 123"
+gdb_test "print onev%ivla(3, 2, 1)" " = 321"
+gdb_test "ptype onev" \
+         [multi_line "type = Type one" \
+                     "\\s+$int, allocatable :: ivla\\\(11,22,33\\\)" \
+                     "End Type one" ]
+
+# Check type with two VLA's inside
+gdb_breakpoint [gdb_get_line_number "twov-filled"]
+gdb_continue_to_breakpoint "twov-filled"
+gdb_test "print twov%ivla1(5, 11, 23)" " = 1"
+gdb_test "print twov%ivla1(1, 2, 3)" " = 123"
+gdb_test "print twov%ivla1(3, 2, 1)" " = 321"
+gdb_test "ptype twov" \
+         [multi_line "type = Type two" \
+                     "\\s+$int, allocatable :: ivla1\\\(5,12,99\\\)" \
+                     "\\s+$int, allocatable :: ivla2\\\(9,12\\\)" \
+                     "End Type two" ]
+gdb_test "print twov" " = \\\( ivla1 = \\\(\\\(\\\(1, 1, 1, 1, 1\\\)\
+ \\\(1, 1, 321, 1, 1\\\)\
+ \\\(1, 1, 1, 1, 1\\\) .*"
+
+# Check type with attribute at beginn of type
+gdb_breakpoint [gdb_get_line_number "threev-filled"]
+gdb_continue_to_breakpoint "threev-filled"
+gdb_test "print threev%ivla(1)" " = 1"
+gdb_test "print threev%ivla(5)" " = 42"
+gdb_test "print threev%ivla(14)" " = 24"
+gdb_test "print threev%ivar" " = 3"
+gdb_test "ptype threev" \
+         [multi_line "type = Type three" \
+                     "\\s+$int :: ivar" \
+                     "\\s+$int, allocatable :: ivla\\\(20\\\)" \
+                     "End Type three" ]
+
+# Check type with attribute at end of type
+gdb_breakpoint [gdb_get_line_number "fourv-filled"]
+gdb_continue_to_breakpoint "fourv-filled"
+gdb_test "print fourv%ivla(1)" " = 1"
+gdb_test "print fourv%ivla(2)" " = 2"
+gdb_test "print fourv%ivla(7)" " = 7"
+gdb_test "print fourv%ivla(12)" "no such vector element"
+gdb_test "print fourv%ivar" " = 3"
+gdb_test "ptype fourv" \
+         [multi_line "type = Type four" \
+                     "\\s+$int, allocatable :: ivla\\\(10\\\)" \
+                     "\\s+$int :: ivar" \
+                     "End Type four" ]
+
+# Check nested types containing a VLA
+gdb_breakpoint [gdb_get_line_number "fivev-filled"]
+gdb_continue_to_breakpoint "fivev-filled"
+gdb_test "print fivev%tone%ivla(5, 5, 1)" " = 1"
+gdb_test "print fivev%tone%ivla(1, 2, 3)" " = 123"
+gdb_test "print fivev%tone%ivla(3, 2, 1)" " = 321"
+gdb_test "ptype fivev" \
+         [multi_line "type = Type five" \
+                     "\\s+Type one :: tone" \
+                     "End Type five" ]
+gdb_test "ptype fivev%tone" \
+         [multi_line "type = Type one" \
+                     "    $int, allocatable :: ivla\\(10,10,10\\)" \
+                     "End Type one" ]
+
+# Check array of types containing a VLA
+gdb_breakpoint [gdb_get_line_number "fivearr-filled"]
+gdb_continue_to_breakpoint "fivearr-filled"
+gdb_test "print fivearr(1)%tone%ivla(1, 2, 3)" " = 1"
+gdb_test "print fivearr(1)%tone%ivla(2, 2, 10)" "no such vector element"
+gdb_test "print fivearr(1)%tone%ivla(2, 2, 3)" " = 223"
+gdb_test "print fivearr(2)%tone%ivla(12, 14, 16)" " = 2"
+gdb_test "print fivearr(2)%tone%ivla(6, 7, 8)" " = 678"
+gdb_test "ptype fivearr(1)" \
+         [multi_line "type = Type five" \
+                     "\\s+Type one :: tone" \
+                     "End Type five" ]
+gdb_test "ptype fivearr(1)%tone" \
+         [multi_line "type = Type one" \
+                     "    $int, allocatable :: ivla\\(2,4,6\\)" \
+                     "End Type one" ]
+gdb_test "ptype fivearr(2)" \
+         [multi_line "type = Type five" \
+                     "\\s+Type one :: tone" \
+                     "End Type five" ]
+gdb_test "ptype fivearr(2)%tone" \
+         [multi_line "type = Type one" \
+                     "    $int, allocatable :: ivla\\(12,14,16\\)" \
+                     "End Type one" ]
+
+# Check allocation status of dynamic array and it's dynamic members
+gdb_test "ptype fivedynarr" \
+         [multi_line "type = Type five" \
+                     "    Type one :: tone" \
+                     "End Type five, allocatable \\(:\\)" ]
+gdb_test "next" ""
+gdb_test "ptype fivedynarr(2)" \
+         [multi_line "type = Type five" \
+                     "\\s+Type one :: tone" \
+                     "End Type five" ] \
+         "ptype fivedynarr(2), tone is not allocated"
+gdb_test "ptype fivedynarr(2)%tone" \
+         [multi_line "type = Type one" \
+                     "    $int, allocatable :: ivla\\(:,:,:\\)" \
+                     "End Type one" ] \
+         "ptype fivedynarr(2)%tone, not allocated"
+
+# Check dynamic array of types containing a VLA
+gdb_breakpoint [gdb_get_line_number "fivedynarr-filled"]
+gdb_continue_to_breakpoint "fivedynarr-filled"
+gdb_test "print fivedynarr(1)%tone%ivla(1, 2, 3)" " = 1"
+gdb_test "print fivedynarr(1)%tone%ivla(2, 2, 10)" "no such vector element"
+gdb_test "print fivedynarr(1)%tone%ivla(2, 2, 3)" " = 223"
+gdb_test "print fivedynarr(2)%tone%ivla(12, 14, 16)" " = 2"
+gdb_test "print fivedynarr(2)%tone%ivla(6, 7, 8)" " = 678"
+gdb_test "ptype fivedynarr(1)" \
+         [multi_line "type = Type five" \
+                     "\\s+Type one :: tone" \
+                     "End Type five" ]
+gdb_test "ptype fivedynarr(1)%tone" \
+         [multi_line "type = Type one" \
+                     "    $int, allocatable :: ivla\\(2,4,6\\)" \
+                     "End Type one" ]
+gdb_test "ptype fivedynarr(2)" \
+         [multi_line "type = Type five" \
+                     "\\s+Type one :: tone" \
+                     "End Type five" ]
+gdb_test "ptype fivedynarr(2)%tone" \
+         [multi_line "type = Type one" \
+                     "    $int, allocatable :: ivla\\(12,14,16\\)" \
+                     "End Type one" ]

@@ -1,0 +1,1207 @@
+# Copyright (C) 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It tests the
+# gdb.Value.format_string () method.
+
+load_lib gdb-python.exp
+
+require allow_python_tests
+
+standard_testfile
+
+gdb_exit
+gdb_start
+
+# Build inferior to language specification.
+proc build_inferior {exefile lang} {
+  global srcdir subdir srcfile testfile hex
+
+  set flags [list debug $lang]
+  if { $lang == "c" } {
+    lappend flags additional_flags=-std=c99
+  }
+
+  if { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${exefile}" \
+	    executable $flags] != "" } {
+      untested "failed to compile in $lang mode"
+      return -1
+  }
+
+  return 0
+}
+
+# Restart GDB.
+proc prepare_gdb {exefile} {
+  global srcdir subdir srcfile testfile hex
+
+  clean_restart $exefile
+
+  if {![runto_main]} {
+      return
+  }
+
+  # Load the pretty printer.
+  set remote_python_file \
+    [gdb_remote_download host ${srcdir}/${subdir}/${testfile}.py]
+  gdb_test_no_output "source ${remote_python_file}" "load python file"
+
+  runto_bp "break here"
+}
+
+# Set breakpoint and run to that breakpoint.
+proc runto_bp {bp} {
+  gdb_breakpoint [gdb_get_line_number $bp]
+  gdb_continue_to_breakpoint $bp
+}
+
+# Set an option using the GDB command in $set_cmd, execute $body, and then
+# restore the option using the GDB command in $unset_cmd.
+proc with_temp_option { set_cmd unset_cmd body } {
+  with_test_prefix $set_cmd {
+    gdb_test "$set_cmd" ".*"
+    uplevel 1 $body
+    gdb_test "$unset_cmd" ".*"
+  }
+}
+
+# A regular expression for a pointer.
+set default_pointer_regexp "0x\[a-fA-F0-9\]+"
+
+# A regular expression for a non-expanded C++ reference.
+#
+# Stringifying a C++ reference produces an address preceeded by a "@" in
+# Python, but, by default, the C++ reference/class is expanded by the
+# GDB print command.
+set default_ref_regexp "@${default_pointer_regexp}"
+
+# The whole content of the C variable a_big_string, i.e. the whole English
+# alphabet repeated 10 times.
+set whole_big_string ""
+set alphabet "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+for {set i 0} {$i < 10} {incr i} {
+  append whole_big_string $alphabet
+}
+unset alphabet
+
+# Produces a potentially cut down version of $whole_big_string like GDB
+# would represent it.
+# $max is the maximum number of characters allowed in the string (but
+# the return value may contain more to accound for the extra quotes and
+# "..." added by GDB).
+proc get_cut_big_string { max } {
+  global whole_big_string
+
+  set whole_size [string length $whole_big_string]
+  if { $max > $whole_size } {
+    return "\"${whole_big_string}\""
+  }
+
+  set cut_string [string range $whole_big_string 0 [expr $max - 1]]
+  return "\"${cut_string}\"..."
+}
+
+# A dictionary mapping from C variable names to their default string
+# representation when using str () or gdb.Value.format_string () with
+# no arguments.
+# This usually matches what the print command prints if used with no
+# options, except for C++ references which are not expanded by
+# default in Python.  See the comment above $default_ref_regexp.
+set default_regexp_dict [dict create \
+  "a_point_t"			"Pretty Point \\(42, 12\\)" \
+  "a_point_t_pointer"		$default_pointer_regexp \
+  "a_point_t_ref"		"Pretty Point \\(42, 12\\)" \
+  "another_point"		"Pretty Point \\(123, 456\\)" \
+  "a_struct_with_point"		"\\{the_point = Pretty Point \\(42, 12\\)\\}" \
+  "a_struct_with_union"		"\\{the_union = \\{an_int = 707406378, a_char = 42 '\\*'\\}\\}" \
+  "an_enum"			"ENUM_BAR" \
+  "a_string"			"${default_pointer_regexp} \"hello world\"" \
+  "a_binary_string"		"${default_pointer_regexp} \"hello\"" \
+  "a_binary_string_array"	"\"hello\\\\000world\"" \
+  "a_big_string"		[get_cut_big_string 200] \
+  "an_array"			"\\{2, 3, 5\\}" \
+  "an_array_with_repetition"	"\\{1, 3 <repeats 12 times>, 5, 5, 5\\}" \
+  "a_symbol_pointer"		"${default_pointer_regexp} <global_symbol>" \
+  "a_base_ref"			"${default_ref_regexp}" \
+  ]
+
+# A sentinel value to pass to function to get them to use a default value
+# instead.
+# Note that we cannot use $undefined for default arguments in function
+# definitions as we would just get the literal "$undefined" string, so
+# we need to repeat the string.
+set undefined "\000UNDEFINED\000"
+
+# Return $value if it's not $undefined, otherwise return the default value
+# (from $default_regexp_dict) for the variable $var.
+proc get_value_or_default { var value } {
+  global undefined
+  if { $value != $undefined } {
+    return $value
+  }
+
+  global default_regexp_dict
+  return [dict get $default_regexp_dict $var]
+}
+
+# Check that using gdb.Value.format_string on the value representing the
+# variable $var produces $expected.
+proc check_format_string {
+	var
+	opts
+	{ expected "\000UNDEFINED\000" }
+	{ name "\000UNDEFINED\000" }
+  } {
+  global undefined
+
+  set expected [get_value_or_default $var $expected]
+  if { $name == $undefined } {
+    set name "${var} with option ${opts}"
+  }
+
+  gdb_test \
+    "python print (gdb.parse_and_eval ('${var}').format_string (${opts}))" \
+    $expected \
+    $name
+}
+
+# Check that printing $var with no options set, produces the expected
+# output.
+proc check_var_with_no_opts {
+	var
+	{ expected "\000UNDEFINED\000" }
+  } {
+  set expected [get_value_or_default $var $expected]
+
+  with_test_prefix "${var}" {
+    check_format_string \
+      $var \
+      "" \
+      $expected \
+      "no opts"
+    # str () should behave like gdb.Value.format_string () with no args.
+    gdb_test \
+      "python print (str (gdb.parse_and_eval ('${var}')))" \
+      $expected \
+      "str"
+  }
+}
+
+# Check that printing $var with $opt set to True and set to False,
+# produces the expected output.
+proc check_var_with_bool_opt {
+	opt
+	var
+	{ true_expected  "\000UNDEFINED\000" }
+	{ false_expected "\000UNDEFINED\000" }
+  } {
+  set true_expected  [get_value_or_default $var $true_expected]
+  set false_expected [get_value_or_default $var $false_expected]
+
+  with_test_prefix "${var} with option ${opt}" {
+    # Option set to True.
+    check_format_string \
+      $var \
+      "${opt}=True" \
+      $true_expected \
+      "${opt}=true"
+    # Option set to False.
+    check_format_string \
+      $var \
+      "${opt}=False" \
+      $false_expected \
+      "${opt}=false"
+  }
+}
+
+# Test gdb.Value.format_string with no options.
+proc_with_prefix test_no_opts {} {
+  global current_lang
+
+  check_var_with_no_opts "a_point_t"
+  check_var_with_no_opts "a_point_t_pointer"
+  check_var_with_no_opts "another_point"
+  check_var_with_no_opts "a_struct_with_union"
+  check_var_with_no_opts "an_enum"
+  check_var_with_no_opts "a_string"
+  check_var_with_no_opts "a_binary_string"
+  check_var_with_no_opts "a_binary_string_array"
+  check_var_with_no_opts "a_big_string"
+  check_var_with_no_opts "an_array"
+  check_var_with_no_opts "an_array_with_repetition"
+  check_var_with_no_opts "a_symbol_pointer"
+
+  if { $current_lang == "c++" } {
+    # Nothing changes in all of the C++ tests because deref_refs is not
+    # True.
+    check_var_with_no_opts "a_point_t_ref"
+    check_var_with_no_opts "a_base_ref"
+  }
+}
+
+# Test the raw option for gdb.Value.format_string.
+proc_with_prefix test_raw {} {
+  global current_lang
+  global default_ref_regexp
+
+  check_var_with_bool_opt "raw" "a_point_t" \
+    "{x = 42, y = 12}"
+  check_var_with_bool_opt "raw" "a_point_t_pointer"
+  check_var_with_bool_opt "raw" "another_point" \
+    "{x = 123, y = 456}"
+  check_var_with_bool_opt "raw" "a_struct_with_union"
+  check_var_with_bool_opt "raw" "an_enum"
+  check_var_with_bool_opt "raw" "a_string"
+  check_var_with_bool_opt "raw" "a_binary_string"
+  check_var_with_bool_opt "raw" "a_binary_string_array"
+  check_var_with_bool_opt "raw" "a_big_string"
+  check_var_with_bool_opt "raw" "an_array"
+  check_var_with_bool_opt "raw" "an_array_with_repetition"
+  check_var_with_bool_opt "raw" "a_symbol_pointer"
+
+  if { $current_lang == "c++" } {
+    check_var_with_bool_opt "raw" "a_point_t_ref" \
+      ${default_ref_regexp}
+    check_var_with_bool_opt "raw" "a_base_ref"
+  }
+
+  with_temp_option \
+	"disable pretty-printer '' test_lookup_function" \
+	"enable pretty-printer '' test_lookup_function" {
+    check_var_with_no_opts "a_point_t" \
+      "{x = 42, y = 12}"
+    check_var_with_bool_opt "raw" "a_point_t" \
+      "{x = 42, y = 12}" \
+      "{x = 42, y = 12}"
+  }
+}
+
+# Test the pretty_arrays option for gdb.Value.format_string.
+proc_with_prefix test_pretty_arrays {} {
+  global current_lang
+
+  set an_array_pretty "\\{\[\r\n\]+  2,\[\r\n\]+  3,\[\r\n\]+  5\[\r\n\]+\\}"
+  set an_array_with_repetition_pretty \
+    "\\{\[\r\n\]+  1,\[\r\n\]+  3 <repeats 12 times>,\[\r\n\]+  5,\[\r\n\]+  5,\[\r\n\]+  5\[\r\n\]+\\}"
+
+  check_var_with_bool_opt "pretty_arrays" "a_point_t"
+  check_var_with_bool_opt "pretty_arrays" "a_point_t_pointer"
+  check_var_with_bool_opt "pretty_arrays" "another_point"
+  check_var_with_bool_opt "pretty_arrays" "a_struct_with_union"
+  check_var_with_bool_opt "pretty_arrays" "an_enum"
+  check_var_with_bool_opt "pretty_arrays" "a_string"
+  check_var_with_bool_opt "pretty_arrays" "a_binary_string"
+  check_var_with_bool_opt "pretty_arrays" "a_binary_string_array"
+  check_var_with_bool_opt "pretty_arrays" "a_big_string"
+  check_var_with_bool_opt "pretty_arrays" "an_array" \
+    $an_array_pretty
+  check_var_with_bool_opt "pretty_arrays" "an_array_with_repetition" \
+    $an_array_with_repetition_pretty
+  check_var_with_bool_opt "pretty_arrays" "a_symbol_pointer"
+
+  if { $current_lang == "c++" } {
+    check_var_with_bool_opt "pretty_arrays" "a_point_t_ref"
+    check_var_with_bool_opt "pretty_arrays" "a_base_ref"
+  }
+
+  with_temp_option "set print array on" "set print array off" {
+    check_var_with_no_opts "an_array" \
+      $an_array_pretty
+    check_var_with_bool_opt "pretty_arrays" "an_array" \
+      $an_array_pretty
+
+    check_var_with_no_opts "an_array_with_repetition" \
+      $an_array_with_repetition_pretty
+    check_var_with_bool_opt "pretty_arrays" "an_array_with_repetition" \
+      $an_array_with_repetition_pretty
+  }
+}
+
+# Test the pretty_structs option for gdb.Value.format_string.
+proc_with_prefix test_pretty_structs {} {
+  global current_lang
+
+  set a_struct_with_union_pretty \
+    "\\{\[\r\n\]+  the_union = \\{\[\r\n\]+    an_int = 707406378,\[\r\n\]+    a_char = 42 '\\*'\[\r\n\]+  \\}\[\r\n\]+\\}"
+
+  check_var_with_bool_opt "pretty_structs" "a_point_t"
+  check_var_with_bool_opt "pretty_structs" "a_point_t_pointer"
+  check_var_with_bool_opt "pretty_structs" "another_point"
+  check_var_with_bool_opt "pretty_structs" "a_struct_with_union" \
+    $a_struct_with_union_pretty
+  check_var_with_bool_opt "pretty_structs" "an_enum"
+  check_var_with_bool_opt "pretty_structs" "a_string"
+  check_var_with_bool_opt "pretty_structs" "a_binary_string"
+  check_var_with_bool_opt "pretty_structs" "a_binary_string_array"
+  check_var_with_bool_opt "pretty_structs" "a_big_string"
+  check_var_with_bool_opt "pretty_structs" "an_array"
+  check_var_with_bool_opt "pretty_structs" "an_array_with_repetition"
+  check_var_with_bool_opt "pretty_structs" "a_symbol_pointer"
+
+  if { $current_lang == "c++" } {
+    check_var_with_bool_opt "pretty_structs" "a_point_t_ref"
+    check_var_with_bool_opt "pretty_structs" "a_base_ref"
+  }
+
+  with_temp_option "set print structs on" "set print structs off" {
+    check_var_with_no_opts "a_struct_with_union"
+    check_var_with_bool_opt "pretty_structs" "a_struct_with_union" \
+      $a_struct_with_union_pretty
+  }
+
+  # point_t is usually printed through the pretty printer.
+  # Try disabling it.
+  with_temp_option \
+	"disable pretty-printer '' test_lookup_function" \
+	"enable pretty-printer '' test_lookup_function" {
+    check_var_with_no_opts "a_point_t" \
+      "{x = 42, y = 12}"
+    check_var_with_bool_opt "pretty_structs" "a_point_t" \
+      "\\{\[\r\n\]+  x = 42, *\[\r\n\]+  y = 12\[\r\n\]+\\}" \
+      "{x = 42, y = 12}" \
+  }
+}
+
+# Test the array_indexes option for gdb.Value.format_string.
+proc_with_prefix test_array_indexes {} {
+  global current_lang
+
+  set an_array_with_indexes "\\{\\\[0\\\] = 2, \\\[1\\\] = 3, \\\[2\\\] = 5\\}"
+  set an_array_with_repetition_with_indexes \
+    "\\{\\\[0\\\] = 1, \\\[1\\\] = 3 <repeats 12 times>, \\\[13\\\] = 5, \\\[14\\\] = 5, \\\[15\\\] = 5\\}"
+
+  check_var_with_bool_opt "array_indexes" "a_point_t"
+  check_var_with_bool_opt "array_indexes" "a_point_t_pointer"
+  check_var_with_bool_opt "array_indexes" "another_point"
+  check_var_with_bool_opt "array_indexes" "a_struct_with_union"
+  check_var_with_bool_opt "array_indexes" "an_enum"
+  check_var_with_bool_opt "array_indexes" "a_string"
+  check_var_with_bool_opt "array_indexes" "a_binary_string"
+  check_var_with_bool_opt "array_indexes" "a_binary_string_array"
+  check_var_with_bool_opt "array_indexes" "a_big_string"
+  check_var_with_bool_opt "array_indexes" "an_array" \
+    $an_array_with_indexes
+  check_var_with_bool_opt "array_indexes" "an_array_with_repetition" \
+    $an_array_with_repetition_with_indexes
+  check_var_with_bool_opt "array_indexes" "a_symbol_pointer"
+
+  if { $current_lang == "c++" } {
+    check_var_with_bool_opt "array_indexes" "a_point_t_ref"
+    check_var_with_bool_opt "array_indexes" "a_base_ref"
+  }
+
+  with_temp_option \
+	"set print array-indexes on" \
+	"set print array-indexes off" {
+    check_var_with_no_opts "an_array" \
+      $an_array_with_indexes
+    check_var_with_bool_opt "array_indexes" "an_array" \
+      $an_array_with_indexes
+
+    check_var_with_no_opts "an_array_with_repetition" \
+      $an_array_with_repetition_with_indexes
+    check_var_with_bool_opt "array_indexes" "an_array_with_repetition" \
+      $an_array_with_repetition_with_indexes
+  }
+}
+
+# Test the symbols option for gdb.Value.format_string.
+proc_with_prefix test_symbols {} {
+  global undefined
+  global current_lang
+  global default_pointer_regexp
+
+  check_var_with_bool_opt "symbols" "a_point_t"
+  check_var_with_bool_opt "symbols" "a_point_t_pointer"
+  check_var_with_bool_opt "symbols" "another_point"
+  check_var_with_bool_opt "symbols" "a_struct_with_union"
+  check_var_with_bool_opt "symbols" "an_enum"
+  check_var_with_bool_opt "symbols" "a_string"
+  check_var_with_bool_opt "symbols" "a_binary_string"
+  check_var_with_bool_opt "symbols" "a_binary_string_array"
+  check_var_with_bool_opt "symbols" "a_big_string"
+  check_var_with_bool_opt "symbols" "an_array"
+  check_var_with_bool_opt "symbols" "an_array_with_repetition"
+  check_var_with_bool_opt "symbols" "a_symbol_pointer" \
+    $undefined \
+    $default_pointer_regexp
+
+  if { $current_lang == "c++" } {
+    check_var_with_bool_opt "symbols" "a_point_t_ref"
+    check_var_with_bool_opt "symbols" "a_base_ref"
+  }
+
+  with_temp_option "set print symbol off" "set print symbol on" {
+    check_var_with_no_opts "a_symbol_pointer" \
+      $default_pointer_regexp
+    check_var_with_bool_opt "symbols" "a_symbol_pointer" \
+      $undefined \
+      $default_pointer_regexp
+  }
+}
+
+# Test the unions option for gdb.Value.format_string.
+proc_with_prefix test_unions {} {
+  global undefined
+  global current_lang
+
+  check_var_with_bool_opt "unions" "a_point_t"
+  check_var_with_bool_opt "unions" "a_point_t_pointer"
+  check_var_with_bool_opt "unions" "another_point"
+  check_var_with_bool_opt "unions" "a_struct_with_union" \
+    $undefined \
+    "\\{the_union = \\{...\\}\\}"
+  check_var_with_bool_opt "unions" "an_enum"
+  check_var_with_bool_opt "unions" "a_string"
+  check_var_with_bool_opt "unions" "a_binary_string"
+  check_var_with_bool_opt "unions" "a_binary_string_array"
+  check_var_with_bool_opt "unions" "a_big_string"
+  check_var_with_bool_opt "unions" "an_array"
+  check_var_with_bool_opt "unions" "an_array_with_repetition"
+  check_var_with_bool_opt "unions" "a_symbol_pointer"
+
+  if { $current_lang == "c++" } {
+    check_var_with_bool_opt "unions" "a_point_t_ref"
+    check_var_with_bool_opt "unions" "a_base_ref"
+  }
+
+  with_temp_option "set print union off" "set print union on" {
+    check_var_with_no_opts "a_struct_with_union" \
+      "\\{the_union = \\{...\\}\\}"
+    check_var_with_bool_opt "unions" "a_struct_with_union" \
+      $undefined \
+      "\\{the_union = \\{...\\}\\}"
+  }
+}
+
+# Test the address option for gdb.Value.format_string.
+proc_with_prefix test_address {} {
+  global undefined
+  global current_lang
+
+  check_var_with_bool_opt "address" "a_point_t"
+  check_var_with_bool_opt "address" "a_point_t_pointer" \
+    $undefined \
+    ""
+  check_var_with_bool_opt "address" "another_point"
+  check_var_with_bool_opt "symbols" "a_struct_with_union"
+  check_var_with_bool_opt "address" "an_enum"
+  check_var_with_bool_opt "address" "a_string" \
+    $undefined \
+    "\"hello world\""
+  check_var_with_bool_opt "address" "a_binary_string" \
+    $undefined \
+    "\"hello\""
+  check_var_with_bool_opt "address" "a_binary_string_array"
+  check_var_with_bool_opt "address" "a_big_string"
+  check_var_with_bool_opt "address" "an_array"
+  check_var_with_bool_opt "address" "an_array_with_repetition"
+  check_var_with_bool_opt "address" "a_symbol_pointer" \
+    $undefined \
+    "<global_symbol>"
+
+  if { $current_lang == "c++" } {
+    check_var_with_bool_opt "address" "a_point_t_ref"
+    check_var_with_bool_opt "address" "a_base_ref" \
+      $undefined \
+      ""
+  }
+
+  with_temp_option "set print address off" "set print address on" {
+    check_var_with_no_opts "a_string" \
+      "\"hello world\""
+    check_var_with_bool_opt "address" "a_string" \
+      $undefined \
+      "\"hello world\""
+  }
+}
+
+# Test the nibbles option for gdb.Value.format_string.
+proc_with_prefix test_nibbles {} {
+  global current_lang
+
+  set opts "format='t', nibbles=True"
+  with_test_prefix $opts {
+    if { $current_lang == "c" } {
+	set binary_pointer_regexp "\[ 0-1\]+"
+	gdb_test "python print (gdb.Value (42).format_string (${opts}))" \
+	  "0010 1010" \
+	  "42 with option ${opts}"
+
+	check_format_string "a_point_t" $opts \
+	    [string_to_regexp "Pretty Point (0010 1010, 1100)"]
+	check_format_string "a_point_t_pointer" $opts \
+	  $binary_pointer_regexp
+	check_format_string "another_point" $opts \
+	    [string_to_regexp "Pretty Point (0111 1011, 0001 1100 1000)"]
+
+	check_format_string "a_struct_with_union" $opts \
+	  "\\{the_union = \\{an_int = 0010 1010 0010 1010 0010 1010 0010 1010, a_char = 0010 1010\\}\\}"
+	check_format_string "an_enum" $opts \
+	  "0001"
+	check_format_string "a_string" $opts \
+	  $binary_pointer_regexp
+	check_format_string "a_binary_string" $opts \
+	  $binary_pointer_regexp
+	check_format_string "a_binary_string_array" $opts \
+	  "\\{0110 1000, 0110 0101, 0110 1100, 0110 1100, 0110 1111, 0, 0111 0111, 0110 1111, 0111 0010, 0110 1100, 0110 0100, 0\\}"
+	check_format_string "a_big_string" $opts \
+	  "\\{0100 0001, 0100 0010, 0100 0011, 0100 0100, 0100 0101, \[, 0-1\]+\.\.\.\\}"
+	check_format_string "an_array" $opts \
+	  "\\{0010, 0011, 0101\\}"
+	check_format_string "an_array_with_repetition" $opts \
+	  "\\{0001, 0011 <repeats 12 times>, 0101, 0101, 0101\\}"
+	check_format_string "a_symbol_pointer" $opts \
+	  $binary_pointer_regexp
+    }
+    if { $current_lang == "c++" } {
+	set binary_pointer_regexp "\['0-1\]+"
+	gdb_test "python print (gdb.Value (42).format_string (${opts}))" \
+	  "0010'1010" \
+	  "42 with option ${opts}"
+
+	check_format_string "a_point_t" $opts \
+	    [string_to_regexp "Pretty Point (0010'1010, 1100)"]
+	check_format_string "a_point_t_pointer" $opts \
+	  $binary_pointer_regexp
+	check_format_string "another_point" $opts \
+	    [string_to_regexp "Pretty Point (0111'1011, 0001'1100'1000)"]
+
+	check_format_string "a_struct_with_union" $opts \
+	  "\\{the_union = \\{an_int = 0010'1010'0010'1010'0010'1010'0010'1010, a_char = 0010'1010\\}\\}"
+	check_format_string "an_enum" $opts \
+	  "0001"
+	check_format_string "a_string" $opts \
+	  $binary_pointer_regexp
+	check_format_string "a_binary_string" $opts \
+	  $binary_pointer_regexp
+	check_format_string "a_binary_string_array" $opts \
+	  "\\{0110'1000, 0110'0101, 0110'1100, 0110'1100, 0110'1111, 0, 0111'0111, 0110'1111, 0111'0010, 0110'1100, 0110'0100, 0\\}"
+	check_format_string "a_big_string" $opts \
+	  "\\{0100'0001, 0100'0010, 0100'0011, 0100'0100, 0100'0101, \[, '0-1\]+\.\.\.\\}"
+	check_format_string "an_array" $opts \
+	  "\\{0010, 0011, 0101\\}"
+	check_format_string "an_array_with_repetition" $opts \
+	  "\\{0001, 0011 <repeats 12 times>, 0101, 0101, 0101\\}"
+	check_format_string "a_symbol_pointer" $opts \
+	  $binary_pointer_regexp
+
+	check_format_string "a_point_t_ref" $opts \
+	    [string_to_regexp "Pretty Point (0010'1010, 1100)"]
+	check_format_string "a_base_ref" $opts
+    }
+  }
+}
+
+# Test the deref_refs option for gdb.Value.format_string.
+proc_with_prefix test_deref_refs {} {
+  global current_lang
+  global default_pointer_regexp
+  global default_ref_regexp
+  global decimal
+
+  check_var_with_bool_opt "deref_refs" "a_point_t"
+  check_var_with_bool_opt "deref_refs" "a_point_t_pointer"
+  check_var_with_bool_opt "deref_refs" "another_point"
+  check_var_with_bool_opt "deref_refs" "a_struct_with_union"
+  check_var_with_bool_opt "deref_refs" "an_enum"
+  check_var_with_bool_opt "deref_refs" "a_string"
+  check_var_with_bool_opt "deref_refs" "a_binary_string"
+  check_var_with_bool_opt "deref_refs" "a_binary_string_array"
+  check_var_with_bool_opt "deref_refs" "a_big_string"
+  check_var_with_bool_opt "deref_refs" "an_array"
+  check_var_with_bool_opt "deref_refs" "an_array_with_repetition"
+  check_var_with_bool_opt "deref_refs" "a_symbol_pointer"
+
+  if { $current_lang == "c++" } {
+    check_var_with_bool_opt "deref_refs" "a_point_t_ref"
+    check_var_with_bool_opt "deref_refs" "a_base_ref" \
+	"${default_ref_regexp}: \\{_vptr\[.\$\]Base = ${default_pointer_regexp} <vtable for Deriv\\+$decimal>, a = 42, static a_static_member = 2019\\}"
+  }
+}
+
+# Test the actual_objects option for gdb.Value.format_string.
+proc_with_prefix test_actual_objects {} {
+  global current_lang
+
+  check_var_with_bool_opt "actual_objects" "a_point_t"
+  check_var_with_bool_opt "actual_objects" "a_point_t_pointer"
+  check_var_with_bool_opt "actual_objects" "another_point"
+  check_var_with_bool_opt "actual_objects" "a_struct_with_union"
+  check_var_with_bool_opt "actual_objects" "an_enum"
+  check_var_with_bool_opt "actual_objects" "a_string"
+  check_var_with_bool_opt "actual_objects" "a_binary_string"
+  check_var_with_bool_opt "actual_objects" "a_binary_string_array"
+  check_var_with_bool_opt "actual_objects" "a_big_string"
+  check_var_with_bool_opt "actual_objects" "an_array"
+  check_var_with_bool_opt "actual_objects" "an_array_with_repetition"
+  check_var_with_bool_opt "actual_objects" "a_symbol_pointer"
+
+  if { $current_lang == "c++" } {
+    # Nothing changes in all of the C++ tests because deref_refs is not
+    # True.
+    check_var_with_bool_opt "actual_objects" "a_point_t_ref"
+    check_var_with_bool_opt "actual_objects" "a_base_ref"
+
+    with_temp_option "set print object on" "set print object off" {
+      check_var_with_no_opts "a_point_t_ref"
+      check_var_with_bool_opt "actual_objects" "a_point_t_ref"
+
+      check_var_with_no_opts "a_base_ref"
+      check_var_with_bool_opt "actual_objects" "a_base_ref"
+    }
+  }
+}
+
+# Test the static_members option for gdb.Value.format_string.
+proc_with_prefix test_static_members {} {
+  global current_lang
+
+  check_var_with_bool_opt "static_members" "a_point_t"
+  check_var_with_bool_opt "static_members" "a_point_t_pointer"
+  check_var_with_bool_opt "static_members" "another_point"
+  check_var_with_bool_opt "static_members" "a_struct_with_union"
+  check_var_with_bool_opt "static_members" "an_enum"
+  check_var_with_bool_opt "static_members" "a_string"
+  check_var_with_bool_opt "static_members" "a_binary_string"
+  check_var_with_bool_opt "static_members" "a_binary_string_array"
+  check_var_with_bool_opt "static_members" "a_big_string"
+  check_var_with_bool_opt "static_members" "an_array"
+  check_var_with_bool_opt "static_members" "an_array_with_repetition"
+  check_var_with_bool_opt "static_members" "a_symbol_pointer"
+
+  if { $current_lang == "c++" } {
+    # Nothing changes in all of the C++ tests because deref_refs is not
+    # True.
+    check_var_with_bool_opt "static_members" "a_point_t_ref"
+    check_var_with_bool_opt "static_members" "a_base_ref"
+
+    with_temp_option \
+	"set print static-members off" \
+	"set print static-members on" {
+      check_var_with_no_opts "a_point_t_ref"
+      check_var_with_bool_opt "static_members" "a_point_t_ref"
+
+      check_var_with_no_opts "a_base_ref"
+      check_var_with_bool_opt "static_members" "a_base_ref"
+    }
+  }
+}
+
+# Test the max_elements option for gdb.Value.format_string.
+# SETTING is the print setting to verify, either "elements"
+# or "characters".  UNLIMITED is the numeric value to use
+# for the "unlimited" setting.
+
+proc test_max_string_one { setting unlimited } {
+  global current_lang
+  global default_pointer_regexp
+
+  # 200 is the default maximum number of elements, so setting it should
+  # not change the output.
+  set opts "max_$setting=200"
+  with_test_prefix $opts {
+    check_format_string "a_point_t" $opts
+    check_format_string "a_point_t_pointer" $opts
+    check_format_string "another_point" $opts
+    check_format_string "a_struct_with_union" $opts
+    check_format_string "an_enum" $opts
+    check_format_string "a_string" $opts
+    check_format_string "a_binary_string" $opts
+    check_format_string "a_binary_string_array" $opts
+    check_format_string "a_big_string" $opts
+    if { $setting == "elements" } {
+      check_format_string "an_array" $opts
+      check_format_string "an_array_with_repetition" $opts
+    }
+    check_format_string "a_symbol_pointer" $opts
+
+    if { $current_lang == "c++" } {
+      check_format_string "a_point_t_ref" $opts
+      check_format_string "a_base_ref" $opts
+    }
+  }
+
+  set opts "max_$setting=3"
+  with_test_prefix $opts {
+    check_format_string "a_point_t" $opts
+    check_format_string "a_point_t_pointer" $opts
+    check_format_string "another_point" $opts
+    check_format_string "a_struct_with_union" $opts
+    check_format_string "an_enum" $opts
+    check_format_string "a_string" $opts \
+      "${default_pointer_regexp} \"hel\"..."
+    check_format_string "a_binary_string" $opts \
+      "${default_pointer_regexp} \"hel\"..."
+    check_format_string "a_binary_string_array" $opts \
+      "\"hel\"..."
+    check_format_string "a_big_string" $opts \
+      [get_cut_big_string 3]
+    if { $setting == "elements"} {
+      check_format_string "an_array" $opts
+      check_format_string "an_array_with_repetition" $opts \
+	"\\{1, 3 <repeats 12 times>...\\}"
+    }
+    check_format_string "a_symbol_pointer" $opts
+
+    if { $current_lang == "c++" } {
+      check_format_string "a_point_t_ref" $opts
+      check_format_string "a_base_ref" $opts
+    }
+  }
+
+  # Both 1,000 (we don't have that many elements) and unlimited should
+  # mean no truncation.
+  foreach opts [list "max_$setting=1000" "max_$setting=$unlimited"] {
+    with_test_prefix $opts {
+      check_format_string "a_point_t" $opts
+      check_format_string "a_point_t_pointer" $opts
+      check_format_string "another_point" $opts
+      check_format_string "a_struct_with_union" $opts
+      check_format_string "an_enum" $opts
+      check_format_string "a_string" $opts
+      check_format_string "a_binary_string" $opts
+      check_format_string "a_binary_string_array" $opts
+      check_format_string "a_big_string" $opts \
+        [get_cut_big_string 1000]
+      if { $setting == "elements"} {
+	check_format_string "an_array" $opts
+	check_format_string "an_array_with_repetition" $opts
+      }
+      check_format_string "a_symbol_pointer" $opts
+
+      if { $current_lang == "c++" } {
+        check_format_string "a_point_t_ref" $opts
+        check_format_string "a_base_ref" $opts
+      }
+    }
+  }
+
+  with_temp_option "set print $setting 4" "set print $setting 200" {
+    check_format_string "a_string" "" \
+      "${default_pointer_regexp} \"hell\"..."
+    check_format_string "a_binary_string" "" \
+      "${default_pointer_regexp} \"hell\"..."
+    check_format_string "a_binary_string_array" "" \
+      "\"hell\"..."
+    if { $setting == "elements"} {
+      check_format_string "an_array_with_repetition" "" \
+	"\\{1, 3 <repeats 12 times>...\\}"
+    }
+  }
+}
+
+proc_with_prefix test_max_string {} {
+  foreach_with_prefix setting { "elements" "characters" } {
+    test_max_string_one $setting \
+      [string map {elements 0 characters 4294967295} $setting]
+  }
+}
+
+# Test the max_depth option for gdb.Value.format_string.
+proc_with_prefix test_max_depth {} {
+    set opts "max_depth=-1"
+    with_test_prefix $opts {
+	check_format_string "a_struct_with_union" $opts
+	check_format_string "a_point_t" $opts "Pretty Point \\(42, 12\\)"
+	check_format_string "a_struct_with_point" $opts
+    }
+    set opts "max_depth=0"
+    with_test_prefix $opts {
+	check_format_string "a_struct_with_union" $opts "\\{\.\.\.\\}"
+	check_format_string "a_point_t" $opts "Pretty Point \\(42, 12\\)"
+	check_format_string "a_struct_with_point" $opts "\\{\.\.\.\\}"
+    }
+    set opts "max_depth=1"
+    with_test_prefix $opts {
+	check_format_string "a_struct_with_union" $opts "\\{the_union = \\{\.\.\.\\}\\}"
+	check_format_string "a_point_t" $opts "Pretty Point \\(42, 12\\)"
+	check_format_string "a_struct_with_point" $opts
+    }
+    set opts "max_depth=2"
+    with_test_prefix $opts {
+	check_format_string "a_struct_with_union" $opts
+	check_format_string "a_point_t" $opts "Pretty Point \\(42, 12\\)"
+	check_format_string "a_struct_with_point" $opts
+    }
+}
+
+# Test the repeat_threshold option for gdb.Value.format_string.
+proc_with_prefix test_repeat_threshold {} {
+  global current_lang
+  global default_pointer_regexp
+
+  # 10 is the default threshold for repeated items, so setting it should
+  # not change the output.
+  set opts "repeat_threshold=10"
+  with_test_prefix $opts {
+    check_format_string "a_point_t" $opts
+    check_format_string "a_point_t_pointer" $opts
+    check_format_string "another_point" $opts
+    check_format_string "a_struct_with_union" $opts
+    check_format_string "an_enum" $opts
+    check_format_string "a_string" $opts
+    check_format_string "a_binary_string" $opts
+    check_format_string "a_binary_string_array" $opts
+    check_format_string "a_big_string" $opts
+    check_format_string "an_array" $opts
+    check_format_string "an_array_with_repetition" $opts
+    check_format_string "a_symbol_pointer" $opts
+
+    if { $current_lang == "c++" } {
+      check_format_string "a_point_t_ref" $opts
+      check_format_string "a_base_ref" $opts
+    }
+  }
+
+  set opts "repeat_threshold=1"
+  with_test_prefix $opts {
+    check_format_string "a_point_t" $opts
+    check_format_string "a_point_t_pointer" $opts
+    check_format_string "another_point" $opts
+    check_format_string "a_struct_with_union" $opts
+    check_format_string "an_enum" $opts
+    check_format_string "a_string" $opts \
+      "${default_pointer_regexp} \"he\", 'l' <repeats 2 times>, \"o world\""
+    check_format_string "a_binary_string" $opts \
+      "${default_pointer_regexp} \"he\", 'l' <repeats 2 times>, \"o\""
+    check_format_string "a_binary_string_array" $opts \
+      "\"he\", 'l' <repeats 2 times>, \"o\\\\000world\""
+    check_format_string "a_big_string" $opts
+    check_format_string "an_array" $opts
+    check_format_string "an_array_with_repetition" $opts \
+      "\\{1, 3 <repeats 12 times>, 5 <repeats 3 times>\\}"
+
+    check_format_string "a_symbol_pointer" $opts
+
+    if { $current_lang == "c++" } {
+      check_format_string "a_point_t_ref" $opts
+      check_format_string "a_base_ref" $opts
+    }
+  }
+
+  set opts "repeat_threshold=3"
+  with_test_prefix $opts {
+    check_format_string "a_point_t" $opts
+    check_format_string "a_point_t_pointer" $opts
+    check_format_string "another_point" $opts
+    check_format_string "a_struct_with_union" $opts
+    check_format_string "an_enum" $opts
+    check_format_string "a_string" $opts
+    check_format_string "a_binary_string" $opts
+    check_format_string "a_binary_string_array" $opts
+    check_format_string "a_big_string" $opts
+    check_format_string "an_array" $opts
+    check_format_string "an_array_with_repetition" $opts
+    check_format_string "a_symbol_pointer" $opts
+
+    if { $current_lang == "c++" } {
+      check_format_string "a_point_t_ref" $opts
+      check_format_string "a_base_ref" $opts
+    }
+  }
+
+  # Both 100 (we don't have that many repeated elements) and 0 (unlimited)
+  # should mean no truncation.
+  foreach opts { "repeat_threshold=100" "repeat_threshold=0" } {
+    with_test_prefix $opts {
+      check_format_string "a_point_t" $opts
+      check_format_string "a_point_t_pointer" $opts
+      check_format_string "another_point" $opts
+      check_format_string "a_struct_with_union" $opts
+      check_format_string "an_enum" $opts
+      check_format_string "a_string" $opts
+      check_format_string "a_binary_string" $opts
+      check_format_string "a_binary_string_array" $opts
+      check_format_string "a_big_string" $opts
+      check_format_string "an_array" $opts
+      check_format_string "an_array_with_repetition" $opts \
+        "\\{1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 5, 5, 5\\}"
+      check_format_string "a_symbol_pointer" $opts
+
+      if { $current_lang == "c++" } {
+        check_format_string "a_point_t_ref" $opts
+        check_format_string "a_base_ref" $opts
+      }
+    }
+  }
+
+  with_temp_option "set print repeats 1" "set print repeats 10" {
+    check_format_string "an_array_with_repetition" "" \
+      "\\{1, 3 <repeats 12 times>, 5 <repeats 3 times>\\}"
+  }
+}
+
+# Test the format option for gdb.Value.format_string.
+proc_with_prefix test_format {} {
+  global current_lang
+  global default_pointer_regexp
+
+  # Hexadecimal.
+  set opts "format='x'"
+  with_test_prefix $opts {
+    gdb_test "python print (gdb.Value (42).format_string (${opts}))" \
+      "0x2a" \
+      "42 with option ${opts}"
+
+    check_format_string "a_point_t" $opts \
+      "Pretty Point \\(0x2a, 0xc\\)"
+    check_format_string "a_point_t_pointer" $opts
+    check_format_string "another_point" $opts \
+      "Pretty Point \\(0x7b, 0x1c8\\)"
+    check_format_string "a_struct_with_union" $opts \
+      "\\{the_union = \\{an_int = 0x2a2a2a2a, a_char = 0x2a\\}\\}"
+    check_format_string "an_enum" $opts \
+      "0x1"
+    check_format_string "a_string" $opts \
+      $default_pointer_regexp
+    check_format_string "a_binary_string" $opts \
+      $default_pointer_regexp
+    check_format_string "a_binary_string_array" $opts \
+      "\\{0x68, 0x65, 0x6c, 0x6c, 0x6f, 0x0, 0x77, 0x6f, 0x72, 0x6c, 0x64, 0x0\\}"
+    check_format_string "a_big_string" $opts \
+      "\\{0x41, 0x42, 0x43, 0x44, 0x45, \[, x0-9a-f\]+\.\.\.\\}"
+    check_format_string "an_array" $opts \
+      "\\{0x2, 0x3, 0x5\\}"
+    check_format_string "an_array_with_repetition" $opts \
+      "\\{0x1, 0x3 <repeats 12 times>, 0x5, 0x5, 0x5\\}"
+    check_format_string "a_symbol_pointer" $opts \
+      $default_pointer_regexp
+
+    if { $current_lang == "c++" } {
+      check_format_string "a_point_t_ref" $opts \
+	"Pretty Point \\(0x2a, 0xc\\)"
+      check_format_string "a_base_ref" $opts
+    }
+  }
+
+  # Binary.
+  set opts "format='t'"
+  with_test_prefix $opts {
+    set binary_pointer_regexp "\[0-1\]+"
+    gdb_test "python print (gdb.Value (42).format_string (${opts}))" \
+      "101010" \
+      "42 with option ${opts}"
+
+    check_format_string "a_point_t" $opts \
+      "Pretty Point \\(101010, 1100\\)"
+    check_format_string "a_point_t_pointer" $opts \
+      $binary_pointer_regexp
+    check_format_string "another_point" $opts \
+      "Pretty Point \\(1111011, 111001000\\)"
+    check_format_string "a_struct_with_union" $opts \
+      "\\{the_union = \\{an_int = 101010001010100010101000101010, a_char = 101010\\}\\}"
+    check_format_string "an_enum" $opts \
+      "1"
+    check_format_string "a_string" $opts \
+      $binary_pointer_regexp
+    check_format_string "a_binary_string" $opts \
+      $binary_pointer_regexp
+    check_format_string "a_binary_string_array" $opts \
+      "\\{1101000, 1100101, 1101100, 1101100, 1101111, 0, 1110111, 1101111, 1110010, 1101100, 1100100, 0\\}"
+    check_format_string "a_big_string" $opts \
+      "\\{1000001, 1000010, 1000011, 1000100, 1000101, \[, 0-1\]+\.\.\.\\}"
+    check_format_string "an_array" $opts \
+      "\\{10, 11, 101\\}"
+    check_format_string "an_array_with_repetition" $opts \
+      "\\{1, 11 <repeats 12 times>, 101, 101, 101\\}"
+    check_format_string "a_symbol_pointer" $opts \
+      $binary_pointer_regexp
+
+    if { $current_lang == "c++" } {
+      check_format_string "a_point_t_ref" $opts \
+	"Pretty Point \\(101010, 1100\\)"
+      check_format_string "a_base_ref" $opts
+    }
+  }
+
+  # Decimal.
+  set opts "format='d'"
+  with_test_prefix $opts {
+    set decimal_pointer_regexp "\[0-9\]+"
+    gdb_test "python print (gdb.Value (0x2a).format_string (${opts}))" \
+      "42" \
+      "0x2a with option ${opts}"
+
+    check_format_string "a_point_t" $opts
+    check_format_string "a_point_t_pointer" $opts \
+      $decimal_pointer_regexp
+    check_format_string "another_point" $opts
+    check_format_string "a_struct_with_union" $opts \
+      "\\{the_union = \\{an_int = 707406378, a_char = 42\\}\\}"
+    check_format_string "an_enum" $opts \
+      "1"
+    check_format_string "a_string" $opts \
+      $decimal_pointer_regexp
+    check_format_string "a_binary_string" $opts \
+      $decimal_pointer_regexp
+    check_format_string "a_binary_string_array" $opts \
+      "\\{104, 101, 108, 108, 111, 0, 119, 111, 114, 108, 100, 0\\}"
+    check_format_string "a_big_string" $opts \
+      "\\{65, 66, 67, 68, 69, \[, 0-9\]+\.\.\.\\}"
+    check_format_string "an_array" $opts
+    check_format_string "an_array_with_repetition" $opts
+    check_format_string "a_symbol_pointer" $opts \
+      $decimal_pointer_regexp
+
+    if { $current_lang == "c++" } {
+      check_format_string "a_point_t_ref" $opts
+      check_format_string "a_base_ref" $opts
+    }
+  }
+}
+
+# Test mixing options.
+proc_with_prefix test_mixed {} {
+  global current_lang
+  global default_ref_regexp
+  global default_pointer_regexp
+  global decimal
+
+  check_format_string "a_point_t" \
+    "raw=True, format='x'" \
+    "\\{x = 0x2a, y = 0xc\\}"
+
+  check_format_string "an_array" \
+    "array_indexes=True, pretty_arrays=True" \
+    "\\{\[\r\n\]+  \\\[0\\\] = 2,\[\r\n\]+  \\\[1\\\] = 3,\[\r\n\]+  \\\[2\\\] = 5\[\r\n\]+\\}"
+
+  check_format_string "a_struct_with_union" \
+    "pretty_structs=True, unions=False" \
+    "\\{\[\r\n\]+  the_union = \\{\.\.\.\\}\[\r\n\]+\\}"
+
+  check_format_string "a_symbol_pointer" \
+    "symbols=False, format='d'" \
+    "\[0-9\]+"
+
+  if { $current_lang == "c++" } {
+    check_format_string "a_point_t_ref" \
+      "deref_refs=True, actual_objects=True, raw=True" \
+      "${default_ref_regexp}: \\{x = 42, y = 12\\}"
+
+    check_format_string "a_base_ref" \
+      "deref_refs=True, static_members=False" \
+      "${default_ref_regexp}: \\{_vptr\[.\$\]Base = ${default_pointer_regexp} <vtable for Deriv\\+$decimal>, a = 42\\}"
+  }
+}
+
+# Test passing invalid arguments to gdb.Value.format_string.
+proc_with_prefix test_invalid_args {} {
+  check_format_string \
+    "a_point_t" \
+    "12" \
+    "TypeError: format_string\\(\\) takes 0 positional arguments but 1 were given.*"
+
+  check_format_string \
+    "a_point_t" \
+    "invalid=True" \
+    "TypeError: 'invalid' is an invalid keyword argument for this function.*"
+
+  check_format_string \
+    "a_point_t" \
+    "raw='hello'" \
+    "TypeError: argument 1 must be bool, not str.*"
+
+  check_format_string \
+    "a_point_t" \
+    "format='xd'" \
+    "ValueError: a single character is required.*"
+}
+
+# Check the styling argument to format_string.  This function needs to
+# be called with TERM set such that styling can be applied.
+proc test_styling {} {
+    gdb_test "python print(gdb.parse_and_eval(\"a_point_t\").format_string(styling=True, raw=True))" \
+	"{[style x variable] = 42, [style y variable] = 12}"
+}
+
+# Test the gdb.print_options API.
+proc test_print_options {} {
+    gdb_test_no_output "set print elements 500"
+    gdb_test "python print(gdb.print_options()\['max_elements'\])" "500" \
+	"examine max elements"
+    gdb_test "python print('format' in gdb.print_options())" "False" \
+	"examine format"
+
+    check_format_string "a_point_t" "format='t', nibbles=True" \
+	"Pretty Point \\(0010.1010, 1100\\)" \
+	"print in binary to fetch options"
+    gdb_test "python print(saved_options\['format'\] == 't')" "True" \
+	"format was set"
+    gdb_test "python print(saved_options\['nibbles'\])" "True" \
+	"nibbles was set"
+
+    check_format_string "a_point_t" "summary=True" \
+	"No Data" \
+	"print in summary mode"
+    gdb_test "python print(saved_options\['summary'\])" "True" \
+	"summary was set"
+}
+
+# Run all the tests in common for both C and C++.
+proc_with_prefix test_all_common {} {
+  # No options.
+  test_no_opts
+  # Single options set to True/False.
+  test_raw
+  test_pretty_arrays
+  test_pretty_structs
+  test_array_indexes
+  test_symbols
+  test_unions
+  test_address
+  test_nibbles
+  test_deref_refs
+  test_actual_objects
+  test_static_members
+  test_max_string
+  test_max_depth
+  test_repeat_threshold
+  test_format
+  # Multiple options mixed together.
+  test_mixed
+  # Various error conditions.
+  test_invalid_args
+  test_print_options
+}
+
+# The current language ("c" or "c++" while running tests).
+set current_lang ""
+
+with_test_prefix "format_string" {
+  # Perform C Tests.
+  if { [build_inferior "${binfile}" "c"] == 0 } {
+    with_test_prefix "lang_c" {
+      with_ansi_styling_terminal {
+	# We run all of these tests in an environment where styling
+	# could work, but we only expect the final call to
+	# test_styling to actually produce any styled output.
+	set current_lang "c"
+	prepare_gdb "${binfile}"
+	test_all_common
+	test_styling
+      }
+    }
+  }
+
+  # Perform C++ Tests.
+  if { [build_inferior "${binfile}-cxx" "c++"] == 0 } {
+    with_test_prefix "lang_cpp" {
+      set current_lang "c++"
+      prepare_gdb "${binfile}-cxx"
+      test_all_common
+    }
+  }
+}

@@ -1,0 +1,137 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check for an issue in GDB where buildsym_compunit::record_line was
+# removing duplicate line table entries, but skip_prologue_using_sal
+# depends on these duplicates to spot the end of the prologue.
+#
+# When the de-duplication was added this regression was not spotted as
+# it requires a particular combination of a (very) small function
+# being inlined into an also very small outer function.
+#
+# This test recreates the exact combination of line table entries that
+# were seen in the original test using the Dejagnu DWARF compiler.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+# The .c files use __attribute__.
+require is_c_compiler_gcc
+
+standard_testfile -lbls.c .S \
+    .c .h
+
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    global srcdir subdir srcfile srcfile3 srcfile4
+    declare_labels lines_label callee_subprog_label
+
+    get_func_info main {debug optimize=-O1}
+
+    cu {} {
+	# It is important that the producer here be 'clang' as, at the
+	# time of writing this, GCC for x86-64 doesn't make use of
+	# skip_prologue_using_sal, while clang does.
+	compile_unit {
+	    {producer "clang xxxx" }
+	    {language @DW_LANG_C}
+	    {name ${srcfile3}}
+	    {low_pc 0 addr}
+	    {stmt_list ${lines_label} DW_FORM_sec_offset}
+	} {
+	    callee_subprog_label: subprogram {
+		{external 1 flag}
+		{name callee}
+		{inline 3 data1}
+	    }
+	    subprogram {
+		{external 1 flag}
+		{name main}
+		{low_pc $main_start addr}
+		{high_pc "$main_start + $main_len" addr}
+	    } {
+		inlined_subroutine {
+		    {abstract_origin %$callee_subprog_label}
+		    {low_pc line_label_1 addr}
+		    {high_pc line_label_2 addr}
+		    {call_file 1 data1}
+		    {call_line 21 data1}
+		}
+	    }
+	}
+    }
+
+    lines {version 2 default_is_stmt 1} lines_label {
+	include_dir "${srcdir}/${subdir}"
+	file_name "$srcfile3" 1
+	file_name "$srcfile4" 1
+
+	set f1_l1 [gdb_get_line_number "caller: before call" $srcfile3]
+	set f1_l2 [gdb_get_line_number "caller: the call" $srcfile3]
+	set f1_l3 [gdb_get_line_number "caller: after call" $srcfile3]
+
+	set f2_l1 [gdb_get_line_number "callee: body" $srcfile4]
+
+	program {
+	    DW_LNE_set_address line_label_1
+	    line $f1_l1
+	    DW_LNS_copy
+
+	    line ${f1_l2}
+	    DW_LNS_copy
+
+	    DW_LNS_set_file 2
+	    line ${f2_l1}
+	    DW_LNS_copy
+
+	    DW_LNS_negate_stmt
+	    DW_LNS_copy
+
+	    DW_LNS_set_file 1
+	    DW_LNE_set_address line_label_2
+	    line ${f1_l3}
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_3
+	    DW_LNS_copy
+	    DW_LNE_end_sequence
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	  [list $srcfile $asm_file] {nodebug optimize=-O1}] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+# Delete all breakpoints so that the output of "info breakpoints"
+# below will only contain a single breakpoint.
+delete_breakpoints
+
+# Place a breakpoint within the function in the header file.
+set linenum [gdb_get_line_number "callee: body" $srcfile4]
+gdb_breakpoint "${srcfile4}:${linenum}"
+
+# Check that the breakpoint was placed where we expected.  It should
+# appear at the requested line.  When the bug in GDB was present the
+# breakpoint would be placed on one of the following lines instead.
+gdb_test "info breakpoints" \
+    ".* in callee at \[^\r\n\]+${srcfile4}:${linenum}\\y.*"

@@ -1,0 +1,81 @@
+# Copyright 2011-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi2"
+
+require allow_shlib_tests
+
+standard_testfile solib-main.c solib-lib.c
+
+set libname "solib-lib"
+set srcfile_lib ${srcdir}/${subdir}/$srcfile2
+set binfile_lib [standard_output_file ${libname}.so]
+set lib_flags [list debug]
+
+set srcfile_main ${srcdir}/${subdir}/$srcfile
+set bin_flags [list debug shlib=${binfile_lib}]
+
+if { [gdb_compile_shlib ${srcfile_lib} ${binfile_lib} $lib_flags] != ""
+     || [gdb_compile ${srcfile_main} ${binfile} executable $bin_flags] != "" } {
+  untested "failed to compile"
+  return -1
+}
+
+if {[mi_clean_restart $binfile]} {
+    return
+}
+
+mi_load_shlibs $binfile_lib
+
+proc_with_prefix test_stop_on_solib_events {} {
+    mi_gdb_test "777-gdb-set stop-on-solib-events 1" "777\\^done" \
+	"set stop-on-solib-events"
+
+    # We use "run" rather than "-exec-run" here in order to test that CLI
+    # commands still cause the correct MI output to be generated.
+    mi_run_with_cli
+
+    # Also test that the CLI solib event note is output.
+    set test "CLI prints solib event"
+    gdb_expect {
+	-re "~\"Stopped due to shared library event \\(no libraries added or removed\\)\\\\n" {
+	    pass "$test"
+	}
+	timeout {
+	    fail "$test (timeout)"
+	}
+    }
+
+    mi_expect_stop solib-event .* .* .* .* .* "check for solib event"
+
+    # Unset solib events to avoid interfering with other tests.
+    mi_gdb_test "778-gdb-set stop-on-solib-events 0" "778\\^done" \
+	"unset stop-on-solib-events"
+}
+
+proc_with_prefix test_file_list_shared_libraries {} {
+    global libname
+    global binfile
+
+    mi_continue_to main
+
+    mi_gdb_test "222-file-list-shared-libraries" \
+	"222\\^done,shared-libraries=\\\[\{id=\".*${libname}.so\",target-name=\".*${libname}.so\",host-name=\".*${libname}.so\",symbols-loaded=\"1\",thread-group=\".*\",ranges=\\\[\{from=\".*\",to=\".*\"\}]\}]" \
+	"get the list of shared libraries"
+}
+
+test_stop_on_solib_events
+test_file_list_shared_libraries

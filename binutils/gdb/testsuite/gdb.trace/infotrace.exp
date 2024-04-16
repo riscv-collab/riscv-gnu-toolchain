@@ -1,0 +1,126 @@
+#   Copyright 1998-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file was written by Michael Snyder (msnyder@cygnus.com)
+
+load_lib "trace-support.exp"
+
+
+standard_testfile actions.c
+
+require gdb_trace_common_supports_arch
+
+if { [gdb_compile "$srcdir/$subdir/$srcfile" $binfile \
+	  executable {debug nowarnings}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+clean_restart
+gdb_file_cmd $binfile
+
+#
+# test "info tracepoints" command
+#
+
+gdb_delete_tracepoints
+set c_test_num [gdb_gettpnum gdb_c_test]
+set asm_test_num [gdb_gettpnum gdb_asm_test]
+if {$c_test_num <= 0 || $asm_test_num <= 0} {
+    fail "setting tracepoints"
+    return
+}
+
+# 2.1 info tracepoints (all)
+gdb_test "info tracepoints" \
+    "Num     Type\[ \]+Disp Enb Address\[ \]+What.*
+\[0-9\]+\[\t \]+tracepoint     keep y.* in gdb_c_test at .*$srcfile:\[0-9\]+.
+\[\t \]+not installed on target.
+\[0-9\]+\[\t \]+tracepoint     keep y.* in gdb_asm_test at .*$srcfile:\[0-9\]+.
+\[\t \]+not installed on target" \
+    "2.1: info tracepoints (all)"
+
+# 2.2 info tracepoint (specific)
+gdb_test "info tracepoint $c_test_num" \
+    "Num     Type\[ \]+Disp Enb Address\[ \]+What.*
+\[0-9\]+\[\t \]+tracepoint     keep y.* in gdb_c_test at .*$srcfile:\[0-9\]+.
+\[\t \]+not installed on target" \
+    "2.2a: info tracepoint $c_test_num (gdb_c_test)"
+
+gdb_test "info tracepoint $asm_test_num" \
+    "Num     Type\[ \]+Disp Enb Address\[ \]+What.*
+\[0-9\]+\[\t \]+tracepoint     keep y.* in gdb_asm_test at .*$srcfile:\[0-9\]+.
+\[\t \]+not installed on target" \
+    "2.2b: info tracepoint $asm_test_num (gdb_asm_test)"
+
+# 2.3 info tracepoint (invalid tracepoint number)
+gdb_test "info tracepoint [expr $c_test_num + $asm_test_num]" \
+    "No tracepoint matching '[expr $c_test_num + $asm_test_num]'." \
+    "2.3: info tracepoint (invalid tracepoint number)"
+
+# 2.4 info tracepoints (list of numbers)
+gdb_test_multiple "info tracepoints $c_test_num $asm_test_num " \
+    "2.4: info trace rejects multiple tracepoint numbers" {
+	-re "Num Enb .*$gdb_prompt $" {
+	    fail "2.4: info trace rejects multiple tracepoint numbers"
+	}
+	-re ".*$gdb_prompt $" {
+	    pass "2.4: info trace rejects multiple tracepoint numbers"
+	}
+    }
+
+# 2.5 help info trace
+gdb_test "help info tracepoints" \
+    "Status of specified tracepoints .all tracepoints if no argument.*" \
+    "2.5: help info tracepoints"
+
+# 2.6 info tracepoints (check trace buffer usage).  We need a live
+# tracing.
+
+# Load the binary to the target too.
+gdb_load $binfile
+
+# Can't use runto_main here, because that would delete the tracepoints
+# created above.
+gdb_breakpoint "main"
+gdb_trace_setactions "collect on tracepoint 1" "1" \
+	"collect gdb_struct1_test" "^$"
+gdb_run_cmd
+if {[gdb_test "" "Breakpoint ${decimal}, main.*" "run to main"] != 0} {
+    return -1
+}
+
+if {![gdb_target_supports_trace]} {
+    unsupported "current target does not support trace"
+    return 1
+}
+
+gdb_breakpoint "end" qualified
+gdb_test_no_output "tstart"
+gdb_test "continue" "Continuing\\.\[ \r\n\]+Breakpoint.*" \
+    "continue to end"
+gdb_test_no_output "tstop"
+gdb_test "tstatus"
+gdb_test "info tracepoints" \
+    [multi_line \
+	 "Num     Type\[ \]+Disp Enb Address\[ \]+What.*" \
+	 "\[0-9\]+\[\t \]+tracepoint     keep y.* in gdb_c_test at .*$srcfile:\[0-9\]+" \
+	 "\[\t \]+tracepoint already hit 1 time" \
+	 "\[\t \]+trace buffer usage ${decimal} bytes" \
+	 "\[\t \]+collect gdb_struct1_test" \
+	 "\tinstalled on target" \
+	 "\[0-9\]+\[\t \]+tracepoint     keep y.* in gdb_asm_test at .*$srcfile:\[0-9\]+" \
+	 "\tinstalled on target"] \
+    "2.6: info tracepoints (trace buffer usage)"

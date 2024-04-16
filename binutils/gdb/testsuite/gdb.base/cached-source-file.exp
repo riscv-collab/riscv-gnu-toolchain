@@ -1,0 +1,141 @@
+# Copyright (C) 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test for PR tui/25126.
+#
+# The bug is about a regression that makes GDB not reload its source
+# code cache when the inferior's symbols are reloaded, which leads to
+# wrong backtraces/listings.
+#
+# This bug is reproducible even without using the TUI.
+
+standard_testfile
+
+# Only run on native boards.
+require !use_gdb_stub
+if { [target_info gdb_protocol] == "extended-remote" } {
+    return -1
+}
+
+# Because we need to modify the source file later, it's better if we
+# just copy it to our output directory (instead of messing with the
+# user's source directory).
+set newsrc [standard_output_file $testfile].c
+file copy -force -- $srcdir/$subdir/$srcfile $newsrc
+set srcfile $newsrc
+
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile] } {
+    return -1
+}
+
+# Get the line number for the line with the "break-here" marker.
+set bp_line [gdb_get_line_number "break-here" $srcfile]
+
+gdb_assert { [runto "$srcfile:$bp_line"] } \
+    "run to break-here marker"
+
+# Do a "list" and check that the printed line matches the line of the
+# original source file.
+gdb_test_no_output "set listsize 1"
+gdb_test "list" "$bp_line\[ \t\]+printf \\(\"hello\\\\n\"\\); /\\* break-here \\*/" \
+    "check the first version of the source file"
+
+# Modify the original source file, and add an extra line into it.
+# This only works locally because of the TCL commands.
+set bkpsrc [standard_output_file $testfile].c.bkp
+set bkpsrcfd [open $bkpsrc w]
+set srcfd [open $srcfile r]
+
+while { [gets $srcfd line] != -1 } {
+    if { [string first "break-here" $line] != -1 } {
+	# Put a "printf" line before the "break-here" line.
+	puts $bkpsrcfd "  printf (\"foo\\n\"); /* new-marker */"
+    }
+    puts $bkpsrcfd $line
+}
+
+close $bkpsrcfd
+close $srcfd
+file rename -force -- $bkpsrc $srcfile
+# We have to wait 1 second because of the way GDB checks whether the
+# binary has changed or not.  GDB uses stat(2) and currently checks
+# 'st_mtime', whose precision is measured in seconds.  Since the copy,
+# rename, and rebuild can take less than 1 second, GDB might mistakenly
+# assume that the binary is unchanged.
+sleep 1
+
+# Recompile the modified source.  We use "gdb_compile" here instead of
+# "prepare_for_testing" because we don't want to call "clean_restart".
+if { [gdb_compile "${srcfile}" "${binfile}" executable {debug}] != "" } {
+    return -1
+}
+
+# Rerun the program.  This should not only force GDB to reload the
+# source cache, but also to break at BP_LINE again, which now has
+# different contents.
+set q \
+    [multi_line \
+	 "The program being debugged has been started already\\." \
+	 "Start it from the beginning\\? \\(y or n\\) "]
+set binregex [string_to_regexp $binfile]
+set re \
+    [multi_line \
+	 "\\`$binregex\\' has changed; re-reading symbols\\.(" \
+	 "Expanding full symbols from $binfile\\.\\.\\.)?" \
+	 "Starting program: ${binregex}.*"]
+gdb_test "run" $re "rerun program" $q y
+
+# Again, perform the listing and check that the line indeed has
+# changed for GDB.
+gdb_test "list" "${bp_line}\[ \t\]+printf \\(\"foo\\\\n\"\\); /\\\* new-marker \\\*/.*" \
+    "verify that the source code is properly reloaded"
+
+# Modify the source file again.  As before, this only works locally
+# because of the TCL commands.
+set bkpsrc [standard_output_file $testfile].c.bkp
+set bkpsrcfd [open $bkpsrc w]
+set srcfd [open $srcfile r]
+
+while { [gets $srcfd line] != -1 } {
+    if { [string first "new-marker" $line] != -1 } {
+	# Modify the printf line that we added previously.
+	puts $bkpsrcfd "  printf (\"foo\\n\"); /* new-marker updated */"
+    } else {
+	puts $bkpsrcfd $line
+    }
+}
+
+close $bkpsrcfd
+close $srcfd
+file rename -force -- $bkpsrc $srcfile
+
+# As before, delay so that at least one second has passed.  GDB still
+# will not spot that the source file has changed, as GDB doesn't do a
+# time check unless the binary has also changed, this delay just
+# allows us to confirm this behaviour.
+sleep 1
+
+# List the printf line again, we should not see the file changes yet
+# as the binary is unchanged, so the cached contents will still be
+# used.
+gdb_test "list ${bp_line}" "${bp_line}\[ \t\]+printf \\(\"foo\\\\n\"\\); /\\\* new-marker \\\*/.*" \
+    "verify that the source code change is not seen yet"
+
+gdb_test "maint flush source-cache" "Source cache flushed\\."
+
+# List the printf line again.  After the cache flush GDB will re-read
+# the source file and we should now see the changes.
+gdb_test "list ${bp_line}" "${bp_line}\[ \t\]+printf \\(\"foo\\\\n\"\\); /\\\* new-marker updated \\\*/.*" \
+    "verify that the updated source code change is not seen"

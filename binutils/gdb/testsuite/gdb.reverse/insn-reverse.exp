@@ -1,0 +1,142 @@
+# Copyright (C) 2015-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require supports_reverse !use_gdb_stub
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile \
+	 [list debug]]} {
+    return -1
+}
+if {![runto_main]} {
+    return
+}
+
+# Read function name from testcases[N].
+
+proc read_testcase { n } {
+    global gdb_prompt
+
+    set result -1
+    gdb_test_multiple "print testcases\[${n}\]" "read name of test case ${n}" {
+	-re "\[$\].*= .*<(.*)>.*$gdb_prompt $" {
+	    set result $expect_out(1,string)
+	}
+	-re "$gdb_prompt $" { }
+    }
+
+    return $result
+}
+
+# In each function FUNC, GDB turns on process record, and single step
+# until program goes to the end of the function.  Then, single step
+# backward.  In each of forward single step and backward single step,
+# the contents of registers are saved, and test compares them.  If
+# there is any differences, a FAIL is emitted.
+
+proc test { func testcase_nr } {
+    global hex decimal
+    global gdb_prompt
+
+    with_test_prefix "$func" {
+	gdb_start_cmd $testcase_nr
+	gdb_test "" "" "wait for prompt"
+
+	gdb_breakpoint $func
+	gdb_test "continue"
+
+	set last_insn ""
+	set test "disassemble $func"
+	gdb_test_multiple $test $test {
+	    -re ".*($hex) <\\+$decimal>:\[^\r\n\]+\r\nEnd of assembler dump\.\r\n$gdb_prompt $" {
+		set last_insn $expect_out(1,string)
+	    }
+	}
+	if { $last_insn == "" } {
+	    fail "find the last instruction of function $func"
+	}
+
+	# Activate process record/replay
+	gdb_test_no_output "record" "turn on process record"
+
+	# Registers contents before each forward single step.
+	set count 0
+	set insn_addr ""
+	for {} {$count < 500} {incr count} {
+	    set prev_insn_addr $insn_addr
+	    set insn_addr ""
+	    gdb_test_multiple "x/i \$pc" "" {
+		-re ".* ($hex) <.*>:\[ \t\]*(.*)\r\n$gdb_prompt $" {
+		    set insn_addr $expect_out(1,string)
+		    set insn_array($count) $expect_out(2,string)
+		}
+	    }
+
+	    if { $insn_addr == "" } {
+		break
+	    }
+
+	    if { $last_insn == $insn_addr } {
+		break
+	    }
+
+	    if { $prev_insn_addr == $insn_addr } {
+		# Failed to make progress, might have run into SIGILL.
+		fail "no progress at: $expect_out(2,string)"
+		# Ignore the last instruction recorded
+		incr count -1
+		break
+	    }
+
+	    set pre_regs($count) [capture_command_output "info all-registers" ""]
+	    gdb_test -nopass "si"
+	}
+
+	# Registers contents after each backward single step.
+	for {set i [expr $count - 1]} {$i >= 0} {incr i -1} {
+	    gdb_test -nopass "reverse-stepi"
+	    set post_regs($i) [capture_command_output "info all-registers" ""]
+	}
+
+	# Compare the register contents.
+	for {set i 0} {$i < $count} {incr i} {
+	    if { ![gdb_assert { [string compare $pre_regs($i) $post_regs($i)] == 0 } \
+		      "compare registers on insn $i:$insn_array($i)"] } {
+
+		foreach pre_line [split $pre_regs($i) \n] post_line [split $post_regs($i) \n] {
+		    if { [string compare $pre_line $post_line] } {
+			verbose -log " -:$pre_line"
+			verbose -log " +:$post_line"
+		    }
+		}
+	    }
+	}
+	gdb_test "record stop"
+    }
+}
+
+set n_testcases [get_integer_valueof "n_testcases" 0]
+
+if { ${n_testcases} == 0 } {
+    untested "no test"
+    return 1
+}
+
+for { set i 0 } { ${i} < ${n_testcases} } { incr i } {
+    set testcase [read_testcase $i]
+
+    test $testcase $i
+}

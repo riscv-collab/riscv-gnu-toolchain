@@ -1,0 +1,110 @@
+# Copyright 2015-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile
+
+require {is_any_target i?86-*-* x86_64-*-*}
+
+set default_pkru_re 0x0
+if { [istarget *-*-linux*] } {
+    # Starting with v4.9, the linux kernel contains commit acd547b29880
+    # ("x86/pkeys: Default to a restrictive init PKRU"), which sets the
+    # pkru register to 0x55555554 by default.
+    set default_pkru_re (0x0|0x55555554)
+}
+
+
+set comp_flags "-I${srcdir}/../nat/"
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile} \
+     [list debug additional_flags=${comp_flags}]] } {
+    untested "failed to compile x86 PKEYS test."
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+set supports_pkru 0
+set test "probe PKRU support"
+gdb_test_multiple "print have_pkru()" $test {
+    -re ".. = 1\r\n$gdb_prompt $" {
+        pass $test
+        set supports_pkru 1
+    }
+    -re ".. = 0\r\n$gdb_prompt $" {
+        pass $test
+    }
+}
+
+if { !$supports_pkru } {
+    unsupported "processor does not support protection key feature."
+    return
+}
+
+# Linux kernel versions 5.14.0 to 6.1.x contain a regression related to writing
+# the PKRU using ptrace, see commit 4a804c4f8356 ("x86/fpu: Allow PKRU to be
+# (once again) written by ptrace.").
+set have_xfail 0
+set v [linux_kernel_version]
+if { $v != {} } {
+    set have_xfail \
+	[expr \
+	     [version_compare [list 5 14 0] <= $v] \
+	     && [version_compare $v < [list 6 2 0]]]
+}
+
+# Test pkru register at startup
+gdb_test "print /x \$pkru" "= $default_pkru_re" "pkru register"
+
+# Read values from pseudo registers.
+gdb_breakpoint [ gdb_get_line_number "break here 1" ]
+gdb_continue_to_breakpoint "break here 1" ".*break here 1.*"
+
+set val1 0x12345678
+gdb_test "info register pkru" ".*pkru.*$val1.*" "read pkru register"
+
+set val2 0x44444444
+gdb_test "print /x \$pkru = $val2" "= $val2" "set pkru value"
+
+gdb_test_multiple "info register pkru" "read value after setting value" {
+    -re -wrap ".*pkru.*$val2.*" {
+	pass $gdb_test_name
+    }
+    -re -wrap ".*pkru.*$val1.*" {
+	if { $have_xfail } {
+	    xfail $gdb_test_name
+	} else {
+	    fail $gdb_test_name
+	}
+    }
+}
+
+gdb_breakpoint [ gdb_get_line_number "break here 2" ]
+gdb_continue_to_breakpoint "break here 2" ".*break here 2.*"
+
+gdb_test_multiple "print /x rd_value" "variable after reading pkru" {
+    -re -wrap "= $val2" {
+	pass $gdb_test_name
+    }
+    -re -wrap "= $val1" {
+	if { $have_xfail } {
+	    xfail $gdb_test_name
+	} else {
+	    fail $gdb_test_name
+	}
+    }
+}

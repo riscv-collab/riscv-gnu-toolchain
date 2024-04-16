@@ -1,0 +1,106 @@
+# Copyright (C) 2010-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.
+# It tests the mechanism exposing blocks to Guile.
+
+load_lib gdb-guile.exp
+
+require allow_guile_tests
+
+standard_testfile
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+    return -1
+}
+
+if ![gdb_guile_runto_main] {
+    return
+}
+
+gdb_breakpoint [gdb_get_line_number "Block break here."]
+gdb_continue_to_breakpoint "Block break here."
+
+# Test initial innermost block.
+gdb_scm_test_silent_cmd "guile (define frame (selected-frame))" \
+    "Get frame inner"
+gdb_scm_test_silent_cmd "guile (define block (frame-block frame))" \
+    "Get block inner"
+gdb_test "guile (print block)" "#<gdb:block $hex-$hex>" \
+    "Check block not #f"
+gdb_test "guile (print (block-function block))" \
+    "#f" "First anonymous block"
+gdb_test "guile (print (block-start block))" \
+    "${decimal}" "Check start not #f"
+gdb_test "guile (print (block-end block))" \
+    "${decimal}" "Check end not #f"
+
+# Test eq?.
+gdb_test "guile (print (eq? (frame-block frame) (frame-block frame)))" \
+     "= #t" "Check eq? on same block"
+gdb_test "guile (print (eq? block (block-global-block block)))" \
+     "= #f" "Check eq? on different blocks"
+
+# Test global/static blocks.
+gdb_scm_test_silent_cmd "guile (define frame (selected-frame))" \
+    "Get frame for global/static"
+gdb_scm_test_silent_cmd "guile (define block (frame-block frame))" \
+    "Get block for global/static"
+gdb_test "guile (print (block-global? block))" \
+    "#f" "Not a global block"
+gdb_test "guile (print (block-static? block))" \
+    "#f" "Not a static block"
+gdb_scm_test_silent_cmd "guile (define gblock (block-global-block block))" \
+    "Get global block"
+gdb_scm_test_silent_cmd "guile (define sblock (block-static-block block))" \
+    "Get static block"
+gdb_test "guile (print (block-global? gblock))" \
+    "#t" "Is the global block"
+gdb_test "guile (print (block-static? sblock))" \
+    "#t" "Is the static block"
+
+# Move up superblock(s) until we reach function block_func.
+gdb_test_no_output "guile (set! block (block-superblock block))" \
+    "Get superblock"
+gdb_test "guile (print (block-function block))" \
+    "#f" "Second anonymous block"
+gdb_test_no_output "guile (set! block (block-superblock block))" \
+    "Get superblock 2"
+gdb_test "guile (print (block-function block))" \
+    "block_func" "Print superblock 2 function"
+
+# Switch frames, then test for main block.
+gdb_test "up" ".*"
+gdb_scm_test_silent_cmd "guile (define frame (selected-frame))" \
+    "Get frame 2"
+gdb_scm_test_silent_cmd "guile (define block (frame-block frame))" \
+    "Get frame 2's block"
+gdb_test "guile (print block)" "#<gdb:block main $hex-$hex>" \
+    "Check Frame 2's block not #f"
+gdb_test "guile (print (block-function block))" \
+    "main" "main block"
+
+# Test block-valid?.  This must always be the last test in this
+# testcase as it unloads the object file.
+delete_breakpoints
+gdb_scm_test_silent_cmd "guile (define frame (selected-frame))" \
+    "Get frame for valid?"
+gdb_scm_test_silent_cmd "guile (define block (frame-block frame))" \
+    "Get frame block for valid?"
+gdb_test "guile (print (block-valid? block))" \
+    "#t" "Check block validity"
+gdb_unload
+gdb_test "guile (print (block-valid? block))" \
+    "#f" "Check block validity after unload"

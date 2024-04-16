@@ -1,0 +1,279 @@
+# Copyright 2010-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+#
+# Contributed by Ken Werner <ken.werner@de.ibm.com>.
+#
+# Tests GDBs support for GNU vectors.
+# http://gcc.gnu.org/onlinedocs/gcc/Vector-Extensions.html
+
+standard_testfile .c
+
+# If supported by the compiler, "-mcpu=native" or "-march=native"
+# should enable the highest available vector ABI.  Try both, then try
+# without a CPU option.  If all variants fail, assume that the
+# compiler can not handle GNU vectors.
+
+proc do_compile { {opts {}} } {
+    global srcdir subdir srcfile binfile
+    set ccopts {debug quiet}
+    foreach opt $opts {lappend ccopts "additional_flags=$opt"}
+    gdb_compile "${srcdir}/${subdir}/${srcfile}" "$binfile" executable $ccopts
+}
+
+if { [do_compile {-mcpu=native}] != ""
+     && [do_compile {-mcpu=native -Wno-psabi}] != ""
+     && [do_compile {-march=native}] != ""
+     && [do_compile] != ""} {
+	untested "compiler can't handle vector_size attribute?"
+	return -1
+}
+
+clean_restart ${binfile}
+
+if { ![runto_main] } {
+    return -1
+}
+
+# Get endianess for the scalar->vector casts
+set endian [get_endianness]
+
+# Test printing of character vector types
+gdb_test "print c4" "\\\$$decimal = \\{1, 2, 3, 4\\}"
+gdb_test "print c4\[2\]" "\\\$$decimal = 3"
+
+# Test operators on integer vector types
+gdb_test "print i4a" "\\\$$decimal = \\{2, 4, 8, 16\\}"
+gdb_test "print i4b" "\\\$$decimal = \\{1, 2, 8, 4\\}"
+# Arithmetic operators
+gdb_test "print i4a + i4b" "\\\$$decimal = \\{3, 6, 16, 20\\}"
+gdb_test "print i4a - i4b" "\\\$$decimal = \\{1, 2, 0, 12\\}"
+gdb_test "print i4a * i4b" "\\\$$decimal = \\{2, 8, 64, 64\\}"
+gdb_test "print i4a / i4b" "\\\$$decimal = \\{2, 2, 1, 4\\}"
+gdb_test "print i4a % i4b" "\\\$$decimal = \\{0, 0, 0, 0\\}"
+gdb_test "print i4a++" "\\\$$decimal = \\{2, 4, 8, 16\\}"
+gdb_test "print ++i4a" "\\\$$decimal = \\{4, 6, 10, 18\\}"
+gdb_test "print i4a--" "\\\$$decimal = \\{4, 6, 10, 18\\}"
+gdb_test "print --i4a" "\\\$$decimal = \\{2, 4, 8, 16\\}"
+gdb_test "print +i4a" "\\\$$decimal = \\{2, 4, 8, 16\\}"
+gdb_test "print -i4a" "\\\$$decimal = \\{-2, -4, -8, -16\\}"
+
+# Bitwise operators
+gdb_test "print i4a & i4b" "\\\$$decimal = \\{0, 0, 8, 0\\}"
+gdb_test "print i4a | i4b" "\\\$$decimal = \\{3, 6, 8, 20\\}"
+gdb_test "print i4a ^ i4b" "\\\$$decimal = \\{3, 6, 0, 20\\}"
+gdb_test "print ~i4a" "\\\$$decimal = \\{-3, -5, -9, -17\\}"
+# Shift operators
+gdb_test "print i4a << i4b" "\\\$$decimal = \\{4, 16, 2048, 256\\}"
+gdb_test "print i4a >> i4b" "\\\$$decimal = \\{1, 1, 0, 1\\}"
+
+# Test operators on floating point vector types
+gdb_test "print f4a" "\\\$$decimal = \\{2, 4, 8, 16\\}"
+gdb_test "print f4b" "\\\$$decimal = \\{1, 2, 8, 4\\}"
+# Arithmetic operators
+gdb_test "print f4a + f4b" "\\\$$decimal = \\{3, 6, 16, 20\\}"
+gdb_test "print f4a - f4b" "\\\$$decimal = \\{1, 2, 0, 12\\}"
+gdb_test "print f4a * f4b" "\\\$$decimal = \\{2, 8, 64, 64\\}"
+gdb_test "print f4a / f4b" "\\\$$decimal = \\{2, 2, 1, 4\\}"
+gdb_test "print +f4a" "\\\$$decimal = \\{2, 4, 8, 16\\}"
+gdb_test "print -f4a" "\\\$$decimal = \\{-2, -4, -8, -16\\}"
+
+# When casting to vector the input type must have the same length as
+# the total length of the vector.
+gdb_test "print (char4) 0x01010101" "\\\$$decimal = \\{1, 1, 1, 1\\}"
+gdb_test "print (int2) lla" "\\\$$decimal = \\{1, 1\\}"
+
+# Check that "whatis" doesn't peel off the destination type's typedef
+# by mistake, in expressions that involve a cast to typedef type.
+gdb_test "whatis (char4) 0x01010101" "type = char4"
+gdb_test "whatis (int2) lla" "type = int2"
+# Check that OTOH "ptype" does peel off the destination type's
+# typedef.
+gdb_test "ptype (char4) 0x01010101" \
+    "type = char __attribute__ \\(\\(vector_size\\(4\\)\\)\\)"
+gdb_test "ptype (int2) lla" \
+    "type = int __attribute__ \\(\\(vector_size\\(2\\)\\)\\)"
+
+if {![string compare $endian big]} {
+    gdb_test "print (char4) ia" "\\\$$decimal = \\{0, 0, 0, 2\\}"
+} else {
+    gdb_test "print (char4) ia" "\\\$$decimal = \\{2, 0, 0, 0\\}"
+}
+
+gdb_test "print (int2) 1" "can only cast scalar to vector of same size"
+gdb_test "print (longlong2) 2" "can only cast scalar to vector of same size"
+gdb_test "print (float2) 3" "can only cast scalar to vector of same size"
+gdb_test "print (double2) 4" "can only cast scalar to vector of same size"
+gdb_test "print (uint4) ia" "can only cast scalar to vector of same size"
+gdb_test "print (int4) -3" "can only cast scalar to vector of same size"
+gdb_test "print (float4) 4" "can only cast scalar to vector of same size"
+
+gdb_test "print i4b = ia" "can only cast scalar to vector of same size"
+gdb_test "print i4a = 3" "can only cast scalar to vector of same size"
+gdb_test "print f4a = fb" "can only cast scalar to vector of same size"
+gdb_test "print f4b = 2" "can only cast scalar to vector of same size"
+
+gdb_test "print c4 + lla" "conversion of scalar to vector involves truncation"
+gdb_test "print i4a + lla" "conversion of scalar to vector involves truncation"
+gdb_test "print lla + c4" "conversion of scalar to vector involves truncation"
+gdb_test "print lla + i4a" "conversion of scalar to vector involves truncation"
+
+gdb_test "print c4 + ib" "\\\$$decimal = \\{2, 3, 4, 5\\}"
+gdb_test "print i4a + ib" "\\\$$decimal = \\{3, 5, 9, 17\\}"
+gdb_test "print i4a + 1" "\\\$$decimal = \\{3, 5, 9, 17\\}"
+gdb_test "print 1 + i4a" "\\\$$decimal = \\{3, 5, 9, 17\\}"
+gdb_test "print fa - f4b" "\\\$$decimal = \\{1, 0, -6, -2\\}"
+gdb_test "print 2 - f4b" "\\\$$decimal = \\{1, 0, -6, -2\\}"
+gdb_test "print f4a * fb" "\\\$$decimal = \\{2, 4, 8, 16\\}"
+gdb_test "print f4a * 1" "\\\$$decimal = \\{2, 4, 8, 16\\}"
+gdb_test "print ia / i4b" "\\\$$decimal = \\{2, 1, 0, 0\\}"
+gdb_test "print 2 / i4b" "\\\$$decimal = \\{2, 1, 0, 0\\}"
+gdb_test "print i4a % ib" "\\\$$decimal = \\{0, 0, 0, 0\\}"
+gdb_test "print i4a % 1" "\\\$$decimal = \\{0, 0, 0, 0\\}"
+gdb_test "print ia & i4b" "\\\$$decimal = \\{0, 2, 0, 0\\}"
+gdb_test "print 2 & i4b" "\\\$$decimal = \\{0, 2, 0, 0\\}"
+gdb_test "print i4a | ib" "\\\$$decimal = \\{3, 5, 9, 17\\}"
+gdb_test "print i4a | 1" "\\\$$decimal = \\{3, 5, 9, 17\\}"
+gdb_test "print ia ^ i4b" "\\\$$decimal = \\{3, 0, 10, 6\\}"
+gdb_test "print 2 ^ i4b" "\\\$$decimal = \\{3, 0, 10, 6\\}"
+gdb_test "print i4a << ib" "\\\$$decimal = \\{4, 8, 16, 32\\}"
+gdb_test "print i4a << 1" "\\\$$decimal = \\{4, 8, 16, 32\\}"
+gdb_test "print i4a >> ib" "\\\$$decimal = \\{1, 2, 4, 8\\}"
+gdb_test "print i4a >> 1" "\\\$$decimal = \\{1, 2, 4, 8\\}"
+
+gdb_test "print i4a = \{2, 4, 8, 16\}" "\\\$$decimal = \\{2, 4, 8, 16\\}"
+gdb_test "print i4a <<= ib" "\\\$$decimal = \\{4, 8, 16, 32\\}"
+
+# Test some error scenarios
+gdb_test "print i4a + d2" "Cannot perform operation on vectors with different types"
+gdb_test "print d2 + i4a" "Cannot perform operation on vectors with different types"
+gdb_test "print f4a + ll2" "Cannot perform operation on vectors with different types"
+gdb_test "print ll2 + f4a" "Cannot perform operation on vectors with different types"
+gdb_test "print i2 + ll2" "Cannot perform operation on vectors with different types"
+gdb_test "print ll2 + i2" "Cannot perform operation on vectors with different types"
+gdb_test "print i4a + ll2" "Cannot perform operation on vectors with different types"
+gdb_test "print ll2 + i4a" "Cannot perform operation on vectors with different types"
+gdb_test "print f4a + d2" "Cannot perform operation on vectors with different types"
+gdb_test "print d2 + f4a" "Cannot perform operation on vectors with different types"
+gdb_test "print ui4 + i4a" "Cannot perform operation on vectors with different types"
+gdb_test "print i4a + ui4" "Cannot perform operation on vectors with different types"
+gdb_test "print i4a + i2" "Cannot perform operation on vectors with different types"
+gdb_test "print i2 + i4a" "Cannot perform operation on vectors with different types"
+gdb_test "print f4a + f2" "Cannot perform operation on vectors with different types"
+gdb_test "print f2 + f4a" "Cannot perform operation on vectors with different types"
+
+gdb_test "print (double2) f2" "Cannot convert between vector values of different sizes"
+gdb_test "print (int4) c4" "Cannot convert between vector values of different sizes"
+gdb_test "print (char4) i4a" "Cannot convert between vector values of different sizes"
+
+# Test ptype/whatis on vector types/vars.
+gdb_test "ptype c4" "type = char __attribute__ \\(\\(vector_size\\(4\\)\\)\\)"
+gdb_test "whatis c4" "type = char4"
+
+gdb_test "ptype char4" "type = char __attribute__ \\(\\(vector_size\\(4\\)\\)\\)"
+gdb_test "whatis char4" "type = char __attribute__ \\(\\(vector_size\\(4\\)\\)\\)"
+
+gdb_test "ptype i4a" "type = int __attribute__ \\(\\(vector_size\\(4\\)\\)\\)"
+gdb_test "whatis i4a" "type = int4"
+
+gdb_test "ptype int4" "type = int __attribute__ \\(\\(vector_size\\(4\\)\\)\\)"
+gdb_test "whatis int4" "type = int __attribute__ \\(\\(vector_size\\(4\\)\\)\\)"
+
+gdb_test "ptype f4b" "type = float __attribute__ \\(\\(vector_size\\(4\\)\\)\\)"
+gdb_test "whatis f4b" "type = float4"
+
+gdb_test "ptype float4" "type = float __attribute__ \\(\\(vector_size\\(4\\)\\)\\)"
+gdb_test "whatis float4" "type = float __attribute__ \\(\\(vector_size\\(4\\)\\)\\)"
+
+gdb_test "ptype union_with_vector_1" "type = union {\r\n\[\t \]+int i;\r\n\[\t \]+char cv __attribute__ \\(\\(vector_size\\(4\\)\\)\\);\r\n}"
+gdb_test "whatis union_with_vector_1" {type = union {...}}
+
+gdb_test "ptype struct_with_vector_1" "type = struct {\r\n\[\t \]+int i;\r\n\[\t \]+char cv __attribute__ \\(\\(vector_size\\(4\\)\\)\\);\r\n\[\t \]+float4 f4;\r\n}"
+gdb_test "whatis struct_with_vector_1" {type = struct {...}}
+
+# Test inferior function calls with vector arguments and/or vector
+# return values.
+if { [istarget "i?86-*-*"] || [istarget "x86_64-*-*" ] } {
+    # These platforms don't support infcalls with vector arguments
+    # and/or vector return values, so skip the remaining tests.
+    # See also PR exp/18537.
+    unsupported "skip remaining vector ABI tests on this arch"
+    return
+}
+gdb_test "print add_some_intvecs(i4a, i4b, 3 * i4a)" "= \\{17, 34, 72, 132\\}" \
+    "call add_some_intvecs"
+gdb_test "print add_many_charvecs(c4, c4, c4, c4, c4, c4, c4, c4, c4, c4)" \
+    "= \\{10, 20, 30, 40\\}" "call add_many_charvecs"
+gdb_test "print add_various_floatvecs(2, f4a, f4b)" "= \\{3, 6, 16, 20\\}" \
+    "call add_various_floatvecs"
+gdb_test "print add_structvecs(i2, (struct just_int2)\{2*i2\}, (struct two_int2)\{3*i2, 4*i2\})" \
+    "= \\{i = \\{10, 20\\}\\}" "call add_structvecs"
+gdb_test "print add_singlevecs((char1) \{6\}, (int1) \{12\}, (double1) \{24\})" "= \\{42\\}" \
+    "call add_singlevecs"
+
+gdb_breakpoint "add_some_intvecs"
+
+# Test "finish" from vector-valued function.
+with_test_prefix "finish from vector function" {
+    gdb_continue "add_some_intvecs"
+    gdb_test_multiple "finish" "shows vector return value" {
+	-re "Value returned is .* = \\{10, 20, 48, 72\\}.*$gdb_prompt $" {
+	    pass $gdb_test_name
+	}
+	-re "Value returned has type: .* Cannot determine contents.*$gdb_prompt $" {
+	    kfail "gdb/8549" $gdb_test_name
+	}
+    }
+}
+
+gdb_continue "add_some_intvecs"
+gdb_test "up" ""
+gdb_test "p res" "\\{10, 20, 48, 72\\}.*"
+gdb_test "down" ""
+
+
+# Test "return" from vector-valued function.
+set test "return from vector-valued function"
+set should_kfail 0
+gdb_test_multiple "return (int4) \{4, 2, 7, 6\}" $test {
+    -re "#0 .* main .*$gdb_prompt $" {
+	pass $test
+    }
+    -re "The location .* is unknown.\r\n.* return value .* will be ignored.\r\n" {
+	# This happens, e.g., on s390x unless using the vector ABI.
+	set should_kfail 1
+	exp_continue
+    }
+    -re "Make add_some_intvecs return now. .y or n. $" {
+	send_gdb "y\n"
+	exp_continue
+    }
+}
+
+gdb_test "next" ""
+set test "verify vector return value"
+gdb_test_multiple "p res" $test {
+    -re ".*= \\{4, 2, 7, 6\\}\r\n.*$gdb_prompt $" {
+	pass $test
+    }
+    -re ".*= \\{.*\\}\r\n.*$gdb_prompt $" {
+	if { $should_kfail } {
+	    # GDB had not actually set the return value, likely due to
+	    # PR 8549.  So accept any return value and emit a KFAIL.
+	    kfail "gdb/8549" $test
+	} else {
+	    fail $test
+	}
+    }
+}

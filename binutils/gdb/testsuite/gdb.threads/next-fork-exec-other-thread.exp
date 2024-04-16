@@ -1,0 +1,131 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test was adapted from next-fork-other-thread.exp. The .c file
+# was adapted from the reproducer for this bug:
+#
+# https://sourceware.org/bugzilla/show_bug.cgi?id=30387#
+#
+# That bug demonstrates a problem with software-singlestep in gdbserver.
+# Prior to being fixed, this test also demonstrated that bug for a
+# 32-bit ARM target.  (Use RUNTESTFLAGS="--target_board=native-gdbserver".)
+# It has been reproduced on a Raspberry Pi running Ubunutu server
+# 20.04.5 LTS with 32-bit kernel + 32-bit userland.  It was NOT reproducible
+# using a circa 2023 Raspberry Pi OS w/ 64-bit kernel and 32-bit userland.
+
+standard_testfile
+
+# Line where to stop the main thread.
+set break_here_line [gdb_get_line_number "break here"]
+
+# Build executables, one for each fork flavor.
+foreach_with_prefix fork_func {fork vfork} {
+    set opts [list debug pthreads additional_flags=-DFORK_FUNC=${fork_func}]
+    if { [build_executable "failed to prepare" \
+	    ${testfile}-${fork_func} ${srcfile} $opts] } {
+	return
+    }
+}
+
+# If testing against GDBserver, consume all it its output.
+
+proc drain_gdbserver_output { } {
+    if { [info exists ::server_spawn_id] } {
+	gdb_test_multiple "" "" {
+	    -i "$::server_spawn_id"
+	    -timeout 0
+	    -re ".+" {
+	      exp_continue
+	    }
+	}
+    }
+}
+
+# Run the test with the given parameters:
+#
+#   - FORK_FUNC: fork flavor, "fork" or "vfork".
+#   - TARGET-NON-STOP: "maintenance set target-non-stop" value, "auto", "on" or
+#     "off".
+#   - NON-STOP: "set non-stop" value, "on" or "off".
+#   - DISPLACED-STEPPING: "set displaced-stepping" value, "auto", "on" or "off".
+
+proc do_test { fork_func target-non-stop non-stop displaced-stepping } {
+    save_vars { ::GDBFLAGS } {
+	append ::GDBFLAGS " -ex \"maintenance set target-non-stop ${target-non-stop}\""
+	append ::GDBFLAGS " -ex \"set non-stop ${non-stop}\""
+	clean_restart ${::binfile}-${fork_func}
+    }
+
+    gdb_test_no_output "set displaced-stepping ${displaced-stepping}"
+
+    if { ![runto_main] } {
+	return
+    }
+
+    # The "Detached after (v)fork" messages get in the way in non-stop, disable
+    # them.
+    gdb_test_no_output "set print inferior-events off"
+
+    # Advance the next-ing thread to the point where we'll execute the nexts.
+    # Leave the breakpoint in: it will force GDB to step over it while next-ing,
+    # which exercises some additional code paths.
+    gdb_test "break $::break_here_line" "Breakpoint $::decimal at $::hex.*"
+    gdb_test "continue" "hit Breakpoint $::decimal, worker_b.*"
+
+    # Next an arbitrary number of times over the lines of the loop.
+    for { set i 0 } { $i < 30 } { incr i } {
+	# If testing against GDBserver, the forking threads cause a lot of
+	# "Detaching from process XYZ" messages to appear.  If we don't consume
+	# that output, GDBserver eventually blocks on a full stderr.  Drain it
+	# once every loop.  It may not be needed for 20 iterations, but it's
+	# needed if you increase to 200 iterations.
+	drain_gdbserver_output
+
+	with_test_prefix "i=$i" {
+	    if { [gdb_test "next" "other line.*" "next to other line"] != 0 } {
+		return
+	    }
+
+	    if { [gdb_test "next" "for loop.*" "next to for loop"] != 0 } {
+		return
+	    }
+
+	    if { [gdb_test "next" "break here.*" "next to break here"] != 0} {
+		return
+	    }
+	}
+    }
+}
+
+foreach_with_prefix fork_func {fork vfork} {
+    foreach_with_prefix target-non-stop {auto on off} {
+	# This file was copied from next-fork-other-thread.exp and
+	# then adapted for the a case which also involves an exec in
+	# addition to the fork.  Ideally, we should test non-stop "on"
+	# in addition to "off", but, for this test, that results in a
+	# number of failures occur preceded by the message:
+	#
+	# Cannot execute this command while the selected thread is running.
+	#
+	# That seems like correct behavior to me, but perhaps the
+	# non-stop case can be made to work; if so, simply add "on"
+	# after "off" on the line below...
+	foreach_with_prefix non-stop {off} {
+	    foreach_with_prefix displaced-stepping {auto on off} {
+		do_test ${fork_func} ${target-non-stop} ${non-stop} ${displaced-stepping}
+	    }
+	}
+    }
+}

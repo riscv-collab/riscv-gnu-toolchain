@@ -1,0 +1,120 @@
+# Copyright (C) 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that we can access memory while the inferior is running.
+
+standard_testfile
+
+if {[build_executable "failed to prepare" $testfile $srcfile {debug}] == -1} {
+    return -1
+}
+
+# The test proper.  NON_STOP indicates whether we're testing in
+# non-stop, or all-stop mode.
+
+proc test { non_stop } {
+    global srcfile binfile
+    global gdb_prompt
+    global GDBFLAGS
+    global decimal
+
+    save_vars { GDBFLAGS } {
+      append GDBFLAGS " -ex \"set non-stop $non_stop\""
+      clean_restart ${binfile}
+    }
+
+    if ![runto_main] {
+	return -1
+    }
+
+    # If debugging with target remote, check whether the all-stop variant
+    # of the RSP is being used.  If so, we can't run the background tests.
+    if {!$non_stop
+	&& [target_info exists gdb_protocol]
+	&& ([target_info gdb_protocol] == "remote"
+	    || [target_info gdb_protocol] == "extended-remote")} {
+
+	if {![is_target_non_stop]} {
+	    unsupported "can't issue commands while target is running"
+	    return 0
+	}
+    }
+
+    delete_breakpoints
+
+    if {$non_stop == "off"} {
+	set cmd "continue &"
+    } else {
+	set cmd "continue -a &"
+    }
+    gdb_test_multiple $cmd "continuing" {
+	-re "Continuing\.\r\n$gdb_prompt " {
+	    pass $gdb_test_name
+	}
+    }
+
+    # Check we can read/write variables.
+
+    # Check that we can read the counter variable, and that the
+    # counter is increasing, meaning the process really is running.
+
+    sleep 1
+    set global_counter1 \
+	[get_integer_valueof "global_counter" 0 \
+	     "get global_counter once"]
+
+    sleep 1
+    set global_counter2 \
+	[get_integer_valueof "global_counter" 0 \
+	     "get global_counter twice"]
+
+    gdb_assert {$global_counter1 != 0 \
+		    && $global_counter2 != 0 \
+		    && $global_counter1 != $global_counter2} \
+	"value changed"
+
+    # Check that we can write variables.
+
+    gdb_test "print global_var" " = 123" \
+	"print global_var before writing"
+    gdb_test "print global_var = 321" " = 321" \
+	"write to global_var"
+    gdb_test "print global_var" " = 321" \
+	"print global_var after writing"
+    gdb_test "print global_var = 123" " = 123" \
+	"write to global_var again"
+
+    # Check we can set a breakpoint while the process is running.  The
+    # breakpoint should hit immediately.
+    set any "\[^\r\n\]*"
+
+    gdb_test_multiple "b maybe_stop_here" "" {
+	-re "Breakpoint $decimal at $any: file $any${srcfile}, line $decimal.\r\n$gdb_prompt " {
+	    pass $gdb_test_name
+	}
+    }
+    gdb_test_multiple "" "breakpoint hits" {
+	-re "Breakpoint $decimal, maybe_stop_here \\(\\) at $any${srcfile}:$decimal\r\n" {
+	    pass "$gdb_test_name"
+	}
+    }
+}
+
+foreach non_stop { "off" "on" } {
+    set stop_mode [expr ($non_stop=="off")?"all-stop":"non-stop"]
+    with_test_prefix "$stop_mode" {
+	test $non_stop
+    }
+}

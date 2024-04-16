@@ -1,0 +1,249 @@
+# Copyright (C) 2005-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Miscellaneous CRIS simulator testcases testing syscall sequences.
+
+sim_init
+
+global global_cc_works
+global global_cc_os
+
+set CFLAGS_FOR_TARGET "-O2"
+if [istarget cris-*-*] {
+    set mach "crisv10"
+} {
+    set mach "crisv32"
+}
+
+# Make sure we're using the right runtime for simulator runs.  If the
+# cris-sim dejagnu baseboard is used, -sim3 will be duplicated, but
+# that's ok.  For e.g. cris*-linux-gnu, neither -sim not -sim3 are
+# supported options and likely not other targets too.
+set saved_CFLAGS_FOR_TARGET $CFLAGS_FOR_TARGET
+if { $global_cc_os == "newlib" } {
+    append CFLAGS_FOR_TARGET " -sim3"
+}
+
+# Using target_compile, since it is less noisy,
+if { $global_cc_works == 1 } {
+    # Now check if we can link a program dynamically, and where
+    # libc.so is located.  If it is, we provide a sym link to the
+    # directory (which must end in /lib) in [pwd], so /lib/ld.so.1 is
+    # found (which must reside along libc.so).  We don't bother
+    # replacing the board ldflags like below as we don't care about
+    # detrimental effects on the executable from the specs and
+    # -static in the board ldflags, we just add -Bdynamic.
+    global objdir
+    if [regexp "(.*/lib)/libc.so" \
+	    [target_compile $srcdir/lib/compilercheck.c $objdir/compilercheck.x \
+		 "executable" \
+		 "ldflags=-print-file-name=libc.so -Wl,-Bdynamic"] \
+	    xxx libcsodir]  {
+	file delete lib 
+	verbose -log "Creating link to $libcsodir in [pwd]"
+	file link lib $libcsodir
+    }
+    file delete $objdir/compilercheck.x
+}
+
+# Like istarget, except take a list of targets as a string.
+proc anytarget { targets } {
+    set targetlist [split $targets]
+    set argc [llength $targetlist]
+    for { set i 0 } { $i < $argc } { incr i } {
+	if [istarget [lindex $targetlist $i]] {
+	    return 1
+	}
+    }
+    return 0
+}
+
+global sim_path
+foreach src [lsort [glob -nocomplain $srcdir/$subdir/*.c]] {
+    set orig_ldflags ""
+
+    if ![runtest_file_p $runtests $src] {
+	continue
+    }
+    set testname "[file tail $src]"
+
+    set opt_array [slurp_options $src]
+    if { $opt_array == -1 } {
+	unresolved $testname
+	return
+    }
+
+    # And again, to simplify specifying tests.
+    if ![runtest_file_p $runtests $src] {
+	continue
+    }
+
+    # Note absence of CC in results, but don't make a big fuss over it.
+    if { $global_cc_works == 0 } {
+	untested $testname
+	continue
+    }
+
+    if ![file exists $sim_path] {
+	untested $testname
+	return 0
+    }
+
+    # Clear default options
+    set opts(cc) ""
+    set opts(sim) ""
+    set opts(output) ""
+    set opts(progoptions) ""
+    set opts(progos) ""
+    set opts(timeout) ""
+    set opts(mach) ""
+    set opts(xerror) "no"
+    set opts(kfail) ""
+    set opts(xfail) ""
+    set opts(target) ""
+    set opts(notarget) ""
+
+    # Clear any machine specific options specified in a previous test case
+    if [info exists opts(sim,$mach)] {
+	unset opts(sim,$mach)
+    }
+
+    foreach i $opt_array {
+	set opt_name [lindex $i 0]
+	set opt_machs [lindex $i 1]
+	set opt_val [lindex $i 2]
+	if ![info exists opts($opt_name)] {
+	    perror "unknown option $opt_name in file $src"
+	    unresolved $testname
+	    return
+	}
+
+	# Multiple of these options concatenate, they don't override.
+	if { $opt_name == "output" || $opt_name == "progoptions" } {
+	    set opt_val "$opts($opt_name)$opt_val"
+	}
+
+	# Similar with "xfail", "kfail", "target" and "notarget", but
+	# arguments are space-separated.
+	if { $opt_name == "xfail" || $opt_name == "kfail" \
+		 || $opt_name == "target"  || $opt_name == "notarget" } {
+	    if { $opts($opt_name) != "" } {
+		set opt_val "$opts($opt_name) $opt_val"
+	    }
+	}
+
+	foreach m $opt_machs {
+	    set opts($opt_name,$m) $opt_val
+	}
+	if { "$opt_machs" == "" } {
+	    set opts($opt_name) $opt_val
+	}
+    }
+
+    if { $opts(output) == "" } {
+	if { "$opts(xerror)" == "no" } {
+	    set opts(output) "pass\n"
+	} else {
+	    set opts(output) "fail\n"
+	}
+    }
+
+    if { $opts(target) != "" && ![anytarget $opts(target)] } {
+	continue
+    }
+
+    if { $opts(notarget) != "" && [anytarget $opts(notarget)] } {
+	continue
+    }
+
+    if { $opts(progos) != "" && $opts(progos) != $global_cc_os } {
+	untested $testname
+	continue
+    }
+
+    # If no machine specific options, default to the general version.
+    if ![info exists opts(sim,$mach)] {
+	set opts(sim,$mach) $opts(sim)
+    }
+
+    # Change \n sequences to newline chars.
+    regsub -all "\\\\n" $opts(output) "\n" opts(output)
+
+    verbose -log "Compiling $src with $opts(cc)"
+
+    if { [target_compile $src "$objdir/$testname.x" "executable" "$opts(cc)" ] != "" } {
+	fail "$mach $testname (compilation)"
+	continue
+    }
+
+    if { $orig_ldflags != "" } {
+	set board_info([target_info name],ldflags) $orig_ldflags
+    }
+
+    verbose -log "Simulating $src with $opts(sim,$mach)"
+
+    # Time to setup xfailures and kfailures.
+    if { "$opts(xfail)" != "" } {
+	verbose -log "xfail: $opts(xfail)"
+	# Using eval to make $opts(xfail) appear as individual
+	# arguments.
+	eval setup_xfail $opts(xfail)
+    }
+    if { "$opts(kfail)" != "" } {
+	verbose -log "kfail: $opts(kfail)"
+	eval setup_kfail $opts(kfail)
+    }
+
+    set result [sim_run "$objdir/$testname.x" "$opts(sim,$mach)" "$opts(progoptions)" \
+	"" ""]
+    set return_code [lindex $result 0]
+    set output [lindex $result 1]
+
+    set status fail
+    if { $return_code == 0 } {
+	set status pass
+    }
+
+    if { "$status" == "pass" } {
+	if { "$opts(xerror)" == "no" } {
+	    if [string match $opts(output) $output] {
+		pass "$mach $testname"
+	    } else {
+		verbose -log "output:  $output" 3
+		verbose -log "pattern: $opts(output)" 3
+		fail "$mach $testname (execution)"
+	    }
+	} else {
+	    verbose -log "`pass' return code when expecting failure" 3
+	    fail "$mach $testname (execution)"
+	}
+    } elseif { "$status" == "fail" } {
+	if { "$opts(xerror)" == "no" } {
+	    fail "$mach $testname (execution)"
+	} else {
+	    if [string match $opts(output) $output] {
+		pass "$mach $testname"
+	    } else {
+		verbose -log "output:  $output" 3
+		verbose -log "pattern: $opts(output)" 3
+		fail "$mach $testname (execution)"
+	    }
+	}
+    } else {
+	$status "$mach $testname"
+    }
+}
+
+set CFLAGS_FOR_TARGET $saved_CFLAGS_FOR_TARGET

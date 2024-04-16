@@ -1,0 +1,155 @@
+#   Copyright 2013-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "trace-support.exp"
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile {debug nopie}]} {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+if ![gdb_target_supports_trace] {
+    unsupported "target does not support trace"
+    return -1
+}
+
+# Set tracepoints, start tracing and collect data.
+
+proc set_tracepoint_and_collect { } {
+    global testfile srcfile
+
+    # Start with a fresh gdb.
+    clean_restart ${testfile}
+    if ![runto_main] {
+	return -1
+    }
+    gdb_breakpoint "end" qualified
+    gdb_test "trace start" "Tracepoint \[0-9\] at .*"
+    gdb_trace_setactions "set action for tracepoint"  "" \
+	"collect testglob" "^$" \
+	"collect constglob" "^$"
+
+    gdb_test_no_output "tstart"
+    gdb_test "continue" ".*Breakpoint.* end .*at.*$srcfile.*" \
+	"continue to end"
+    gdb_test_no_output "tstop"
+}
+
+with_test_prefix "live" {
+    set_tracepoint_and_collect
+
+    gdb_test "print testglob" " = 2"
+    gdb_test "print testglob_not_collected" " = 12"
+    gdb_test "print constglob" " = 10000"
+    gdb_test "print constglob_not_collected" " = 100"
+}
+
+with_test_prefix "live target tfind" {
+    gdb_test "tfind 0" "Found trace frame 0, tracepoint \[0-9\]+.*" \
+	"tfind 0"
+    gdb_test "print testglob" " = 1"
+    gdb_test "print testglob_not_collected" " = <unavailable>"
+    gdb_test "print constglob" " = 10000"
+    gdb_test "print constglob_not_collected" " = 100"
+    gdb_test "tfind" "Target failed to find requested trace frame." \
+	"tfind does not find a second frame"
+}
+
+# Save trace frames to trace file.
+set tracefile [standard_output_file ${testfile}]
+gdb_test "tsave ${tracefile}.tfile" \
+    "Trace data saved to file '${tracefile}.tfile'.*" \
+    "save tfile trace"
+
+# Test read memory when changing target from remote to ${target}.
+
+proc test_from_remote { target } {
+    global gdb_prompt testfile
+    global tracefile
+
+    with_test_prefix "remote to ${target}" {
+	set_tracepoint_and_collect
+
+	# Change target to ${target}.
+	set test "change target"
+	gdb_test_multiple "target ${target} ${tracefile}.${target}" "$test" {
+	    -re "A program is being debugged already.  Kill it. .y or n. " {
+		send_gdb "y\n"
+		exp_continue
+	    }
+	    -re "$gdb_prompt $" {
+		pass "$test"
+	    }
+	}
+
+	with_test_prefix "w/o setting traceframe" {
+	    gdb_test "print testglob" " = <unavailable>"
+	    gdb_test "print testglob_not_collected" " = <unavailable>"
+	    gdb_test "print constglob" " = 10000"
+	    gdb_test "print constglob_not_collected" " = 100"
+	}
+	with_test_prefix "w/ setting traceframe" {
+	    gdb_test "tfind 0" "Found trace frame 0, tracepoint \[0-9\]+.*" \
+		"tfind 0"
+	    gdb_test "print testglob" " = 1"
+	    gdb_test "print testglob_not_collected" " = <unavailable>"
+	    gdb_test "print constglob" " = 10000"
+	    gdb_test "print constglob_not_collected" " = 100"
+	    gdb_test "tfind" "Target failed to find requested trace frame." \
+		"tfind does not find a second frame"
+	}
+    }
+}
+
+test_from_remote "tfile"
+
+# Test read memory when changing target from exec to ${target}
+
+proc teset_from_exec { target } {
+    global srcdir subdir binfile testfile
+    global tracefile
+
+    # Restart GDB and read the trace data in ${target} target.
+    clean_restart
+    gdb_file_cmd $binfile
+
+    gdb_test "target ${target} ${tracefile}.${target}" ".*" \
+	"change to ${target} target"
+
+    with_test_prefix "exec to ${target} w/o setting traceframe" {
+	gdb_test "print testglob" " = <unavailable>"
+	gdb_test "print testglob_not_collected" " = <unavailable>"
+	gdb_test "print constglob" " = 10000"
+	gdb_test "print constglob_not_collected" " = 100"
+    }
+
+    with_test_prefix "exec to ${target} w/ setting traceframe" {
+	gdb_test "tfind 0" "Found trace frame 0, tracepoint \[0-9\]+.*" \
+	    "tfind 0"
+	gdb_test "print testglob" " = 1"
+	gdb_test "print testglob_not_collected" " = <unavailable>"
+	gdb_test "print constglob" " = 10000"
+	gdb_test "print constglob_not_collected" " = 100"
+	gdb_test "tfind" "Target failed to find requested trace frame." \
+	    "tfind does not find a second frame"
+    }
+}
+
+teset_from_exec "tfile"

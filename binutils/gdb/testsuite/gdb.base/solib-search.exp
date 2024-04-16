@@ -1,0 +1,179 @@
+# Copyright 2013-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test solib-search-path, and in the case of solib-svr4.c whether l_addr_p
+# is properly reset when the path is changed.
+
+require allow_shlib_tests
+require {!is_remote target}
+
+# Build "wrong" and "right" versions of the libraries in separate directories.
+set wrong_lib_subdir "solib-search-wrong"
+set right_lib_subdir "solib-search-right"
+
+# First library file.
+set libname1 "solib-search-lib1"
+set srcfile1_lib ${srcdir}/${subdir}/${libname1}.c
+set wrong_binfile1_lib \
+    [standard_output_file ${wrong_lib_subdir}/${libname1}.so]
+set right_binfile1_lib \
+    [standard_output_file ${right_lib_subdir}/${libname1}.so]
+# Second library file.
+set libname2 "solib-search-lib2"
+set srcfile2_lib ${srcdir}/${subdir}/${libname2}.c
+set wrong_binfile2_lib \
+    [standard_output_file ${wrong_lib_subdir}/${libname2}.so]
+set right_binfile2_lib \
+    [standard_output_file ${right_lib_subdir}/${libname2}.so]
+# Link with the library that lives here.
+# This is so that we can replace what gdb sees with the wrong copy,
+# and then tell gdb to use the right copy that lives someplace else.
+set binfile1_lib [standard_output_file ${libname1}.so]
+set binfile2_lib [standard_output_file ${libname2}.so]
+
+set lib_flags [list debug ldflags=-Wl,-Bsymbolic]
+set wrong_lib_flags "$lib_flags additional_flags=-DARRAY_SIZE=1"
+set right_lib_flags "$lib_flags additional_flags=-DARRAY_SIZE=8192 additional_flags=-DRIGHT"
+
+# Binary file.
+standard_testfile .c
+set bin_flags [list debug shlib=${binfile1_lib} shlib=${binfile2_lib}]
+
+remote_exec build "rm -rf [standard_output_file ${wrong_lib_subdir}]"
+remote_exec build "rm -rf [standard_output_file ${right_lib_subdir}]"
+remote_exec build "mkdir [standard_output_file ${wrong_lib_subdir}]"
+remote_exec build "mkdir [standard_output_file ${right_lib_subdir}]"
+
+if { [gdb_compile_shlib ${srcfile1_lib} ${wrong_binfile1_lib} $wrong_lib_flags] != ""
+     || [gdb_compile_shlib ${srcfile2_lib} ${wrong_binfile2_lib} $wrong_lib_flags] != ""
+     || [gdb_compile_shlib ${srcfile1_lib} ${right_binfile1_lib} $right_lib_flags] != ""
+     || [gdb_compile_shlib ${srcfile2_lib} ${right_binfile2_lib} $right_lib_flags] != "" } {
+    untested "failed to compile shared library"
+    return -1
+}
+
+# Build the test binary using the right copies of the libraries.
+remote_exec build "ln -sf ${right_lib_subdir}/${libname1}.so ${binfile1_lib}"
+remote_exec build "ln -sf ${right_lib_subdir}/${libname2}.so ${binfile2_lib}"
+if { [gdb_compile $srcdir/$subdir/${srcfile} ${binfile} \
+	  executable $bin_flags] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+clean_restart $testfile
+
+if { ![runto_main] } {
+    return
+}
+
+gdb_breakpoint "break_here"
+gdb_continue "break_here"
+
+set corefile [standard_output_file solib-search.core]
+set core_supported [gdb_gcore_cmd "$corefile" "save a corefile"]
+
+if {!$core_supported} {
+  return -1
+}
+
+# Before we restart gdb, replace the libs with the "wrong" ones.
+remote_exec build "ln -sf ${wrong_lib_subdir}/${libname1}.so ${binfile1_lib}"
+remote_exec build "ln -sf ${wrong_lib_subdir}/${libname2}.so ${binfile2_lib}"
+
+clean_restart $testfile
+
+set core_loaded [gdb_core_cmd $corefile "re-load generated corefile"]
+if { $core_loaded == -1 } {
+    # No use proceeding from here.
+    return
+}
+
+proc test_backtrace { expect_fail } {
+    global gdb_prompt
+
+    set count 0
+    set total_expected 5
+
+    if { $expect_fail } {
+	set testname "backtrace (with wrong libs)"
+    } else {
+	set testname "backtrace (with right libs)"
+    }
+    # N.B. The order of the tests here is important.
+    # We need to count each function in the backtrace, and expect matches
+    # the first one it finds.
+    gdb_test_multiple "backtrace" $testname {
+	-re "\[^\r\n\]* in lib2_func4 \[^\r\n\]*" {
+	    incr count
+	    exp_continue
+	}
+	-re "\[^\r\n\]* in lib1_func3 \[^\r\n\]*" {
+	    incr count
+	    exp_continue
+	}
+	-re "\[^\r\n\]* in lib2_func2 \[^\r\n\]*" {
+	    incr count
+	    exp_continue
+	}
+	-re "\[^\r\n\]* in lib1_func1 \[^\r\n\]*" {
+	    incr count
+	    exp_continue
+	}
+	-re "\[^\r\n\]* in main \[^\r\n\]*" {
+	    incr count
+	    exp_continue
+	}
+	-re "\[\r\n\]$gdb_prompt $" {
+	    pass "$testname (data collection)"
+	}
+    }
+
+    set fail 0
+    if { $expect_fail } {
+	# If the backtrace output is correct the test isn't sufficiently
+	# testing what it should.
+	if { $count == $total_expected } {
+	    set fail 1
+	}
+    } else {
+	if { $count != $total_expected } {
+	    set fail 1
+	}
+    }
+    if { $fail } {
+	fail $testname
+    } else {
+	pass $testname
+    }
+}
+
+# Verify the backtrace is messed up.
+test_backtrace 1
+
+# Remove the copies gdb currently sees: the absolute path is encoded in
+# the core file and we want gdb to find the right copies elsewhere.
+remote_exec build "rm -f ${binfile1_lib}"
+remote_exec build "rm -f ${binfile2_lib}"
+# Set solib-search-path to use the correct copies of libraries.
+gdb_test "set solib-search-path [standard_output_file ${right_lib_subdir}]" \
+    "" \
+    "set solib-search-path"
+
+# Verify gdb has properly updated the location of the libraries.
+test_backtrace 0
+gdb_test "p lib1_size" " = 8192"
+gdb_test "p lib2_size" " = 8192"
+

@@ -1,0 +1,130 @@
+# Copyright 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile .cc
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile} {debug c++}] } {
+     return -1
+}
+
+############################################
+
+if {![runto_main]} {
+    return
+}
+
+gdb_breakpoint [gdb_get_line_number "end of main"]
+gdb_continue_to_breakpoint "end of main"
+
+gdb_test "p foo0_1 (ta)"   "= 1"              "typedef to another typedef"
+gdb_test "p foo0_2 (ta)"   "= 2"              "typedef to typedef of a typedef"
+gdb_test "p foo0_3 (bppp)" "Cannot resolve.*" \
+ "Pointer-to-pointer-to-pointer derived to Pointer-to-pointer-to-pointer base."
+
+gdb_test "p foo1_1 (a)"  "= 11"             "pointer to pointer"
+gdb_test "p foo1_2 (a)"  "= 12"             "pointer to array"
+gdb_test "p foo1_3 (a)"  "Cannot resolve.*" \
+	 "pointer to pointer of wrong type, a"
+gdb_test "p foo1_3 (bp)" "Cannot resolve.*" \
+	 "pointer to pointer of wrong type, bp"
+gdb_test "p foo1_4 (bp)" "= 14"             "pointer to ancestor pointer"
+gdb_test "p foo1_5 (bp)" "= 15"             "pointer to void pointer"
+gdb_test "p foo1_6 (bp)" "Cannot resolve.*"     "pointer to void pointer pointer"
+gdb_test "p foo1_7 (bp)" "= 17"                 "pointer to boolean"
+gdb_test "p foo1_8 (bp)" "Using non-standard.*" "pointer to long int"
+
+gdb_test "p foo1_5 (b)" "= 15"             "pointer pointer to void pointer"
+gdb_test "p foo2_1 (b)" "= 21"             "pointer pointer to pointer pointer"
+gdb_test "p foo2_2 (b)" "Cannot resolve.*" "pointer pointer to array of arrays"
+gdb_test "p foo2_3 (b)" "= 23"             "pointer pointer to array of pointers"
+gdb_test "p foo2_4 (b)" "Cannot resolve.*" "pointer pointer to array of wrong pointers"
+
+gdb_test "p foo3_1 ((char *) 0, ta)" "Cannot resolve.*" \
+    "check all parameters for badness"
+
+# Tests for null pointer conversion
+global gdb_prompt
+set nl {[\r\n]+}
+set t "null pointer conversion"
+gdb_test_multiple "p foo3_1 (0, 0)" $t {
+  -re "warning: Using non-standard conversion.*$nl$gdb_prompt $" {
+    fail "$t (warning issued)"
+  }
+
+  -re "Cannot resolve function foo3_1 to any overloaded instance$nl$gdb_prompt $" {
+    fail "$t (conversion failed)"
+  }
+
+  -re "\\$\[0-9\]+ = 31$nl$gdb_prompt $" {
+    pass $t
+  }
+}
+
+gdb_test "p foo3_1 (0, 1)" \
+    "Cannot resolve function foo3_1 to any overloaded instance"
+gdb_test "p foo3_1 (0, (const char**) 1)" " = 31"
+gdb_test "p foo3_2 (0, 0)" "= 32"
+gdb_test "p foo3_2 (0, (char const**) 0)" " = 320"
+
+# Tests for boolean conversions allowed by the standard
+gdb_test "p foo1_7(0)" " = 17"
+gdb_test "p foo1_7(integer)" " = 17"
+gdb_test "p foo1_7(long_int)" " = 17"
+gdb_test "p foo1_7(*a)" " = 17"
+gdb_test "p foo1_7(MY_A)" " = 17"
+gdb_test "p foo1_7(&foo1_7)" " = 17"
+gdb_test "p foo1_7(&A::member_)" " = 17"
+gdb_test "p foo1_7(a)" " = 17"
+gdb_test "p foo1_7(fp)" " = 17"
+gdb_test "p foo1_7(dp)" " = 17"
+gdb_test "p foo1_7(-1.23)" " = 17"
+gdb_test "p foo1_7(ta)" \
+    "Cannot resolve function foo1_7 to any overloaded instance"
+
+# Test for strict type checking
+set error_str "Cannot resolve function %s to any overloaded instance"
+gdb_test "show check type" "Strict type checking is on\." \
+	 "confirm check type on"
+
+with_test_prefix "strict type checking on" {
+    gdb_test "p foo1_type_check (123)" [format $error_str "foo1_type_check"]
+    gdb_test "p foo2_type_check (0, 1)" [format $error_str "foo2_type_check"]
+    gdb_test "p foo2_type_check (1, 0)" [format $error_str "foo2_type_check"]
+    gdb_test "p foo2_type_check (1, 1)" [format $error_str "foo2_type_check"]
+    gdb_test "p foo3_type_check (0, 0, 1)" [format $error_str "foo3_type_check"]
+    gdb_test "p foo3_type_check (0, 1, 0)" [format $error_str "foo3_type_check"]
+    gdb_test "p foo3_type_check (1, 0, 0)" [format $error_str "foo3_type_check"]
+    gdb_test "p foo3_type_check (0, 1, 1)" [format $error_str "foo3_type_check"]
+    gdb_test "p foo3_type_check (1, 1, 0)" [format $error_str "foo3_type_check"]
+    gdb_test "p foo3_type_check (1, 1, 1)" [format $error_str "foo3_type_check"]
+}
+
+gdb_test_no_output "set check type off"
+gdb_test "show check type" "Strict type checking is off\." \
+	 "confirm check type off"
+
+with_test_prefix "strict type checking off" {
+    gdb_test "p foo1_type_check (123)" " = 1000"
+    gdb_test "p foo2_type_check (0, 1)" " = 1001"
+    gdb_test "p foo2_type_check (1, 0)" " = 1001"
+    gdb_test "p foo2_type_check (1, 1)" " = 1001"
+    gdb_test "p foo3_type_check (0, 0, 1)" " = 1002"
+    gdb_test "p foo3_type_check (0, 1, 0)" " = 1002"
+    gdb_test "p foo3_type_check (1, 0, 0)" " = 1002"
+    gdb_test "p foo3_type_check (0, 1, 1)" " = 1002"
+    gdb_test "p foo3_type_check (1, 1, 0)" " = 1002"
+    gdb_test "p foo3_type_check (1, 1, 1)" " = 1002"
+    gdb_test "p foo3_2 (1,1)" " = 32"
+}

@@ -1,0 +1,88 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Regression test for PR30056.
+
+# This PR is fixed in the in-repo copy of readline.  System readline may or
+# may not be fixed, so skip this test-case.
+require !with_system_readline
+require {have_host_locale C.UTF-8}
+
+tuiterm_env
+
+save_vars { env(LC_ALL) } {
+    setenv LC_ALL C.UTF-8
+
+    # Start terminal.
+    Term::clean_restart 24 80
+
+    # Start TUI.
+    if {![Term::enter_tui]} {
+	unsupported "TUI not supported"
+	return
+    }
+
+    # Send "^R", starting reverse-i-search.
+    send_gdb "\022"
+    Term::wait_for_region_contents 0 $Term::_cur_row $Term::_cols 1 \
+	[string_to_regexp "(reverse-i-search)`': "]
+
+    # Send "xyz".
+    send_gdb "xyz"
+    Term::wait_for_region_contents 0 $Term::_cur_row $Term::_cols 1 \
+	[string_to_regexp "(failed reverse-i-search)`xyz': "]
+
+    # Send arrow-right.
+    send_gdb "\033\[C"
+
+    # We need to the arrow-right to be processed by readline, before we
+    # send the following ^C.  Waiting 1 ms seems to do that.
+    after 1
+
+    # Send ^C.
+    send_gdb "\003"
+    gdb_assert { [Term::wait_for "Quit"] } "Control-C"
+
+    # Uncomment this to simulate that PR cli/30498 is fixed.
+    #send_gdb "\007"
+
+    set test "Control-C aborts isearch"
+
+    # Send "xyz", again.
+    send_gdb "xyz"
+    # Wait for xyx to appear.
+    Term::wait_for_region_contents 0 $Term::_cur_row $Term::_cols 1 "xyz"
+
+    if { [Term::check_region_contents_p 0 $Term::_cur_row $Term::_cols 1 \
+	      "^$gdb_prompt xyz"] } {
+	pass $test
+
+	# Send ^C to clear the command line.
+	send_gdb "\003"
+    } else {
+	# Sending ^C currently doesn't abort the i-search. PR cli/30498 is
+	# open about this.
+	kfail cli/30498 $test
+
+	# At this point we don't have a reponsive prompt.  Send ^G to abort
+	# the i-search.
+	send_gdb "\007"
+    }
+
+    # We need a reponsive prompt here, to deal with the "monitor exit"
+    # that native-extended-gdbserver will send.  Check that we have a
+    # responsive prompt.
+    Term::command "echo \\n"
+}

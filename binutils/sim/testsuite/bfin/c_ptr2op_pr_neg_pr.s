@@ -1,0 +1,163 @@
+//Original:/proj/frio/dv/testcases/core/c_ptr2op_pr_neg_pr/c_ptr2op_pr_neg_pr.dsp
+// Spec Reference:  ptr2op preg -= preg
+# mach: bfin
+
+.include "testutils.inc"
+	start
+
+// check p-reg to p-reg move
+	imm32 p1, 0xf0021003;
+	imm32 p2, 0x2e041005;
+	imm32 p3, 0x20d61007;
+	imm32 p4, 0x200a1009;
+	imm32 p5, 0x200a300b;
+	imm32 sp, 0x200c180d;
+	imm32 fp, 0x200e109f;
+	P1 -= P1;
+	P2 -= P1;
+	P3 -= P1;
+	P4 -= P1;
+	P5 -= P1;
+	SP -= P1;
+	FP -= P1;
+	CHECKREG p1, 0x00000000;
+	CHECKREG p2, 0x2E041005;
+	CHECKREG p3, 0x20D61007;
+	CHECKREG p4, 0x200A1009;
+	CHECKREG p5, 0x200A300B;
+	CHECKREG sp, 0x200C180D;
+	CHECKREG fp, 0x200E109F;
+
+	imm32 p1, 0x50021003;
+	imm32 p2, 0x26041005;
+	imm32 p3, 0x20761007;
+	imm32 p4, 0x20081009;
+	imm32 p5, 0x200a900b;
+	imm32 sp, 0x200c1a0d;
+	imm32 fp, 0x200e10bf;
+	P1 -= P2;
+	P2 -= P2;
+	P3 -= P2;
+	P4 -= P2;
+	P5 -= P2;
+	SP -= P2;
+	FP -= P2;
+	CHECKREG p1, 0x29FDFFFE;
+	CHECKREG p2, 0x00000000;
+	CHECKREG p3, 0x20761007;
+	CHECKREG p4, 0x20081009;
+	CHECKREG p5, 0x200A900B;
+	CHECKREG sp, 0x200C1A0D;
+	CHECKREG fp, 0x200E10BF;
+
+	imm32 p1, 0x20021003;
+	imm32 p2, 0x20041005;
+	imm32 p3, 0x20061007;
+	imm32 p4, 0x20081009;
+	imm32 p5, 0x200a100b;
+	imm32 sp, 0x200c100d;
+	imm32 fp, 0x200e100f;
+	P1 -= P3;
+	P2 -= P3;
+	P3 -= P3;
+	P4 -= P3;
+	P5 -= P3;
+	SP -= P3;
+	FP -= P3;
+	CHECKREG p1, 0xFFFBFFFC;
+	CHECKREG p2, 0xFFFDFFFE;
+	CHECKREG p3, 0x00000000;
+	CHECKREG p4, 0x20081009;
+	CHECKREG p5, 0x200A100B;
+	CHECKREG sp, 0x200C100D;
+	CHECKREG fp, 0x200E100F;
+
+	imm32 p1, 0xa0021003;
+	imm32 p2, 0x2c041005;
+	imm32 p3, 0x20b61007;
+	imm32 p4, 0x200d1009;
+	imm32 p5, 0x200ae00b;
+	imm32 sp, 0x200c110d;
+	imm32 fp, 0x200e104f;
+	P1 -= P4;
+	P2 -= P4;
+	P3 -= P4;
+	P4 -= P4;
+	P5 -= P4;
+	SP -= P4;
+	FP -= P4;
+	CHECKREG p1, 0x7FF4FFFA;
+	CHECKREG p2, 0x0BF6FFFC;
+	CHECKREG p3, 0x00A8FFFE;
+	CHECKREG p4, 0x00000000;
+	CHECKREG p5, 0x200AE00B;
+	CHECKREG sp, 0x200C110D;
+	CHECKREG fp, 0x200E104F;
+
+	imm32 p1, 0x10021003;
+	imm32 p2, 0x22041005;
+	imm32 p3, 0x20361007;
+	imm32 p4, 0x20041009;
+	imm32 p5, 0x200aa00b;
+	imm32 sp, 0x200c1b0d;
+	imm32 fp, 0x200e10cf;
+	P1 -= P5;
+	P2 -= P5;
+	P3 -= P5;
+	P4 -= P5;
+	P5 -= P5;
+	SP -= P5;
+	FP -= P5;
+	CHECKREG p1, 0xEFF76FF8;
+	CHECKREG p2, 0x01F96FFA;
+	CHECKREG p3, 0x002B6FFC;
+	CHECKREG p4, 0xFFF96FFE;
+	CHECKREG p5, 0x00000000;
+	CHECKREG sp, 0x200C1B0D;
+	CHECKREG fp, 0x200E10CF;
+
+	imm32 p1, 0x20021003;
+	imm32 p2, 0x20041005;
+	imm32 p3, 0x20061007;
+	imm32 p4, 0x20081009;
+	imm32 p5, 0x200a100b;
+	imm32 sp, 0x200c100d;
+	imm32 fp, 0x200e100f;
+	P1 -= SP;
+	P2 -= SP;
+	P3 -= SP;
+	P4 -= SP;
+	P5 -= SP;
+	SP -= SP;
+	FP -= SP;
+	CHECKREG p1, 0xFFF5FFF6;
+	CHECKREG p2, 0xFFF7FFF8;
+	CHECKREG p3, 0xFFF9FFFA;
+	CHECKREG p4, 0xFFFBFFFC;
+	CHECKREG p5, 0xFFFDFFFE;
+	CHECKREG sp, 0x00000000;
+	CHECKREG fp, 0x200E100F;
+
+	imm32 p1, 0x20021003;
+	imm32 p2, 0x20041005;
+	imm32 p3, 0x20061007;
+	imm32 p4, 0x20081009;
+	imm32 p5, 0x200a100b;
+	imm32 sp, 0x200c100d;
+	imm32 fp, 0x200e100f;
+	P1 -= FP;
+	P2 -= FP;
+	P3 -= FP;
+	P4 -= FP;
+	P5 -= FP;
+	SP -= FP;
+	FP -= FP;
+	CHECKREG p1, 0xFFF3FFF4;
+	CHECKREG p2, 0xFFF5FFF6;
+	CHECKREG p3, 0xFFF7FFF8;
+	CHECKREG p4, 0xFFF9FFFA;
+	CHECKREG p5, 0xFFFBFFFC;
+	CHECKREG sp, 0xFFFDFFFE;
+	CHECKREG fp, 0x00000000;
+
+	pass

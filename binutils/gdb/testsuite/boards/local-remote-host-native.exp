@@ -1,0 +1,96 @@
+# Copyright 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is a dejagnu "board file" and is used to run the testsuite
+# against local host, in remote host mode.
+#
+# This board file is used to emulate the real remote host testing, in
+# which file system of host and build are not shared.  This is achieved
+# by copying files from source directory to ${host_dir}.
+#
+# To use this file:
+# bash$ cd ${build_dir}/gdb
+# bash$ make check RUNTESTFLAGS="--host_board=local-remote-host-native --target_board=local-remote-host-native HOST_DIR=/tmp/foo/"
+#
+# We set both target board and host board together to test a native gdb
+# (host == target) on a remote host (host != build).  $HOST_DIR is the
+# directory for copying files to, to avoid messing up your HOME.  When
+# it is absent, files are copied to ./remote-host.
+
+if { $board_type == "target" } {
+    set_board_info compiler gcc
+}
+
+# We have to explicitly specify GDB with the path to the copy in
+# the build directory because otherwise it will be set to the
+# result of "transform GDB" since the harness thinks we're using
+# a remote host.  See lib/gdb.exp.
+set GDB [file join [pwd] "../gdb"]
+verbose -log "Overriding setting of GDB to $GDB"
+
+set_board_info hostname localhost
+
+set_board_info username $env(USER)
+
+save_vars {rsh_cmd res} {
+    set rsh_cmd \
+	[join \
+	     [list \
+		  [board_info $board rsh_prog] \
+		  -l [board_info $board username] \
+		  [board_info $board hostname]]]
+
+    if [info exists HOST_DIR] {
+	set_board_info remotedir $HOST_DIR
+    } else {
+	# Set remotedir by default, to force remote_download target to give an
+	# absolute file name.
+	set res [remote_exec build $rsh_cmd pwd]
+	if { [lindex $res 0] != 0 } {
+	    error "Couldn't set remotedir using pwd"
+	}
+	set_board_info remotedir [string trim [lindex $res 1]]
+    }
+}
+
+# The ssh key should be correctly set up that you ssh to localhost
+# without having to type password.
+set_board_info rsh_prog /usr/bin/ssh
+set_board_info rcp_prog /usr/bin/scp
+set_board_info file_transfer "rsh"
+
+if { $board_type == "host" } {
+    set_board_info gdb_opts "-d \"${HOST_DIR}\""
+}
+
+proc ${board}_spawn { board cmd } {
+    global board_info
+
+    set remote [board_info $board hostname]
+    set username [board_info $board username]
+    set RSH [board_info $board rsh_prog]
+
+    spawn $RSH -t -l $username $remote $cmd
+
+    if { [string match "$::GDB*" $cmd] } {
+	set board_info($board,fileid) $spawn_id
+    }
+
+    return $spawn_id
+}
+
+if { $board_type == "host" } {
+    set GDBFLAGS "${GDBFLAGS} -iex \"set style enabled off\""
+}

@@ -1,0 +1,105 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test "continue" to breakpoints in different targets.  In non-stop
+# mode, also tests "interrupt -a".
+
+source $srcdir/$subdir/multi-target.exp.tcl
+
+if {![multi_target_prepare]} {
+    return
+}
+
+proc test_continue {non-stop} {
+    if {![setup ${non-stop}]} {
+	untested "setup failed"
+	return
+    }
+
+    proc set_break {inf} {
+	gdb_test "break function${inf} thread ${inf}.1" \
+	"Breakpoint .* function${inf}\\..*"
+    }
+
+    # Select inferior INF, and then run to a breakpoint on inferior
+    # INF+1.
+    proc test_continue_inf {inf} {
+	upvar 1 non-stop non-stop
+
+	global gdb_prompt
+	delete_breakpoints
+
+	set next_inf [next_live_inferior $inf]
+
+	gdb_test "inferior $inf" "Switching to inferior $inf.*"
+	set_break $next_inf
+
+	if {${non-stop} == "off"} {
+	    gdb_test "continue" "hit Breakpoint .* function${next_inf}.*"
+	} else {
+	    set msg "continue"
+	    gdb_test_multiple "continue -a&" $msg {
+		-re "Continuing.*$gdb_prompt " {
+		    pass $msg
+		}
+	    }
+
+	    set msg "hit bp"
+	    gdb_test_multiple "" $msg {
+		-re "hit Breakpoint .* function${next_inf}" {
+		    pass $msg
+		}
+	    }
+
+	    set msg "stop all threads"
+	    gdb_test_multiple "interrupt -a" $msg {
+		-re "$gdb_prompt " {
+		    for {set i 0} {$i < 7} {incr i} {
+			set ok 0
+			gdb_test_multiple "" $msg {
+			    -re "Thread\[^\r\n\]*stopped\\." {
+				set ok 1
+			    }
+			}
+			if {!$ok} {
+			    break
+			}
+		    }
+		    gdb_assert $ok $msg
+		}
+	    }
+	}
+    }
+
+    for {set i 1} {$i <= 5} {incr i} {
+	if {$i == 3} {
+	    # This is a core inferior.
+	    continue
+	}
+
+	with_test_prefix "inf$i" {
+	    test_continue_inf $i
+	}
+    }
+}
+
+# Some basic "continue" + breakpoints tests.
+with_test_prefix "continue" {
+    foreach_with_prefix non-stop {"off" "on"} {
+	test_continue ${non-stop}
+    }
+}
+
+multi_target_cleanup

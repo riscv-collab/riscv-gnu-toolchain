@@ -1,0 +1,60 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check for an issue in GDB where buildsym_compunit::record_line was
+# removing duplicate line table entries, but skip_prologue_using_sal
+# depends on these duplicates to spot the end of the prologue.
+#
+# When the de-duplication was added this regression was not spotted as
+# it requires a particular combination of a (very) small function
+# being inlined into an also very small outer function.
+#
+# See also gdb.dwarf/dw2-inline-small-func.exp for a version of this
+# test that makes use of the Dejagnu DWARF compiler.
+#
+# This test simply compiles with optimization and checks that GDB can
+# do something suitable with the compiled binary.  Problems with this
+# test are most likely to occur when GDB asks the target specific code
+# to skip the prologue (gdbarch_skip_prologue).  Some targets make use
+# of skip_prologue_using_sal, which should be fine, however, some
+# targets make a poor attempt to duplicate parts of
+# skip_prologue_using_sal, these targets could easily fail this test.
+# This is not (necessarily) a problem with this test, but could
+# indicate a weakness with the target in question.
+
+standard_testfile inline-small-func.c inline-small-func.h
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	  [list $srcfile] {debug optimize=-O1}] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+# Delete all breakpoints so that the output of "info breakpoints"
+# below will only contain a single breakpoint.
+delete_breakpoints
+
+# Place a breakpoint within the function in the header file.
+set linenum [gdb_get_line_number "callee: body" $srcfile2]
+gdb_breakpoint "${srcfile2}:${linenum}"
+
+# Check that the breakpoint was placed where we expected.  It should
+# appear at the requested line.  When the bug in GDB was present the
+# breakpoint would be placed on one of the following lines instead.
+gdb_test "info breakpoints" \
+    ".* in callee at \[^\r\n\]+${srcfile2}:${linenum}\\y.*"

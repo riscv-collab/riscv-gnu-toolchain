@@ -1,0 +1,183 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Some simple tests of inferior function calls from breakpoint
+# conditions, in a single-threaded inferior.
+#
+# Test what happens when the inferior function (from a breakpoint
+# condition) either hits a nested breakpoint, or segfaults.
+
+standard_testfile
+
+if { [build_executable "failed to prepare" ${binfile} "${srcfile}" \
+	  {debug}] == -1 } {
+    return
+}
+
+set bp_1_line [gdb_get_line_number "First breakpoint"]
+set bp_2_line [gdb_get_line_number "Second breakpoint"]
+set segv_line [gdb_get_line_number "Segfault here"]
+
+# Start GDB based on TARGET_ASYNC and TARGET_NON_STOP, and then runto
+# main.
+proc start_gdb_and_runto_main { target_async target_non_stop } {
+    save_vars { ::GDBFLAGS } {
+	append ::GDBFLAGS \
+	    " -ex \"maint set target-non-stop $target_non_stop\""
+	append ::GDBFLAGS \
+	    " -ex \"maintenance set target-async ${target_async}\""
+
+	clean_restart ${::binfile}
+    }
+
+    if { ![runto_main] } {
+	return -1
+    }
+
+    return 0
+}
+
+# Start GDB according to ASYNC_P and NON_STOP_P, then setup a
+# conditional breakpoint.  The breakpoint condition includes an
+# inferior function call that will itself hit a breakpoint.  Check how
+# GDB reports this to the user.
+proc_with_prefix run_cond_hits_breakpoint_test { async_p non_stop_p } {
+    if { [start_gdb_and_runto_main $async_p $non_stop_p] == -1 } {
+	return
+    }
+
+    # Setup the conditional breakpoint and record its number.
+    gdb_breakpoint "${::srcfile}:${::bp_1_line} if (func_bp ())"
+    set bp_1_num [get_integer_valueof "\$bpnum" "*UNKNOWN*" \
+		     "get number of first breakpoint"]
+
+    # Setup a breakpoint inside func_bp.
+    gdb_breakpoint "${::srcfile}:${::bp_2_line}"
+    set bp_2_num [get_integer_valueof "\$bpnum" "*UNKNOWN*" \
+		     "get number of second breakpoint"]
+
+    gdb_test "continue" \
+	[multi_line \
+	     "Continuing\\." \
+	     "" \
+	     "Breakpoint ${bp_2_num}, func_bp \\(\\) at \[^\r\n\]+:${::bp_2_line}" \
+	     "${::decimal}\\s+\[^\r\n\]+Second breakpoint\[^\r\n\]+" \
+	     "Error in testing condition for breakpoint ${bp_1_num}:" \
+	     "The program being debugged stopped while in a function called from GDB\\." \
+	     "Evaluation of the expression containing the function" \
+	     "\\(func_bp\\) will be abandoned\\." \
+	     "When the function is done executing, GDB will silently stop\\."]
+}
+
+# Start GDB according to ASYNC_P and NON_STOP_P, then call an inferior
+# function.  The inferior function being called will itself have a
+# breakpoint within it.  Check how GDB reports this to the user.
+proc_with_prefix run_call_hits_breakpoint_test { async_p non_stop_p } {
+    if { [start_gdb_and_runto_main $async_p $non_stop_p] == -1 } {
+	return
+    }
+
+    # Setup a breakpoint inside func_bp.
+    gdb_breakpoint "${::srcfile}:${::bp_2_line}"
+    set bp_2_num [get_integer_valueof "\$bpnum" "*UNKNOWN*" \
+		      "get number of second breakpoint"]
+
+
+    gdb_test "call func_bp ()" \
+	[multi_line \
+	     "" \
+	     "Breakpoint ${bp_2_num}, func_bp \\(\\) at \[^\r\n\]+:${::bp_2_line}" \
+	     "${::decimal}\\s+\[^\r\n\]+Second breakpoint\[^\r\n\]+" \
+	     "The program being debugged stopped while in a function called from GDB\\." \
+	     "Evaluation of the expression containing the function" \
+	     "\\(func_bp\\) will be abandoned\\." \
+	     "When the function is done executing, GDB will silently stop\\."]
+}
+
+# Start GDB according to ASYNC_P and NON_STOP_P, then setup a
+# conditional breakpoint.  The breakpoint condition includes an
+# inferior function call that segfaults.  Check how GDB reports this
+# to the user.
+proc_with_prefix run_cond_hits_segfault_test { async_p non_stop_p } {
+    if { [start_gdb_and_runto_main $async_p $non_stop_p] == -1 } {
+	return
+    }
+
+    # This test relies on the inferior segfaulting when trying to
+    # access address zero.
+    if { [is_address_zero_readable] } {
+	unsupported "address zero is readable"
+	return
+    }
+
+    # Setup the conditional breakpoint and record its number.
+    gdb_breakpoint "${::srcfile}:${::bp_1_line} if (func_segfault ())"
+    set bp_1_num [get_integer_valueof "\$bpnum" "*UNKNOWN*" \
+		     "get number of first breakpoint"]
+
+    gdb_test "continue" \
+	[multi_line \
+	     "Continuing\\." \
+	     "" \
+	     "Program received signal SIGSEGV, Segmentation fault\\." \
+	     "${::hex} in func_segfault \\(\\) at \[^\r\n\]+:${::segv_line}" \
+	     "${::decimal}\\s+\[^\r\n\]+Segfault here\[^\r\n\]+" \
+	     "Error in testing condition for breakpoint ${bp_1_num}:" \
+	     "The program being debugged was signaled while in a function called from GDB\\." \
+	     "GDB remains in the frame where the signal was received\\." \
+	     "To change this behavior use \"set unwindonsignal on\"\\." \
+	     "Evaluation of the expression containing the function" \
+	     "\\(func_segfault\\) will be abandoned\\." \
+	     "When the function is done executing, GDB will silently stop\\."]
+}
+
+# Start GDB according to ASYNC_P and NON_STOP_P, then call an inferior
+# function.  The inferior function will segfault.  Check how GDB
+# reports this to the user.
+proc_with_prefix run_call_hits_segfault_test { async_p non_stop_p } {
+    if { [start_gdb_and_runto_main $async_p $non_stop_p] == -1 } {
+	return
+    }
+
+    # This test relies on the inferior segfaulting when trying to
+    # access address zero.
+    if { [is_address_zero_readable] } {
+	unsupported "address zero is readable"
+	return
+    }
+
+    gdb_test "call func_segfault ()" \
+	[multi_line \
+	     "" \
+	     "Program received signal SIGSEGV, Segmentation fault\\." \
+	     "${::hex} in func_segfault \\(\\) at \[^\r\n\]+:${::segv_line}" \
+	     "${::decimal}\\s+\[^\r\n\]+Segfault here\[^\r\n\]+" \
+	     "The program being debugged was signaled while in a function called from GDB\\." \
+	     "GDB remains in the frame where the signal was received\\." \
+	     "To change this behavior use \"set unwindonsignal on\"\\." \
+	     "Evaluation of the expression containing the function" \
+	     "\\(func_segfault\\) will be abandoned\\." \
+	     "When the function is done executing, GDB will silently stop\\."]
+}
+
+foreach_with_prefix target_async { "on" "off" } {
+    foreach_with_prefix target_non_stop { "on" "off" } {
+	run_cond_hits_breakpoint_test $target_async $target_non_stop
+	run_call_hits_breakpoint_test $target_async $target_non_stop
+
+	run_cond_hits_segfault_test $target_async $target_non_stop
+	run_call_hits_segfault_test $target_async $target_non_stop
+    }
+}

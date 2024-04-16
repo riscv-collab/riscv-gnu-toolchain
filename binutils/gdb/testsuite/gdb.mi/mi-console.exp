@@ -1,0 +1,95 @@
+# Copyright 1999-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test inferior console output, with MI.
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+#
+# Given STRING, return the semihosted version of that string.
+#
+proc semihosted_string { string } {
+    set semihosted_list {}
+    set leading_markers "@\""
+    set trailing_markers "\"\r\n"
+
+    if {$string != "" } {
+	set split_string [split $string ""]
+
+	foreach char $split_string {
+	    # Escape special characters.
+	    if {$char == "\\"} {
+		set char "\\\\\\\\"
+	    } elseif {$char == "\r"} {
+		  set char "\\\\r"
+	    } elseif {$char == "\n"} {
+		  set char "\\\\n"
+	    } elseif {$char == "\""} {
+		  set char "\\\\\""
+	    }
+	    lappend semihosted_list $leading_markers $char $trailing_markers
+	}
+    }
+  return [join $semihosted_list ""]
+}
+
+standard_testfile
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug}] != "" } {
+     untested "failed to compile"
+     return -1
+}
+
+if {[mi_clean_restart $binfile]} {
+    return
+}
+
+mi_runto_main
+
+# The output we get from the target depends on how it is hosted.  If
+# we are semihosted (e.g., the sim or a remote target that supports
+# the File I/O remote protocol extension), we see the target I/O
+# encapsulated in MI target output stream records.  If debugging with
+# a native target, the inferior's I/O streams are connected directly
+# to a PTY we create for the inferior (notice separate-inferior-tty
+# above), and we just see the program's output unadorned.  If
+# debugging with a remote target that doesn't support semihosting,
+# we'll see nothing.
+
+# The program's real output string.
+set program_output "Hello \\\"!\r\n"
+
+# Prepare the pattern for the PTY output of a native target.
+set native_output [string map {"\r\n" "\[\r\n\]+"} $program_output]
+set native_output [string map {"\\" "\\\\"} $native_output]
+
+# Prepare the pattern for the semihosted output.
+set semihosted_output [semihosted_string $program_output]
+
+# Combine both outputs in a single pattern.
+set output "($semihosted_output|$native_output)"
+
+# Next over the hello() call which will produce lots of output
+mi_gdb_test "220-exec-next" \
+	    "220\\^running(\r\n\\*running,thread-id=\"all\")?" \
+	    "Testing console output" \
+	    $output
+
+set line [gdb_get_line_number "after-hello"]
+mi_expect_stop "end-stepping-range" "main" "" ".*mi-console.c" $line "" \
+    "finished step over hello"
+    
+mi_gdb_exit

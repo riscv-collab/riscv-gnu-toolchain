@@ -1,0 +1,80 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test starting gdbserver using the 'target remove | ....' syntax.
+# The extended-remote target type is tested too.  The test checks that
+# the `|` character can be seen in the 'info connections' output, and
+# (when Python is available) in the gdb.TargetConnection.details
+# string.
+
+# This test relies on starting gdbserver using the pipe syntax.  Not
+# sure how well this will run if part of this test is being run
+# elsewhere.
+require {!is_remote target} {!is_remote host}
+
+load_lib gdbserver-support.exp
+
+standard_testfile
+
+require allow_gdbserver_tests
+
+set gdbserver [find_gdbserver]
+if { $gdbserver == "" } {
+    unsupported "could not find gdbserver"
+    return
+}
+
+standard_testfile normal.c
+set executable ${testfile}
+
+if {[build_executable "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+# Start GDB using remote type TARGET, which should be either "remote"
+# or "extended-remote".  Check the output of 'info connections', and
+# the contents of the gdb.TargetConnection.details string.
+proc do_test { target } {
+    clean_restart ${::binfile}
+
+    # Make sure we're disconnected, in case we're testing with an
+    # extended-remote board, therefore already connected.
+    gdb_test "disconnect" ".*"
+
+    gdb_test "target ${target} | ${::gdbserver} - ${::binfile}" ".*" \
+	"start gdbserver using pipe syntax"
+
+    gdb_breakpoint main
+    gdb_continue_to_breakpoint main
+    gdb_test "info frame" ".* in main .*"
+
+    gdb_test "info connections" "${target} \| ${::gdbserver} - ${::binfile} \[^\r\n\]+"
+
+    if { [allow_python_tests] } {
+	gdb_test_no_output "python conn = gdb.selected_inferior().connection"
+	gdb_test "python print(conn.details)" "\| ${::gdbserver} - ${::binfile}"
+    }
+}
+
+save_vars { GDBFLAGS } {
+    set GDBFLAGS "$GDBFLAGS -ex \"set sysroot\""
+
+    # Test with the two remote protocol types.
+    foreach_with_prefix target { remote extended-remote } {
+	do_test ${target}
+    }
+}

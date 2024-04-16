@@ -1,0 +1,169 @@
+# MIPS simulator instruction tests
+
+sim_init
+
+# Do "run_sim_test TESTFILE MODELS" for each combination of the
+# mf{lo,hi} -> mult/div/mt{lo,hi} hazard described in mips.igen.
+# Insert NOPS nops after the mflo or mfhi.
+proc run_hilo_test {testfile models nops} {
+    foreach reg {lo hi} {
+	foreach insn "{mult\t\$4,\$4} {div\t\$0,\$4,\$4} {mt$reg\t\$4}" {
+	    set contents ""
+	    append contents "\t.macro hilo\n"
+	    append contents "\tmf$reg\t\$4\n"
+	    append contents "\t.rept\t$nops\n"
+	    append contents "\tnop\n"
+	    append contents "\t.endr\n"
+	    append contents "\t$insn\n"
+	    append contents "\t.endm"
+
+	    verbose -log "HILO test:\n$contents"
+	    set file [open hilo-hazard.inc w]
+	    puts $file $contents
+	    close $file
+
+	    run_sim_test $testfile $models
+	}
+    }
+}
+
+# Runs micromips tests by adding -mmicromips to as options
+proc run_micromips_test { name requested_machs } {
+    global ASFLAGS_FOR_TARGET
+    set ASFLAGS_FOR_TARGET "-mmicromips"
+    run_sim_test $name $requested_machs
+    unset ASFLAGS_FOR_TARGET
+}
+
+# Runs endian tests
+proc run_endian_tests { name requested_machs } {
+    global ASFLAGS_FOR_TARGET
+    global LDFLAGS_FOR_TARGET
+    run_sim_test $name $requested_machs
+    set ASFLAGS_FOR_TARGET "-EL"
+    set LDFLAGS_FOR_TARGET "-EL"
+    run_sim_test $name $requested_machs
+    unset ASFLAGS_FOR_TARGET
+    unset LDFLAGS_FOR_TARGET
+}
+
+# Runs all specified tests
+proc run_sim_tests { name requested_machs { requested_micromips_machs "" } } {
+    run_sim_test $name $requested_machs
+    run_micromips_test $name $requested_micromips_machs
+}
+
+
+# Runs the combination of instructions removed in R6 through the testsuite
+proc run_r6_removed_test {testfile models} {
+    global subdir srcdir
+    set fd [open "$srcdir/$subdir/r6-removed.csv" r]
+    set file_data [read $fd]
+    close $fd
+    set data [split $file_data "\n"]
+    foreach line $data {
+        set line_contents [split $line ","]
+        set mnemonic [lindex $line_contents 0]
+        set insn [lindex $line_contents 1]
+
+        if {[string compare $insn ""] == 1} {
+
+            set contents ""
+            append contents ".macro removed_instr\n"
+            append contents ".word $insn\n"
+            append contents "nop\n"
+            append contents ".endm"
+
+            verbose -log "r6-removed test: $mnemonic\n$contents"
+            set file [open r6-removed.inc w]
+            puts $file $contents
+            close $file
+
+            run_sim_test $testfile $models
+        }
+    }
+}
+
+
+if {[istarget *]} {
+    # Used to locate the `run` program.
+    global arch
+    set arch "mips"
+
+    set dspmodels ""
+    set mdmxmodels ""
+    set micromipsmodels ""
+    set micromipsdspmodels ""
+
+    if {[istarget mipsisa64sb1*-*-elf]} {
+	set models "sb1"
+	set submodels "mips1 mips2 mips3 mips4 mips32 mips64"
+	append mdmxmodels " mips64"
+    } elseif {[istarget mipsisa64r6*-*-elf]} {
+        set models "mips32r6 mips64r6"
+        set submodels ""
+    } elseif {[istarget mipsisa64*-*-elf]} {
+	set models "mips32 mips64 mips32r2 mips64r2"
+	set submodels "mips1 mips2 mips3 mips4"
+	append dspmodels " mips32r2 mips64r2"
+	append mdmxmodels " mips64 mips32r2 mips64r2"
+    } elseif {[istarget mips*-sde-elf*] || [istarget mips*-mti-elf*]} {
+	set models "mips32 mips64 mips32r2 mips64r2 mips32r6 mips64r6"
+	set submodels ""
+	append dspmodels " mips32r2 mips64r2 mips32r6 mips64r6"
+	append mdmxmodels " mips64 mips32r2 mips64r2 mips32r6 mips64r6"
+	append micromipsmodels " mips32r2 mips64r2"
+	append micromipsdspmodels " mips32r2 mips64r2"
+    } elseif {[istarget mipsisa32r6*-*-elf]} {
+        set models "mips32r6"
+        set submodels ""
+    } elseif {[istarget mipsisa32*-*-elf]} {
+	set models "mips32 mips32r2"
+	set submodels "mips1 mips2"
+	append dspmodels " mips32r2"
+	append mdmxmodels " mips32r2"
+	append micromipsmodels " mips32r2"
+	append micromipsdspmodels " mips32r2"
+    } elseif {[istarget mips64vr*-*-elf]} {
+	set models "vr4100 vr4111 vr4120 vr5000 vr5400 vr5500"
+	set submodels "mips1 mips2 mips3 mips4"
+    } elseif {[istarget mips64*-*-elf]} {
+	set models "mips3"
+	set submodels "mips1 mips2"
+    } else {
+	# fall back to just testing mips1 code.
+	set models "mips1"
+	set submodels ""
+    }
+    append submodels " " $models
+    set cpu_option -march
+
+    run_sim_tests sanity.s $submodels $micromipsmodels
+
+    foreach nops {0 1} {
+	run_hilo_test hilo-hazard-1.s $models $nops
+	run_hilo_test hilo-hazard-2.s $models $nops
+    }
+    run_hilo_test hilo-hazard-3.s $models 2
+    run_hilo_test hilo-hazard-4.s $micromipsmodels 2
+
+    run_sim_test fpu64-ps.s $submodels
+    run_sim_test fpu64-ps-sb1.s $submodels
+
+    run_sim_test mdmx-ob.s $mdmxmodels
+    run_sim_test mdmx-ob-sb1.s $mdmxmodels
+
+    run_sim_tests mips32-dsp.s $dspmodels $micromipsdspmodels
+    run_sim_tests mips32-dsp2.s $dspmodels $micromipsdspmodels
+
+    run_sim_test r2-fpu.s $models
+
+    run_sim_test r6-fpu.s $models
+    run_sim_test r6.s $models
+    run_sim_test r6-forbidden.s $models
+    run_r6_removed_test r6-removed.s $models
+    run_sim_test r6-64.s $models
+    run_sim_test r6-branch.s $models
+    run_endian_tests r6-llsc-wp.s $models
+    run_endian_tests r6-llsc-dp.s $models
+}

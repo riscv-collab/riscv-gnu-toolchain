@@ -1,0 +1,139 @@
+# Copyright 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the gdb testsuite.
+
+load_lib completion-support.exp
+
+# A helper procedure to test location completions restricted by
+# class.
+proc test_class_complete {class expr name matches} {
+    global gdb_prompt
+
+    set matches [lsort $matches]
+    set cmd "complete break ${class}::$expr"
+    set seen {}
+    gdb_test_multiple $cmd $name {
+	"break ${class}::main" { fail "$name (saw global symbol)" }
+	$cmd { exp_continue }
+	-re "break ${class}::\[^\r\n\]*\r\n" {
+	    set str $expect_out(0,string)
+	    scan $str "break ${class}::%\[^(\]" method
+	    lappend seen $method
+	    exp_continue
+	}
+	-re "$gdb_prompt $" {
+	    set failed ""
+	    foreach got [lsort $seen] have $matches {
+		if {![string equal $got $have]} {
+		    set failed $have
+		    break
+		}
+	    }
+	    if {[string length $failed] != 0} {
+		fail "$name ($failed not found)"
+	    } else {
+		pass $name
+	    }
+	}
+    }
+}
+
+require allow_cplus_tests
+
+standard_testfile .cc
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile {debug c++}]} {
+    return -1
+}
+
+# Tests below are about tab-completion, which doesn't work if readline
+# library isn't used.  Check it first.
+
+if { ![readline_is_used] } {
+    untested "no tab completion support without readline"
+    return -1
+}
+
+# Test that completion is restricted by class name (all methods)
+test_class_complete Foo "" "complete class methods" \
+    [list Foo Foofoo get_foo set_foo ~Foo]
+
+test_class_complete Foo F "complete class methods beginning with F" \
+    [list Foo Foofoo]
+
+# The tests below depend on the current code scope.
+
+set bp_location [gdb_get_line_number "Set breakpoint here" ${srcfile}]
+
+if {![runto "${srcfile}:$bp_location"]} {
+    perror "test suppressed"
+    return
+}
+
+# This also tests inheritance -- completion should only see a single
+# "get_foo".
+test_gdb_complete_unique "p foo1.g" "p foo1.get_foo"
+
+# Test inheritance without overriding.
+test_gdb_complete_unique "p foo1.base" "p foo1.base_function_only"
+
+# Test non-completion of constructor names.
+test_gdb_complete_unique "p foo1.Fo" "p foo1.Foofoo"
+
+# Test completion with an anonymous struct.
+test_gdb_complete_unique "p a.g" "p a.get"
+
+with_test_prefix "expression with namespace" {
+    # Before the scope operator, GDB shows all the symbols whose
+    # fully-qualified name matches the completion word.
+    test_gdb_complete_multiple "p " "Test_NS" "" {
+	"Test_NS"
+	"Test_NS::Nested"
+	"Test_NS::Nested::qux"
+	"Test_NS::bar"
+	"Test_NS::foo"
+    }
+
+    # Unlike in linespecs, tab- and complete-command completion work a
+    # bit differently when completing around the scope operator.  The
+    # matches in the tab-completion case only show the part of the
+    # symbol after the scope, since ':' is a word break character.
+
+    set tab_completion_list {
+	"Nested"
+	"Nested::qux"
+	"bar"
+	"foo"
+    }
+    test_gdb_complete_tab_multiple "p Test_NS:" ":" $tab_completion_list
+    test_gdb_complete_tab_multiple "p Test_NS::" "" $tab_completion_list
+
+    # OTOH, the complete command must show the whole command, with
+    # qualified symbol displayed as entered by the user.
+    set cmd_completion_list {
+	"Test_NS::Nested"
+	"Test_NS::Nested::qux"
+	"Test_NS::bar"
+	"Test_NS::foo"
+    }
+    test_gdb_complete_cmd_multiple "p " "Test_NS:" $cmd_completion_list
+    test_gdb_complete_cmd_multiple "p " "Test_NS::" $cmd_completion_list
+
+    # Add a disambiguating character and we get a unique completion.
+    test_gdb_complete_unique "p Test_NS::f" "p Test_NS::foo"
+}
+
+test_gdb_complete_unique "break baz(int" "break baz(int, double)"

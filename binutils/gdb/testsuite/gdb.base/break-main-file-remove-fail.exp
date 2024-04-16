@@ -1,0 +1,122 @@
+# Copyright 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+# Test that GDB isn't silent if it fails to remove a breakpoint from
+# the main program, independently of whether the program was loaded
+# with "file PROGRAM" or directly from the command line with "gdb
+# PROGRAM".
+
+standard_testfile
+
+if {[build_executable "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+# Run the test proper.  INITIAL_LOAD determines whether the program is
+# initially loaded by the "file" command or by passing it to GDB on
+# the command line.
+proc test_remove_bp { initial_load } {
+    with_test_prefix "$initial_load" {
+	global srcdir subdir binfile
+	global gdb_prompt hex
+	global GDBFLAGS
+
+	gdb_exit
+
+	set saved_gdbflags $GDBFLAGS
+
+	# See "used to behave differently" further below.
+	if { $initial_load == "file" } {
+	    gdb_start
+	    gdb_file_cmd $binfile
+	} else {
+	    global last_loaded_file
+
+	    # gdb_file_cmd sets this.  This is what gdb_reload
+	    # implementations use as binary.
+	    set last_loaded_file $binfile
+
+	    set GDBFLAGS "$GDBFLAGS $binfile"
+	    gdb_start
+	}
+	gdb_reinitialize_dir $srcdir/$subdir
+	gdb_reload
+	set GDBFLAGS $saved_gdbflags
+
+	if ![runto start] {
+	    return
+	}
+
+	delete_breakpoints
+
+	# So we can easily control when are breakpoints removed.
+	gdb_test_no_output "set breakpoint always-inserted on"
+
+	set bp_addr ""
+
+	set test "break foo"
+	gdb_test_multiple $test $test {
+	    -re "Breakpoint .* at ($hex).*$gdb_prompt $" {
+		set bp_addr $expect_out(1,string)
+		pass $test
+	    }
+	}
+
+	if {$bp_addr == ""} {
+	    unsupported "can't extract foo's address"
+	    return
+	}
+
+	gdb_test "info break" "y.*$hex.*in foo at.*" \
+	    "breakpoint is set"
+
+	# Now unmap the page where the breakpoint is set.  Trying to
+	# remove the memory breakpoint afterwards should fail, and GDB
+	# should warn the user about it.
+	set pagesize [get_integer_valueof "pg_size" 0]
+	set align_addr [expr $bp_addr - $bp_addr % $pagesize]
+	set munmap_prototype "int (*) (void *, size_t)"
+	set munmap_expr "(($munmap_prototype) munmap) ($align_addr, $pagesize)"
+
+	# Use gdb_test_multiple here rather than get_integer_valueof.
+	# Targets that use the AT_ENTRY_POINT strategy for inferior
+	# function calls will place a breakpoint near the entry point
+	# to catch the return from the inferior function call, and
+	# this is likely on the page we are about to unmap.  As a
+	# consequence we will see the warning about being unable to
+	# remove the breakpoint here, which throws off
+	# get_integer_valueof.
+	set munmap -1
+	gdb_test_multiple "print /d ${munmap_expr}" "get result of munmap call" {
+	    -re -wrap "^(?:warning: error removing breakpoint $::decimal at $::hex\r\n)?\\$\[0-9\]* = (\[-\]*\[0-9\]*).*" {
+		set munmap $expect_out(1,string)
+		pass $gdb_test_name
+	    }
+	}
+
+	if {$munmap != 0} {
+	    unsupported "can't munmap foo's page"
+	    return
+	}
+
+	gdb_test "delete \$bpnum" \
+	    "^warning: error removing breakpoint $::decimal at $::hex" \
+	    "failure to remove breakpoint warns"
+    }
+}
+
+foreach initial_load { "cmdline" "file" } {
+    test_remove_bp $initial_load
+}

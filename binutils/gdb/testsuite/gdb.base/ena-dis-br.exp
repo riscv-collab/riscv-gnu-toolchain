@@ -1,0 +1,463 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 1997-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+#
+# test running programs
+#
+
+standard_testfile break.c break1.c
+
+if {[prepare_for_testing "failed to prepare" ${testfile} \
+	 [list $srcfile $srcfile2] {debug nowarnings}]} {
+    return -1
+}
+
+set bp_location1 [gdb_get_line_number "set breakpoint 1 here"]
+set bp_location7 [gdb_get_line_number "set breakpoint 7 here"]
+set bp_location8 [gdb_get_line_number "set breakpoint 8 here" $srcfile2]
+set bp_location11 [gdb_get_line_number "set breakpoint 11 here"]
+set bp_location14 [gdb_get_line_number "set breakpoint 14 here" $srcfile2]
+set bp_location15 [gdb_get_line_number "set breakpoint 15 here" $srcfile2]
+set bp_location17 [gdb_get_line_number "set breakpoint 17 here" $srcfile2]
+
+if {![runto_main]} {
+    return
+}
+
+# Verify that we can set a breakpoint (the location is irrelevant),
+# then enable it (yes, it's already enabled by default), then hit it.
+
+proc break_at { breakpoint where } {
+    global gdb_prompt
+    global expect_out
+
+    set test "break $breakpoint"
+    set bp 0
+    gdb_test_multiple "$test" "$test" {
+	-re "Breakpoint (\[0-9\]*) at .*$where.*$gdb_prompt $" {
+	    set bp $expect_out(1,string)
+	    pass $gdb_test_name
+	}
+    }
+    return $bp
+}
+
+set bp [break_at "marker1" " line $bp_location15"]
+
+gdb_test_no_output "enable $bp" "enable break marker1"
+
+gdb_test "info break $bp" \
+    "\[0-9\]*\[ \t\]+breakpoint\[ \t\]+keep\[ \t\]+y.*" \
+    "info break marker1 before hitting breakpoint"
+
+# See the comments in condbreak.exp for "run until breakpoint at
+# marker1" for an explanation of the xfail below.
+set test "continue to break marker1"
+set bpno 0
+gdb_test_multiple "continue" "$test" {
+    -re "Breakpoint (\[0-9\]*), marker1.*$gdb_prompt $" {
+	set bpno $expect_out(1,string)
+	pass "$test"
+    }
+    -re "Breakpoint (\[0-9\]*), $hex in marker1.*$gdb_prompt $" {
+	set bpno $expect_out(1,string)
+	xfail "$test"
+    }
+}
+# Verify the $_hit_bbnum convenience variable is equal to the hit bpno.
+gdb_test "print \$_hit_bpnum" " = $bpno" "$test \$_hit_bpnum is $bpno"
+# Verify the $_hit_locno is 1, as there is only one code location.
+gdb_test "print \$_hit_locno" " = 1" "$test \$_hit_locno is 1"
+
+gdb_test_no_output "delete $bp" "delete break marker1"
+
+# Verify that we can set a breakpoint to be self-disabling after the
+# first time it triggers.
+set bp [break_at "marker2" " line $bp_location8"]
+
+gdb_test_no_output "enable once $bp" "enable once break marker2"
+
+gdb_test "info break $bp" \
+    "\[0-9\]*\[ \t\]+breakpoint\[ \t\]+dis\[ \t\]+y.*" \
+    "info auto-disabled break marker2 before hitting breakpoint"
+
+# See the comments in condbreak.exp for "run until breakpoint at
+# marker1" for an explanation of the xfail below.
+set test "continue to auto-disabled break marker2"
+gdb_test_multiple "continue" "$test" {
+    -re "Breakpoint \[0-9\]*, marker2.*$gdb_prompt $" {
+	pass "$test"
+    }
+    -re "Breakpoint \[0-9\]*, $hex in marker2.*$gdb_prompt $" {
+	xfail "$test"
+    }
+}
+
+gdb_test "info break $bp" \
+    "\[0-9\]*\[ \t\]+breakpoint\[ \t\]+dis\[ \t\]+n.*" \
+    "info auto-disabled break marker2 after hitting breakpoint"
+
+# Verify that we don't stop at a disabled breakpoint.
+gdb_continue_to_end "no stop"
+
+set count 1
+with_test_prefix "run $count" {
+    rerun_to_main
+    incr count
+}
+gdb_continue_to_end "no stop at auto-disabled break marker2"
+
+# Verify that we can set a breakpoint to be self-deleting after the
+# first time it triggers.
+if {![runto_main]} {
+    return
+}
+
+set bp [break_at "marker3" " line $bp_location17"]
+
+gdb_test_no_output "enable del $bp" "enable del break marker3"
+
+gdb_test "info break $bp" \
+    "\[0-9\]*\[ \t\]+breakpoint\[ \t\]+del\[ \t\]+y.*" \
+    "info auto-deleted break marker2"
+
+gdb_test "continue" \
+    ".*marker3 .*:$bp_location17.*" \
+    "continue to auto-deleted break marker3"
+
+gdb_test "info break $bp" \
+    ".*No breakpoint or watchpoint matching.*" \
+    "info auto-deleted break marker3"
+
+# Verify that we can set a breakpoint and manually disable it (we've
+# already proven that disabled bp's don't trigger).
+
+set bp [break_at "marker4" " line $bp_location14.*"]
+
+gdb_test_no_output "disable $bp" "disable break marker4"
+
+gdb_test "info break $bp" \
+    "\[0-9\]*\[ \t\]+breakpoint\[ \t\]+keep\[ \t\]+n.*" \
+    "info break marker4"
+
+if {![runto_main]} {
+    return
+}
+
+# Test enable count by stopping at a location until it is disabled
+# and passes through.
+
+set bp [break_at $bp_location7 "line $bp_location7"]
+
+with_test_prefix "enable count" {
+  set bp2 [break_at marker1 " line $bp_location15"]
+}
+
+gdb_test "enable count" \
+    "Argument required \\(hit count\\)\\." \
+    "enable count missing arguments"
+
+gdb_test "enable count 2" \
+    "Argument required \\(one or more breakpoint numbers\\)\\." \
+    "enable count missing breakpoint number"
+
+gdb_test_no_output "enable count 2 $bp" "disable break with count"
+
+gdb_test "continue" \
+    ".*factorial .*:$bp_location7.*" \
+    "continue from enable count, first time"
+
+gdb_test "continue" \
+    ".*factorial .*:$bp_location7.*" \
+    "continue from enable count, second time"
+
+gdb_test "continue" \
+    ".*marker1 .*:$bp_location15.*" \
+    "continue through enable count, now disabled"
+
+# Verify that we can set a breakpoint with an ignore count N, which
+# should cause the next N triggers of the bp to be ignored.  (This is
+# a flavor of enablement/disablement, after all.)
+
+if {![runto_main]} {
+    return
+}
+
+with_test_prefix "ignore count" {
+    set bp [break_at "marker1" " line $bp_location15.*"]
+}
+
+# Verify that an ignore of a non-existent breakpoint is gracefully
+# handled.
+
+gdb_test "ignore 999 2" \
+    "No breakpoint number 999..*" \
+    "ignore non-existent break"
+
+# Verify that a missing ignore count is gracefully handled.
+
+gdb_test "ignore $bp" \
+    "Second argument .specified ignore-count. is missing..*" \
+    "ignore break with missing ignore count"
+
+# Verify that a negative or zero ignore count is handled gracefully
+# (they both are treated the same).
+
+gdb_test "ignore $bp -1" \
+    "Will stop next time breakpoint \[0-9\]* is reached..*" \
+    "ignore break marker1 -1"
+
+gdb_test "ignore $bp 0" \
+    "Will stop next time breakpoint \[0-9\]* is reached..*" \
+    "ignore break marker1 0"
+
+gdb_test "ignore $bp 1" \
+    "Will ignore next crossing of breakpoint \[0-9\]*.*" \
+    "ignore break marker1 1"
+
+gdb_test "info break $bp" \
+    "\[0-9\]*\[ \t\]+breakpoint\[ \t\]+keep\[ \t\]+y.*ignore next 1 hits.*" \
+    "info ignored break marker1"
+
+gdb_continue_to_end "no stop at ignored break marker1"
+
+with_test_prefix "run $count" {
+    rerun_to_main
+    incr count
+}
+
+# See the comments in condbreak.exp for "run until breakpoint at marker1" 
+# for an explanation of the xfail below.
+set test "continue to break marker1, 2nd time"
+gdb_test_multiple "continue" "$test" {
+    -re "Breakpoint \[0-9\]*, marker1.*$gdb_prompt $" {
+	pass "continue to break marker1, 2nd time"
+    }
+    -re "Breakpoint \[0-9\]*, $hex in marker1.*$gdb_prompt $" {
+	xfail "continue to break marker1, 2nd time"
+    }
+}
+
+# Verify that we can specify both an ignore count and an auto-delete.
+
+if {![runto_main]} {
+    return
+}
+
+with_test_prefix "ignore count and auto-delete" {
+    set bp [break_at marker1 " line $bp_location15.*"]
+}
+
+gdb_test "ignore $bp 1" \
+    "Will ignore next crossing of breakpoint \[0-9\]*.*" \
+    "ignore break marker1"
+
+gdb_test_no_output "enable del $bp" "enable del break marker1"
+
+gdb_test "info break $bp" \
+    "\[0-9\]*\[ \t\]+breakpoint\[ \t\]+del\[ \t\]+y.*ignore next 1 hits.*" \
+    "info break marker1 after hitting breakpoint"
+
+gdb_continue_to_end "no stop at ignored & auto-deleted break marker1"
+
+with_test_prefix "run $count" {
+    rerun_to_main
+    incr count
+}
+
+gdb_test "continue" \
+    ".*marker1 .*:$bp_location15.*" \
+    "continue to ignored & auto-deleted break marker1"
+
+# Verify that a disabled breakpoint's ignore count isn't updated when
+# the bp is encountered.
+
+if {![runto_main]} {
+    return
+}
+
+with_test_prefix "disabled breakpoint ignore count" {
+    set bp [break_at marker1 " line $bp_location15"]
+}
+
+gdb_test "ignore $bp 10" \
+    "Will ignore next 10 crossings of breakpoint \[0-9\]*.*" \
+    "ignore break marker1 10"
+
+gdb_test_no_output "disable $bp" "disable break marker1"
+
+gdb_continue_to_end "no stop at ignored & disabled break marker1"
+
+with_test_prefix "run $count" {
+    rerun_to_main
+}
+
+gdb_test "info break $bp" \
+    "\[0-9\]*\[ \t\]+breakpoint\[ \t\]+keep\[ \t\]+n.*ignore next 10 hits.*" \
+    "info ignored & disabled break marker1"
+
+# Verify that GDB correctly handles the "continue" command with an argument,
+# which is an ignore count to set on the currently stopped-at breakpoint.
+# (Also verify that GDB gracefully handles the case where the inferior
+# isn't stopped at a breakpoint.)
+#
+if {![runto_main]} {
+    return
+}
+
+gdb_test "break $bp_location1" \
+    "Breakpoint \[0-9\]*.*, line $bp_location1.*" \
+    "prepare to continue with ignore count"
+
+gdb_test "continue 2" \
+    "Will ignore next crossing of breakpoint \[0-9\]*.  Continuing..*" \
+    "continue with ignore count"
+
+gdb_test "next" ".*$bp_location11\[ \t\]*marker1.*" \
+    "step after continue with ignore count"
+
+set test "continue with ignore count, not stopped at bpt"
+gdb_test_multiple "continue 2" "$test" {
+    -re "Not stopped at any breakpoint; argument ignored.*$gdb_prompt $" {
+	pass "$test"
+    }
+    -re "No breakpoint number -1.*$gdb_prompt $" {
+	kfail gdb/1689 "$test"
+    }
+}
+
+# Verify that GDB correctly handles the "enable/disable" command
+# with arguments, that include multiple locations.
+#
+if {![runto_main]} {
+    return
+}
+
+set b1 0
+set b2 0
+set b3 0
+set b4 0
+set b1 [break_at main ""]
+
+with_test_prefix "2nd breakpoint" {
+    set b2 [break_at main ""]
+}
+
+with_test_prefix "3rd breakpoint" {
+    set b3 [break_at main ""]
+}
+
+with_test_prefix "4th breakpoint" {
+    set b4 [break_at main ""]
+}
+
+# Perform tests for disable/enable commands on multiple
+# code locations and breakpoints.  If a breakpoint has only one code location,
+# enable/disable num  and enable/disable num.1 should be equivalent.
+#
+# WHAT - the command to test (disable/enable).
+#
+# Note: tests involving location ranges (and more) are found in
+# gdb.cp/ena-dis-br-range.exp.
+#
+proc test_ena_dis_br { what } {
+    global b1
+    global b2
+    global b3
+    global b4
+    global gdb_prompt
+
+    # OPPOS    - the command opposite to WHAT.
+    # WHAT_RES - whether breakpoints are expected to end
+    #            up enabled or disabled.
+    # OPPOS_RES- same as WHAT_RES but opposite.
+    # P1/P2    - proc to call (pass/fail).  Must be
+    #            opposites.
+    # Set variable values for disable command.
+    set oppos "enable"
+    set oppos_res "y"
+    set what_res "n"
+    set p1 "pass"
+    set p2 "fail"
+
+    if { "$what" == "enable" } {
+	# Set varibale values for enable command.
+	set oppos "disable"
+	set oppos_res "n"
+	set what_res "y"
+	set p1 "fail"
+	set p2 "pass"
+    }
+
+    # Now enable(disable) $b1.1 $b2.1.
+    gdb_test_no_output "$what $b1.1 $b2.1" "$what \$b1.1 \$b2.1"
+    set test1 "${what}d \$b1.1 and \$b2.1"
+
+    # Now $b1.1 and $b2.1 should be enabled(disabled).
+    gdb_test_multiple "info break" "$test1" {
+       -re "(${b1})(\[^\n\r\]*)( n.*)(${b2})(\[^\n\r\]*)( n.*)$gdb_prompt $" {
+           $p1 "$test1"
+       }
+       -re ".*$gdb_prompt $" {
+           $p2 "$test1"
+       }
+    }
+
+    # Now enable(disable) $b1 fooo.1, it should give error on fooo.
+    gdb_test "$what $b1 fooo.1" \
+       "Bad breakpoint number 'fooo\\.1'" \
+       "$what \$b1 fooo.1"
+
+    # $b1 should be enabled(disabled).
+    gdb_test "info break" \
+       "(${b1})(\[^\n\r]*)( $what_res.*)" \
+       "${what}d \$b1"
+
+    gdb_test_no_output "$oppos $b3" "$oppos \$b3"
+    # Now $b4 $b3 should be enabled(disabled)
+    set test1 "${what}d \$b4 and \$b3"
+    gdb_test "info break" "(${b3})(\[^\n\r]*)( $oppos_res.*).*(${b4})(\[^\n\r\]*)( $oppos_res.*)" "$test1"
+
+    gdb_test_no_output "$what $b4 $b3.1" "$what \$b4 \$b3.1"
+    set test1 "${what}d \$b4 and \$b3.1, changing \$b3"
+
+    # Now $b4 $b3 should be enabled(disabled)
+    gdb_test "info break" "(${b3})(\[^\n\r]*)( $what_res.*).*(${b4})(\[^\n\r\]*)( $what_res.*)" "$test1"
+
+
+    # Now enable(disable) '$b4.1 fooobaar'.  This should error on
+    # fooobaar.
+    gdb_test "$what $b4.1 fooobaar" \
+       "Bad breakpoint number 'fooobaar'" \
+       "$what \$b4.1 fooobar"
+    set test1 "${what}d \$b4.1"
+
+    # $b4.1 should be enabled(disabled).
+    gdb_test_multiple "info break" "$test1" {
+        -re "(${b4})(\[^\n\r\]*)( n.*)$gdb_prompt $" {
+           $p1 "$test1"
+       }
+       -re ".*$gdb_prompt $" {
+           $p2 "$test1"
+       }
+    }
+}
+
+test_ena_dis_br "disable"
+test_ena_dis_br "enable"
+
+gdb_exit

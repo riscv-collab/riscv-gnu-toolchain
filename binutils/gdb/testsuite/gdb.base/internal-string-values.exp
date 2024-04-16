@@ -1,0 +1,279 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that string values are correctly allocated inside GDB when doing
+# various operations that yield strings.
+#
+# The issue that lead to this test was a missing NULL terminator in the
+# C-string values.  We verify that we can print the null terminator of these
+# strings.
+
+load_lib "trace-support.exp"
+load_lib "gdb-guile.exp"
+
+standard_testfile
+
+if {[build_executable "failed to prepare" $testfile $srcfile ]} {
+    return
+}
+
+set user_conv_funcs {$_gdb_setting $_gdb_setting_str}
+set maint_conv_funcs {$_gdb_maint_setting $_gdb_maint_setting_str}
+
+# Add language (LANG) appropriate quotation marks around string STR.
+proc quote_for_lang {lang str} {
+    if {$lang == "fortran"} {
+	return "'$str'"
+    } else {
+	return "\"$str\""
+    }
+}
+
+# Check that the string contained in the convenienced variable $v is
+# EXPECTED_STR.
+#
+# In particular, check that the null terminator is there and that we can't
+# access a character past the end of the string.
+
+proc check_v_string { expected_str } {
+    set len [string length $expected_str]
+
+    for { set i 0 } { $i < $len } { incr i } {
+	set c [string index $expected_str $i]
+	gdb_test "print \$v\[$i\]" "= $::decimal '$c'"
+    }
+
+    # Check that the string ends with a null terminator.
+    gdb_test "print \$v\[$i\]" {= 0 '\\000'}
+
+    # Check that we can't access a character after the end of the string.
+    incr i
+    gdb_test "print \$v\[$i\]" "no such vector element"
+}
+
+# Test with string values made by $_gdb_setting & co.
+
+proc_with_prefix test_setting { } {
+    clean_restart
+
+    # This is an internal GDB implementation detail, but the variable backing
+    # a string setting starts as nullptr (unless explicitly initialized at
+    # startup).  When assigning an empty value, the variable then points to an
+    # empty string.  Test both cases, as it triggers different code paths (in
+    # addition to a non-empty value).
+    #
+    # Use "set trace-user" and "maintenance set test-settings string" as they
+    # are both not initialized at startup.
+    with_test_prefix "user setting" {
+	with_test_prefix "not set" {
+	    foreach_with_prefix conv_func $::user_conv_funcs {
+		gdb_test_no_output "set \$v = ${conv_func}(\"trace-user\")"
+		check_v_string ""
+	    }
+	}
+
+	with_test_prefix "set to empty" {
+	    gdb_test "set trace-user"
+	    foreach_with_prefix conv_func $::user_conv_funcs {
+		gdb_test_no_output "set \$v = ${conv_func}(\"trace-user\")"
+		check_v_string ""
+	    }
+	}
+
+	with_test_prefix "set" {
+	    gdb_test "set trace-user poulet"
+	    foreach_with_prefix conv_func $::user_conv_funcs {
+		gdb_test_no_output {set $v = $_gdb_setting("trace-user")}
+		check_v_string "poulet"
+	    }
+	}
+    }
+
+    with_test_prefix "maintenance setting" {
+	with_test_prefix "not set" {
+	    foreach_with_prefix conv_func $::maint_conv_funcs {
+		gdb_test_no_output \
+		    "set \$v = ${conv_func}(\"test-settings string\")"
+		check_v_string ""
+	    }
+	}
+
+	with_test_prefix "set to empty" {
+	    gdb_test "maintenance set test-settings string"
+	    foreach_with_prefix conv_func $::maint_conv_funcs {
+		gdb_test_no_output \
+		    "set \$v = ${conv_func}(\"test-settings string\")"
+		check_v_string ""
+	    }
+	}
+
+	with_test_prefix "set" {
+	    gdb_test "maintenance set test-settings string perchaude"
+	    foreach_with_prefix conv_func $::maint_conv_funcs {
+		gdb_test_no_output \
+		    "set \$v = ${conv_func}(\"test-settings string\")"
+		check_v_string "perchaude"
+	    }
+	}
+    }
+
+    # Test with a non-string setting, this tests yet another code path.
+    with_test_prefix "integer setting" {
+	gdb_test_no_output {set $v = $_gdb_setting_str("remotetimeout")}
+	check_v_string "2"
+    }
+
+    # Test string values made by $_gdb_setting & co. in all languages.
+    with_test_prefix "all langs" {
+	# Get list of supported languages.
+	set langs [gdb_supported_languages]
+
+	gdb_test "maintenance set test-settings string foo"
+	foreach_with_prefix lang $langs {
+	    gdb_test_no_output "set language $lang"
+
+	    if {$lang == "modula-2"} {
+		# The Modula-2 parser doesn't know how to build a
+		# suitable string expression.
+		gdb_test "print \"foo\"" "strings are not implemented"
+		continue
+	    }
+
+	    if {$lang == "rust"} {
+		# Rust strings are actually structs, without a running
+		# inferior into which the string data can be pushed
+		# GDB can't print anything.
+		gdb_test "print \"foo\"" \
+		    "evaluation of this expression requires the target program to be active"
+		gdb_test "print \$_gdb_maint_setting(\"test-settings string\")" \
+		    "evaluation of this expression requires the target program to be active"
+		continue
+	    }
+
+	    if {$lang == "unknown"} {
+		# Skipped because expression parsing is not supported
+		# for the "unknown" language.  See gdb/28093 for more
+		# details.
+		continue
+	    }
+
+	    set print_output ""
+	    set ptype_output ""
+
+	    set foo_str [quote_for_lang $lang foo]
+	    gdb_test_multiple "print $foo_str" "" {
+		-wrap -re " = (.*)" {
+		    set print_output $expect_out(1,string)
+		    pass $gdb_test_name
+		}
+	    }
+
+	    gdb_test_multiple "ptype $foo_str" "" {
+		-wrap -re " = (.*)" {
+		    set ptype_output $expect_out(1,string)
+		    pass $gdb_test_name
+		}
+	    }
+
+	    set cmd_str [quote_for_lang $lang "test-settings string"]
+	    set ptype_output_re [string_to_regexp $ptype_output]
+	    set print_output_re [string_to_regexp $print_output]
+
+	    foreach_with_prefix conv_func $::maint_conv_funcs {
+		gdb_test "print ${conv_func}($cmd_str)" \
+		    " = $print_output_re"
+		gdb_test "ptype \$" \
+		    " = $ptype_output_re"
+	    }
+	}
+    }
+}
+
+# Test with a string value created by gdb.Value in Python.
+
+proc_with_prefix test_python_value { } {
+    clean_restart
+
+    if {![allow_python_tests]} {
+	untested "skipping test_python_value"
+	return
+    }
+
+    gdb_test_no_output "python gdb.set_convenience_variable(\"v\", \"bar\")" \
+	"set convenience var"
+    check_v_string "bar"
+}
+
+# Test with a string value created by make-value in Guile.
+
+proc_with_prefix test_guile_value { } {
+    clean_restart
+
+    if {![allow_guile_tests]} {
+	untested "skipping test_guile_value"
+	return
+    }
+
+    # We can't set a convenience var from Guile, but we can append to history.
+    # Do that, then transfer to a convenience var with a CLI command.
+    gdb_test_no_output "guile (use-modules (gdb))"
+    gdb_test_multiple "guile (history-append! (make-value \"foo\"))" "make value" {
+	-re -wrap "($::decimal)" {
+	    set histnum $expect_out(1,string)
+	}
+    }
+
+    gdb_test_no_output "set \$v = \$$histnum"
+    check_v_string "foo"
+}
+
+# Test with a string value coming from a string internal var.  The only internal
+# vars of this type, at the time of writing, are $trace_func and $trace_file.
+# They both require inspecting a trace frame.  So if the target is capable start
+# tracing, record one trace frame, and use $trace_func.
+
+proc_with_prefix test_internal_var { } {
+    if {![gdb_trace_common_supports_arch]} {
+	unsupported "arch does not support trace"
+	return
+    }
+
+    clean_restart $::binfile
+
+    if {![runto_main]} {
+	fail "could not run to main"
+	return
+    }
+
+    if {![gdb_target_supports_trace]} {
+	unsupported "target does not support trace"
+	return
+    }
+
+    gdb_breakpoint "end"
+    gdb_test "trace trace_me" "Tracepoint $::decimal at $::hex.*"
+    gdb_test_no_output "tstart"
+    gdb_continue_to_breakpoint "breakpoint at end"
+    gdb_test_no_output "tstop"
+    gdb_test "tfind" "Found trace frame 0, tracepoint $::decimal.*"
+    gdb_test_no_output "set \$v = \$trace_func"
+    gdb_test "tfind none" "No longer looking at any trace frame.*"
+    check_v_string "trace_me"
+}
+
+test_setting
+test_python_value
+test_guile_value
+test_internal_var

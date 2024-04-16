@@ -1,0 +1,97 @@
+#   Copyright 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that 'set breakpoint always-inserted 1' is not a brick
+# Also verifies that breakpoint enabling/disabling works properly
+# with duplicated breakpoints.
+
+if { [prepare_for_testing "failed to prepare" break-always break-always.c] } {
+    return -1
+}
+
+set bar_location [gdb_get_line_number "break in bar" break-always.c]
+
+gdb_test_no_output "set breakpoint always-inserted on"
+
+gdb_test "show breakpoint always-inserted" "mode is on\." \
+    "confirm breakpoint always-inserted"
+
+runto foo
+
+gdb_test "break bar" "Breakpoint 2.*" "set breakpoint on bar"
+gdb_test "break bar" "Note: breakpoint 2 also set.*Breakpoint 3.*" "set 2nd breakpoint on bar"
+gdb_test "break bar" "Note: breakpoints 2 and 3 also set.*Breakpoint 4.*" "set 3rd breakpoint on bar"
+gdb_test "break bar" "Note: breakpoints 2, 3 and 4 also set.*Breakpoint 5.*" "set 4th breakpoint on bar"
+gdb_test "info breakpoints" "keep y.*keep y.*keep y.*keep y.*keep y.*" "initial check breakpoint state"
+gdb_test_no_output "disable" "initial disable all breakpoints"
+gdb_test_no_output "enable" "initial enable all breakpoints"
+gdb_test_no_output "disable" "re-disable all breakpoints"
+gdb_test_no_output "enable 3" "enable 3.A"
+gdb_test_no_output "disable 3" "disable 3.B"
+gdb_test_no_output "enable 3" "enable 3.C"
+gdb_test_no_output "enable 2" "enable 2.D"
+gdb_test_no_output "disable 2" "disable 2.E"
+gdb_test_no_output "disable 3" "disable 3.F"
+gdb_test_no_output "enable 3" "enable 3.G"
+gdb_test_no_output "enable 2" "enable 2.H"
+gdb_test_no_output "disable 2" "disable 2.I"
+gdb_test "info breakpoints" "keep n.*keep n.*keep y.*keep n.*keep n.*" "before re-enable check breakpoint state"
+gdb_test_no_output "enable" "re-enable all breakpoints"
+
+set bp_address 0
+set test "set breakpoint on bar 2"
+gdb_test_multiple "break bar" $test {
+    -re "Breakpoint 6 at ($hex).*$gdb_prompt $" {
+	set bp_address $expect_out(1,string)
+	pass $test
+    }
+}
+
+# Save the original INSN under the breakpoint.
+gdb_test "p /x \$shadow = *(char *) $bp_address" \
+    " = $hex" \
+    "save shadow"
+
+# Overwrite memory where the breakpoint is planted.  GDB should update
+# its memory breakpoint's shadows, to account for the new contents,
+# and still leave the breakpoint insn planted.  Try twice with
+# different values, in case we happen to be writing exactly what was
+# there already.
+foreach test_value {0 1} {
+    set write_test "write $test_value to breakpoint's address"
+
+    gdb_test_multiple "p /x *(char *) $bp_address = $test_value" $write_test {
+	-re "Cannot access memory at address $hex.*$gdb_prompt $" {
+
+	    # Some targets do not allow manually writing a breakpoint to a
+	    # certain memory address, like QEMU.  In that case, just bail out.
+	    unsupported "cannot write to address $bp_address"
+	    return -1
+	}
+	-re " = .*$gdb_prompt $" {
+	    pass $write_test
+	}
+    }
+
+    set read_test "read back $test_value from the breakpoint's address"
+    gdb_test "p /x *(char *) $bp_address" " = 0x$test_value" $read_test
+}
+
+# Restore the original contents.
+gdb_test "p /x *(char *) $bp_address = \$shadow" "" \
+    "restore the original contents"
+
+# Run to breakpoint.
+gdb_continue_to_breakpoint "bar" ".*break-always.c:$bar_location.*"

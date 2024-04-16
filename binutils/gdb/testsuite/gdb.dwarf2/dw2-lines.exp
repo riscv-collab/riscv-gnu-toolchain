@@ -1,0 +1,177 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test line number information in various configurations.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+standard_testfile .c
+
+with_shared_gdb {
+    set func_info_vars \
+	[concat \
+	     [get_func_info main] \
+	     [get_func_info bar]]
+}
+
+# Helper function.
+proc line_for { l } {
+    global srcfile
+    set line [gdb_get_line_number "$l:" $srcfile]
+    return [expr $line + 1]
+}
+
+# Execute test.
+proc test_1 { _cv _cdw64 _lv _ldw64 {_string_form ""}} {
+    global srcfile srcfile2 testfile
+    global cv cdw64 lv ldw64 string_form
+    set cv $_cv
+    set cdw64 $_cdw64
+    set lv $_lv
+    set ldw64 $_ldw64
+    set string_form $_string_form
+
+    standard_testfile .c [prefix_id]-dw.S
+
+    set asm_file [standard_output_file $srcfile2]
+    Dwarf::assemble $asm_file {
+	declare_labels Llines
+	global srcdir subdir srcfile cv cdw64 lv ldw64 string_form
+	global func_info_vars
+	foreach var $func_info_vars {
+	    global $var
+	}
+
+	cu { version $cv is_64 $cdw64 } {
+	    compile_unit {
+		{language @DW_LANG_C}
+		{name $srcfile}
+		{stmt_list $Llines DW_FORM_sec_offset}
+	    } {
+		subprogram {
+		    {external 1 flag}
+		    {name main}
+		    {low_pc $main_start addr}
+		    {high_pc "$main_start + $main_len" addr}
+		}
+		subprogram {
+		    {external 1 flag}
+		    {name bar}
+		    {low_pc $bar_start addr}
+		    {high_pc "$bar_start + $bar_len" addr}
+		}
+	    }
+	}
+
+	lines [list version $lv is_64 $ldw64 string_form $string_form] Llines {
+	    set diridx [include_dir "${srcdir}/${subdir}"]
+	    file_name "$srcfile" $diridx
+
+	    program {
+		# If using DWARF 5, we want to refer to file 0, but the LNP
+		# state machine is still initialized with file 1.  So we need
+		# to set the current file explicitly.
+		DW_LNS_set_file $diridx
+
+		DW_LNE_set_address bar_label
+		line [line_for bar_label]
+		DW_LNS_copy
+
+		DW_LNE_set_address bar_label_2
+		line [line_for bar_label_2]
+		DW_LNS_copy
+
+		DW_LNE_set_address bar_label_3
+		line [line_for bar_label_3]
+		DW_LNS_copy
+
+		DW_LNE_set_address bar_label_4
+		line [line_for bar_label_4]
+		DW_LNS_copy
+
+		DW_LNE_set_address bar_label_5
+		DW_LNE_end_sequence
+	    }
+	}
+    }
+
+    if { [prepare_for_testing "failed to prepare" ${testfile}.[prefix_id] \
+	      [list $srcfile $asm_file] {nodebug}] } {
+	return -1
+    }
+
+    if ![runto_main] {
+	return -1
+    }
+
+    gdb_breakpoint "bar_label"
+    gdb_continue_to_breakpoint "foo \\(1\\)"
+
+    gdb_test "next" "foo \\(2\\).*" "next to foo (2)"
+    gdb_test "next" "foo \\(3\\).*" "next to foo (3)"
+    gdb_test "next" "foo \\(4\\).*" "next to foo (4)"
+}
+
+
+# Add unique test prefix.
+proc test { cv cdw64 lv ldw64 {string_form ""}} {
+    with_test_prefix cv=$cv {
+	with_test_prefix cdw=[expr $cdw64 ? 64 : 32] {
+	    with_test_prefix lv=$lv {
+		with_test_prefix ldw=[expr $ldw64 ? 64 : 32] {
+		    if { $string_form == "" } {
+			test_1 $cv $cdw64 $lv $ldw64
+		    } else {
+			with_test_prefix string_form=$string_form {
+			    test_1 $cv $cdw64 $lv $ldw64 $string_form
+			}
+		    }
+		}
+	    }
+	}
+    }
+}
+
+set cv_low 2
+set cv_high 4
+
+set lv_low 2
+set lv_high 4
+
+for { set cv $cv_low } { $cv <= $cv_high } { incr cv } {
+    for { set lv $lv_low } { $lv <= $lv_high } { incr lv } {
+	# I'm not sure if it makes sense to have a dwarf vx CU with
+	# a dwarf vx+1 line unit.
+	if { $lv > $lv } {
+	    continue
+	}
+
+	foreach cdw64 { 0 1 } {
+	    foreach ldw64 { 0 1 } {
+		test $cv $cdw64 $lv $ldw64
+	    }
+	}
+    }
+}
+
+foreach cdw64 { 0 1 } {
+    foreach ldw64 { 0 1 } {
+	test 5 $cdw64 5 $ldw64 string
+	test 5 $cdw64 5 $ldw64 line_strp
+    }
+}

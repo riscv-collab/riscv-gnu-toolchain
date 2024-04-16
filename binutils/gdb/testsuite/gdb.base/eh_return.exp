@@ -1,0 +1,82 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+# Check if executable generated from eh_return.c assert when setting a
+# breakpoint at the last insn of eh, and running to it.
+
+standard_testfile
+
+# Set compiler flags.
+if {[istarget "powerpc*"]} {
+    # PowerPC generates a Traceback Table, as defined in the PPC64 ABI,
+    # following each function by default.  The Traceback Table information is
+    # typically interpreted by the disassembler as data represented with
+    # .long xxxx following the last instruction in the function.  For example:
+    #
+    #   Dump of assembler code for function eh2:
+    #   0x00000000100009e0 <+0>:     lis     r2,4098
+    #   ...
+    #   0x0000000010000b04 <+292>:   add     r1,r1,r10
+    #   0x0000000010000b08 <+296>:   blr
+    #   0x0000000010000b0c <+300>:   .long 0x0
+    #   0x0000000010000b10 <+304>:   .long 0x1000000
+    #   0x0000000010000b14 <+308>:   .long 0x1000180
+    #   End of assembler dump.
+    #
+    # Disable the Traceback Table generation, using the PowerPC specific
+    # compiler option, so the test gdb_test_multiple "disassemble eh2" will
+    # locate the address of the blr instruction not the last .long statement.
+    if { [test_compiler_info "gcc-*"] } {
+	set compile_flags {debug nopie additional_flags=-mtraceback=no}
+    } elseif { [test_compiler_info "xlc-*"] } {
+	set compile_flags {debug nopie additional_flags=-qtbtable=none}
+    } elseif { [test_compiler_info "clang-*"] } {
+	set compile_flags [list debug nopie additional_flags=-mllvm \
+			       additional_flags=-xcoff-traceback-table=false]
+    } else {
+	set compile_flags {debug nopie }
+    }
+} else {
+    set compile_flags {debug nopie}
+}
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile \
+	 $compile_flags]} {
+    return -1
+}
+
+set address -1
+
+# Get the address of the last insn in function eh2.
+gdb_test_multiple "disassemble eh2" "" {
+    -re -wrap "($hex)\[^\r\n\]*\r\nEnd of assembler dump." {
+	set address $expect_out(1,string)
+	pass $gdb_test_name
+    }
+}
+
+if { $address == -1 } {
+    return 0
+}
+
+clean_restart ${binfile}
+
+gdb_assert [gdb_breakpoint "*$address" no-message] "set breakpoint on address"
+
+# The assert did not reproduce when running to main, and continuing to the
+# breakpoint, so instead, run to the breakpoint.
+gdb_run_cmd
+
+gdb_test "" "Breakpoint .*" "hit breakpoint"

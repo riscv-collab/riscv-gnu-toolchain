@@ -1,0 +1,70 @@
+# Copyright 2002-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Regression test for PR11557.  Make sure we don't end up with a stale
+# register cache just after resuming a thread.
+
+require support_displaced_stepping
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+proc mi_nonstop_resume { command test } {
+    if { [mi_send_resuming_command $command $test] != 0 } {
+	# If a resume fails, assume non-stop is broken or unsupported
+	# for this target.  We have logged a FAIL or UNSUPPORTED; skip
+	# the remaining tests to limit timeouts.
+	return -code continue
+    }
+}
+
+#
+# Start here
+#
+standard_testfile ns-stale-regcache.c
+
+set options [list debug]
+if {[gdb_compile "$srcdir/$subdir/$srcfile" \
+	 $binfile executable $options] != "" } {
+    return -1
+}
+
+save_vars { GDBFLAGS } {
+    append GDBFLAGS " -ex \"set non-stop on\""
+    mi_clean_restart $binfile
+}
+
+mi_gdb_test "-gdb-set mi-async 1" ".*"
+mi_detect_async
+
+if { [mi_runto_main] < 0 } {
+    return
+}
+
+# Check that register and stack info don't end up stale after resuming
+# a thread.
+mi_nonstop_resume "exec-continue" "resume thread"
+
+mi_gdb_test "-data-evaluate-expression \$pc" \
+    "\\^error,msg=\".*\"" "no stale register cache of resumed thread"
+
+mi_gdb_test "-stack-info-frame" \
+    "\\^error,msg=\".*\"" "no stale frame info of resumed thread"
+
+# Check that the thread is still running.  If the above tests passed,
+# we want it to be for the right reasons.
+mi_check_thread_states {"running"} "main thread still running"
+
+mi_gdb_exit

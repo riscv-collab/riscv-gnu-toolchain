@@ -1,0 +1,117 @@
+# Copyright (C) 2010-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It tests the program space
+# support in Python.
+
+load_lib gdb-python.exp
+
+require allow_python_tests
+
+standard_testfile
+
+if {[build_executable $testfile.exp $testfile $srcfile debug] == -1} {
+    return -1
+}
+
+clean_restart
+
+gdb_test "python print (gdb.current_progspace().filename)" "None" \
+  "current progspace filename (None)"
+gdb_test "python print (gdb.current_progspace().symbol_file)" "None" \
+    "current progspace symbol_file is None"
+gdb_test "python print (gdb.progspaces())" "\\\[<gdb.Progspace object at $hex>\\\]"
+
+gdb_test_no_output "python dir(gdb.current_progspace())"
+
+gdb_load ${binfile}
+
+gdb_py_test_silent_cmd "python progspace = gdb.current_progspace()" \
+    "Get current progspace" 1
+
+gdb_test "python print (progspace.filename)" "py-progspace" \
+  "current progspace filename (py-progspace)"
+
+gdb_test "python print (gdb.current_progspace().symbol_file)" \
+    "<gdb.Objfile filename=.*/py-progspace>" \
+    "current progspace symbol_file is set correctly"
+
+gdb_py_test_silent_cmd "python progspace.random_attribute = 42" \
+    "Set random attribute in progspace" 1
+gdb_test "python print (progspace.random_attribute)" "42" \
+    "Verify set of random attribute in progspace"
+
+# Check that we can't create new (invalid) gdb.Progspace objects.
+gdb_test "python gdb.Progspace()" \
+    [multi_line "TypeError: cannot create 'gdb.Progspace' instances" \
+	 "Error while executing Python code\\."] \
+    "check for error when calling gdb.Progspace() directly"
+
+if {![runto_main]} {
+    return
+}
+
+# Check we can get a block for the current $pc.
+set pc_val [get_integer_valueof "\$pc" 0]
+gdb_py_test_silent_cmd "python blk = gdb.current_progspace ().block_for_pc (${pc_val})" \
+    "get block for the current \$pc" 1
+gdb_py_test_silent_cmd \
+    "python blk = gdb.current_progspace ().block_for_pc (gdb.Value(${pc_val}))" \
+    "get block for the current \$pc as value" 1
+gdb_test "python print (blk.start <= ${pc_val})" "True" \
+    "block start is before \$pc"
+gdb_test "python print (blk.end >= ${pc_val})" "True" \
+    "block end is after \$pc"
+
+# Check what happens when we ask for a block of an invalid address.
+if ![is_address_zero_readable] {
+    gdb_test "python print (gdb.current_progspace ().block_for_pc (0))" "None"
+}
+
+gdb_test "python print(gdb.current_progspace().objfile_for_address(${pc_val}).username)" \
+    ".*py-progspace" \
+    "objfile for pc"
+gdb_test "python print(gdb.current_progspace().objfile_for_address(0))" \
+    "None" \
+    "no objfile for 0"
+
+# With a single inferior, progspace.objfiles () and gdb.objfiles () should
+# be identical.
+gdb_test "python print (progspace.objfiles () == gdb.objfiles ())" "True"
+
+gdb_test "add-inferior"
+gdb_test "inferior 2"
+
+gdb_load ${binfile}
+
+# With a second (non-started) inferior, we should have a single objfile - the
+# main one.
+gdb_test "python print (len (gdb.objfiles ())) == 1"
+
+# And the gdb.objfiles() list should now be different from the objfiles of the
+# prog space of inferior 1.
+gdb_test "python print (progspace.objfiles () != gdb.objfiles ())" "True"
+
+# Delete inferior 2 (and therefore the second progspace), check that the Python
+# object reacts sensibly.
+gdb_py_test_silent_cmd "python progspace2 = gdb.current_progspace()" \
+    "save progspace 2" 1
+gdb_test "inferior 1" "Switching to inferior 1.*"
+gdb_test_no_output "remove-inferiors 2"
+gdb_test "python print (progspace2.objfiles ())" \
+    "RuntimeError: Program space no longer exists.*"
+
+gdb_test "python print (progspace2.symbol_file)" \
+    "RuntimeError: Program space no longer exists.*"

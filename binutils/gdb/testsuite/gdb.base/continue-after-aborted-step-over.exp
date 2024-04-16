@@ -1,0 +1,93 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This testcase is a regression test for a regression in the in-line
+# step-over machinery.  If a resumption that starts a step-over
+# failed, a following resumption would make GDB hang forever:
+#
+#  (gdb) b *0
+#  Breakpoint 2 at 0x0
+#  continue
+#  Continuing.
+#  Warning:
+#  Cannot insert breakpoint 2.
+#  Cannot access memory at address 0x0
+#
+#  Command aborted.
+#  delete breakpoints
+#  Delete all breakpoints? (y or n) y
+#  (gdb) b function
+#  Breakpoint 3 at 0x40048b: file test.c, line 33.
+#  continue
+#  Continuing.
+#  *GDB hangs forever*
+
+standard_testfile
+
+if {[build_executable "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+# DISPLACED indicates whether to use displaced-stepping.
+proc do_test {displaced breakpoint_always_inserted} {
+    global gdb_prompt decimal
+    global srcfile binfile
+
+    clean_restart $binfile
+
+    gdb_test_no_output "set displaced-stepping $displaced"
+    gdb_test_no_output "set breakpoint always-inserted $breakpoint_always_inserted"
+
+    if ![runto_main] {
+	return -1
+    }
+
+    # We rely on not being able to set a breakpoint at 0, as proxy for
+    # any kind of breakpoint insertion failure.  If we can examine
+    # what's at memory address 0, it is possible that we could also
+    # execute it.
+    if [is_address_zero_readable] {
+	untested "memory at address 0 is possibly executable"
+	return
+    }
+
+    # Set a breakpoint that fails to insert.
+    if { $breakpoint_always_inserted == "on" } {
+	gdb_test "b *0" "Breakpoint $decimal at 0x0.*"
+    } else {
+	gdb_test "b *0" "Breakpoint $decimal at 0x0"
+    }
+
+    gdb_test "continue" \
+	"Command aborted\\." \
+	"continue aborts"
+
+    # Delete the "bad" breakpoint and try continuing again.
+    delete_breakpoints
+    gdb_test "b function" "Breakpoint $decimal .*$srcfile.*"
+
+    gdb_test "continue" \
+	"Breakpoint $decimal, function \\(\\) at .*$srcfile:.*" \
+	"continue to function"
+}
+
+# This testcase exercises a regression with the in-line step-over
+# machinery.  So make sure this runs with displaced stepping disabled,
+# and for good measure, also try with displaced stepping enabled.
+foreach_with_prefix displaced-stepping {"off" "on"} {
+    foreach_with_prefix breakpoint-always-inserted {"off" "on"} {
+	do_test ${displaced-stepping} ${breakpoint-always-inserted}
+    }
+}

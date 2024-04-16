@@ -1,0 +1,204 @@
+# Copyright 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile
+
+# Take a list of directories DIRS, and return a regular expression
+# that will match against the output of the 'directory' command
+# assuming that DIRS are all of the directories that should appear in
+# the results.
+proc search_dir_list { dirs } {
+    set output "\r\nSource directories searched: "
+    append output [join $dirs "\[:;\]"]
+
+    return ${output}
+}
+
+# Check that adding directories to the search path changes the order
+# in which directories are searched.
+proc test_changing_search_directory {} {
+    gdb_start
+
+    set foo "/nOtExStInG"
+
+    gdb_test "directory $foo/a $foo/b $foo/c" \
+	[search_dir_list [list \
+			      "$foo/a" \
+			      "$foo/b" \
+			      "$foo/c" \
+			      "\\\$cdir" \
+			      "\\\$cwd"]]
+    gdb_test "directory $foo/b $foo/d $foo/c" \
+	[search_dir_list [list \
+			      "$foo/b" \
+			      "$foo/d" \
+			      "$foo/c" \
+			      "$foo/a" \
+			      "\\\$cdir" \
+			      "\\\$cwd"]]
+    gdb_exit
+}
+
+# Test that the compilation directory can also be extended with a
+# prefix from the directory search path in order to find source files.
+proc test_truncated_comp_dir {} {
+    global srcfile srcdir subdir binfile
+    global decimal
+
+    # When we run this test the current directory will be something
+    # like this:
+    #     /some/path/to/gdb/build/testsuite/
+    # We are going to copy the source file out of the source tree into
+    # a location like this:
+    #     /some/path/to/gdb/build/testsuite/output/gdb.base/soure-dir/
+    #
+    # We will then switch to this directory and compile the source
+    # file, however, we will ask GCC to remove this prefix from the
+    # compilation directory in the debug info:
+    #     /some/path/to/gdb/build/testsuite/output/
+    #
+    # As a result the debug information will look like this:
+    #
+    #     DW_AT_name        : source-dir.c
+    #     DW_AT_comp_dir    : /gdb.base/source-dir
+    #
+    # Finally we switch back to this directory:
+    #     /some/path/to/gdb/build/testsuite/
+    #
+    # and start GDB.  There was a time when GDB would be unable to
+    # find the source file no matter what we added to the directory
+    # search path, this should now be fixed.
+
+    # All of these pathname and directory manipulations assume
+    # host == build, so do not attempt this set of tests on remote host.
+    if [is_remote host] {
+        return
+    }
+
+    set working_dir [standard_output_file ""]
+    with_cwd $working_dir {
+	set strip_dir [file normalize "${working_dir}/../.."]
+
+	set new_srcfile [standard_output_file ${srcfile}]
+	set fd [open "$new_srcfile" w]
+	puts $fd "int
+	main ()
+	{
+	  return 0;
+	}"
+	close $fd
+
+	set options \
+	    "debug additional_flags=-fdebug-prefix-map=${strip_dir}="
+	if  { [gdb_compile "${srcfile}" "${binfile}" \
+		   executable ${options}] != "" } {
+	    untested "failed to compile"
+	    return -1
+	}
+    }
+
+    clean_restart ${binfile}
+
+    if { [ishost *-*-mingw*] } {
+        gdb_test_no_output "set directories \$cdir;\$cwd"
+    } else {
+	gdb_test_no_output "set directories \$cdir:\$cwd"
+    }
+    gdb_test "show directories" \
+	"\r\nSource directories searched: \\\$cdir\[:;\]\\\$cwd"
+
+    if {![runto_main]} {
+	return 0
+    }
+
+    gdb_test "info source" \
+    [multi_line \
+	 "Current source file is ${srcfile}" \
+	 "Compilation directory is \[^\n\r\]+" \
+	 "Source language is c." \
+	 "Producer is \[^\n\r\]+" \
+	 "Compiled with DWARF $decimal debugging format." \
+	 "Does not include preprocessor macro info." ] \
+	"info source before setting directory search list"
+
+    gdb_test "dir $strip_dir" \
+	[search_dir_list [list \
+			      "$strip_dir" \
+			      "\\\$cdir" \
+			      "\\\$cwd"]] \
+	"setup source path search directory"
+    gdb_test "list" [multi_line \
+			 "1\[ \t\]+int" \
+			 "2\[ \t\]+main \\(\\)" \
+			 "3\[ \t\]+\\{" \
+			 "4\[ \t\]+return 0;" \
+			 "5\[ \t\]+\\}" ]
+
+    gdb_test "info source" \
+	[multi_line \
+	     "Current source file is ${srcfile}" \
+	     "Compilation directory is \[^\n\r\]+" \
+	     "Located in ${new_srcfile}" \
+	     "Contains 5 lines." \
+	     "Source language is c." \
+	     "Producer is \[^\n\r\]+" \
+	     "\[^\n\r\]+" \
+	     "\[^\n\r\]+" ] \
+	"info source after setting directory search list"
+}
+
+proc test_change_search_directory_with_empty_dirname {} {
+    gdb_start
+
+    # Add 3 entries to the source directories list:
+    # - ""
+    # - "/foo"
+    # - "/bar"
+    # Since /foo and /bar probably do not exist, ignore the warnings printed by
+    # GDB.
+    if { [ishost *-*-mingw*] } {
+	gdb_test "set directories ;/foo;/bar" ".*"
+    } else {
+	gdb_test "set directories :/foo:/bar" ".*"
+    }
+
+    # The first entry added ("") should be ignored, only /foo and /bar are
+    # effectively added.
+    with_test_prefix "initial_directory_state" {
+	gdb_test "show directories" \
+	    [search_dir_list [list \
+				  "/foo" \
+				  "/bar" \
+				  "\\\$cdir" \
+				  "\\\$cwd"]]
+    }
+
+    # Arguments can be quoted.  Check a empty string has the same effect as
+    # 'set directory' (i.e. reset to $cdir:$cwd)
+    gdb_test_no_output "set directories \"\""
+
+    with_test_prefix "directory_after_reset" {
+	gdb_test "show directories" \
+	    [search_dir_list [list \
+				  "\\\$cdir" \
+				  "\\\$cwd"]]
+    }
+
+    gdb_exit
+}
+
+test_changing_search_directory
+test_change_search_directory_with_empty_dirname
+test_truncated_comp_dir

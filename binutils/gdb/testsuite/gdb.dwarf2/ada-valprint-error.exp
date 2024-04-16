@@ -1,0 +1,113 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+standard_testfile .c -dw.S
+
+# We need to know the size of integer and address types in order
+# to write some of the debugging info we'd like to generate.
+#
+# For that, we ask GDB by debugging our ada-valprint-error.c program.
+# Any program would do, but since we already have ada-valprint-error.c
+# specifically for this testcase, might as well use that.
+
+if { [prepare_for_testing ${testfile}.exp ${testfile} ${srcfile}] } {
+    untested "failed to compile"
+    return -1
+}
+
+# Make some DWARF for the test.
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    cu {} {
+ 	DW_TAG_compile_unit {
+                {DW_AT_language @DW_LANG_Ada95}
+                {DW_AT_name     fd.adb}
+                {DW_AT_comp_dir /tmp}
+        } {
+	    declare_labels array_elt_label integer_label array_label \
+                typedef_label ref_type_label
+            set ptr_size [get_sizeof "void *" 96]
+            set int_size [get_sizeof "int" 4]
+
+            # A structure with no size attribute, to mimick structures
+            # in Ada that have a dynamic size...
+            array_elt_label: structure_type {
+                {name fd__Tints_doubledC}
+                {artificial 1 DW_FORM_flag_present}
+            }
+
+            # ... and a corresponding XVZ variable, supposed to be there
+            # to provide the actual size.  Except that, in this case,
+            # the variable has no address, to simulate the fact that
+            # it has been optimized out (which the compiler can do,
+            # even if it at the expense of debuggability).
+            DW_TAG_variable {
+                {name fd__Tints_doubledC___XVZ}
+                {DW_AT_type :$integer_label}
+                {artificial 1 DW_FORM_flag_present}
+            }
+
+            integer_label: DW_TAG_base_type {
+                {DW_AT_byte_size $int_size DW_FORM_sdata}
+                {DW_AT_encoding  @DW_ATE_signed}
+                {DW_AT_name      integer}
+            }
+
+	    array_label: DW_TAG_array_type {
+		{DW_AT_name fd__ints_doubled}
+		{DW_AT_type :$array_elt_label}
+	    } {
+		DW_TAG_subrange_type {
+		    {DW_AT_type        :$integer_label}
+		    {DW_AT_upper_bound 2 DW_FORM_data1}
+		}
+	    }
+
+            typedef_label: DW_TAG_typedef {
+                {DW_AT_name fd__ints_doubled}
+                {DW_AT_type :$array_label}
+            }
+
+            ref_type_label: DW_TAG_reference_type {
+                {DW_AT_byte_size $ptr_size DW_FORM_sdata}
+                {DW_AT_type :$typedef_label}
+            }
+
+            DW_TAG_variable {
+                {name fd__global}
+                {DW_AT_type :$ref_type_label}
+                {DW_AT_location {
+                    DW_OP_addr [gdb_target_symbol fd__global]
+                } SPECIAL_expr}
+                {external 1 flag}
+            }
+
+	}
+    }
+}
+
+if { [prepare_for_testing ${testfile}.exp ${testfile} \
+	  [list $srcfile $asm_file] {nodebug}] } {
+    return -1
+}
+
+gdb_test_no_output "set language ada"
+
+gdb_test "print fd.global" \
+         " = <error reading variable: unable to read value of fd__Tints_doubledC___XVZ \\(value has been optimized out\\)>"

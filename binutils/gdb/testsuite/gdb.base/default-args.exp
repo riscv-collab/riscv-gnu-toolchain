@@ -1,0 +1,123 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2019-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test the "default-args" arguments and completion of alias command.
+
+load_lib completion-support.exp
+
+standard_testfile .c
+
+if {[build_executable "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+clean_restart $binfile
+
+# Basic/core tests using user-visible commands.
+with_test_prefix "basics" {
+    # Define an alias to pretty print something.
+    gdb_test "print g_s" " = {a = 1, b = 2, c = 3}" "simple print"
+    gdb_test_no_output "alias PP = print -pretty --" "alias PP"
+    gdb_test "help PP" "print, PP, inspect, p\r\n  alias PP = print -pretty --\r\n.*"
+    gdb_test "PP g_s" \
+	[multi_line  \
+	     " = {" \
+	     "  a = 1," \
+	     "  b = 2," \
+	     "  c = 3" \
+	     "}"]
+
+    # Define an alias of frame apply all with some default args.
+    gdb_test_no_output "alias frame apply tout = frame apply all -past-entry -past-main" \
+	"alias frame apply tout"
+    gdb_test "help frame apply tout" \
+	"frame apply all, frame apply tout\r\n  alias frame apply tout = frame apply all -past-entry -past-main\r\n.*"
+
+    # Show all aliases.
+    gdb_test "help aliases" \
+	[multi_line  \
+	     "User-defined aliases of other commands." \
+	     "" \
+	     "List of commands:" \
+	     "" \
+	     "PP -- Print value of expression EXP." \
+	     "  alias PP = print -pretty --" \
+	     "frame apply tout -- Apply a command to all frames." \
+	     "  alias frame apply tout = frame apply all -past-entry -past-main" \
+	     ".*" ] \
+	"help aliases"
+}
+
+# Check errors.
+with_test_prefix "errors" {
+    # Try an unknown root setting.
+    gdb_test "alias wrong = xxxx yyyy -someoption" \
+	"Undefined command: \"xxxx\".  Try \"help\"\\."
+
+    # Try ambiguous command.
+    gdb_test "alias wrong = a" \
+	"Ambiguous command \"a\":.*" "ambiguous a"
+    gdb_test "alias wrong = frame a" \
+	"Ambiguous frame command \"a\":.*" "ambiguous frame a"
+}
+
+
+# Check completion.
+with_test_prefix "completion" {
+    test_gdb_complete_unique \
+	"alias set pri" \
+	"alias set print"
+
+    test_gdb_complete_unique \
+	"alias set print items = set pri" \
+	"alias set print items = set print"
+
+    test_gdb_complete_unique \
+	"alias set print items = set print ele" \
+	"alias set print items = set print elements"
+
+   test_gdb_complete_unique \
+	"alias btfu = backt" \
+	"alias btfu = backtrace"
+
+   test_gdb_complete_unique \
+	"alias btfu = backtrace -fu" \
+	"alias btfu = backtrace -full"
+
+   test_gdb_complete_unique \
+	"alias btfu = backtrace -full -past-e" \
+	"alias btfu = backtrace -full -past-entry"
+
+    gdb_test_no_output "alias btfu = backtrace -full -past-entry" \
+	"alias btfu"
+
+}
+
+# Check alias of alias.
+with_test_prefix "alias_of_alias" {
+    # Verify we can alias an alias that has no default args.
+    # We allow an alias of an alias, to be backward compatible with
+    # GDB 9.1 .
+    gdb_test_no_output "alias aaa = backtrace"
+    gdb_test_no_output "alias bbb = backtrace"
+
+    # Verify that we cannot define an alias of an alias that has default args.
+    gdb_test_no_output "alias ccc = backtrace -full"
+    gdb_test "alias ddd = ccc" \
+	"Cannot define an alias of an alias that has default args"
+
+}

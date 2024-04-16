@@ -1,0 +1,139 @@
+# Copyright 2019-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test shows the importance of not corrupting the order of line
+# table information.  When multiple lines are given for the same
+# address the compiler usually lists these in the order in which we
+# would expect to encounter them.  When stepping through nested inline
+# frames the last line given for an address is assumed by GDB to be
+# the most inner frame, and this is what GDB displays.
+#
+# If we corrupt the order of the line table entries then GDB will
+# display the wrong line as being the inner most frame.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+# The .c files use __attribute__.
+require is_c_compiler_gcc
+
+standard_testfile .c .S
+
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    global srcdir subdir srcfile srcfile2
+    declare_labels ranges_label lines_label foo_prog
+
+    lassign [function_range main [list ${srcdir}/${subdir}/$srcfile]] \
+	main_start main_len
+    set main_end "$main_start + $main_len"
+    lassign [function_range bar [list ${srcdir}/${subdir}/$srcfile]] \
+	bar_start bar_len
+    set bar_end "$bar_start + $bar_len"
+
+    set call_line [gdb_get_line_number "main call foo"]
+
+    cu {} {
+	compile_unit {
+	    {language @DW_LANG_C}
+	    {name dw2-inline-stepping.c}
+	    {low_pc 0 addr}
+	    {stmt_list ${lines_label} DW_FORM_sec_offset}
+	    {ranges ${ranges_label} DW_FORM_sec_offset}
+	} {
+	    subprogram {
+		{external 1 flag}
+		{name bar}
+		{low_pc $bar_start addr}
+		{high_pc "$bar_start + $bar_len" addr}
+	    }
+	    foo_prog: subprogram {
+		{name foo}
+		{inline 3 data1}
+	    }
+	    subprogram {
+		{external 1 flag}
+		{name main}
+		{low_pc $main_start addr}
+		{high_pc "$main_start + $main_len" addr}
+	    } {
+		inlined_subroutine {
+		    {abstract_origin %$foo_prog}
+		    {low_pc main_label2 addr}
+		    {high_pc main_label3 addr}
+		    {call_file 1 data1}
+		    {call_line $call_line data1}
+		}
+	    }
+	}
+    }
+
+    lines {version 2} lines_label {
+	include_dir "${srcdir}/${subdir}"
+	file_name "$srcfile" 1
+
+	program {
+	    DW_LNE_set_address $main_start
+	    line [gdb_get_line_number "main prologue"]
+	    DW_LNS_copy
+	    DW_LNE_set_address main_label
+	    line [gdb_get_line_number "main set global_var"]
+	    DW_LNS_copy
+	    DW_LNE_set_address main_label2
+	    line [gdb_get_line_number "main call foo"]
+	    DW_LNS_copy
+	    DW_LNE_set_address main_label2
+	    line [gdb_get_line_number "foo call bar"]
+	    DW_LNS_copy
+	    DW_LNE_set_address $main_end
+	    DW_LNE_end_sequence
+
+	    DW_LNE_set_address $bar_start
+	    line [gdb_get_line_number "bar prologue"]
+	    DW_LNS_copy
+	    DW_LNE_set_address bar_label
+	    line [gdb_get_line_number "bar return global_var"]
+	    DW_LNS_copy
+	    DW_LNE_set_address $bar_end
+	    DW_LNE_end_sequence
+	}
+    }
+
+    ranges {is_64 [is_64_target]} {
+	ranges_label: sequence {
+	    range ${main_start} ${main_end}
+	    range ${bar_start} ${bar_end}
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	  [list $srcfile $asm_file] {nodebug}] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+set patterns [list "main call foo" \
+		  "foo call bar" \
+		  "bar return global_var"]
+foreach p $patterns {
+    gdb_test "step" "/\\* $p \\*/" \
+	"step to '$p'"
+}

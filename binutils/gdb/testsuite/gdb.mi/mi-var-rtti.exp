@@ -1,0 +1,125 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require allow_cplus_tests
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+standard_testfile .cc
+set opts {debug c++}
+
+if [build_executable $testfile.exp $testfile $srcfile $opts] {
+    return -1
+}
+
+if {[mi_clean_restart $binfile]} {
+    return
+}
+
+mi_prepare_inline_tests $srcfile
+
+# Enable using RTTI to determine real types of the objects
+proc set_print_object {state testname} {
+    mi_gdb_test "-interpreter-exec console \"set print object ${state}\"" \
+	"(.*=cmd-param-changed,param=\"print object\",value=\"${state}\".*|)\\^done" \
+        "-interpreter-exec console \"set print object ${state}\" in $testname"
+}
+
+proc check_derived_children_without_rtti {varobj_name var_name testname} {
+    mi_list_varobj_children ${varobj_name} "
+        { ${varobj_name}.public public 1 }
+    " "list children of ${var_name} (without RTTI) in $testname"
+    mi_list_varobj_children "${varobj_name}.public" "
+        { ${varobj_name}.public.A A 0 int }
+    " "list children of ${var_name}.public (without RTTI) in $testname"
+}
+
+proc check_derived_content_without_rtti {varobj_name var_name testname} {
+    mi_check_varobj_value ${varobj_name}.public.A 1 \
+        "check ${var_name}->A (without RTTI) in $testname"
+}
+
+proc check_derived_without_rtti {varobj_name var_name testname} {
+    check_derived_children_without_rtti ${varobj_name} ${var_name} ${testname}
+    check_derived_content_without_rtti ${varobj_name} ${var_name} ${testname}
+}
+
+proc check_new_derived_without_rtti {var_name var_type testname} {
+    set varobj_name VAR
+    mi_create_varobj_checked ${varobj_name} ${var_name} ${var_type} \
+        "create varobj for ${var_name} (without RTTI) in ${testname}"
+    check_derived_without_rtti ${varobj_name} ${var_name} ${testname}
+    mi_delete_varobj ${varobj_name} \
+        "delete varobj for ${var_name} (without RTTI) in ${testname}"
+}
+
+proc check_derived_children_with_rtti {varobj_name var_name testname} {
+    mi_list_varobj_children ${varobj_name} "
+        { ${varobj_name}.Base Base 1 Base }
+        { ${varobj_name}.public public 2 }
+    " "list children of ${var_name} (with RTTI) in $testname"
+    mi_list_varobj_children "${varobj_name}.Base" "
+        { ${varobj_name}.Base.public public 1 }
+    " "list children of ${var_name}.Base (with RTTI) in $testname"
+    mi_list_varobj_children "${varobj_name}.Base.public" "
+        { ${varobj_name}.Base.public.A A 0 int }
+    " "list children of ${var_name}.Base.public (with RTTI) in $testname"
+    mi_list_varobj_children "${varobj_name}.public" "
+        { ${varobj_name}.public.B B 0 int }
+        { ${varobj_name}.public.C C 0 int }
+    " "list children of ${var_name}.public (with RTTI) in $testname"
+}
+
+proc check_derived_content_with_rtti {varobj_name var_name testname} {
+    mi_check_varobj_value ${varobj_name}.Base.public.A 1 \
+        "check ${var_name}->A (with RTTI) in $testname"
+    mi_check_varobj_value ${varobj_name}.public.B 2 \
+        "check ${var_name}->B (with RTTI) in $testname"
+    mi_check_varobj_value ${varobj_name}.public.C 3 \
+        "check ${var_name}->C (with RTTI) in $testname"
+}
+
+proc check_derived_with_rtti {varobj_name var_name testname} {
+    check_derived_children_with_rtti ${varobj_name} ${var_name} $testname
+    check_derived_content_with_rtti ${varobj_name} ${var_name} $testname
+}
+
+proc check_new_derived_with_rtti {var_name var_type testname} {
+    set varobj_name VAR
+    mi_create_varobj_checked ${varobj_name} ${var_name} ${var_type} \
+        "create varobj for ${var_name} (with RTTI) in $testname"
+    check_derived_with_rtti ${varobj_name} ${var_name} $testname
+    mi_delete_varobj ${varobj_name} \
+        "delete varobj for ${var_name} (with RTTI) in $testname"
+}
+
+set inline_tests {
+    use_rtti_for_ptr
+    use_rtti_for_ref
+    use_rtti_for_ptr_child
+    use_rtti_for_ref_child
+    use_rtti_with_multiple_inheritence
+    type_update_when_use_rtti
+    skip_type_update_when_not_use_rtti
+}
+
+foreach_with_prefix inline_test $inline_tests {
+    if { [mi_run_inline_test $inline_test] < 0 } {
+       return -1
+    }
+}
+
+mi_gdb_exit

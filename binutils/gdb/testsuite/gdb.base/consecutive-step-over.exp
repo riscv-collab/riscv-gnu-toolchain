@@ -1,0 +1,69 @@
+# Copyright 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+#
+# Regression test for a bug where GDB would internal error if a thread
+# runs into a breakpoint that needs stepping over, just after stepping
+# over another breakpoint, without a user visible stop in between.
+#
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+if {![runto_main]} {
+    return 0
+}
+
+# Make sure the target doesn't hide the breakpoint hits (that don't
+# cause a user visible stop) from GDB.
+gdb_test_no_output "set breakpoint condition-evaluation host"
+
+set up_to_nl "\[^\r\n\]+\[\r\n\]+"
+
+# Number of consecutive breakpoints in a row to try.
+set n_insns 3
+
+# Extract addresses of a few consecutive instructions.
+set test "get breakpoint addresses"
+if { [gdb_test_multiple "x /[expr $n_insns + 1]i \$pc" $test {
+    -re "=> $hex${up_to_nl}   ($hex)${up_to_nl}   ($hex)${up_to_nl}   ($hex)${up_to_nl}$gdb_prompt $" {
+	for {set i 1} {$i <= $n_insns} {incr i} {
+	    set bp_addrs($i) $expect_out($i,string)
+	}
+	pass $test
+    }
+}] != 0 } {
+    # No use proceeding if bp_addrs wasn't set.
+    return
+}
+
+for {set i 1} {$i <= $n_insns} {incr i} {
+    with_test_prefix "insn $i" {
+	gdb_test "break \*$bp_addrs($i)" \
+	    "Breakpoint $decimal at $bp_addrs($i): file .*" \
+	    "set breakpoint"
+
+	# Give the breakpoint a condition that always fails, so that
+	# the thread is immediately re-resumed.
+	gdb_test_no_output "condition \$bpnum condition" \
+	    "set condition"
+    }
+}
+
+set lineno [gdb_get_line_number "break here"]
+gdb_breakpoint $lineno
+gdb_continue_to_breakpoint "break here" ".*break here.*"

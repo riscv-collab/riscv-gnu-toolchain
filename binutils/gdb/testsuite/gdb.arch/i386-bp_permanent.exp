@@ -1,0 +1,81 @@
+# Copyright (C) 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+
+# This file is part of the gdb testsuite.
+
+# Test stepping over permanent breakpoints on i386.
+
+require {is_any_target "i?86-*-*" "x86_64-*-*"}
+
+standard_testfile
+
+# some targets have leading underscores on assembly symbols.
+set additional_flags [gdb_target_symbol_prefix_flags]
+
+# Don't use "debug", so that we don't have line information for the assembly
+# fragments.
+if { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable [list $additional_flags]] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+
+clean_restart $binfile
+
+#
+# Run to `main' where we begin our tests.
+#
+
+if {![runto_main]} {
+  return -1
+}
+
+set function "standard"
+
+set retcode [gdb_test_multiple "disassemble $function" "disassemble function '$function'" {
+    -re "($hex) <\\+0>.*($hex) <\\+$decimal>.*int3.*($hex) <\\+$decimal>.*leave.*$gdb_prompt $" {
+      set address_bp $expect_out(2,string)
+      set address_after_bp $expect_out(3,string)
+    }
+}]
+
+if {$retcode != 0} {
+  fail "disassemble failed, skipping entire test."
+  return -1
+}
+
+gdb_breakpoint "*$address_bp"
+
+gdb_test "continue" "Breakpoint .*, $address_bp in $function.*" \
+	 "stop at permanent breakpoint"
+
+# We want to fetch the stack pointer at the start of '$function'
+# function to make sure the skip_permanent_breakpoint implementation
+# really skips only the permanent breakpoint.  If, for whatever
+# reason, the 'leave' instruction executes, the stack pointer will not
+# have this value.
+set start_sp 0
+gdb_test_multiple "print \$sp" "fetch stack pointer value" {
+    -re "\\\$1.*($hex).*$gdb_prompt $" {
+      set start_sp $expect_out(1,string)
+    }
+}
+
+gdb_test "stepi" "$address_after_bp in $function.*" \
+	 "single-step past permanent breakpoint"
+
+gdb_test "print \$sp" ".*$start_sp.*" \
+	 "stack pointer value matches"

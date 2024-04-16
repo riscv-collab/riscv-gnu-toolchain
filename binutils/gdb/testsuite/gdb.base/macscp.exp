@@ -1,0 +1,752 @@
+# Test macro scoping.
+# Copyright 2002-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+
+standard_testfile macscp1.c
+set objfile [standard_output_file ${testfile}.o]
+
+set options {debug macros additional_flags=-DFROM_COMMANDLINE=ARG}
+
+# Generate the intermediate object file.  This is required by Darwin to
+# have access to the .debug_macinfo section.
+if  {[gdb_compile "${srcdir}/${subdir}/macscp1.c" "${objfile}" \
+	  object $options] != ""
+     || [gdb_compile "${objfile}" "${binfile}" executable $options] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+clean_restart ${binfile}
+
+
+# Ask GDB to show the current definition of MACRO, and return a list
+# describing the result.
+#
+# The return value has the form {FILE1 FILE2 ... DEF}, which means
+# that MACRO has the definition `DEF', and was defined in `FILE1',
+# which was included from `FILE2', included from ... .
+#
+# If GDB says that MACRO has no definition, return the string `undefined'.
+#
+# If GDB complains that it doesn't have any information about
+# preprocessor macro definitions, return the string `no-macro-info'.
+# 
+# If expect times out waiting for GDB, we return the string `timeout'.
+#
+# If GDB's output doesn't otherwise match what we're expecting, we
+# return the empty string.
+
+proc info_macro {macro} {
+    global gdb_prompt
+
+    set filepat {macscp[0-9]+\.[ch]}
+    set definition {}
+    set location {}
+
+    # Line number zero is set for macros defined from the compiler command-line.
+    # Such macros are not being tested by this function.
+    set nonzero {[1-9][0-9]*}
+
+    send_gdb "info macro ${macro}\n"
+
+    set debug_me 0
+
+    if {$debug_me} {exp_internal 1}
+    gdb_expect {
+        -re "Defined at \[^\r\n\]*(${filepat}):${nonzero}\[\r\n\]" {
+            # `location' and `definition' should be empty when we see
+            # this message.
+            if {[llength $location] == 0 && [llength $definition] == 0} {
+                set location $expect_out(1,string)
+                exp_continue
+            } else {
+                # Exit this expect loop, with a result indicating failure.
+                set definition {}
+            }
+        }
+        -re "The symbol `${macro}' has no definition as a C/C\\+\\+ preprocessor macro\[^\r\n\]*\[\r\n\]" {
+            # `location' and `definition' should be empty when we see
+            # this message.
+            if {[llength $location] == 0 && [llength $definition] == 0} {
+                set definition undefined
+                exp_continue
+            } else {
+                # Exit this expect loop, with a result indicating failure.
+                set definition {}
+            }
+        }
+        -re "^\[\r\n\]*  included at \[^\r\n\]*(${filepat}):${nonzero}\[\r\n\]" {
+            # `location' should *not* be empty when we see this
+            # message.  It should have recorded at least the initial
+            # `Defined at ' message (for definitions) or ` at' message
+            # (for undefined symbols).
+            if {[llength $location] != 0} {
+                lappend location $expect_out(1,string)
+                exp_continue
+            } else {
+                # Exit this expect loop, with a result indicating failure.
+                set definition {}
+            }
+        }
+        -re "^\[\r\n\]*at \[^\r\n\]*(${filepat}):${nonzero}\[\r\n\]" {
+            # This appears after a `has no definition' message.
+            # `location' should be empty when we see it.
+            if {[string compare $definition undefined] == 0 \
+                    && [llength $location] == 0} {
+                set location $expect_out(1,string)
+                exp_continue
+            } else {
+                # Exit this expect loop, with a result indicating failure.
+                set definition {}
+            }
+        }
+        -re "#define ${macro} (\[^\r\n\]*)\[\r\n\]" {
+            # `definition' should be empty when we see this message.
+            if {[string compare $definition ""] == 0} {
+                set definition $expect_out(1,string)
+                exp_continue
+            } else {
+                # Exit this expect loop, with a result indicating failure.
+                set definition {}
+            }
+        }
+        -re "has no preprocessor macro information.*$gdb_prompt $" {
+            set definition no-macro-info
+        }
+        -re "$gdb_prompt $" {
+            # Exit the expect loop; let the existing value of `definition'
+            # indicate failure or success.
+        }
+        timeout {
+            set definition timeout
+        }
+    }
+    if {$debug_me} {exp_internal 0}
+
+    switch -exact -- $definition {
+        no-macro-info { return no-macro-info }
+        timeout { return timeout }
+        undefined { return undefined }
+        default {
+            if {[llength $location] >= 1} {
+                return [concat $location [list $definition]]
+            } else {
+                return {}
+            }
+        }
+    }
+}
+
+
+# Call info_macro to show the definition of MACRO.  Expect a result of
+# EXPECTED.  Use WHERE in pass/fail messages to identify the context.
+# Return non-zero if we should abort the entire test file, or zero if
+# we can continue.
+proc check_macro {macro expected where} {
+    set func_def [info_macro $macro]
+    if {[string compare $func_def $expected] == 0} {
+        pass "info macro $macro $where"
+    } else {
+        switch -exact -- $func_def {
+            no-macro-info {
+                xfail "executable includes no macro debugging information"
+                return 1
+            }
+	    undefined {
+		fail "info macro $macro $where (undefined)"
+		return 1
+	    }
+            timeout {
+                fail "info macro $macro $where (timeout)"
+            }
+            default {
+                fail "info macro $macro $where"
+            }
+        }
+    }
+    return 0
+}
+
+
+# List the function FUNC, and then show the definition of MACRO,
+# expecting the result EXPECTED.
+proc list_and_check_macro {func macro expected} {
+    gdb_test "list $func" ".*${func}.*" "list $func for $macro"
+    return [check_macro $macro $expected "after `list $func'"]
+}
+
+gdb_test "list -q main" ".*main.*" "list main for support check"
+set macro_support "unknown"
+gdb_test_multiple "info source" "test macro information"  {
+    -re "Includes preprocessor macro info\..*$gdb_prompt $" {
+	set macro_support 1
+	verbose "Source has macro information"
+    }
+    -re "Does not include preprocessor macro info\..*$gdb_prompt $" {
+	set macro_support 0
+	verbose "Source has no macro information"
+    }
+    default {
+	warning "couldn't check macro support (no valid response)."
+    }
+}
+if {$macro_support == 0} {
+    unsupported "skipping test because debug information does not include macro information."
+    return 0
+}
+ 
+list_and_check_macro main WHERE {macscp1.c {before macscp1_3}}
+list_and_check_macro macscp2_2 WHERE {macscp2.h macscp1.c {before macscp2_2}}
+list_and_check_macro macscp3_2 WHERE {macscp3.h macscp1.c {before macscp3_2}}
+
+
+# Assuming the current position inside program by `list' from above.
+gdb_test "info macro FROM_COMMANDLINE" \
+	 "Defined at \[^\r\n\]*:0\r\n-DFROM_COMMANDLINE=ARG"
+
+gdb_test "info macro __FILE__" "#define __FILE__ \".*macscp3.h\"" \
+    "info macro __FILE__ before running"
+gdb_test "info macro __LINE__" "#define __LINE__ 26" \
+    "info macro __LINE__ before running"
+
+# Although GDB's macro table structures distinguish between multiple
+# #inclusions of the same file, GDB's other structures don't.  So the
+# `list' command here doesn't reliably select one #inclusion or the
+# other, even though it could.  It would be nice to eventually change
+# GDB's structures to handle this correctly.
+gdb_test "list macscp4_2_from_macscp2" ".*macscp4_2_, MACSCP4_INCLUSION.*"
+switch -exact -- [info_macro WHERE] {
+    {macscp4.h macscp2.h macscp1.c {before macscp4_2_..., from macscp2.h}} {
+        pass "info macro WHERE after `list macscp_4_2_from_macscp2'"
+    }
+    {macscp4.h macscp3.h macscp1.c {before macscp4_2_..., from macscp3.h}} {
+        setup_kfail "gdb/7660" *-*-* 
+        fail "info macro WHERE after `list macscp_4_2_from_macscp2' (gdb/7660)"
+    }
+    timeout { 
+        fail "info macro WHERE after `list macscp_4_2_from_macscp2' (timeout)"
+    }
+    default { fail "info macro WHERE after `list macscp_4_2_from_macscp2'" }
+}
+
+gdb_test "list macscp4_2_from_macscp3" ".*macscp4_2_, MACSCP4_INCLUSION.*"
+switch -exact -- [info_macro WHERE] {
+    {macscp4.h macscp3.h macscp1.c {before macscp4_2_..., from macscp3.h}} {
+        pass "info macro WHERE after `list macscp_4_2_from_macscp3'"
+    }
+    {macscp4.h macscp2.h macscp1.c {before macscp4_2_..., from macscp2.h}} {
+        setup_kfail "gdb/7660" *-*-* 
+        fail "info macro WHERE after `list macscp_4_2_from_macscp3' (gdb/7660)"
+    }
+    timeout {
+        fail "info macro WHERE after `list macscp_4_2_from_macscp3' (timeout)"
+    }
+    default { fail "info macro WHERE after `list macscp_4_2_from_macscp3'" }
+}
+
+
+#### Test the selection of the macro scope by the current frame.
+
+### A table of functions, in the order they will be reached, which is
+### also the order they appear in the preprocessed output.  Each entry
+### has the form {FUNCNAME WHERE KFAILWHERE}, where:
+### - FUNCNAME is the name of the function,
+### - WHERE is the definition we expect to see for the macro `WHERE', as
+###   returned by `info_macro', and
+### - KFAILWHERE is an alternate definition which should be reported
+###   as a `known failure', due to GDB's inability to distinguish multiple
+###   #inclusions of the same file.
+### KFAILWHERE may be omitted.
+
+set funcs {
+    {
+        macscp1_1
+        {macscp1.c {before macscp1_1}}
+    }
+    {
+        macscp2_1
+        {macscp2.h macscp1.c {before macscp2_1}}
+    }
+    {
+        macscp4_1_from_macscp2
+        {macscp4.h macscp2.h macscp1.c {before macscp4_1_..., from macscp2.h}}
+        {macscp4.h macscp3.h macscp1.c {before macscp4_1_..., from macscp3.h}}
+    }
+    {
+        macscp4_2_from_macscp2
+        {macscp4.h macscp2.h macscp1.c {before macscp4_2_..., from macscp2.h}}
+        {macscp4.h macscp3.h macscp1.c {before macscp4_2_..., from macscp3.h}}
+    }
+    {
+        macscp2_2
+        {macscp2.h macscp1.c {before macscp2_2}}
+    }
+    {
+        macscp1_2
+        {macscp1.c {before macscp1_2}}
+    }
+    {
+        macscp3_1
+        {macscp3.h macscp1.c {before macscp3_1}}
+    }
+    {
+        macscp4_1_from_macscp3
+        {macscp4.h macscp3.h macscp1.c {before macscp4_1_..., from macscp3.h}}
+        {macscp4.h macscp2.h macscp1.c {before macscp4_1_..., from macscp2.h}}
+    }
+    {
+        macscp4_2_from_macscp3
+        {macscp4.h macscp3.h macscp1.c {before macscp4_2_..., from macscp3.h}}
+        {macscp4.h macscp2.h macscp1.c {before macscp4_2_..., from macscp2.h}}
+    }
+    {
+        macscp3_2
+        {macscp3.h macscp1.c {before macscp3_2}}
+    }
+    {
+        macscp1_3
+        {macscp1.c {before macscp1_3}}
+    }
+}
+
+proc maybe_kfail { func test_name } {
+    # We can't get the right scope info when we're stopped in
+    # the macro4_ functions.
+    if {[string match macscp4_* $func]} {
+	kfail gdb/7660 "$test_name"
+    } else {
+	fail "$test_name"
+    }
+}
+
+# Start the program running.
+if {! [runto_main]} {
+    return 0
+}
+
+# Set a breakpoint on each of the functions.
+foreach func_entry $funcs {
+    set func [lindex $func_entry 0]
+    gdb_test "break $func" "Breakpoint.*"
+}
+
+# Run to each of the breakpoints and check the definition (or lack
+# thereof) of each macro.
+for {set i 0} {$i < [llength $funcs]} {incr i} {
+    set func_entry [lindex $funcs $i]
+    set func [lindex $func_entry 0]
+    set expected [lindex $func_entry 1]
+    set kfail_expected [lindex $func_entry 2]
+
+    # Run to the breakpoint for $func.
+    gdb_test "continue" "Breakpoint $decimal, $func .*" "continue to $func"
+
+    # Check the macro WHERE.
+    set result [info_macro WHERE]
+    if {[string compare $result $expected] == 0} {
+        pass "info macro WHERE stopped in $func"
+    } elseif {[string compare $result $kfail_expected] == 0} {
+        setup_kfail "gdb/7660" *-*-* 
+        fail "info macro WHERE stopped in $func (gdb/7660)"
+    } elseif {[string compare $result timeout] == 0} {
+        fail "info macro WHERE stopped in $func (timeout)"
+    } else {
+        fail "info macro WHERE stopped in $func"
+    }
+
+    # Check that the BEFORE_<func> macros for all prior functions are
+    # #defined, and that those for all subsequent functions are not.
+    for {set j 0} {$j < [llength $funcs]} {incr j} {
+        if {$j != $i} {
+            set func_j_entry [lindex $funcs $j]
+            set func_j [lindex $func_j_entry 0]
+
+            set before_macro "BEFORE_[string toupper $func_j]"
+            set test_name \
+                    "$before_macro defined/undefined when stopped at $func"
+            set result [info_macro $before_macro]
+
+            if {$j < $i} {
+                if {[llength $result] >= 2 && \
+                        [string compare [lindex $result end] {}] == 0} {
+                    pass $test_name
+                } elseif {[string compare $result timeout] == 0} {
+                    fail "$test_name (timeout)"
+                } else {
+                    maybe_kfail $func "$test_name"
+                }
+            } elseif {$j > $i} {
+                switch -- [lindex $result end] {
+                    undefined { pass $test_name }
+                    timeout { fail "$test_name (timeout)" }
+                    default { 
+                        maybe_kfail $func "$test_name"
+                    }
+                }
+            }
+
+            set until_macro "UNTIL_[string toupper $func_j]"
+            set test_name \
+                    "$until_macro defined/undefined when stopped at $func"
+            set result [info_macro $until_macro]
+
+            if {$j <= $i} {
+                switch -- [lindex $result end] {
+                    undefined { pass $test_name }
+                    timeout { fail "$test_name (timeout)" }
+                    default { 
+                        maybe_kfail $func "$test_name"
+                    }
+                }
+            } elseif {$j > $i} {
+                if {[llength $result] >= 2 && \
+                        [string compare [lindex $result end] {}] == 0} {
+                    pass $test_name
+                } elseif {[string compare $result timeout] == 0} {
+                    fail "$test_name (timeout)"
+                } else {
+                    maybe_kfail $func "$test_name"
+                }
+            }
+        }
+    }
+}
+
+gdb_test "break [gdb_get_line_number "set breakpoint here"]" \
+    "Breakpoint.*at.* file .*, line.*" \
+    "breakpoint macscp_expr"
+
+gdb_test "cond \$bpnum foo == MACRO_TO_EXPAND" \
+  "No symbol \"MACRO_TO_EXPAND\" in current context\." \
+  "macro MACRO_TO_EXPAND not in scope at breakpoint"
+
+# Note that we choose the condition so that this breakpoint never
+# stops.
+set l2 [gdb_get_line_number "set second breakpoint here"]
+gdb_test "break $l2  if foo != MACRO_TO_EXPAND" \
+  "Breakpoint.*at.*" \
+  "breakpoint macscp_expr using MACRO_TO_EXPAND"
+
+gdb_test "continue" "foo = 0;.*" "continue to macsp_expr"
+
+gdb_test "print address.addr" \
+  " = 0"
+
+gdb_test "print MACRO_TO_EXPAND" \
+    "No symbol \"MACRO_TO_EXPAND\" in current context\." \
+    "print expression with macro before define."
+
+gdb_test "next" "foo = 1;.*here.*/" "next to definition 1"
+
+gdb_test "print MACRO_TO_EXPAND" \
+    " = 0" \
+    "print expression with macro in scope."
+
+gdb_test_no_output "macro define MACRO_TO_EXPAND 72" \
+  "user macro override"
+
+gdb_test "print MACRO_TO_EXPAND" \
+  " = 72" \
+  "choose user macro"
+
+gdb_test_no_output "macro undef MACRO_TO_EXPAND" \
+  "remove user override"
+
+gdb_test "print MACRO_TO_EXPAND" \
+    " = 0" \
+    "print expression with macro after removing override"
+
+gdb_test "next" "foo = 2;.*" "next to definition 2"
+
+gdb_test "print MACRO_TO_EXPAND" \
+    "No symbol \"MACRO_TO_EXPAND\" in current context\." \
+    "print expression with macro after undef."
+
+gdb_test_no_output "macro define MACRO_TO_EXPAND 5" \
+  "basic macro define"
+
+gdb_test "print MACRO_TO_EXPAND" \
+  " = 5" \
+  "expansion of defined macro"
+
+gdb_test "macro list" \
+  "macro define MACRO_TO_EXPAND 5" \
+  "basic macro list"
+
+gdb_test_no_output "macro define MACRO_TO_EXPAND(x) x" \
+  "basic redefine, macro with args"
+
+gdb_test "print MACRO_TO_EXPAND (7)" \
+  " = 7" \
+  "expansion of macro with arguments"
+
+gdb_test_no_output "macro undef MACRO_TO_EXPAND" \
+  "basic macro undef"
+
+gdb_test "print MACRO_TO_EXPAND" \
+    "No symbol \"MACRO_TO_EXPAND\" in current context\." \
+    "print expression with macro after user undef."
+
+# Regression test; this used to crash.
+gdb_test "macro define" \
+    "usage: macro define.*" \
+    "macro define with no arguments"
+
+# Regression test; this used to crash.
+gdb_test "macro undef" \
+    "usage: macro undef.*" \
+    "macro undef with no arguments"
+
+# Do completion tests if readline is used.
+
+if { [readline_is_used] } {
+
+    # The macro FIFTY_SEVEN is in scope at this point.
+    send_gdb "p FIFTY_\t"
+    gdb_expect  {
+	-re "^p FIFTY_SEVEN $" {
+	    send_gdb "\n"
+	    gdb_expect {
+		-re "^.* = 57.*$gdb_prompt $" {
+		    pass "complete 'p FIFTY_SEVEN'"
+		}
+		-re ".*$gdb_prompt $" { fail "complete 'p FIFTY_SEVEN'" }
+		timeout { fail "(timeout) complete 'p FIFTY_SEVEN'" }
+	    }
+	}
+	-re ".*$gdb_prompt $" { fail "complete 'p FIFTY_SEVEN'" }
+	timeout { fail "(timeout) complete 'p FIFTY_SEVEN' 2" }
+    }
+
+    # The macro TWENTY_THREE is not in scope.
+    send_gdb "p TWENTY_\t"
+    gdb_expect  {
+	-re "^p TWENTY_\\\x07$" {
+	    send_gdb "\n"
+	    gdb_expect {
+		-re "No symbol \"TWENTY_\" in current context\\..*$gdb_prompt $" {
+		    pass "complete 'p TWENTY_'"
+		}
+		-re ".*$gdb_prompt $" { fail "complete 'p TWENTY_'" }
+		timeout { fail "(timeout) complete 'p TWENTY_'"}
+	    }
+	}
+	-re ".*$gdb_prompt $" { fail "complete 'p TWENTY_'" }
+	timeout { fail "(timeout) complete 'p TWENTY_' 2" }
+    }
+
+    # The macro FORTY_EIGHT was undefined and thus is not in scope.
+    send_gdb "p FORTY_\t"
+    gdb_expect  {
+	-re "^p FORTY_\\\x07$" {
+	    send_gdb "\n"
+	    gdb_expect {
+		-re "No symbol \"FORTY_\" in current context\\..*$gdb_prompt $" {
+		    pass "complete 'p FORTY_'"
+		}
+		-re ".*$gdb_prompt $" { fail "complete 'p FORTY_'" }
+		timeout {fail "(timeout) complete 'p FORTY_'"}
+	    }
+	}
+	-re ".*$gdb_prompt $" { fail "complete 'p FORTY_'" }
+	timeout { fail "(timeout) complete 'p FORTY_' 2" }
+    }
+
+    gdb_test_no_output "macro define TWENTY_THREE 25" \
+	"defining TWENTY_THREE"
+
+    # User-defined macros are always in scope.
+    send_gdb "p TWENTY_\t"
+    gdb_expect  {
+	-re "^p TWENTY_THREE $" {
+	    send_gdb "\n"
+	    gdb_expect {
+		-re "^.* = 25.*$gdb_prompt $" {
+		    pass "complete 'p TWENTY_THREE'"
+		}
+		-re ".*$gdb_prompt $" { fail "complete 'p TWENTY_THREE'"}
+		timeout { fail "(timeout) complete 'p TWENTY_THREE'" }
+	    }
+	}
+	-re ".*$gdb_prompt $" { fail "complete 'p TWENTY_THREE'" }
+	timeout { fail "(timeout) complete 'p TWENTY_THREE' 2" }
+    }
+}
+
+# Splicing tests.
+
+gdb_test "macro expand SPLICE(x, y)" \
+  "expands to: xy" \
+  "basic macro splicing"
+
+gdb_test_no_output "macro define robotinvasion 2010" \
+  "define splice helper"
+
+gdb_test "macro expand SPLICE(robot, invasion)" \
+  "expands to: *2010" \
+  "splicing plus expansion"
+
+# Varargs tests.
+
+gdb_test_no_output "macro define va_c99(...) varfunc (fixedarg, __VA_ARGS__)" \
+  "define first varargs helper"
+
+gdb_test_no_output "macro define va2_c99(x, y, ...) varfunc (fixedarg, x, y, __VA_ARGS__)" \
+  "define second varargs helper"
+
+gdb_test_no_output "macro define va_gnu(args...) varfunc (fixedarg, args)" \
+  "define third varargs helper"
+
+gdb_test_no_output "macro define va2_gnu(args...) varfunc (fixedarg, ## args)" \
+  "define fourth varargs helper"
+
+gdb_test_no_output \
+    "macro define va3_cxx2a(x, ...) varfunc (x __VA_OPT__(,) __VA_ARGS__)" \
+    "define fifth varargs helper"
+
+gdb_test_no_output \
+    "macro define va4_cxx2a(x, ...) varfunc (x __VA_OPT__(, __VA_ARGS__))" \
+    "define sixth varargs helper"
+
+gdb_test_no_output \
+    "macro define va5_cxx2a(x, ...) varfunc (x __VA_OPT__(,) __VA_OPT__(__VA_ARGS__))" \
+    "define seventh varargs helper"
+
+gdb_test "macro expand va_c99(one, two, three)" \
+  "expands to: *varfunc \\(fixedarg, *one, two, three\\)" \
+  "c99 varargs expansion"
+
+gdb_test "macro expand va_c99()" \
+  "expands to: *varfunc \\(fixedarg, *\\)" \
+  "c99 varargs expansion without an argument"
+
+gdb_test "macro expand va2_c99(one, two, three, four)" \
+  "expands to: *varfunc \\(fixedarg, *one, two, three, four\\)" \
+  "c99 varargs expansion, multiple formal arguments"
+
+gdb_test "macro expand va_gnu(one, two, three, four)" \
+  "expands to: *varfunc \\(fixedarg, *one, two, three, four\\)" \
+  "gnu varargs expansion"
+
+gdb_test "macro expand va_gnu()" \
+  "expands to: *varfunc \\(fixedarg, *\\)" \
+  "gnu varargs expansion without an argument"
+
+gdb_test "macro expand va2_gnu()" \
+  "expands to: *varfunc \\(fixedarg\\)" \
+  "gnu varargs expansion special splicing without an argument"
+
+gdb_test "macro expand va3_cxx2a(23)" \
+    "expands to: *varfunc \\(23 \\)" \
+    "C++2a __VA_OPT__ handling without variable argument"
+
+gdb_test "macro expand va3_cxx2a(23, 24, 25)" \
+    "expands to: *varfunc \\(23, 24, 25\\)" \
+    "C++2a __VA_OPT__ handling with variable argument"
+
+gdb_test "macro expand va4_cxx2a(23, 24, 25)" \
+    "expands to: *varfunc \\(23, 24, 25\\)" \
+    "C++2a __VA_OPT__ conditional __VA_ARGS__ handling with variable argument"
+
+gdb_test "macro expand va4_cxx2a(23)" \
+    "expands to: *varfunc \\(23\\)" \
+    "C++2a __VA_OPT__ conditional __VA_ARGS__ handling without variable argument"
+
+gdb_test "macro expand va5_cxx2a(23, 24, 25)" \
+    "expands to: *varfunc \\(23,24, 25\\)" \
+    "C++2a double __VA_OPT__ conditional __VA_ARGS__ handling with variable argument"
+
+gdb_test "macro expand va5_cxx2a(23)" \
+    "expands to: *varfunc \\(23\\)" \
+    "C++2a double __VA_OPT__ conditional __VA_ARGS__ handling without variable argument"
+
+gdb_test_no_output \
+    "macro define badopt1(x, ...) __VA_OPT__) x" \
+    "define first invalid varargs helper"
+gdb_test "macro expand badopt1(5)" \
+    "__VA_OPT__ must be followed by an open parenthesis" \
+    "__VA_OPT__ without open paren"
+
+gdb_test_no_output \
+    "macro define badopt2(x, ...) __VA_OPT__(__VA_OPT__(,)) x" \
+    "define second invalid varargs helper"
+gdb_test "macro expand badopt2(5)" \
+    "__VA_OPT__ cannot appear inside __VA_OPT__" \
+    "__VA_OPT__ inside __VA_OPT__"
+
+gdb_test_no_output \
+    "macro define badopt3(x) __VA_OPT__" \
+    "define third invalid varargs helper"
+gdb_test "macro expand badopt3(5)" \
+    "__VA_OPT__ is only valid in a variadic macro" \
+    "__VA_OPT__ not in variadic macro"
+
+gdb_test_no_output \
+    "macro define badopt4(x, ...) __VA_OPT__(x" \
+    "define fourth invalid varargs helper"
+gdb_test "macro expand badopt4(5)" \
+    "Unterminated __VA_OPT__" \
+    "__VA_OPT__ without closing paren"
+
+# Stringification tests.
+
+gdb_test_no_output "macro define str(x) #x" \
+  "define stringification macro"
+
+gdb_test_no_output "macro define maude 5" \
+  "define first stringification helper"
+
+gdb_test_no_output "macro define xstr(x) str(x)" \
+  "define second stringification helper"
+
+gdb_test "print str(5)" \
+  " = \"5\"" \
+  "simple stringify"
+
+gdb_test "print str(hi bob)" \
+  " = \"hi bob\"" \
+  "stringify with one space"
+
+gdb_test "print str(  hi  bob  )" \
+  " = \"hi bob\"" \
+  "stringify with many spaces"
+
+gdb_test "print str(hi \"bob\")" \
+  " = \"hi \\\\\"bob\\\\\"\"" \
+  "stringify with quotes"
+
+gdb_test "print str(hi \\bob\\)" \
+  " = \"hi \\\\\\\\bob\\\\\\\\\"" \
+  "stringify with backslashes"
+
+gdb_test "print str(maude)" \
+  " = \"maude\"" \
+  "stringify without substitution"
+
+gdb_test "print xstr(maude)" \
+  " = \"5\"" \
+  "stringify with substitution"
+
+# Regression test for pp-number bug.
+gdb_test_no_output "macro define si_addr fields.fault.si_addr" \
+  "define si_addr macro"
+
+gdb_test "macro expand siginfo.si_addr" \
+  "expands to: siginfo.fields.fault.si_addr"
+
+gdb_test "print __FILE__" " = \".*macscp1.c\""
+gdb_test "print __LINE__" \
+    " = [gdb_get_line_number {stopping point for line test}]"

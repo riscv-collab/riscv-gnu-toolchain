@@ -1,0 +1,155 @@
+# This testcase is part of GDB, the GNU debugger.
+#
+# Copyright 2013-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check that GDB handles GDBserver disconnecting abruptly, in several
+# scenarios.
+
+load_lib gdbserver-support.exp
+
+standard_testfile
+
+require allow_gdbserver_tests
+
+if { [build_executable "failed to prepare" ${testfile}] } {
+    return -1
+}
+
+# Spawn GDBserver, run to main, extract GDBserver's PID and save it in
+# the SERVER_PID global.
+
+proc prepare {} {
+    global binfile gdb_prompt srcfile decimal
+    global server_pid
+    global GDBFLAGS
+
+    save_vars { GDBFLAGS } {
+	# If GDB and GDBserver are both running locally, set the sysroot to avoid
+	# reading files via the remote protocol.
+	if { ![is_remote host] && ![is_remote target] } {
+	    set GDBFLAGS "$GDBFLAGS -ex \"set sysroot\""
+	}
+
+	clean_restart $binfile
+    }
+
+    # Make sure we're disconnected, in case we're testing with an
+    # extended-remote board, therefore already connected.
+    gdb_test "disconnect" ".*"
+
+    gdbserver_run ""
+
+    gdb_breakpoint ${srcfile}:[gdb_get_line_number "i = 0;"]
+    gdb_continue_to_breakpoint "after server_pid assignment"
+
+    # Get the pid of GDBServer.
+    set server_pid 0
+    gdb_test_multiple "p server_pid" "" {
+	-re -wrap " = ($decimal)" {
+	    set server_pid $expect_out(1,string)
+	    pass $gdb_test_name
+	}
+    }
+
+    if {$server_pid == 0} {
+	return 0
+    }
+
+    return 1
+}
+
+# Kill GDBserver using the PID saved by prepare.
+
+proc kill_server {} {
+    global server_pid
+
+    remote_exec target "kill -9 $server_pid"
+}
+
+# Test issuing "tstatus" right after the connection is dropped.
+
+proc_with_prefix test_tstatus {} {
+    if ![prepare] {
+	return
+    }
+
+    kill_server
+
+    # Enable trace status packet which is disabled after the
+    # connection if the remote target doesn't support tracepoint at
+    # all.  Otherwise, no RSP packet is sent out.
+    gdb_test \
+	"set remote trace-status-packet on" \
+	"Support for the 'qTStatus' packet on the current remote target is set to \"on\"."
+
+    # Force GDB to talk with GDBserver, so that we can get the
+    # "connection closed" error.
+    gdb_test "tstatus" {Remote connection closed|Remote communication error\.  Target disconnected: Connection reset by peer\.}
+}
+
+# Test unwinding with no debug/unwind info, right after the connection
+# is dropped.
+
+proc_with_prefix test_unwind_nosyms {} {
+    if ![prepare] {
+	return
+    }
+
+    # Remove symbols, so that we try to unwind with one of the
+    # heuristic unwinders, and read memory from within its sniffer.
+    gdb_unload
+
+    kill_server
+
+    gdb_test "bt" "(Target disconnected|Remote connection closed|Remote communication error).*"
+}
+
+# Test unwinding with debug/unwind info, right after the connection is
+# dropped.
+
+proc_with_prefix test_unwind_syms {} {
+    if ![prepare] {
+	return
+    }
+
+    kill_server
+
+    gdb_test "bt" "(Target disconnected|Remote connection closed|Remote communication error).*"
+}
+
+# Test performing a stepi right after the connection is dropped.
+
+proc_with_prefix test_stepi {} {
+    if ![prepare] {
+	return
+    }
+
+    # Ensure GDB has computed the frame-id for the current frame
+    # before we kill the gdbserver.  With the frame-id cached when we
+    # stepi below the first packets we try to send to gdbserver will
+    # be from within the breakpoint insertion process.
+    gdb_test "info frame" "Stack level 0, .*"
+
+    kill_server
+
+    gdb_test "stepi" "(Target disconnected|Remote connection closed|Remote communication error).*"
+}
+
+test_tstatus
+test_unwind_nosyms
+test_unwind_syms
+test_stepi
+

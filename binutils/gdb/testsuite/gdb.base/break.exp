@@ -1,0 +1,948 @@
+#   Copyright 1988-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file was written by Rob Savoye. (rob@cygnus.com)
+
+if { [build_executable "failed to prepare" "break" {break.c break1.c} {debug nowarnings}] } {
+    return -1
+}
+set srcfile break.c
+set srcfile1 break1.c
+
+set bp_location1 [gdb_get_line_number "set breakpoint 1 here"]
+set bp_location2 [gdb_get_line_number "set breakpoint 2 here"]
+set bp_location3 [gdb_get_line_number "set breakpoint 3 here"]
+set bp_location4 [gdb_get_line_number "set breakpoint 4 here"]
+set bp_location6 [gdb_get_line_number "set breakpoint 6 here"]
+set bp_location7 [gdb_get_line_number "set breakpoint 7 here"]
+set bp_location8 [gdb_get_line_number "set breakpoint 8 here" $srcfile1]
+set bp_location11 [gdb_get_line_number "set breakpoint 11 here"]
+
+set main_line $bp_location6
+
+# In C++ mode, we see a full prototype; in C mode, we only see the
+# function name, with no parameter info.
+proc func {name} {
+    return "${name}(?:\(\[^\r\n\]*\))?"
+}
+
+# test simple breakpoint setting commands
+
+proc_with_prefix test_break {} {
+    clean_restart break
+
+    # Test deleting all breakpoints when there are none installed,
+    # GDB should not prompt for confirmation.
+    # Note that lib/gdb.exp provides a "delete_breakpoints" proc
+    # for general use elsewhere.
+    send_gdb "delete breakpoints\n"
+    gdb_expect {
+	 -re "Delete all breakpoints.*$" {
+		send_gdb "y\n"
+		gdb_expect {
+		    -re "$::gdb_prompt $" {
+			fail "delete all breakpoints when none (unexpected prompt)"
+		    }
+		    timeout	{ fail "delete all breakpoints when none (timeout after unexpected prompt)" }
+		}
+	    }
+	 -re ".*$::gdb_prompt $"       { pass "delete all breakpoints when none" }
+	timeout	            { fail "delete all breakpoints when none (timeout)" }
+    }
+
+    # test break at function
+    gdb_test "break -q main" \
+	"Breakpoint.*at.* file .*$::srcfile, line.*" \
+	"breakpoint function"
+
+    # test break at quoted function
+    gdb_test "break \"marker2\"" \
+	"Breakpoint.*at.* file .*$::srcfile1, line.*" \
+	"breakpoint quoted function"
+
+    # test break at function in file
+    gdb_test "break $::srcfile:factorial" \
+	"Breakpoint.*at.* file .*$::srcfile, line.*" \
+	"breakpoint function in file"
+
+    # test break at line number
+    #
+    # Note that the default source file is the last one whose source text
+    # was printed.  For native debugging, before we've executed the
+    # program, this is the file containing main, but for remote debugging,
+    # it's wherever the processor was stopped when we connected to the
+    # board.  So, to be sure, we do a list command.
+    gdb_test "list -q main" \
+	".*main \\(int argc, char \\*\\*argv, char \\*\\*envp\\).*" \
+	"use `list' to establish default source file"
+
+    gdb_test "break $::bp_location1" \
+	"Breakpoint.*at.* file .*$::srcfile, line $::bp_location1\\." \
+	"breakpoint line number"
+
+    # test duplicate breakpoint
+    gdb_test "break $::bp_location1" \
+	"Note: breakpoint \[0-9\]+ also set at pc.*Breakpoint \[0-9\]+ at.* file .*$::srcfile, line $::bp_location1\\." \
+	"breakpoint duplicate"
+
+    # test break at line number in file
+    gdb_test "break $::srcfile:$::bp_location2" \
+	"Breakpoint.*at.* file .*$::srcfile, line $::bp_location2\\." \
+	"breakpoint line number in file"
+
+    # Test putting a break at the start of a multi-line if conditional.
+    # Verify the breakpoint was put at the start of the conditional.
+    gdb_test "break multi_line_if_conditional" \
+	"Breakpoint.*at.* file .*$::srcfile, line $::bp_location3\\." \
+	"breakpoint at start of multi line if conditional"
+
+    gdb_test "break multi_line_while_conditional" \
+	"Breakpoint.*at.* file .*$::srcfile, line $::bp_location4\\." \
+	"breakpoint at start of multi line while conditional"
+
+    gdb_test "info break" \
+	[multi_line "Num     Type\[ \]+Disp Enb Address\[ \]+What.*" \
+		    "$::decimal\[\t \]+breakpoint     keep y.* in [func main] at .*$::srcfile:$::main_line.*" \
+		    "$::decimal\[\t \]+breakpoint     keep y.* in [func marker2] at .*$::srcfile1:$::bp_location8.*" \
+		    "$::decimal\[\t \]+breakpoint     keep y.* in [func factorial] at .*$::srcfile:$::bp_location7.*" \
+		    "$::decimal\[\t \]+breakpoint     keep y.* in [func main] at .*$::srcfile:$::bp_location1.*" \
+		    "$::decimal\[\t \]+breakpoint     keep y.* in [func main] at .*$::srcfile:$::bp_location1.*" \
+		    "$::decimal\[\t \]+breakpoint     keep y.* in [func main] at .*$::srcfile:$::bp_location2.*" \
+		    "$::decimal\[\t \]+breakpoint     keep y.* in [func multi_line_if_conditional] at .*$::srcfile:$::bp_location3.*" \
+		    "$::decimal\[\t \]+breakpoint     keep y.* in [func multi_line_while_conditional] at .*$::srcfile:$::bp_location4"] \
+	"breakpoint info"
+
+    #
+    # Test info breakpoint with arguments
+    #
+
+    set see1 0
+    set see2 0
+    set see3 0
+    set see4 0
+    set see5 0
+    set see6 0
+
+    gdb_test_multiple "info break 2 4 6" "info break 2 4 6" {
+	-re "1\[\t \]+breakpoint *keep y\[^\r\n\]*:$::main_line\[^\r\n\]*" {
+	    set see1 1
+	    exp_continue
+	}
+	-re "2\[\t \]+breakpoint *keep y\[^\r\n\]* in [func marker2] at \[^\r\n\]*" {
+	    set see2 1
+	    exp_continue
+	}
+	-re "3\[\t \]+breakpoint *keep y\[^\r\n\]*$::bp_location7\[^\r\n\]*" {
+	    set see3 1
+	    exp_continue
+	}
+	-re "4\[\t \]+breakpoint *keep y\[^\r\n\]*$::bp_location1\[^\r\n\]*" {
+	    set see4 1
+	    exp_continue
+	}
+	-re "5\[\t \]+breakpoint *keep y\[^\r\n\]*$::bp_location1\[^\r\n\]*" {
+	    set see5 1
+	    exp_continue
+	}
+	-re "6\[\t \]+breakpoint *keep y\[^\r\n\]*$::bp_location2\[^\r\n\]*" {
+	    set see6 1
+	    exp_continue
+	}
+	-re ".*$::gdb_prompt $" {
+	    if {!$see1 && $see2 && !$see3 && $see4 && !$see5 && $see6} {
+		pass "info break 2 4 6"
+	    } else {
+		fail "info break 2 4 6"
+	    }
+	}
+    }
+
+    set see1 0
+    set see2 0
+    set see3 0
+    set see4 0
+    set see5 0
+    set see6 0
+
+    gdb_test_multiple "info break 3-5" "info break 3-5" {
+	-re "1\[\t \]+breakpoint *keep y.* in [func main] at .*:$::main_line\[^\r\n\]*" {
+	    set see1 1
+	    exp_continue
+	}
+	-re "2\[\t \]+breakpoint *keep y\[^\r\n\]* in [func marker2] at \[^\r\n\]*" {
+	    set see2 1
+	    exp_continue
+	}
+	-re "3\[\t \]+breakpoint *keep y\[^\r\n\]*$::bp_location7\[^\r\n\]*" {
+	    set see3 1
+	    exp_continue
+	}
+	-re "4\[\t \]+breakpoint *keep y\[^\r\n\]*$::bp_location1\[^\r\n\]*" {
+	    set see4 1
+	    exp_continue
+	}
+	-re "5\[\t \]+breakpoint *keep y\[^\r\n\]*$::bp_location1\[^\r\n\]*" {
+	    set see5 1
+	    exp_continue
+	}
+	-re "6\[\t \]+breakpoint *keep y\[^\r\n\]*$::bp_location2\[^\r\n\]*" {
+	    set see6 1
+	    exp_continue
+	}
+	-re ".*$::gdb_prompt $" {
+	    if {!$see1 && !$see2 && $see3 && $see4 && $see5 && !$see6} {
+		pass "info break 3-5"
+	    } else {
+		fail "info break 3-5"
+	    }
+	}
+    }
+
+    #
+    # Test disable/enable with arguments
+    #
+
+    # Test with value history
+
+    with_test_prefix "with value history" {
+	gdb_test "print 1"
+	gdb_test "print 2"
+	gdb_test "print 3"
+	gdb_test "print 4"
+	gdb_test "print 5"
+	gdb_test "print 6"
+
+	# $2 is 2 and $$ is 5
+	gdb_test_no_output "disable \$2 \$\$" "disable using history values"
+
+	set see1 0
+	set see2 0
+	set see3 0
+	set see4 0
+	set see5 0
+	set see6 0
+
+	gdb_test_multiple "info break" "check disable with history values" {
+	    -re "1\[\t \]+breakpoint *keep y.* in [func main] at .*:$::main_line\[^\r\n\]*" {
+		set see1 1
+		exp_continue
+	    }
+	    -re "2\[\t \]+breakpoint *keep n\[^\r\n\]* in [func marker2] at \[^\r\n\]*" {
+		set see2 1
+		exp_continue
+	    }
+	    -re "3\[\t \]+breakpoint *keep y\[^\r\n\]*$::bp_location7\[^\r\n\]*" {
+		set see3 1
+		exp_continue
+	    }
+	    -re "4\[\t \]+breakpoint *keep y\[^\r\n\]*$::bp_location1\[^\r\n\]*" {
+		set see4 1
+		exp_continue
+	    }
+	    -re "5\[\t \]+breakpoint *keep n\[^\r\n\]*$::bp_location1\[^\r\n\]*" {
+		set see5 1
+		exp_continue
+	    }
+	    -re "6\[\t \]+breakpoint *keep y\[^\r\n\]*$::bp_location2\[^\r\n\]*" {
+		set see6 1
+		exp_continue
+	    }
+	    -re ".*$::gdb_prompt $" {
+		if {$see1 && $see2 && $see3 && $see4 && $see5 && $see6} {
+		    pass "check disable with history values"
+		} else {
+		    fail "check disable with history values"
+		}
+	    }
+	}
+    }
+
+    with_test_prefix "with convenience vars" {
+	gdb_test "enable"
+	gdb_test "set \$foo = 3"
+	gdb_test "set \$bar = 6"
+	gdb_test_no_output "disable \$foo \$bar" "disable with convenience values"
+
+	set see1 0
+	set see2 0
+	set see3 0
+	set see4 0
+	set see5 0
+	set see6 0
+
+	gdb_test_multiple "info break" "check disable with convenience values" {
+	    -re "1\[\t \]+breakpoint *keep y.* in [func main] at .*:$::main_line\[^\r\n\]*" {
+		set see1 1
+		exp_continue
+	    }
+	    -re "2\[\t \]+breakpoint *keep y\[^\r\n\]* in [func marker2] at \[^\r\n\]*" {
+		set see2 1
+		exp_continue
+	    }
+	    -re "3\[\t \]+breakpoint *keep n\[^\r\n\]*$::bp_location7\[^\r\n\]*" {
+		set see3 1
+		exp_continue
+	    }
+	    -re "4\[\t \]+breakpoint *keep y\[^\r\n\]*$::bp_location1\[^\r\n\]*" {
+		set see4 1
+		exp_continue
+	    }
+	    -re "5\[\t \]+breakpoint *keep y\[^\r\n\]*$::bp_location1\[^\r\n\]*" {
+		set see5 1
+		exp_continue
+	    }
+	    -re "6\[\t \]+breakpoint *keep n\[^\r\n\]*$::bp_location2\[^\r\n\]*" {
+		set see6 1
+		exp_continue
+	    }
+	    -re ".*$::gdb_prompt $" {
+		if {$see1 && $see2 && $see3 && $see4 && $see5 && $see6} {
+		    pass "check disable with convenience values"
+		} else {
+		    fail "check disable with convenience values"
+		}
+	    }
+	}
+    }
+
+    # test with bad values
+
+    with_test_prefix "bad values" {
+	gdb_test "enable"
+	gdb_test "disable 10" "No breakpoint number 10." \
+	    "disable non-existent breakpoint 10"
+
+	gdb_test_no_output "set \$baz = 1.234"
+	gdb_test "disable \$baz" \
+	    "Convenience variable must have integer value.*" \
+	    "disable with non-integer convenience var"
+	gdb_test "disable \$grbx" \
+	    "Convenience variable must have integer value.*" \
+	    "disable with non-existent convenience var"
+	gdb_test "disable \$10" \
+	    "History has not yet reached .10." \
+	    "disable with non-existent history value"
+	gdb_test "disable \$1foo" \
+	    "Convenience variable must have integer value.*" \
+	    "disable with badly formed history value"
+    }
+
+    # FIXME: The rest of this test doesn't work with anything that can't
+    # handle arguments.
+    # Huh? There doesn't *appear* to be anything that passes arguments
+    # below.
+
+    #
+    # run until the breakpoint at main is hit. For non-stubs-using targets.
+    #
+    gdb_run_cmd
+    gdb_test "" \
+	"Breakpoint \[0-9\]+,.*main .*argc.*argv.* at .*$::srcfile:$::bp_location6.*$::bp_location6\[\t \]+if .argc.* \{.*" \
+	"run until function breakpoint"
+
+    # Test the 'list' commands sets current file for the 'break LINENO' command.
+    set bp_marker1 [gdb_get_line_number "set breakpoint 15 here" $::srcfile1]
+    gdb_test "list marker1" ".*"
+    gdb_test "break $bp_marker1" "Breakpoint \[0-9\]+ at 0x\[0-9a-f\]+: file .*$::srcfile1, line ${bp_marker1}\\." \
+	     "break lineno"
+    gdb_test_no_output {delete $bpnum}
+
+    #
+    # run until the breakpoint at a line number
+    #
+    gdb_test continue "Continuing\\..*Breakpoint \[0-9\]+, main \\(argc=.*, argv=.*, envp=.*\\) at .*$::srcfile:$::bp_location1.*$::bp_location1\[\t \]+printf.*factorial.*" \
+			    "run until breakpoint set at a line number"
+
+    #
+    # Run until the breakpoint set in a function in a file
+    #
+    for {set i 6} {$i >= 1} {incr i -1} {
+	    gdb_test continue "Continuing\\..*Breakpoint \[0-9\]+, factorial \\(value=$i\\) at .*$::srcfile:$::bp_location7.*$::bp_location7\[\t \]+.*if .value > 1. \{.*" \
+			    "run until file:function($i) breakpoint"
+    }
+
+    #
+    # Run until the breakpoint set at a quoted function
+    #
+    gdb_test continue "Continuing\\..*Breakpoint \[0-9\]+, (0x\[0-9a-f\]+ in )?marker2 \\(a=43\\) at .*$::srcfile1:$::bp_location8.*" \
+		    "run until quoted breakpoint"
+    #
+    # run until the file:function breakpoint at a line number in a file
+    #
+    gdb_test continue "Continuing\\..*Breakpoint \[0-9\]+, main \\(argc=.*, argv=.*, envp=.*\\) at .*$::srcfile:$::bp_location2.*$::bp_location2\[\t \]+argc = \\(argc == 12345\\);.*" \
+		    "run until file:linenum breakpoint"
+
+    # Test break at offset +1
+    set bp_location10 [gdb_get_line_number "set breakpoint 10 here"]
+
+    gdb_test "break +1" \
+	"Breakpoint.*at.* file .*$::srcfile, line $bp_location10\\." \
+	"breakpoint offset +1"
+
+    # Check to see if breakpoint is hit when stepped onto
+
+    gdb_test "step" \
+	".*Breakpoint \[0-9\]+, main \\(argc=.*, argv=.*, envp=.*\\) at .*$::srcfile:$bp_location10.*$bp_location10\[\t \]+return argc;.*breakpoint 10 here.*" \
+	"step onto breakpoint"
+
+    # Check to see if breakpoint can be set on ending brace of function
+    set bp_location10a [gdb_get_line_number "set breakpoint 10a here"]
+
+    gdb_test "break $bp_location10a" \
+	"Breakpoint.*at.* file .*$::srcfile, line $bp_location10a\\." \
+	"setting breakpoint at \}"
+
+    gdb_test "continue" \
+	".*Breakpoint \[0-9\]+, main \\(argc=.*, argv=.*, envp=.*\\) at .*$::srcfile:$bp_location10a.*$bp_location10a\[\t \]+\}.*breakpoint 10a here.*" \
+	"continue to breakpoint at \}"
+}
+
+test_break
+
+proc_with_prefix test_tbreak {} {
+    clean_restart break
+
+    # test temporary breakpoint at function
+    gdb_test "tbreak -q main" "Temporary breakpoint.*at.* file .*$::srcfile, line.*" "temporary breakpoint function"
+
+    # test break at function in file
+    gdb_test "tbreak $::srcfile:factorial" "Temporary breakpoint.*at.* file .*$::srcfile, line.*" \
+	    "Temporary breakpoint function in file"
+
+    # test break at line number
+    gdb_test "tbreak $::bp_location1" \
+	"Temporary breakpoint.*at.* file .*$::srcfile, line $::bp_location1.*" \
+	"temporary breakpoint line number #1"
+
+    gdb_test "tbreak $::bp_location6" "Temporary breakpoint.*at.* file .*$::srcfile, line $::bp_location6.*" "temporary breakpoint line number #2"
+
+    # test break at line number in file
+    gdb_test "tbreak $::srcfile:$::bp_location2" \
+	"Temporary breakpoint.*at.* file .*$::srcfile, line $::bp_location2.*" \
+	"temporary breakpoint line number in file #1"
+
+    gdb_test  "tbreak $::srcfile:$::bp_location11" "Temporary breakpoint.*at.* file .*$::srcfile, line $::bp_location11.*" "Temporary breakpoint line number in file #2"
+
+    # check to see what breakpoints are set (temporary this time)
+    gdb_test "info break" \
+	[multi_line "Num     Type.*Disp Enb Address.*What.*" \
+		    "$::decimal\[\t \]+breakpoint     del.*y.*in [func main] at .*$::srcfile:$::main_line.*" \
+		    "$::decimal\[\t \]+breakpoint     del.*y.*in [func factorial] at .*$::srcfile:$::bp_location7.*" \
+		    "$::decimal\[\t \]+breakpoint     del.*y.*in [func main] at .*$::srcfile:$::bp_location1.*" \
+		    "$::decimal\[\t \]+breakpoint     del.*y.*in [func main] at .*$::srcfile:$::bp_location6.*" \
+		    "$::decimal\[\t \]+breakpoint     del.*y.*in [func main] at .*$::srcfile:$::bp_location2.*" \
+		    "$::decimal\[\t \]+breakpoint     del.*y.*in [func main] at .*$::srcfile:$::bp_location11.*"] \
+	"Temporary breakpoint info"
+}
+
+test_tbreak
+
+#***********
+
+# Verify that catchpoints for fork, vfork and exec don't trigger
+# inappropriately.  (There are no calls to those system functions
+# in this test program.)
+
+proc_with_prefix test_no_break_on_catchpoint {} {
+    clean_restart break
+
+    if {![runto_main]} {
+	return
+    }
+
+    gdb_test "catch fork" "Catchpoint \[0-9\]+ \\(fork\\)" \
+	"set catch fork, never expected to trigger"
+
+    gdb_test "catch vfork" "Catchpoint \[0-9\]+ \\(vfork\\)" \
+	"set catch vfork, never expected to trigger"
+
+    gdb_test "catch exec" "Catchpoint \[0-9\]+ \\(exec\\)" \
+	"set catch exec, never expected to trigger"
+
+    gdb_continue_to_end
+}
+
+test_no_break_on_catchpoint
+
+# Verify that GDB responds gracefully when asked to set a breakpoint
+# on a nonexistent source line.
+
+proc_with_prefix test_break_nonexistent_line {} {
+    clean_restart break
+
+    if {![runto_main]} {
+	return
+    }
+
+    gdb_test_no_output "set breakpoint pending off"
+    gdb_test "break 999" \
+	"No line 999 in the current file." \
+	"break on non-existent source line"
+}
+
+test_break_nonexistent_line
+
+proc_with_prefix test_break_default {} {
+    clean_restart break
+
+    if {![runto_main]} {
+	return
+    }
+
+    # Run to the desired default location. If not positioned here, the
+    # tests below don't work.
+    #
+    gdb_test "until $::bp_location1" "main .* at .*:$::bp_location1.*" \
+	"until bp_location1"
+
+    # Verify that GDB allows one to just say "break", which is treated
+    # as the "default" breakpoint.  Note that GDB gets cute when printing
+    # the informational message about other breakpoints at the same
+    # location.  We'll hit that bird with this stone too.
+    #
+    gdb_test "break" "Breakpoint \[0-9\]*.*" \
+	"break on default location, 1st time"
+
+    gdb_test "break" \
+	"Note: breakpoint \[0-9\]* also set at .*Breakpoint \[0-9\]*.*" \
+	"break on default location, 2nd time"
+
+    gdb_test "break" \
+	"Note: breakpoints \[0-9\]* and \[0-9\]* also set at .*Breakpoint \[0-9\]*.*" \
+	"break on default location, 3rd time"
+
+    gdb_test "break" \
+	"Note: breakpoints \[0-9\]*, \[0-9\]* and \[0-9\]* also set at .*Breakpoint \[0-9\]*.*" \
+	"break on default location, 4th time"
+
+    # Check setting a breakpoint at the default location with a condition attached.
+    gdb_test "break if (1)" \
+	"Note: breakpoints \[0-9\]*, \[0-9\]*, \[0-9\]* and \[0-9\]* also set at .*Breakpoint \[0-9\]*.*" \
+	"break on the default location, 5th time, but with a condition"
+}
+
+test_break_default
+
+# Verify that a "silent" breakpoint can be set, and that GDB is indeed
+# "silent" about its triggering.
+
+proc_with_prefix test_break_silent_and_more {} {
+    clean_restart break
+
+    if {![runto_main]} {
+	return
+    }
+
+    gdb_test_multiple "break $::bp_location1" \
+	"set to-be-silent break bp_location1" {
+	    -re "Breakpoint (\[0-9\]*) at .*, line $::bp_location1.*$::gdb_prompt $" {
+		set bpno $expect_out(1,string)
+		pass "set to-be-silent break bp_location1"
+	    }
+	}
+
+    gdb_test "commands $bpno\nsilent\nend" ">end" "set silent break bp_location1"
+
+    gdb_test "info break $bpno" \
+	"\[0-9\]*\[ \t\]*breakpoint.*:$::bp_location1\r\n\[ \t\]*silent.*" \
+	"info silent break bp_location1"
+
+    gdb_test "continue" "Continuing." \
+	"hit silent break bp_location1"
+
+    gdb_test "bt" "#0  main .* at .*:$::bp_location1.*" \
+	"stopped for silent break bp_location1"
+
+    # Verify the $_hit_bpnum convenience variable is set to the silent hit bpno.
+    gdb_test "printf \"%d\\n\", \$_hit_bpnum" "$bpno" \
+	"Silent breakpoint hit \$_hit_bpnum is silent $bpno"
+
+    # Verify that GDB can at least parse a breakpoint with the
+    # "thread" keyword.  (We won't attempt to test here that a
+    # thread-specific breakpoint really triggers appropriately.
+    # The gdb.threads subdirectory contains tests for that.)
+    #
+    set bp_location12 [gdb_get_line_number "set breakpoint 12 here"]
+    gdb_test "break $bp_location12 thread 999" "Unknown thread 999.*" \
+	"thread-specific breakpoint on non-existent thread disallowed"
+
+    gdb_test "break $bp_location12 thread foo" \
+	"Invalid thread ID: foo" \
+	"thread-specific breakpoint on bogus thread ID disallowed"
+
+    # Verify that GDB responds gracefully to a breakpoint command with
+    # trailing garbage.
+    #
+    gdb_test "break $bp_location12 foo" \
+	"malformed linespec error: unexpected string, \"foo\".*" \
+	"breakpoint with trailing garbage disallowed"
+
+    # Verify that GDB responds gracefully to a "clear" command that has
+    # no matching breakpoint.  (First, get us off the current source line,
+    # which we know has a breakpoint.)
+    #
+    gdb_test "next" "marker1.*" "step over breakpoint"
+
+    gdb_test "clear 81" "No breakpoint at 81.*" \
+	"clear line has no breakpoint disallowed"
+
+    gdb_test "clear" "No breakpoint at this line.*" \
+	"clear current line has no breakpoint disallowed"
+
+    # Verify that we can set and clear multiple breakpoints.
+    #
+    # We don't test that it deletes the correct breakpoints.  We do at
+    # least test that it deletes more than one breakpoint.
+    #
+    gdb_test "break marker3" "Breakpoint.*at.*" "break marker3 #1"
+    gdb_test "break marker3" "Breakpoint.*at.*" "break marker3 #2"
+    gdb_test "clear marker3" {Deleted breakpoints [0-9]+ [0-9]+.*}
+}
+
+test_break_silent_and_more
+
+# Verify that a breakpoint can be set via a convenience variable.
+
+proc_with_prefix test_break_line_convenience_var {} {
+    clean_restart break
+
+    if { ![runto_main] } {
+	return
+    }
+
+    gdb_test_no_output "set \$foo=$::bp_location11" \
+	"set convenience variable \$foo to bp_location11"
+
+    gdb_test "break \$foo" \
+	"Breakpoint (\[0-9\]*) at .*, line $::bp_location11.*"
+
+    # Verify that GDB responds gracefully to an attempt to set a
+    # breakpoint via a convenience variable whose type is not integer.
+
+    gdb_test_no_output "set \$foo=81.5" \
+	"set convenience variable \$foo to 81.5"
+
+    gdb_test "break \$foo" \
+	"Convenience variables used in line specs must have integer values.*" \
+	"non-integer convenience variable disallowed"
+}
+
+test_break_line_convenience_var
+
+# Verify that we can set and trigger a breakpoint in a user-called function.
+
+proc_with_prefix test_break_user_call {} {
+    clean_restart break
+
+    if { ![runto_main] } {
+	return
+    }
+
+    gdb_test "break marker2" \
+	"Breakpoint (\[0-9\]*) at .*, line $::bp_location8.*" \
+	"set breakpoint on to-be-called function"
+
+    gdb_test "print marker2(99)" \
+	"The program being debugged stopped while in a function called from GDB.\r\nEvaluation of the expression containing the function\r\n.[func marker2]. will be abandoned.\r\nWhen the function is done executing, GDB will silently stop.*" \
+	"hit breakpoint on called function"
+
+    # As long as we're stopped (breakpointed) in a called function,
+    # verify that we can successfully backtrace & such from here.
+    gdb_test "bt" \
+	"#0\[ \t\]*($::hex in )?marker2.*:$::bp_location8\r\n#1\[ \t\]*<function called from gdb>.*" \
+	"backtrace while in called function"
+
+    # Return from the called function.  For remote targets, it's important to do
+    # this before runto_main, which otherwise may silently stop on the dummy
+    # breakpoint inserted by GDB at the program's entry point.
+    #
+    gdb_test_multiple "finish" "finish from called function" {
+	-re "Run till exit from .*marker2.* at .*$::bp_location8\r\n.*function called from gdb.*$::gdb_prompt $" {
+	    pass "finish from called function"
+	}
+	-re "Run till exit from .*marker2.* at .*$::bp_location8\r\n.*Value returned.*$::gdb_prompt $" {
+	    pass "finish from called function"
+	}
+    }
+}
+
+test_break_user_call
+
+# Verify that GDB responds gracefully to a "finish" command with
+# arguments.
+
+proc_with_prefix test_finish_arguments {} {
+    clean_restart break
+
+    if {![runto_main]} {
+	return
+    }
+
+    send_gdb "finish 123\n"
+    gdb_expect {
+      -re "The \"finish\" command does not take any arguments.\r\n$::gdb_prompt $"\
+	      {pass "finish with arguments disallowed"}
+      -re "$::gdb_prompt $"\
+	      {fail "finish with arguments disallowed"}
+      timeout {fail "(timeout) finish with arguments disallowed"}
+    }
+
+    # Verify that GDB responds gracefully to a request to "finish" from
+    # the outermost frame.  On a stub that never exits, this will just
+    # run to the stubs routine, so we don't get this error...  Thus the
+    # second condition.
+    #
+
+    gdb_test_multiple "finish" "finish from outermost frame disallowed" {
+	-re "\"finish\" not meaningful in the outermost frame.\r\n$::gdb_prompt $" {
+	    pass "finish from outermost frame disallowed"
+	}
+	-re "Run till exit from.*\r\n$::gdb_prompt $" {
+	    pass "finish from outermost frame disallowed"
+	}
+    }
+}
+
+test_finish_arguments
+
+#********
+
+
+#
+# Test "next" over recursive function call.
+#
+
+proc_with_prefix test_next_with_recursion {} {
+    global gdb_prompt
+    global decimal
+    global binfile
+
+    gdb_test "kill" "" "kill program" "Kill the program being debugged.*y or n. $" "y"
+    delete_breakpoints
+
+    gdb_test "break factorial" "Breakpoint $decimal at .*" "break at factorial"
+
+    # Run until we call factorial with 6
+
+    gdb_run_cmd
+    gdb_test "" "Break.* factorial .value=6. .*" "run to factorial(6)"
+
+    # Continue until we call factorial recursively with 5.
+
+    gdb_test "continue" \
+	"Continuing.*Break.* factorial .value=5. .*" \
+	"continue to factorial(5)"
+
+    # Do a backtrace just to confirm how many levels deep we are.
+
+    gdb_test "backtrace" \
+	"#0\[ \t\]+ factorial .value=5..*" \
+	"backtrace from factorial(5)"
+
+    # Now a "next" should position us at the recursive call, which
+    # we will be performing with 4.
+
+    gdb_test "next" \
+	".* factorial .value - 1.;.*" \
+	"next to recursive call"
+
+    # Disable the breakpoint at the entry to factorial by deleting them all.
+    # The "next" should run until we return to the next line from this
+    # recursive call to factorial with 4.
+    # Buggy versions of gdb will stop instead at the innermost frame on
+    # the line where we are trying to "next" to.
+
+    delete_breakpoints
+
+    if [istarget "mips*tx39-*"] {
+	set timeout 60
+    }
+    # We used to set timeout here for all other targets as well.  This
+    # is almost certainly wrong.  The proper timeout depends on the
+    # target system in use, and how we communicate with it, so there
+    # is no single value appropriate for all targets.  The timeout
+    # should be established by the Dejagnu config file(s) for the
+    # board, and respected by the test suite.
+    #
+    # For example, if I'm running GDB over an SSH tunnel talking to a
+    # portmaster in California talking to an ancient 68k board running
+    # a crummy ROM monitor (a situation I can only wish were
+    # hypothetical), then I need a large timeout.  But that's not the
+    # kind of knowledge that belongs in this file.
+
+    gdb_test next "\[0-9\]*\[\t \]+return \\(value\\);.*" \
+	    "next over recursive call"
+
+    # OK, we should be back in the same stack frame we started from.
+    # Do a backtrace just to confirm.
+
+    gdb_test "backtrace" \
+	    "#0\[ \t\]+ factorial .value=120.*\r\n#1\[ \t\]+ \[0-9a-fx\]+ in factorial .value=6..*" \
+	    "backtrace from factorial(5.1)"
+
+    if { ![target_info exists gdb,noresults] } {
+	gdb_continue_to_end "recursive next test"
+    }
+}
+
+test_next_with_recursion
+
+
+#********
+
+# build a new file with optimization enabled so that we can try breakpoints
+# on targets with optimized prologues
+
+if { [build_executable "failed to prepare" "breako2" {break.c break1.c} {debug nowarnings optimize=-O2}] } {
+    return -1
+}
+
+proc_with_prefix test_break_optimized_prologue {} {
+    clean_restart breako2
+
+    # test break at function
+    gdb_test "break -q main" \
+	"Breakpoint.*at.* file .*, line.*" \
+	"breakpoint function, optimized file"
+
+    # test break at function
+    gdb_test "break marker4" \
+	"Breakpoint.*at.* file .*$::srcfile1, line.*" \
+	"breakpoint small function, optimized file"
+
+    # run until the breakpoint at main is hit. For non-stubs-using targets.
+    gdb_run_cmd
+
+    set test "run until function breakpoint, optimized file"
+    gdb_test_multiple "" $test {
+	-re "Breakpoint \[0-9\]+,.*main .*argc.*argv.* at .*$::srcfile:$::bp_location6.*$::bp_location6\[\t \]+if .argc.* \{.*$::gdb_prompt $" {
+	    pass $test
+	}
+	-re "Breakpoint \[0-9\]+,.*main .*argc.*argv.* at .*$::gdb_prompt $" {
+	    pass "$test (code motion)"
+	}
+    }
+
+    # run until the breakpoint at a small function
+    #
+    # Add a second pass pattern.  The behavior differs here between stabs
+    # and dwarf for one-line functions.  Stabs preserves two line symbols
+    # (one before the prologue and one after) with the same line number,
+    # but dwarf regards these as duplicates and discards one of them.
+    # Therefore the address after the prologue (where the breakpoint is)
+    # has no exactly matching line symbol, and GDB reports the breakpoint
+    # as if it were in the middle of a line rather than at the beginning.
+
+    set bp_location14 [gdb_get_line_number "set breakpoint 14 here" $::srcfile1]
+
+    gdb_test_multiple "continue" \
+	"run until breakpoint set at small function, optimized file" {
+	    -re "Breakpoint $::decimal, marker4 \\(d=(d@entry=)?177601976\\) at .*$::srcfile1:$bp_location14\[\r\n\]+$bp_location14\[\t \]+void marker4.*" {
+		pass "run until breakpoint set at small function, optimized file (line bp_location14)"
+	    }
+	    -re "Breakpoint $::decimal, factorial \\(.*\\) .*\{\r\n$::gdb_prompt" {
+		# GCC 4.3 emits bad line number information - see gcc/36748.
+		if { [test_compiler_info "gcc-4-3-*"] } {
+		    setup_xfail *-*-*
+		}
+		fail "run until breakpoint set at small function, optimized file"
+	    }
+	}
+}
+
+test_break_optimized_prologue
+
+# test that 'rbreak' on a symbol that may be from a shared library doesn't
+# cause a "Junk at end of arguments." error.
+#
+# On x86 GNU/Linux, this test will choke on e.g. __libc_start_main@plt.
+#
+# Note that this test won't necessarily choke on all targets even if
+# all the rbreak issue is present.  rbreak needs to match and set a
+# breakpoint on a symbol causes 'break' to choke.
+
+proc_with_prefix test_rbreak_shlib {} {
+    clean_restart breako2
+
+    gdb_test_no_output "set breakpoint pending on" "rbreak junk pending setup"
+
+    # We expect at least one breakpoint to be set when we "rbreak main".
+    gdb_test "rbreak main" \
+	".*Breakpoint.*at.* file .*$::srcfile, line.*"
+
+    # Run to a breakpoint.  Fail if we see "Junk at end of arguments".
+    gdb_run_cmd
+
+    gdb_test_multiple "" "rbreak junk" {
+	-re -wrap "Junk at end of arguments.*" {
+	    fail $gdb_test_name
+	}
+	-re -wrap ".*Breakpoint \[0-9\]+,.*" {
+	    pass $gdb_test_name
+	}
+    }
+}
+
+test_rbreak_shlib
+
+# Test break via convenience variable with file name
+
+proc_with_prefix test_break_file_line_convenience_var {} {
+    clean_restart breako2
+
+    set line [gdb_get_line_number "set breakpoint 1 here"]
+    gdb_test_no_output "set \$l = $line"
+
+    set line_actual "-1"
+    set test "break $::srcfile:\$l"
+    gdb_test_multiple "$test" $test {
+	-re "Breakpoint $::decimal at $::hex: file .*break\\.c, line ($::decimal)\\.\r\n$::gdb_prompt $" {
+	    # Save the actual line number on which the breakpoint was
+	    # actually set. On some systems (Eg: Ubuntu 16.04 with GCC
+	    # version 5.4.0), that line gets completely inlined, including
+	    # the call to printf, and so we end up inserting the breakpoint
+	    # on one of the following lines instead.
+	    set line_actual $expect_out(1,string)
+	    pass $test
+	}
+    }
+
+    gdb_test_no_output "set \$foo=81.5" \
+	"set convenience variable \$foo to 81.5"
+    gdb_test "break $::srcfile:\$foo" \
+	"Convenience variables used in line specs must have integer values.*" \
+	"non-integer convenience variable disallowed"
+}
+
+test_break_file_line_convenience_var
+
+# Test that commands can be cleared without error.
+
+proc_with_prefix test_break_commands_clear {} {
+    clean_restart breako2
+
+    set line [gdb_get_line_number "set breakpoint 1 here"]
+    gdb_breakpoint $line
+
+    gdb_test "commands\nprint 232323\nend" ">end" "set some breakpoint commands"
+    gdb_test "commands\nend" ">end" "clear breakpoint commands"
+
+    # We verify that the commands were cleared by ensuring that the last
+    # breakpoint's location ends the output -- if there were commands,
+    # they would have been printed after the location.
+    gdb_test "info break" "$::srcfile:$::decimal" "verify that they were cleared"
+}
+
+test_break_commands_clear

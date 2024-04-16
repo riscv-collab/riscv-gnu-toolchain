@@ -1,0 +1,110 @@
+# Copyright 1992-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test callling a method on a variable that has been put in a
+# register.
+
+require allow_cplus_tests
+
+load_lib "cp-support.exp"
+load_lib dwarf.exp
+
+standard_testfile .cc -dw.S
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile \
+	 {debug c++}]} {
+    return -1
+}
+
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+
+    set main_result \
+	[function_range main ${::srcdir}/${::subdir}/${::srcfile}]
+    set main_start [lindex $main_result 0]
+    set main_length [lindex $main_result 1]
+
+    cu {} {
+	compile_unit {
+	    {DW_AT_language @DW_LANG_C_plus_plus}
+	    {DW_AT_name	    $::srcfile}
+	    {DW_AT_comp_dir /tmp}
+	} {
+	    declare_labels int_type_label struct_type_label \
+		struct_ptr_type_label
+	    set ptr_size [get_sizeof "void *" 96]
+
+	    DW_TAG_subprogram {
+		{name main}
+		{low_pc $main_start addr}
+		{high_pc $main_length data8}
+		{DW_AT_type :$int_type_label}
+	    }
+
+	    int_type_label: DW_TAG_base_type {
+		{DW_AT_byte_size 4 DW_FORM_sdata}
+		{DW_AT_encoding @DW_ATE_signed}
+		{DW_AT_name int}
+	    }
+
+	    struct_type_label: DW_TAG_structure_type {
+		{DW_AT_byte_size 4 DW_FORM_sdata}
+		{DW_AT_name small}
+	    } {
+		member {
+		    {name xxx}
+		    {type :$int_type_label}
+		    {data_member_location 0 data1}
+		}
+		subprogram {
+		    {name yyy}
+		    {type :$int_type_label}
+		} {
+		    formal_parameter {
+			{type :$struct_ptr_type_label}
+			{artificial 1 flag_present}
+		    }
+		}
+	    }
+
+	    struct_ptr_type_label: DW_TAG_pointer_type {
+		{DW_AT_byte_size $ptr_size DW_FORM_data1}
+		{type :$struct_type_label}
+	    }
+
+	    DW_TAG_variable {
+		{DW_AT_name global_var}
+		{DW_AT_type :$struct_type_label}
+		{DW_AT_location {
+		    DW_OP_reg0
+		} SPECIAL_expr}
+		{external 1 flag}
+	    }
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	  [list $srcfile $asm_file] {nodebug}] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+gdb_test "print global_var.yyy ()" \
+    "Address requested for identifier \"global_var\" which is in register .*" \
+    "call method on register local"

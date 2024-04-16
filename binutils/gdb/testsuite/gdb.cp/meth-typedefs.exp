@@ -1,0 +1,189 @@
+# Copyright 2011-2024 Free Software Foundation, Inc.
+#
+# Contributed by Red Hat, originally written by Keith Seitz.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the gdb testsuite.
+
+proc add {var name params expected {kind {func}}} {
+    upvar $var result
+
+    if {[string compare $kind "template"] == 0} {
+	set method_name "${name}<$expected>"
+    } else {
+	set method_name "$name"
+    }
+
+    set expect ".*// ${method_name}\\($expected\\)"
+    lappend result [list "${method_name}($params)" $expect]
+}
+
+require allow_cplus_tests
+
+# Tests for c++/12266 et al
+standard_testfile .cc
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile \
+	 {c++ debug additional_flags=-std=c++11}]} {
+    return -1
+}
+
+if {![runto_main]} {
+    return
+}
+
+array set typedefs {
+    "my_other_type" {"my_other_type" "my_type" "const char* const*"}
+    "my_other_type_2" {"my_other_type_2" "my_type_2" "int"}
+    "CORE_ADDR" { "CORE_ADDR" "unsigned long" }
+    "_BAR_" { "_BAR_" "a::b::BAR" "a::b::c::d::bar" }
+    "aenum" { "aenum" "anon_enum" }
+    "astruct" { "astruct" "anon_struct" }
+    "aunion" { "aunion" "anon_union" }
+}
+
+set methods {}
+
+# Add the simple, one-parameter methods
+foreach meth {A::FOO::test A::FOO::foo} {
+    foreach type {my_other_type my_other_type_2} {
+	foreach t $typedefs($type)  {
+	    add methods $meth $t $type
+	}
+    }
+}
+
+# Add two-parameter methods
+foreach meth {A::FOO::test A::FOO::foo} {
+    set type "my_other_type_2, const my_other_type"
+    foreach t1 $typedefs(my_other_type_2) {
+	foreach t2 $typedefs(my_other_type) {
+	    add methods $meth "$t1, const $t2" $type
+	    add methods $meth "$t1, $t2" $type
+	}
+    }
+}
+
+# Add three-parameter methods/functions
+foreach meth {A::FOO::test A::FOO::foo B::test test} {
+    set type "aenum, astruct const&, aunion const\\*\\*\\*"
+    foreach t1 $typedefs(aenum) {
+	foreach t2 $typedefs(astruct) {
+	    foreach t3 $typedefs(aunion) {
+		add methods $meth "$t1, $t2 const&, $t3 const***" $type
+	    }
+	}
+    }
+}
+
+# Add the array-of-function pointer methods
+set type "fptr1\\*"
+foreach meth {A::FOO::test A::FOO::foo} {
+    add methods $meth "fptr1*" $type
+    foreach t $typedefs(my_other_type) {
+	add methods $meth "void (**) ($t)" $type
+    }
+}
+
+# Add the function pointer methods
+set type "fptr3"
+foreach meth {A::FOO::test A::FOO::foo} {
+    add methods $meth "fptr3" $type
+
+    foreach t1 $typedefs(my_other_type) {
+	add methods $meth "void (*)(fptr2, $t1)" $type
+	foreach t2 $typedefs(my_other_type_2) {
+	    add methods $meth "void (*)(void (*)(fptr1, $t2), $t1)" $type
+	    foreach t3 $typedefs(my_other_type) {
+		add methods $meth \
+		    "void (*)(void (*)(void (*) ($t3), $t2), $t1)" $type
+	    }
+	}
+    }
+}
+
+set type1 "my_other_type"
+set type2 "my_other_type, my_other_type_2"
+foreach meth {"test" "B::test"} {
+    foreach t1 $typedefs(my_other_type) {
+	add methods $meth $t1 $type1
+	foreach t2 $typedefs(my_other_type_2) {
+	    add methods $meth "$t1, $t2" $type2 template
+	}
+    }
+}
+
+# Miscellaneous tests
+set type {CORE_ADDR \(\*\) \[10\]}
+foreach meth {A::FOO::foo A::FOO::test} {
+    foreach t $typedefs(CORE_ADDR) {
+	add methods $meth "$t (*) \[10\]" $type
+    }
+}
+
+foreach t $typedefs(_BAR_) {
+    add methods "test" "$t&" {_BAR_&}
+}
+
+# Tests for c++/24367
+foreach t {int incomplete_struct another_incomplete_struct} {
+    add methods "test_incomplete" "${t}*" [string_to_regexp "${t}*"]
+}
+
+gdb_test_no_output "set listsize 1" ""
+
+# Finally, for each method in the list METHODS, check whether
+# the user can "list" it and "break" on it (both quoted and unquoted).
+foreach test $methods {
+    set func [lindex $test 0]
+    set result [lindex $test 1]
+
+    gdb_test "list -qualified $func" $result
+    gdb_test "list -qualified '$func'" $result
+    if {[gdb_breakpoint "-qualified $func"]} {
+      pass "break -qualified $func"
+    }
+    if {[gdb_breakpoint "-qualified '$func'"]} {
+      pass "break -qualified '$func'"
+    }
+}
+
+# The tests above use -qualified to explicitly pick the one "test"
+# symbol each test cares about.  Now check that both "break test(..)"
+# and "list test(..)" without -qualified find "test(..)" in all the 3
+# scopes that have the this particular overload.
+set func "test(aenum, astruct const&, aunion const***)"
+set func_re "test\\(anon_enum, anon_struct const&, anon_union const\\*\\*\\*\\)"
+set line1 [gdb_get_line_number " A::FOO::$func"]
+set line2 [gdb_get_line_number " B::$func"]
+set line3 [gdb_get_line_number " $func"]
+
+foreach f [list "$func" "'$func'"] {
+    set any "\[^\r\n\]*"
+    gdb_test \
+	"list $f" \
+	[multi_line \
+	     "file: \".*$srcfile\", line number: $line1, symbol: \"A::foo::$func_re\"" \
+	     "$line1${any}A::FOO::test${any}" \
+	     "file: \".*$srcfile\", line number: $line2, symbol: \"B::$func_re\"" \
+	     "$line2${any}B::test${any}" \
+	     "file: \".*$srcfile\", line number: $line3, symbol: \"$func_re\"" \
+	     "$line3${any}// test${any}"]
+
+    delete_breakpoints
+    gdb_test "break $f" "\\(3 locations\\)"
+}
+
+gdb_exit

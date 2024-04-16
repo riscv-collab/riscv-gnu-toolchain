@@ -1,0 +1,286 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test how GDB reformats the documentation string of commands
+# implemented in Python for use as the help text of those same
+# commands.
+
+load_lib gdb-python.exp
+
+require allow_python_tests
+
+clean_restart
+
+# A global counter used to number the tests.
+set idx 0
+
+# Run a test, create both a command and a parameter with INPUT_DOCS as
+# the Python documentation string, load the command and parameter into
+# GDB, and then ask for the help text of the command, and the show and
+# set help for the parameter.  The output from GDB should match
+# EXPECTED_OUTPUT in each case.
+#
+# The INPUT_DOCS must start with 2 space characters, followed by the
+# 3-quote characters to start the doc string, and must end with the
+# final 3-quote characters.  If this is not true then an error is
+# thrown, and this function immediately returns.
+proc test { input_docs expected_output } {
+    global idx
+
+    set local_idx $idx
+    incr idx
+
+    with_test_prefix "test ${local_idx}" {
+
+	# The tests in this script don't have descriptive names,
+	# rather they use the global IDX to generate a unique name for
+	# each test.  To make it easier to track down a failing test,
+	# we print out the test name and the input string.
+	verbose -log "Start of: test_cmd ${local_idx}"
+	verbose -log "Input:\n${input_docs}"
+
+	if { [string range $input_docs 0 4] != "  \"\"\"" } {
+	    perror "Input string does not start with the required pattern"
+	    return
+	}
+
+	if { [string range $input_docs end-2 end] != "\"\"\"" } {
+	    perror "Input string does not end with the required pattern"
+	    return
+	}
+
+	set python_filename [standard_output_file "${::gdb_test_file_name}-${local_idx}.py"]
+
+	set fd [open $python_filename w]
+
+	puts $fd "class test_cmd (gdb.Command):"
+	puts $fd $input_docs
+	puts $fd ""
+	puts $fd "  def __init__ (self):"
+	puts $fd "    super ().__init__ (\"test-cmd\", gdb.COMMAND_OBSCURE)"
+	puts $fd ""
+	puts $fd "  def invoke (self, arg, from_tty):"
+	puts $fd "    print (\"In test-cmd\")"
+	puts $fd ""
+
+	puts $fd "class test_param (gdb.Parameter):"
+	puts $fd $input_docs
+	puts $fd ""
+	puts $fd "  show_doc = \"This is the show doc line\""
+	puts $fd "  set_doc = \"This is the set doc line\""
+	puts $fd ""
+	puts $fd "  def __init__ (self):"
+	puts $fd "    super ().__init__ (\"test-param\", gdb.COMMAND_OBSCURE, gdb.PARAM_BOOLEAN)"
+	puts $fd ""
+	puts $fd "  def get_show_string (self, value):"
+	puts $fd "    return \"The state is '\" + value + \"'\""
+
+	puts $fd ""
+	puts $fd "test_param ()"
+	puts $fd "test_cmd ()"
+
+	puts $fd ""
+	puts $fd "print(\"Loaded OK.\")"
+
+	close $fd
+
+	set remote_python_file \
+	    [gdb_remote_download host $python_filename]
+
+	clean_restart
+
+	gdb_test "source ${remote_python_file}" \
+	    "Loaded OK\\." \
+	    "source python command file"
+
+	# Use gdb_test_multiple here as plain gdb_test will allow
+	# excess blank lines between the expected_output pattern and
+	# the gdb_prompt - a core part of this test is that we are
+	# checking that such blank lines are removed - so we can't use
+	# gdb_test here.
+	gdb_test_multiple "help test-cmd" "" {
+	    -re "^help test-cmd\r\n" {
+		exp_continue
+	    }
+	    -re "^$expected_output\r\n$::gdb_prompt $" {
+		pass $gdb_test_name
+	    }
+	}
+
+	gdb_test_multiple "help set test-param" "" {
+	    -re "^help set test-param\r\n" {
+		exp_continue
+	    }
+	    -re "^This is the set doc line\r\n" {
+		exp_continue
+	    }
+	    -re "^$expected_output\r\n$::gdb_prompt $" {
+		pass $gdb_test_name
+	    }
+	}
+
+	gdb_test_multiple "help show test-param" "" {
+	    -re "^help show test-param\r\n" {
+		exp_continue
+	    }
+	    -re "^This is the show doc line\r\n" {
+		exp_continue
+	    }
+	    -re "^$expected_output\r\n$::gdb_prompt $" {
+		pass $gdb_test_name
+	    }
+	}
+    }
+}
+
+# The first test is pretty vanilla. First line starts immediately
+# after the opening quotes, and closing quotes are immediately after
+# the last line.
+test \
+    [multi_line_input \
+	 "  \"\"\"This is the first line." \
+	 "" \
+	 "  This is the third line.\"\"\""] \
+    [multi_line \
+	 "This is the first line\\." \
+	 "" \
+	 "This is the third line\\."]
+
+# In this test the first line starts on the line after the opening
+# quotes.  The blank line in the middle is still completely empty.
+test \
+    [multi_line_input \
+	 "  \"\"\"" \
+	 "  This is the first line." \
+	 "" \
+	 "  This is the third line.\"\"\""] \
+    [multi_line \
+	 "This is the first line\\." \
+	 "" \
+	 "This is the third line\\."]
+
+# This test adds an indented line in the middle, we expect the
+# relative indentation to be retained.
+test\
+    [multi_line_input \
+	 "  \"\"\"" \
+	 "  This is the first line." \
+	 "    Indented second line." \
+	 "  This is the third line.\"\"\""] \
+    [multi_line \
+	 "This is the first line\\." \
+	 "  Indented second line\\." \
+	 "This is the third line\\."]
+
+# The indentation moves to the first line.
+test\
+    [multi_line_input \
+	 "  \"\"\"" \
+	 "    Indented first line." \
+	 "  This is the second line." \
+	 "  This is the third line.\"\"\""] \
+    [multi_line \
+	 "  Indented first line\\." \
+	 "This is the second line\\." \
+	 "This is the third line\\."]
+
+# The indentation moves to the last line.
+test\
+    [multi_line_input \
+	 "  \"\"\"" \
+	 "  This is the first line." \
+	 "  This is the second line." \
+	 "    Indented third line.\"\"\""] \
+    [multi_line \
+	 "This is the first line\\." \
+	 "This is the second line\\." \
+	 "  Indented third line\\."]
+
+# Tests using different amounts of white-space on a line of its own.
+# We test with the white-space at the beginning, end, and in the
+# middle of the doc string.
+foreach line [list "" " " "  " "   " "    "] {
+    # Blank lines at the beginning should be removed.
+    test \
+	[multi_line_input \
+	     "  \"\"\"" \
+	     $line \
+	     "  This is the first line." \
+	     "    Indented second line." \
+	     "  This is the third line.\"\"\""] \
+	[multi_line \
+	     "This is the first line\\." \
+	     "  Indented second line\\." \
+	     "This is the third line\\."]
+
+    # As should blank lines at the end.
+    test \
+	[multi_line_input \
+	     "  \"\"\"" \
+	     "  This is the first line." \
+	     "    Indented second line." \
+	     "  This is the third line." \
+	     $line \
+	     "  \"\"\""] \
+	[multi_line \
+	     "This is the first line\\." \
+	     "  Indented second line\\." \
+	     "This is the third line\\."]
+
+    # While blank lines in the middle should have all white-space
+    # removed.
+    test \
+	[multi_line_input \
+	     "  \"\"\"" \
+	     "  This is the first line." \
+	     $line \
+	     "  This is the third line." \
+	     $line \
+	     "  \"\"\""] \
+	[multi_line \
+	     "This is the first line\\." \
+	     "" \
+	     "This is the third line\\."]
+}
+
+# Check for correct handling of closing quotes being on a line of
+# their own.
+test\
+    [multi_line_input \
+	 "  \"\"\"  " \
+	 "  This is the first line." \
+	 "    Indented second line." \
+	 "  This is the third line." \
+	 "  \"\"\""] \
+    [multi_line \
+	 "This is the first line\\." \
+	 "  Indented second line\\." \
+	 "This is the third line\\." ]
+
+
+# Check with a single 'x' character before the closing quotes.  Make
+# sure we don't drop this character.
+test\
+    [multi_line_input \
+	 "  \"\"\"  " \
+	 "  This is the first line." \
+	 "    Indented second line." \
+	 "  This is the third line." \
+	 "  x\"\"\""] \
+    [multi_line \
+	 "This is the first line\\." \
+	 "  Indented second line\\." \
+	 "This is the third line\\." \
+	 "x"]

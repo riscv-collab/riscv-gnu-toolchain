@@ -1,0 +1,88 @@
+# Copyright (C) 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test "start" for D, dwarf assembly version.
+
+load_lib d-support.exp
+load_lib dwarf.exp
+require allow_d_tests dwarf2_support
+
+# This testcase verifies the behavior of the `start' command, which
+# does not work when we use the gdb stub...
+require !use_gdb_stub
+
+standard_testfile dmain.c -dw.S
+
+with_shared_gdb {
+    lassign [function_range _Dmain ${srcdir}/${subdir}/${srcfile}] \
+	dmain_start dmain_length
+
+    lassign [function_range main ${srcdir}/${subdir}/${srcfile}] \
+	main_start main_length
+}
+
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    global dmain_start dmain_length
+    global main_start main_length
+
+    cu { label cu_start } {
+	compile_unit {
+	    {language @DW_LANG_D}
+	} {
+	    module {
+		{name dmain}
+	    }
+	    subprogram {
+		{name "D main" }
+		{MIPS_linkage_name "_Dmain"}
+		{low_pc $dmain_start DW_FORM_addr}
+		{high_pc "$dmain_start + $dmain_length" DW_FORM_addr}
+		{external 1 flag_present}
+	    }
+	    subprogram {
+		{name "dmain._d_cmain!().main" }
+		{MIPS_linkage_name "main"}
+		{low_pc $main_start DW_FORM_addr}
+		{high_pc "$main_start + $main_length" DW_FORM_addr}
+		{external 1 flag_present}
+	    }
+	}
+    }
+
+    aranges {} cu_start {
+	arange {} $dmain_start $dmain_length
+	arange {} $main_start $main_length
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	  [list $srcfile $asm_file] {nodebug}] } {
+    return -1
+}
+
+# Verify that "start" lands inside the right procedure.
+if {[gdb_start_cmd] < 0} {
+    unsupported "start failed"
+    return -1
+}
+
+# We should probably have "D main" instead of "_Dmain" here, filed PR30276
+# '[gdb/symtab] function name is _Dmain instead of "D main"' about that.
+gdb_test "" \
+    "in _Dmain \\(\\)" \
+    "start"
+
+gdb_test "show language" {"auto; currently d".}

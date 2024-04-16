@@ -1,0 +1,150 @@
+# Copyright 2007-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+#
+# test running programs
+#
+
+require allow_shlib_tests
+
+standard_testfile mi-pending.c
+
+set libfile1 "mi-pendshr"
+set libfile2 "mi-pendshr2"
+set libsrc1  $srcdir/$subdir/$libfile1.c
+set libsrc2  $srcdir/$subdir/$libfile2.c
+set lib_sl1  [standard_output_file $libfile1.sl]
+set lib_sl2  [standard_output_file $libfile2.sl]
+set lib_opts debug
+set exec_opts [list debug shlib=$lib_sl1 shlib_load]
+
+if { [gdb_compile_shlib $libsrc1 $lib_sl1 $lib_opts] != ""
+     || [gdb_compile_shlib $libsrc2 $lib_sl2 $lib_opts] != ""} {
+    untested "failed to compile shared library"
+    return -1
+}
+
+if { [gdb_compile_pthreads $srcdir/$subdir/$srcfile $binfile executable $exec_opts] != ""} {
+    untested "failed to compile"
+    return -1
+}
+
+# Start with a fresh gdb.
+if {[mi_clean_restart $binfile]} {
+    return
+}
+mi_load_shlibs $lib_sl1
+mi_load_shlibs $lib_sl2
+
+# Set pending breakpoint via MI.
+mi_create_breakpoint_pending "-f pendfunc1" \
+    "MI pending breakpoint on pendfunc1" \
+    -number "1" \
+    -type "breakpoint" \
+    -disp "keep" \
+    -enabled "y" \
+    -pending "pendfunc1" \
+    -original-location "pendfunc1"
+
+# Add some commands to the pending breakpoint, use -break-info to
+# check that the commands show up, then clear the commands again.
+mi_gdb_test "-break-commands 1 \"print 1\" \"print 2\" \"print 3\""\
+    "\\^done" \
+    "set breakpoint commands on pending breakpoint"
+set bp [mi_make_breakpoint_pending -number 1 -disp keep -func pendfunc1 \
+	    -disp keep -enabled y -original-location pendfunc1 \
+	    -script {\["print 1","print 2","print 3"\]}]
+mi_gdb_test "-break-info 1" \
+    "\\^done,[mi_make_breakpoint_table [list $bp]]" \
+    "breakpoint commands: check that commands are set"
+mi_gdb_test "-break-commands 1"\
+    "\\^done" \
+    "clear breakpoint commands on pending breakpoint"
+
+# Set pending breakpoint with a condition via MI.
+mi_create_breakpoint_pending "-f -c x==4 ${libfile1}.c:pendfunc2" \
+    "MI pending breakpoint on ${libfile1}.c:pendfunc2 if x==4" \
+    -number "2" \
+    -type "breakpoint" \
+    -disp "keep" \
+    -enabled "y" \
+    -pending "${libfile1}.c:pendfunc2" \
+    -cond "x==4" \
+    -original-location "${libfile1}.c:pendfunc2"
+
+# Set breakpoint so that we can stop when the thread is created
+mi_create_breakpoint "-f thread_func" \
+    "MI breakpoint on thread_func" \
+    -number "3" \
+    -type "breakpoint" \
+    -disp "keep" \
+    -enabled "y" \
+    -addr "$hex" \
+    -func "thread_func"
+
+mi_run_cmd
+
+mi_expect_stop "breakpoint-hit" "pendfunc1" ".*" ".*" ".*" \
+    { "" "disp=\"keep\"" } \
+    "Run till MI pending breakpoint on pendfunc1"
+
+mi_send_resuming_command "exec-continue" "continuing execution to skip conditional bp"
+
+# We should not stop on the conditional breakpoint yet, but we stop on the original bp. 
+mi_expect_stop "breakpoint-hit" "pendfunc1" ".*" ".*" ".*" \
+    { "" "disp=\"keep\"" } \
+    "Run till MI pending breakpoint on pendfunc1 a second time"
+
+mi_send_resuming_command "exec-continue" "continuing execution to conditional bp"
+
+# Now we should stop on the conditional breakpoint.
+mi_expect_stop "breakpoint-hit" "pendfunc2" "\{name=\"x\",value=\"4\"\}" ".*" ".*" \
+    { "" "disp=\"keep\"" } \
+    "Run till MI pending breakpoint on pendfunc2 with x==4"
+
+mi_send_resuming_command "exec-continue" "continuing execution to thread creation"
+
+# Stop on thread creation so we can set a pending breakpoint with a thread cond.
+mi_expect_stop "breakpoint-hit" "thread_func" ".*" ".*" ".*" \
+    { "" "disp=\"keep\"" } \
+    "Run till MI pending breakpoint on thread_func"
+
+# Delete thread creation breakpoint to enable more than 1 thread to be created.
+mi_gdb_test "-break-delete 3" "\\^done" "delete breakpoint 3"
+
+# Set pending breakpoint with a thread via MI.
+set bp [mi_make_breakpoint_pending -number "4" -type "breakpoint" \
+	    -disp "keep" -enabled "y" -pending "pendfunc3" -thread "2" \
+	    -times "0" -original-location "pendfunc3"]
+mi_gdb_test "-break-insert -p 2 -f pendfunc3" ".*\\^done,$bp"\
+    "MI pending breakpoint on pendfunc3"
+
+mi_send_resuming_command "exec-continue" "continuing execution to thread condition"
+
+# Check if we stopped in thread 2 like we should.
+set testname "run till MI pending breakpoint on pendfunc3 on thread 2"
+gdb_expect {
+    -re "\\*stopped,reason=\"breakpoint-hit\",disp=\"keep\",bkptno=\"4\",frame=\{addr=\"$hex\",func=\"pendfunc3\".*thread-id=\"2\".*" {
+	pass $testname
+	return 0
+    }
+    timeout {
+	fail "$testname (timeout)"
+	return -1
+    }
+}

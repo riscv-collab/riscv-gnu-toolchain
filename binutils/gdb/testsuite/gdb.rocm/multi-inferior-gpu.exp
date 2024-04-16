@@ -1,0 +1,89 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test checks that GDB can debug multiple inferior which uses all
+# the ROCm runtime.
+
+load_lib rocm.exp
+
+standard_testfile .cpp
+
+require allow_hipcc_tests
+require hip_devices_support_debug_multi_process
+
+if {[build_executable "failed to prepare" $testfile $srcfile {debug hip}]} {
+    return
+}
+
+proc do_test {} {
+    clean_restart $::binfile
+    gdb_test_no_output "set non-stop on"
+    gdb_test_no_output "set detach-on-fork off"
+    gdb_test_no_output "set follow-fork parent"
+
+    with_rocm_gpu_lock {
+	gdb_breakpoint [gdb_get_line_number "Break here"]
+	gdb_breakpoint kern allow-pending
+	gdb_breakpoint [gdb_get_line_number "Last break here"]
+
+	# Run until we reach the first breakpoint where we can figure
+	# out how many children will be spawned.
+	gdb_test "run" "hit Breakpoint.*"
+
+	set num_children [get_integer_valueof "num_devices" 0]
+	set bp_to_see $num_children
+	set stopped_gpu_threads [list]
+
+	gdb_test_multiple "continue -a &" "continue to gpu breakpoints" {
+	    -re "Continuing\.\r\n$::gdb_prompt " {
+		pass $gdb_test_name
+	    }
+	}
+
+	gdb_test_multiple "" "wait for gpu stops" {
+	    -re "Thread ($::decimal\.$::decimal)\[^\r\n\]* hit Breakpoint\[^\r\n\]*, kern \(\)\[^\r\n\]*\r\n" {
+		lappend stopped_gpu_threads $expect_out(1,string)
+		incr bp_to_see -1
+		if {$bp_to_see != 0} {
+		    exp_continue
+		} else {
+		    pass $gdb_test_name
+		}
+	    }
+	}
+
+	# Continue all the GPU kernels so all the children processes can reach exit.
+	foreach thread $stopped_gpu_threads {
+	    set infnumber [lindex [split $thread .] 0]
+	    gdb_test "thread $thread" "Switching to thread.*"
+	    gdb_test_multiple "continue" "continue inferior $infnumber" {
+		-re "\\\[Inferior $infnumber \[^\n\r\]* exited normally\\]\r\n$::gdb_prompt " {
+		    pass $gdb_test_name
+		}
+	    }
+	}
+
+	gdb_test_multiple "" "reach breakpoint in main" {
+	    -re "hit Breakpoint.*parent" {
+		pass $gdb_test_name
+	    }
+	}
+	# Select main inferior
+	gdb_test "inferior 1" "Switching to inferior 1.*"
+	gdb_continue_to_end "" "continue -a" 1
+    }
+}
+
+do_test

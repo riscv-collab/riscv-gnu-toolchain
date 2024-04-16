@@ -1,0 +1,388 @@
+# Copyright 2010-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+#
+# Contributed by Ken Werner <ken.werner@de.ibm.com>.
+#
+# Tests component access of OpenCL vectors.
+
+load_lib opencl.exp
+
+require allow_opencl_tests
+
+set testfile "vec_comps"
+set clprogram [remote_download target ${srcdir}/${subdir}/${testfile}.cl]
+
+# Compile the generic OpenCL host app
+if { [gdb_compile_opencl_hostapp "${clprogram}" "${testfile}" "" ] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+# Load the OpenCL app
+clean_restart ${testfile}
+
+# Set breakpoint at the OpenCL kernel
+gdb_test "tbreak testkernel" \
+    "" \
+    "Set pending breakpoint" \
+    ".*Function \"testkernel\" not defined.*Make breakpoint pending.*y or \\\[n\\\]. $" \
+    "y"
+
+gdb_run_cmd
+gdb_test "" ".*reakpoint.*1.*testkernel.*" "run"
+
+# Continue to the marker
+gdb_breakpoint [gdb_get_line_number "marker" "${clprogram}"]
+gdb_continue_to_breakpoint "marker"
+
+# Check if the language was switched to opencl
+gdb_test "show language" "The current source language is \"auto; currently opencl\"\."
+
+# Retrieve some information about the OpenCL version and the availability of extensions
+set opencl_version [get_integer_valueof "opencl_version" 0]
+set have_cl_khr_fp64 [get_integer_valueof "have_cl_khr_fp64" 0]
+set have_cl_khr_fp16 [get_integer_valueof "have_cl_khr_fp16" 0]
+
+# Sanity checks
+proc check_basic { name type size } {
+  gdb_test "ptype ${name}" "type = ${type}16"
+  gdb_test "p sizeof(${name})" " = [expr ${size} * 16]"
+  gdb_test "print/d ${name}" " = \\{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15\\}"
+}
+
+proc check_type { name type alttype } {
+  gdb_test "whatis ${name}.lo" "type = ${type}8"
+  gdb_test "whatis ${name}.hi" "type = ${type}8"
+  gdb_test "whatis ${name}.even" "type = ${type}8"
+  gdb_test "whatis ${name}.odd" "type = ${type}8"
+  gdb_test "whatis ${name}.low" "Invalid OpenCL vector component accessor low"
+  gdb_test "whatis ${name}.high" "Invalid OpenCL vector component accessor high"
+
+  gdb_test "whatis ${name}.hi.even" "type = ${type}4"
+  gdb_test "whatis ${name}.odd.odd.lo" "type = ${type}2"
+  gdb_test "whatis ${name}.even.hi.lo.odd" "type = ${alttype}|${type}"
+
+  gdb_test "whatis ${name}.x" "type = ${alttype}|${type}"
+  gdb_test "whatis ${name}.y" "type = ${alttype}|${type}"
+  gdb_test "whatis ${name}.z" "type = ${alttype}|${type}"
+  gdb_test "whatis ${name}.w" "type = ${alttype}|${type}"
+  gdb_test "whatis ${name}.v" "Invalid OpenCL vector component accessor v"
+
+  gdb_test "whatis ${name}.xy" "type = ${type}2"
+  gdb_test "whatis ${name}.xx" "type = ${type}2"
+  gdb_test "whatis ${name}.wy" "type = ${type}2"
+  gdb_test "whatis ${name}.zv" "Invalid OpenCL vector component accessor zv"
+
+  gdb_test "whatis ${name}.xyz" "type = ${type}3"
+  gdb_test "whatis ${name}.yxy" "type = ${type}3"
+  gdb_test "whatis ${name}.yzx" "type = ${type}3"
+  gdb_test "whatis ${name}.yzv" "Invalid OpenCL vector component accessor yzv"
+
+  gdb_test "whatis ${name}.xywz" "type = ${type}4"
+  gdb_test "whatis ${name}.zzyy" "type = ${type}4"
+  gdb_test "whatis ${name}.wwww" "type = ${type}4"
+  gdb_test "whatis ${name}.yxwv" "Invalid OpenCL vector component accessor yxwv"
+  gdb_test "whatis ${name}.zyxwv" "Invalid OpenCL vector component accessor zyxwv"
+
+  gdb_test "whatis ${name}.xy.x" "type = ${alttype}|${type}"
+  gdb_test "whatis ${name}.wzyx.yy" "type = ${type}2"
+  gdb_test "whatis ${name}.wzyx.yx.x" "type = ${alttype}|${type}"
+  gdb_test "whatis ${name}.xyzw.w" "type = ${alttype}|${type}"
+  gdb_test "whatis ${name}.xy.z" "Invalid OpenCL vector component accessor z"
+
+  gdb_test "whatis ${name}.s0" "type = ${alttype}|${type}"
+  gdb_test "whatis ${name}.s9" "type = ${alttype}|${type}"
+  gdb_test "whatis ${name}.sa" "type = ${alttype}|${type}"
+  gdb_test "whatis ${name}.sf" "type = ${alttype}|${type}"
+  gdb_test "whatis ${name}.sF" "type = ${alttype}|${type}"
+  gdb_test "whatis ${name}.sg" "Invalid OpenCL vector component accessor sg"
+  gdb_test "whatis ${name}.sG" "Invalid OpenCL vector component accessor sG"
+  gdb_test "whatis ${name}.Sg" "Invalid OpenCL vector component accessor Sg"
+  gdb_test "whatis ${name}.SG" "Invalid OpenCL vector component accessor SG"
+
+  gdb_test "whatis ${name}.s01" "type = ${type}2"
+  gdb_test "whatis ${name}.s00" "type = ${type}2"
+  gdb_test "whatis ${name}.sF0" "type = ${type}2"
+  gdb_test "whatis ${name}.S42" "type = ${type}2"
+
+  gdb_test "whatis ${name}.s567" "type = ${type}3"
+  gdb_test "whatis ${name}.S333" "type = ${type}3"
+  gdb_test "whatis ${name}.Sf0A" "type = ${type}3"
+  gdb_test "whatis ${name}.SB1D" "type = ${type}3"
+  gdb_test "whatis ${name}.s01g" "Invalid OpenCL vector component accessor s01g"
+
+  gdb_test "whatis ${name}.s9876" "type = ${type}4"
+  gdb_test "whatis ${name}.sFFFF" "type = ${type}4"
+  gdb_test "whatis ${name}.sCafe" "type = ${type}4"
+  gdb_test "whatis ${name}.Sf001" "type = ${type}4"
+  gdb_test "whatis ${name}.s1fg2" "Invalid OpenCL vector component accessor s1fg2"
+  gdb_test "whatis ${name}.s012345" "Invalid OpenCL vector component accessor s012345"
+
+  gdb_test "whatis ${name}.s00000000" "type = ${type}8"
+  gdb_test "whatis ${name}.s00224466" "type = ${type}8"
+  gdb_test "whatis ${name}.sDEADBEEF" "type = ${type}8"
+  gdb_test "whatis ${name}.Sa628c193" "type = ${type}8"
+
+  gdb_test "whatis ${name}.s876543210" "Invalid OpenCL vector component accessor s876543210"
+  gdb_test "whatis ${name}.s0123456789abcde" "Invalid OpenCL vector component accessor s0123456789abcde"
+
+  gdb_test "whatis ${name}.s0123456789aBcDeF" "type = ${type}16"
+  gdb_test "whatis ${name}.s0022446688AACCFF" "type = ${type}16"
+  gdb_test "whatis ${name}.S0123456776543210" "type = ${type}16"
+  gdb_test "whatis ${name}.sFEDCBA9876543210" "type = ${type}16"
+
+  gdb_test "whatis ${name}.sfedcba98.S0246" "type = ${type}4"
+  gdb_test "whatis ${name}.sfedcba98.S0246.s13" "type = ${type}2"
+  gdb_test "whatis ${name}.sfedcba98.S0246.s13.s0" "type = ${alttype}|${type}"
+  gdb_test "whatis ${name}.s0123456789abcdef.s22" "type = ${type}2"
+
+  gdb_test "whatis ${name}.hi.s7654.wx" "type = ${type}2"
+  gdb_test "whatis ${name}.s0123456789abcdef.even.lo" "type = ${type}4"
+  gdb_test "whatis ${name}.odd.xyzw.s23" "type = ${type}2"
+  gdb_test "whatis ${name}.xyzw.hi.odd" "type = ${alttype}|${type}"
+
+  gdb_test "ptype ${name}.lo" "type = ${type}8"
+  gdb_test "ptype ${name}.hi" "type = ${type}8"
+  gdb_test "ptype ${name}.even" "type = ${type}8"
+  gdb_test "ptype ${name}.odd" "type = ${type}8"
+
+  gdb_test "ptype ${name}.hi.even" "type = ${type}4"
+  gdb_test "ptype ${name}.odd.odd.lo" "type = ${type}2"
+  gdb_test "ptype ${name}.even.hi.lo.odd" "type = ${alttype}|${type}"
+
+  gdb_test "ptype ${name}.x" "type = ${alttype}|${type}"
+  gdb_test "ptype ${name}.y" "type = ${alttype}|${type}"
+  gdb_test "ptype ${name}.z" "type = ${alttype}|${type}"
+  gdb_test "ptype ${name}.w" "type = ${alttype}|${type}"
+
+  gdb_test "ptype ${name}.xy" "type = ${type}2"
+  gdb_test "ptype ${name}.xx" "type = ${type}2"
+  gdb_test "ptype ${name}.wy" "type = ${type}2"
+
+  gdb_test "ptype ${name}.xyz" "type = ${type}3"
+  gdb_test "ptype ${name}.yxy" "type = ${type}3"
+  gdb_test "ptype ${name}.yzx" "type = ${type}3"
+
+  gdb_test "ptype ${name}.xywz" "type = ${type}4"
+  gdb_test "ptype ${name}.zzyy" "type = ${type}4"
+  gdb_test "ptype ${name}.wwww" "type = ${type}4"
+
+  gdb_test "ptype ${name}.xy.x" "type = ${alttype}|${type}"
+  gdb_test "ptype ${name}.wzyx.yy" "type = ${type}2"
+  gdb_test "ptype ${name}.wzyx.yx.x" "type = ${alttype}|${type}"
+  gdb_test "ptype ${name}.xyzw.w" "type = ${alttype}|${type}"
+
+  gdb_test "ptype ${name}.s0" "type = ${alttype}|${type}"
+  gdb_test "ptype ${name}.s9" "type = ${alttype}|${type}"
+  gdb_test "ptype ${name}.sa" "type = ${alttype}|${type}"
+  gdb_test "ptype ${name}.sf" "type = ${alttype}|${type}"
+  gdb_test "ptype ${name}.sF" "type = ${alttype}|${type}"
+
+  gdb_test "ptype ${name}.s01" "type = ${type}2"
+  gdb_test "ptype ${name}.s00" "type = ${type}2"
+  gdb_test "ptype ${name}.sF0" "type = ${type}2"
+  gdb_test "ptype ${name}.S42" "type = ${type}2"
+
+  gdb_test "ptype ${name}.s567" "type = ${type}3"
+  gdb_test "ptype ${name}.S333" "type = ${type}3"
+  gdb_test "ptype ${name}.Sf0A" "type = ${type}3"
+  gdb_test "ptype ${name}.SB1D" "type = ${type}3"
+
+  gdb_test "ptype ${name}.s9876" "type = ${type}4"
+  gdb_test "ptype ${name}.sFFFF" "type = ${type}4"
+  gdb_test "ptype ${name}.sCafe" "type = ${type}4"
+  gdb_test "ptype ${name}.Sf001" "type = ${type}4"
+
+  gdb_test "ptype ${name}.s00000000" "type = ${type}8"
+  gdb_test "ptype ${name}.s00224466" "type = ${type}8"
+  gdb_test "ptype ${name}.sDEADBEEF" "type = ${type}8"
+  gdb_test "ptype ${name}.Sa628c193" "type = ${type}8"
+
+  gdb_test "ptype ${name}.s0123456789aBcDeF" "type = ${type}16"
+  gdb_test "ptype ${name}.s0022446688AACCFF" "type = ${type}16"
+  gdb_test "ptype ${name}.S0123456776543210" "type = ${type}16"
+  gdb_test "ptype ${name}.sFEDCBA9876543210" "type = ${type}16"
+
+  gdb_test "ptype ${name}.sfedcba98.S0246" "type = ${type}4"
+  gdb_test "ptype ${name}.sfedcba98.S0246.s13" "type = ${type}2"
+  gdb_test "ptype ${name}.sfedcba98.S0246.s13.s0" "type = ${alttype}|${type}"
+  gdb_test "ptype ${name}.s0123456789abcdef.s22" "type = ${type}2"
+
+  gdb_test "ptype ${name}.hi.s7654.wx" "type = ${type}2"
+  gdb_test "ptype ${name}.s0123456789abcdef.even.lo" "type = ${type}4"
+  gdb_test "ptype ${name}.odd.xyzw.s23" "type = ${type}2"
+  gdb_test "ptype ${name}.xyzw.hi.odd" "type = ${alttype}|${type}"
+}
+
+proc check_sizeof { name size } {
+  gdb_test "print sizeof (${name}.lo)" " = [expr $size * 8]"
+  gdb_test "print sizeof (${name}.hi)" " = [expr $size * 8]"
+  gdb_test "print sizeof (${name}.even)" " = [expr $size * 8]"
+  gdb_test "print sizeof (${name}.odd)" " = [expr $size * 8]"
+
+  gdb_test "print sizeof (${name}.hi.even)" " = [expr $size * 4]"
+  gdb_test "print sizeof (${name}.odd.odd.lo)" " = [expr $size * 2]"
+  gdb_test "print sizeof (${name}.even.hi.lo.odd)" " = $size"
+
+  gdb_test "print sizeof (${name}.x)" " = $size"
+  gdb_test "print sizeof (${name}.xy)" " = [expr $size * 2]"
+  gdb_test "print sizeof (${name}.xyz)" " = [expr $size * 4]"
+  gdb_test "print sizeof (${name}.xyzw)" " = [expr $size * 4]"
+
+  gdb_test "print sizeof (${name}.xy.x)" " = $size"
+  gdb_test "print sizeof (${name}.wzyx.yy)" " = [expr $size * 2]"
+  gdb_test "print sizeof (${name}.wzyx.yx.x)" " = $size"
+  gdb_test "print sizeof (${name}.xyzw.w)" " = $size"
+
+  gdb_test "print sizeof (${name}.s0)" " = $size"
+  gdb_test "print sizeof (${name}.s01)" " = [expr $size * 2]"
+  gdb_test "print sizeof (${name}.s012)" " = [expr $size * 4]"
+  gdb_test "print sizeof (${name}.s0123)" " = [expr $size * 4]"
+  gdb_test "print sizeof (${name}.s01234567)" " = [expr $size * 8]"
+  gdb_test "print sizeof (${name}.s0123456789abcdef)" " = [expr $size * 16]"
+
+  gdb_test "print sizeof (${name}.sfedcba98.S0246)" " = [expr $size * 4]"
+  gdb_test "print sizeof (${name}.sfedcba98.S0246.s13)" " = [expr $size * 2]"
+  gdb_test "print sizeof (${name}.sfedcba98.S0246.s13.s0)" " = $size"
+  gdb_test "print sizeof (${name}.s0123456789abcdef.s22)" " = [expr $size * 2]"
+
+  gdb_test "print sizeof (${name}.hi.s7654.wx)" " = [expr $size * 2]"
+  gdb_test "print sizeof (${name}.s0123456789abcdef.even.lo)" " = [expr $size * 4]"
+  gdb_test "print sizeof (${name}.odd.xyzw.s23)" " = [expr $size * 2]"
+  gdb_test "print sizeof (${name}.xyzw.hi.odd)" " = $size"
+}
+
+# OpenCL vector component access
+proc check_access { name } {
+  gdb_test "print/d ${name}.lo" " = \\{0, 1, 2, 3, 4, 5, 6, 7\\}"
+  gdb_test "print/d ${name}.hi" " = \\{8, 9, 10, 11, 12, 13, 14, 15\\}"
+  gdb_test "print/d ${name}.even" " = \\{0, 2, 4, 6, 8, 10, 12, 14\\}"
+  gdb_test "print/d ${name}.odd" " = \\{1, 3, 5, 7, 9, 11, 13, 15\\}"
+
+  gdb_test "print/d ${name}.hi.even" " = \\{8, 10, 12, 14\\}"
+  gdb_test "print/d ${name}.odd.odd.lo" " = \\{3, 7\\}"
+  gdb_test "print/d ${name}.even.hi.lo.odd" " = 10"
+
+  gdb_test "print/d ${name}.x" " = 0"
+  gdb_test "print/d ${name}.y" " = 1"
+  gdb_test "print/d ${name}.z" " = 2"
+  gdb_test "print/d ${name}.w" " = 3"
+
+  gdb_test "print/d ${name}.xy" " = \\{0, 1\\}"
+  gdb_test "print/d ${name}.xx" " = \\{0, 0\\}"
+  gdb_test "print/d ${name}.wy" " = \\{3, 1\\}"
+
+  gdb_test "print/d ${name}.xyz" " = \\{0, 1, 2\\}"
+  gdb_test "print/d ${name}.yxy" " = \\{1, 0, 1\\}"
+  gdb_test "print/d ${name}.yzx" " = \\{1, 2, 0\\}"
+
+  gdb_test "print/d ${name}.xywz" " = \\{0, 1, 3, 2\\}"
+  gdb_test "print/d ${name}.zzyy" " = \\{2, 2, 1, 1\\}"
+  gdb_test "print/d ${name}.wwww" " = \\{3, 3, 3, 3\\}"
+
+  gdb_test "print/d ${name}.xy.x" " = 0"
+  gdb_test "print/d ${name}.wzyx.yy" " = \\{2, 2\\}"
+  gdb_test "print/d ${name}.wzyx.yx.x" " = 2"
+  gdb_test "print/d ${name}.xyzw.w" " = 3"
+
+  for {set i 0} {$i < 16} {incr i} {
+    gdb_test "print/d ${name}.s[format "%x" $i]" " = $i"
+    gdb_test "print/d ${name}.S[format "%x" $i]" " = $i"
+    if {$i > 9} {
+      gdb_test "print/d ${name}.s[format "%X" $i]" " = $i"
+      gdb_test "print/d ${name}.S[format "%X" $i]" " = $i"
+    }
+  }
+
+  gdb_test "print/d ${name}.s01" " = \\{0, 1\\}"
+  gdb_test "print/d ${name}.s00" " = \\{0, 0\\}"
+  gdb_test "print/d ${name}.sF0" " = \\{15, 0\\}"
+  gdb_test "print/d ${name}.S42" " = \\{4, 2\\}"
+
+  gdb_test "print/d ${name}.s567" " = \\{5, 6, 7\\}"
+  gdb_test "print/d ${name}.S333" " = \\{3, 3, 3\\}"
+  gdb_test "print/d ${name}.Sf0A" " = \\{15, 0, 10\\}"
+  gdb_test "print/d ${name}.SB1D" " = \\{11, 1, 13\\}"
+
+  gdb_test "print/d ${name}.s9876" " = \\{9, 8, 7, 6\\}"
+  gdb_test "print/d ${name}.sFFFF" " = \\{15, 15, 15, 15\\}"
+  gdb_test "print/d ${name}.sCafe" " = \\{12, 10, 15, 14\\}"
+  gdb_test "print/d ${name}.Sf001" " = \\{15, 0, 0, 1\\}"
+
+  gdb_test "print/d ${name}.s00000000" " = \\{0, 0, 0, 0, 0, 0, 0, 0\\}"
+  gdb_test "print/d ${name}.s00224466" " = \\{0, 0, 2, 2, 4, 4, 6, 6\\}"
+  gdb_test "print/d ${name}.sDEADBEEF" " = \\{13, 14, 10, 13, 11, 14, 14, 15\\}"
+  gdb_test "print/d ${name}.Sa628c193" " = \\{10, 6, 2, 8, 12, 1, 9, 3\\}"
+
+  gdb_test "print/d ${name}.s0123456789aBcDeF" " = \\{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15\\}"
+  gdb_test "print/d ${name}.s0022446688AACCEE" " = \\{0, 0, 2, 2, 4, 4, 6, 6, 8, 8, 10, 10, 12, 12, 14, 14\\}"
+  gdb_test "print/d ${name}.S0123456776543210" " = \\{0, 1, 2, 3, 4, 5, 6, 7, 7, 6, 5, 4, 3, 2, 1, 0\\}"
+  gdb_test "print/d ${name}.sFEDCBA9876543210" " = \\{15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0\\}"
+
+  gdb_test "print/d ${name}.sfedcba98.S0246" " = \\{15, 13, 11, 9\\}"
+  gdb_test "print/d ${name}.sfedcba98.S0246.s13" " = \\{13, 9\\}"
+  gdb_test "print/d ${name}.sfedcba98.S0246.s13.s0" " = 13"
+  gdb_test "print/d ${name}.s0123456789abcdef.s22" " = \\{2, 2\\}"
+
+  gdb_test "print/d ${name}.hi.s7654.wx" " = \\{12, 15\\}"
+  gdb_test "print/d ${name}.s0123456789abcdef.even.lo" " = \\{0, 2, 4, 6\\}"
+  gdb_test "print/d ${name}.odd.xyzw.s23" " = \\{5, 7\\}"
+  gdb_test "print/d ${name}.xyzw.hi.odd" " = 3"
+
+  # lvalue tests
+  for {set i 0} {$i < 16} {incr i} {
+    gdb_test_no_output "set variable ${name}.s[format "%x" $i] = [expr 15 - $i]"
+    gdb_test "print/d ${name}.s[format "%x" $i]" " = [expr 15 - $i]"
+  }
+  gdb_test "print/d ${name}" " = \\{15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0\\}"
+
+  gdb_test_no_output "set variable ${name}.s02468ace = ${name}.s13579bdf"
+  gdb_test "print/d ${name}" " = \\{14, 14, 12, 12, 10, 10, 8, 8, 6, 6, 4, 4, 2, 2, 0, 0\\}"
+
+  gdb_test_no_output "set variable ${name}.wzyx = ${name}.even.odd"
+  gdb_test "print/d ${name}" " = \\{0, 4, 8, 12, 10, 10, 8, 8, 6, 6, 4, 4, 2, 2, 0, 0\\}"
+
+  gdb_test_no_output "set variable ${name}.odd.lo = ${name}.hi.even"
+  gdb_test "print/d ${name}" " = \\{0, 6, 8, 4, 10, 2, 8, 0, 6, 6, 4, 4, 2, 2, 0, 0\\}"
+
+  gdb_test_no_output "set variable ${name}.hi.hi.hi = ${name}.lo.s1623.lo"
+  gdb_test "print/d ${name}" " = \\{0, 6, 8, 4, 10, 2, 8, 0, 6, 6, 4, 4, 2, 2, 6, 8\\}"
+}
+
+proc do_check { name type alttype size } {
+  check_basic ${name} ${type} ${size}
+  check_type  ${name} ${type} ${alttype}
+  check_sizeof ${name} ${size}
+  check_access ${name}
+}
+
+do_check "c16" "char" "char" 1
+do_check "uc16" "uchar" "unsigned char" 1
+do_check "s16" "short" "short" 2
+do_check "us16" "ushort" "unsigned short" 2
+do_check "i16" "int" "int" 4
+do_check "ui16" "uint" "unsigned int" 4
+do_check "l16" "long" "long" 8
+do_check "ul16" "ulong" "unsigned long" 8
+if { ${have_cl_khr_fp16} } {
+  do_check "h16" "half" "half" 2
+}
+do_check "f16" "float" "float" 4
+if { ${have_cl_khr_fp64} } {
+  do_check "d16" "double" "double" 8
+}
+
+# Delete the OpenCL program source
+remote_file target delete ${clprogram}

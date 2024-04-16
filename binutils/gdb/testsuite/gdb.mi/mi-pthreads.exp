@@ -1,0 +1,73 @@
+# Copyright 2002-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file tests MI thread commands.
+# Specifically, we are testing the MI command set and the console (in MI)
+# command set ("interpreter-exec") and that the commands that are executed
+# via these command pathways are properly executed. Console commands
+# executed via MI should use MI output wrappers, MI event handlers, etc.
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+# This procedure tests the various thread commands in MI.
+proc check_mi_thread_command_set {} {
+
+  mi_runto done_making_threads
+
+  set thread_list [get_mi_thread_list "in check_mi_thread_command_set"]
+  
+  mi_gdb_test "-thread-select" \
+    {\^error,msg="-thread-select: USAGE: threadnum."} \
+    "check_mi_thread_command_set: -thread-select"
+
+  mi_gdb_test "-thread-select 123456789" \
+    {\^error,msg="Thread ID 123456789 not known\."} \
+    "check_mi_thread_command_set: -thread-select 123456789"
+
+  foreach thread $thread_list {
+    # line and file are optional.
+    # many of the threads are blocked in libc calls,
+    # and many people have libc's with no symbols.
+    mi_gdb_test "-thread-select $thread" \
+      "\\^done,new-thread-id=\"$thread\",frame={.*}(,line=\"(-)?\[0-9\]+\",file=\".*\")?" \
+      "check_mi_thread_command_set: -thread-select $thread"
+  }
+
+  foreach thread $thread_list {
+      mi_gdb_test "-interpreter-exec console \"thread $thread\"" \
+	  ".*=thread-selected,id=\"$thread\".*\r\n\\^done" \
+	  "check =thread-selected: thread $thread"
+  }
+}
+
+#
+# Start here
+#
+standard_testfile pthreads.c
+
+set options [list debug]
+if {[gdb_compile_pthreads "$srcdir/$subdir/$srcfile" $binfile executable $options] != "" } {
+    return -1
+}
+
+if {[mi_clean_restart $binfile]} {
+    return
+}
+
+check_mi_thread_command_set
+
+mi_gdb_exit
+

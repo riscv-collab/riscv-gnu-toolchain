@@ -1,0 +1,92 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+standard_testfile .c -foo.c dwz.S
+
+set foo_res \
+    [function_range foo \
+	 [list ${srcdir}/${subdir}/$srcfile ${srcdir}/${subdir}/$srcfile2]]
+lassign $foo_res \
+    foo_start foo_len
+set foo_end "$foo_start + $foo_len"
+
+set bar_res \
+    [function_range bar \
+	 [list ${srcdir}/${subdir}/$srcfile ${srcdir}/${subdir}/$srcfile2]]
+lassign $bar_res \
+    bar_start bar_len
+set bar_end "$bar_start + $bar_len"
+
+# Create the DWARF.
+set asm_file [standard_output_file $srcfile3]
+Dwarf::assemble $asm_file {
+    global foo_start foo_end
+    global bar_start bar_end
+    declare_labels unspecified_type_label
+
+    cu {} {
+	compile_unit {
+	    {language @DW_LANG_Mips_Assembler}
+	} {
+	    unspecified_type_label: unspecified_type {}
+
+	    DW_TAG_subprogram {
+		{name foo}
+		{low_pc $foo_start addr}
+		{high_pc $foo_end addr}
+		{type :$unspecified_type_label}
+	    }
+	}
+    }
+
+    cu {} {
+	compile_unit {
+	    {language @DW_LANG_Mips_Assembler}
+	    {producer "GNU AS 2.39.0"}
+	} {
+	    DW_TAG_subprogram {
+		{name bar}
+		{low_pc $bar_start addr}
+		{high_pc $bar_end addr}
+	    }
+	}
+    }
+}
+
+if [prepare_for_testing "failed to prepare" $testfile \
+	"${asm_file} ${srcfile} ${srcfile2}" {}] {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+foreach f {foo bar} {
+    # Print the function type.  Return type should be stub type, which is printed
+    # as void.
+    gdb_test "ptype $f" "type = void \\(void\\)"
+
+    # Call the function, casting the function to the correct function type.
+    gdb_test "p ((int (*) ()) $f) ()" " = 0"
+
+    # Call the function, casting the function result to the correct type.
+    gdb_test "p (int) $f ()" " = 0"
+}

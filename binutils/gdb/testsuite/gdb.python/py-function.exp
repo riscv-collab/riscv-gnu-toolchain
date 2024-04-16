@@ -1,0 +1,109 @@
+# Copyright (C) 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It tests the mechanism
+# exposing convenience functions to Python.
+
+load_lib gdb-python.exp
+
+require allow_python_tests
+
+clean_restart
+
+gdb_test_multiline "input convenience function" \
+  "python" "" \
+  "class test_func (gdb.Function):" "" \
+  "  def __init__ (self):" "" \
+  "    super (test_func, self).__init__ (\"test_func\")" "" \
+  "  def invoke (self, arg):" "" \
+  "    return \"test_func output, arg = %s\" % arg.string ()" "" \
+  "test_func ()" "" \
+  "end" ""
+
+gdb_test "print \$test_func (\"ugh\")" "= \"test_func output, arg = ugh\"" "call function"
+
+# Test returning a gdb.Value from the function. This segfaulted GDB at one point.
+
+gdb_test_multiline "input value-returning convenience function" \
+  "python" "" \
+  "class Double (gdb.Function):" "" \
+  "  def __init__ (self):" "" \
+  "    super (Double, self).__init__ (\"double\")" "" \
+  "  def invoke (self, n):" "" \
+  "    return n*2" "" \
+  "Double ()" "" \
+  "end" ""
+
+# Different languages can have different parsers, so lets check that
+# internal functions are understood by every language.  Place auto
+# last in the list so we end up back in 'auto' language mode.
+foreach lang [concat [gdb_supported_languages] auto] {
+    gdb_test_no_output "set language $lang"
+    gdb_test "print \$double (1)" "= 2" "call value-returning function, language = $lang"
+}
+
+gdb_test_multiline "input int-returning function" \
+  "python" "" \
+  "class Yes(gdb.Function):" "" \
+  "    def __init__(self):" "" \
+  "        gdb.Function.__init__(self, 'yes')" "" \
+  "    def invoke(self):" "" \
+  "        return 1" "" \
+  "Yes ()" "" \
+  "end" ""
+
+gdb_test "print \$yes() && \$yes()" " = 1" "call yes with &&"
+gdb_test "print \$yes() || \$yes()" " = 1" "call yes with ||"
+
+gdb_test_multiline "Test GDBError" \
+  "python" "" \
+  "class GDBError(gdb.Function):" "" \
+  "    def __init__(self):" "" \
+  "        gdb.Function.__init__(self, 'gdberror')" "" \
+  "    def invoke(self):" "" \
+  "        raise gdb.GdbError(\"This is a GdbError\")" "" \
+  "GDBError ()" "" \
+  "end" ""
+
+gdb_test "print \$gdberror()" "This is a GdbError.*" \
+    "Test GdbError.  There should not be a stack trace"
+
+gdb_test_multiline "Test Normal Error" \
+  "python" "" \
+  "class NormalError(gdb.Function):" "" \
+  "    def __init__(self):" "" \
+  "        gdb.Function.__init__(self, 'normalerror')" "" \
+  "    def invoke(self):" "" \
+  "        raise RuntimeError(\"This is a Normal Error\")" "" \
+  "NormalError ()" "" \
+  "end" ""
+
+gdb_test_no_output "set python print-stack full"
+gdb_test "print \$normalerror()" "Traceback.*File.*line 5.*in invoke.*RuntimeError.*This is a Normal Error.*" \
+    "Test a Runtime error.  There should be a stack trace."
+
+gdb_test_multiline "input command-calling function" \
+  "python" "" \
+  "class CallCommand(gdb.Function):" "" \
+  "    def __init__(self):" "" \
+  "        gdb.Function.__init__(self, 'call_command')" "" \
+  "    def invoke(self):" "" \
+  "        return gdb.execute('print 1', to_string=True)" "" \
+  "CallCommand ()" "" \
+  "end" ""
+
+gdb_test_no_output "set var \$foo = \$call_command()" "setting a value from a function which executes a command."
+# There was a bug where GDB would segfault in the second call, so try calling again.
+gdb_test_no_output "set var \$foo = \$call_command()" "setting a value from a function which executes a command, again."

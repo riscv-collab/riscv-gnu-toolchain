@@ -1,0 +1,64 @@
+# Copyright (C) 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+# Check that GDB doesn't forget to pass SIGTRAP to the program when
+# the user explicitly passes it with the signal command.
+
+standard_testfile
+
+require {!target_info exists gdb,nosignals}
+
+if {[build_executable "failed to prepare" $testfile $srcfile \
+	 {debug pthreads}]} {
+    return -1
+}
+
+# Run test proper.  SIGTRAP_THREAD is the thread that should get the
+# SIGTRAP.
+
+proc test { sigtrap_thread } {
+    global srcfile binfile
+
+    with_test_prefix "sigtrap thread $sigtrap_thread" {
+	clean_restart ${binfile}
+
+	if {![runto "thread_function"]} {
+	    return 0
+	}
+
+	set pattern "\\\* 2\[ \t\]+Thread.*"
+	gdb_test "info threads" $pattern "thread 2 hit breakpoint"
+
+	gdb_test "break sigtrap_handler" "Breakpoint .* at .*$srcfile.*"
+
+	# Thread 2 is stopped at a breakpoint, which must be stepped
+	# over first.  Thus if this is thread 1, then GDB will first
+	# switch back to thread 2 to step it over the breakpoint.
+	gdb_test "thread $sigtrap_thread" \
+	    "Switching to thread $sigtrap_thread.*" \
+	    "switch to sigtrap thread"
+
+	gdb_test "signal SIGTRAP" \
+	    "Continuing with signal SIGTRAP.*Breakpoint .* sigtrap_handler .*" \
+	    "signal SIGTRAP reaches handler"
+
+	set pattern "\\\* $sigtrap_thread\[ \t\]+Thread.*"
+	gdb_test "info threads" $pattern "right thread got the signal"
+    }
+}
+
+foreach sigtrap_thread {1 2} {
+    test $sigtrap_thread
+}

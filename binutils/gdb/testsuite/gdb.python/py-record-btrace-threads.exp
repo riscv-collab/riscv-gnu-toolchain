@@ -1,0 +1,69 @@
+# This testcase is part of GDB, the GNU debugger.
+#
+# Copyright 2017-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib gdb-python.exp
+
+require allow_btrace_tests allow_python_tests
+
+standard_testfile
+
+if { [gdb_compile_pthreads "$srcdir/$subdir/$srcfile" "$binfile" executable {debug} ] != "" } {
+    untested "failed to prepare"
+    return -1
+}
+clean_restart $testfile
+
+if { ![runto_main] } {
+    return -1
+}
+
+# set up breakpoints
+gdb_breakpoint $srcfile:[gdb_get_line_number "bp1" $srcfile]
+gdb_breakpoint $srcfile:[gdb_get_line_number "bp2" $srcfile]
+
+# record data
+gdb_continue_to_breakpoint "cont to bp.1" ".*bp1.*"
+gdb_test_no_output "record btrace"
+gdb_continue_to_breakpoint "cont to bp.2" ".*bp2.*"
+
+# acquire the record objects for thread 1 and thread 2
+gdb_test "thread 1" ".*"
+gdb_test "record function-call-history" ".*" "fch thread 1"
+gdb_test_no_output "python rec1 = gdb.current_recording()"
+gdb_test "thread 2" ".*"
+gdb_test "record function-call-history" ".*" "fch thread 2"
+gdb_test_no_output "python rec2 = gdb.current_recording()"
+
+# Thread 1 is supposed to call func1 (), thread 2 is supposed to call func2 ().
+# Check that the function call history for the current thread contains a call
+# to the right function and does not contain a call to the wrong function.
+proc check_insn_for_thread { self other } {
+  with_test_prefix "checking thread $self" {
+    gdb_test_no_output "python fch = rec$self.function_call_history"
+    gdb_test_no_output "python f1calls = \{x for x in fch if x.symbol and x.symbol.name == \"func1\"\}"
+    gdb_test_no_output "python f2calls = \{x for x in fch if x.symbol and x.symbol.name == \"func2\"\}"
+
+    gdb_test "python print(not f${self}calls)" "False"
+    gdb_test "python print(not f${other}calls)" "True"
+  }
+}
+
+foreach_with_prefix thread { 1 2 } {
+  gdb_test "thread $thread"
+  check_insn_for_thread 1 2
+  check_insn_for_thread 2 1
+}

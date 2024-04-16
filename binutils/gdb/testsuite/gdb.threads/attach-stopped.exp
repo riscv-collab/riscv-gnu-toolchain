@@ -1,0 +1,91 @@
+# Copyright 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test was created by modifying attach.exp.
+# This file was created by Jeff Johnston <jjohnstn@redhat.com>.
+# This file was updated by Jan Kratochvil <jan.kratochvil@redhat.com>.
+
+# This test only works on Linux
+require !use_gdb_stub isnative
+require {!is_remote host}
+require {istarget *-linux*}
+
+standard_testfile
+set escapedbinfile  [string_to_regexp $binfile]
+
+#execute_anywhere "rm -f ${binfile}"
+remote_exec build "rm -f ${binfile}"
+# For debugging this test
+#
+#log_user 1
+
+proc corefunc { threadtype } {
+    global binfile
+    global escapedbinfile
+    global gdb_prompt
+
+    set test_spawn_id [spawn_wait_for_attach $binfile]
+    set testpid [spawn_id_get_pid $test_spawn_id]
+
+    # Stop the program 
+    remote_exec build "kill -s STOP ${testpid}"
+
+    clean_restart $binfile
+
+    # Verify that we can attach to the stopped process.
+       
+    set test "$threadtype: attach2 to stopped, after setting file"
+    gdb_test_multiple "attach $testpid" "$test" {
+	-re "Attaching to program.*`?$escapedbinfile'?, process $testpid.*$gdb_prompt $" {
+	    pass "$test"
+	}
+    }
+
+    # ".*sleep.*clone.*" would fail on s390x as bt stops at START_THREAD there.
+    if {[string equal $threadtype threaded]} {
+	gdb_test "thread apply all bt" ".*sleep.*start_thread.*" "$threadtype: attach2 to stopped bt"
+    } else {
+	gdb_test "bt" ".*sleep.*main.*" "$threadtype: attach2 to stopped bt"
+    }
+
+    gdb_exit
+
+    # Avoid some race:
+    sleep 2
+
+    # At this point, the process may be sleeping or T (Stopped) depending on
+    # the Linux kernel version.  The behavior is not tested as it is not
+    # dependent on GDB.
+
+    kill_wait_spawned_process $test_spawn_id
+}
+
+# build the test case first without threads
+#
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug}] != "" } {
+    untested "attach-stopped.exp (unthreaded)"
+    return -1
+}
+
+corefunc nonthreaded
+
+# build the test case first without threads
+#
+if  { [gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug additional_flags=-DUSE_THREADS}] != "" } {
+    untested "attach-stopped.exp (threaded)"
+    return -1
+}
+
+corefunc threaded

@@ -1,0 +1,129 @@
+# Copyright 2015-2024 Free Software Foundation, Inc.
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "trace-support.exp"
+
+require allow_shlib_tests
+
+standard_testfile
+set executable $testfile
+set expfile $testfile.exp
+
+# Some targets have leading underscores on assembly symbols.
+set options [list debug [gdb_target_symbol_prefix_flags]]
+
+# Check that the target supports trace.
+require gdb_trace_common_supports_arch
+if { [gdb_compile "$srcdir/$subdir/$srcfile" $binfile executable $options] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+clean_restart ${testfile}
+
+if ![runto_main] {
+    return -1
+}
+
+if ![gdb_target_supports_trace] {
+    unsupported "target does not support trace"
+    return -1
+}
+
+# Compile the test case with the in-process agent library.
+set libipa [get_in_proc_agent]
+gdb_load_shlib $libipa
+
+lappend options shlib=$libipa
+
+if { [gdb_compile "$srcdir/$subdir/$srcfile" $binfile executable $options] != "" } {
+    untested "failed to compile with in-process agent library"
+    return -1
+}
+
+# This test makes sure that disabling and enabling tracepoints works
+# correctly.  TRACEPOINT_CMD is the command used to set tracepoints
+# (e.g. trace or ftrace).
+
+proc test_tracepoint_enable_disable { tracepoint_cmd } {
+    with_test_prefix "test_tracepoint_enable_disable $tracepoint_cmd" {
+	global executable
+	clean_restart ${executable}
+
+	set expected 0
+
+	if ![runto_main] {
+	    return -1
+	}
+
+	gdb_test "$tracepoint_cmd point_a" "(Tracepoint|Fast tracepoint) 2.*"
+	gdb_test "$tracepoint_cmd point_b" "(Tracepoint|Fast tracepoint) 3.*"
+	gdb_breakpoint "break_here"
+	gdb_test_no_output "tstart"
+
+	# Test that tracepoints start enabled
+	with_test_prefix "start" {
+	    gdb_continue "break_here"
+	    incr expected 2
+	    gdb_test "tstatus" "Collected $expected trace frames.*"
+	}
+
+	# Test that disabling works
+	with_test_prefix "disable #1" {
+	    gdb_test_no_output "disable 2"
+	    gdb_continue "break_here"
+	    incr expected 1
+	    gdb_test "tstatus" "Collected $expected trace frames.*"
+	}
+
+	with_test_prefix "disable #2" {
+	    gdb_test_no_output "disable 3"
+	    gdb_continue "break_here"
+	    gdb_test "tstatus" "Collected $expected trace frames.*"
+	}
+
+	# Test that disabling an already disabled tracepoint works
+	with_test_prefix "disable #3" {
+	    gdb_test_no_output "disable 2"
+	    gdb_continue "break_here"
+	    gdb_test "tstatus" "Collected $expected trace frames.*"
+	}
+
+	# Test that enabling works
+	with_test_prefix "enable #1" {
+	    gdb_test_no_output "enable 2"
+	    gdb_continue "break_here"
+	    incr expected 1
+	    gdb_test "tstatus" "Collected $expected trace frames.*"
+	}
+
+	with_test_prefix "enable #2" {
+	    gdb_test_no_output "enable 3"
+	    gdb_continue "break_here"
+	    incr expected 2
+	    gdb_test "tstatus" "Collected $expected trace frames.*"
+	}
+
+	# Test that enabling an already enabled tracepoint works
+	with_test_prefix "enable #3" {
+	    gdb_test_no_output "enable 3"
+	    gdb_continue "break_here"
+	    incr expected 2
+	    gdb_test "tstatus" "Collected $expected trace frames.*"
+	}
+    }
+}
+
+test_tracepoint_enable_disable trace
+test_tracepoint_enable_disable ftrace

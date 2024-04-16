@@ -1,0 +1,88 @@
+# Copyright 2015-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test ability to load an elf64-i386 core file.  The provided core file was
+# elf64-x8664 one but it got binary patched to i386:
+# Elf32_Ehdr.e_machine @0x12..0x13
+# Elf64_Ehdr.e_machine @0x12..0x13
+# #define EM_386           3              /* Intel 80386 */
+# #define EM_X86_64       62              /* AMD x86-64 architecture */
+# patch @0x12: 0x3E -> 0x03
+
+require {is_any_target "i?86-*-*" "x86_64-*-*"}
+
+standard_testfile
+
+clean_restart
+
+set gnutargets [get_set_option_choices "set gnutarget"]
+if { [lsearch -exact $gnutargets elf64-little] == -1 } {
+    untested ".text is readable"
+    return
+}
+
+set corebz2file ${srcdir}/${subdir}/${testfile}.core.bz2
+# Entry point of the original executable.
+set address 0x400078
+
+set corefile [decompress_bz2 $corebz2file]
+if { $corefile == "" } {
+    untested "failed bzip2"
+    return -1
+}
+
+file stat ${corefile} corestat
+if {$corestat(size) != 102400} {
+    untested "bzip2 produces invalid result"
+    return -1
+}
+
+set corefile [gdb_remote_download host $corefile]
+
+# First check if this particular GDB supports i386, otherwise we should not
+# expect the i386 core file to be loaded successfully.
+set archs [get_set_option_choices "set architecture" "i386"]
+set supports_arch_i386 [expr [lsearch -exact $archs i386] != -1]
+
+# Wrongly built GDB complains by:
+# "..." is not a core dump: File format not recognized
+# As the provided test core has 64bit PRSTATUS i386 built GDB cannot parse it.
+# This is just a problem of the test case, real-world elf64-i386 file will have
+# 32bit PRSTATUS.  One cannot prepare elf64-i386 core file from elf32-i386 by
+# objcopy as it corrupts the core file beyond all recognition.
+# The output therefore does not matter much, just we should not get GDB
+# internal error.
+#
+# If this particular GDB does not support i386, it is expected GDB will not
+# recognize the core file.  If it does anyway, it should not crash.
+set test "load core file"
+gdb_test_multiple "core-file ${corefile}" $test {
+    -re "no core file handler recognizes format.*\r\n$gdb_prompt $" {
+	if { $supports_arch_i386 } {
+	    fail $test
+	} else {
+	    pass $test
+	    untested ".text is readable (core file unrecognized)"
+	    return
+	}
+    }
+    -re "\r\n$gdb_prompt $" {
+	pass $test
+    }
+}
+
+# Test if at least the core file segments memory has been loaded.
+# https://bugzilla.redhat.com/show_bug.cgi?id=457187
+gdb_test "x/bx $address" "\r\n\[ \t\]*$address:\[ \t\]*0xf4\[ \t\]*" ".text is readable"

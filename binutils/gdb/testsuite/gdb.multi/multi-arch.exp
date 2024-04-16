@@ -1,0 +1,128 @@
+# Copyright 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test multi-exec / multi-process features that work for all configurations,
+# even ones that cannot run multiple processes simultaneously.
+
+set testfile "multi-arch"
+
+# The plain remote target can't do multiple inferiors.
+require !use_gdb_stub
+
+# The 64-bit compile may succeed for i386-linux, but gdb won't be able
+# to load the file.
+if [istarget "i?86-*linux*"] {
+    return
+}
+
+# Can't use standard_testfile, we want executables with specialized
+# names.
+set exec1 "ma-hello"
+set srcfile1 hello.c
+set binfile1 [standard_output_file ${exec1}]
+
+set exec2 "ma-hangout"
+set srcfile2 hangout.c
+set binfile2 [standard_output_file ${exec2}]
+
+# Build two executables, one for each arch.
+
+if [istarget "s390*-*-*"] {
+    set march1 "-m64"
+    set march2 "-m31"
+} elseif { [istarget "aarch64*-*-*"] } {
+    set march1 ""
+    set march2 ""
+} else {
+    set march1 "-m64"
+    set march2 "-m32"
+}
+
+if { $march1 != "" } {
+    require "have_compile_and_link_flag $march1"
+}
+
+if { $march2 != "" } {
+    require "have_compile_and_link_flag $march2"
+}
+
+if { [build_executable "failed to prepare" ${exec1} "${srcfile1}" \
+	  [list debug additional_flags=${march1}]] } {
+    return -1
+}
+
+set options [list debug]
+
+if [istarget "aarch64*-*-*"] {
+    if {[arm_cc_for_target] != ""} {
+	lappend options "compiler=[arm_cc_for_target]"
+    } else {
+	unsupported "ARM compiler is not known"
+	return -1
+    }
+} else {
+    lappend options "additional_flags=${march2}"
+}
+
+if { [build_executable "failed to prepare" ${exec2} "${srcfile2}" \
+	 $options]} {
+    return -1
+}
+
+# Start inferior 1
+
+clean_restart ${exec1}
+if {![runto_main]} {
+    return
+}
+
+# Add and start inferior 2
+
+gdb_test "add-inferior" "Added inferior 2.*" "add empty inferior 2"
+gdb_test "inferior 2" "Switching to inferior 2.*" "switch to inferior 2"
+gdb_load ${binfile2}
+
+if {![runto_main]} {
+    return
+}
+
+# Check we do have two inferiors loaded.
+
+gdb_test "info inferiors" \
+    "Executable.*${exec1}.*${exec2}.*"
+
+# Now select inferior 2, and trigger an event in inferior 1.  This
+# tries to check that GDB doesn't incorrectly uses the architecture of
+# inferior 2 when parsing the expedited registers in a stop reply for
+# inferior 1 (when remote debugging).
+
+gdb_test_no_output "set schedule-multiple on"
+
+with_test_prefix "inf1 event with inf2 selected" {
+    gdb_test "inferior 2" "Switching to inferior 2.*thread 2\.1.*main.*${srcfile2}.*"
+    gdb_test "b hello_loop" "Breakpoint .* at .*${srcfile1}.*"
+    gdb_test "c" " hello_loop.*" "continue to hello_loop"
+}
+
+delete_breakpoints
+
+# Same, but the other way around: select inferior 1 and trigger an
+# event in inferior 2.
+
+with_test_prefix "inf2 event with inf1 selected" {
+    gdb_test "inferior 1" "Switching to inferior 1.*thread 1\.1.*hello_loop.*${srcfile1}.*"
+    gdb_test "b hangout_loop" "Breakpoint .* at .*${srcfile2}.*"
+    gdb_test "c" " hangout_loop.*" "continue to hangout_loop"
+}

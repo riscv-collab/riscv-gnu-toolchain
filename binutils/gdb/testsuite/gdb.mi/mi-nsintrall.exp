@@ -1,0 +1,93 @@
+# Copyright 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require support_displaced_stepping
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+#
+# Start here
+#
+standard_testfile nsintrall.c
+
+set options [list debug]
+if {[gdb_compile_pthreads "$srcdir/$subdir/$srcfile" $binfile executable $options] != "" } {
+    return -1
+}
+
+save_vars { GDBFLAGS } {
+    append GDBFLAGS " -ex \"set non-stop on\""
+    mi_clean_restart $binfile
+}
+
+mi_gdb_test "-gdb-set mi-async 1" ".*"
+mi_detect_async
+
+if { [mi_runto_main] < 0 } {
+    return
+}
+
+mi_create_breakpoint thread_function \
+    "breakpoint at thread_function" \
+    -number 2 -func thread_function
+
+mi_send_resuming_command "exec-continue --all" "resume all"
+for {set i 0} {$i < 6} {incr i} {
+    mi_expect_stop "breakpoint-hit" "thread_function" "\[^\n\]*" "$srcfile" \
+	"\[0-9\]*" {"" "disp=\"keep\""} "stop $i"
+}
+
+mi_check_thread_states \
+    {"stopped" "stopped" "stopped" "stopped" "stopped" "stopped"} \
+    "thread state, all stopped"
+
+# now that we know about all the threads, we can get rid of the breakpoints
+mi_delete_breakpoints
+
+# Here we create a response string.  Note we don't want \r\n at the end,
+# since mi_gdb_test will append this itself.
+set running_re ""
+for {set i 1} {$i < 6} {incr i} {
+    set running_re "$running_re\\*running,thread-id=\"$i\"\r\n"
+}
+set running_re "$running_re\\*running,thread-id=\"6\""
+
+mi_gdb_test "-exec-continue --all" "\[^\n\]*\r\n$running_re" \
+    "resume all, no breakpoint"
+
+mi_check_thread_states \
+    {"running" "running" "running" "running" "running" "running"} \
+    "thread state, resume all"
+
+mi_gdb_test "200-exec-interrupt --all" "200\\^done" "interrupt all threads"
+
+for {set i 0} {$i < 6} {incr i} {
+    mi_expect_interrupt "interrupt $i"
+}
+mi_check_thread_states \
+    {"stopped" "stopped" "stopped" "stopped" "stopped" "stopped"} \
+    "thread state, all interrupted"
+
+# resume all threads, and check that no thread is spuriously left interrupted
+mi_gdb_test "-exec-continue --all" "\[^\n\]*\r\n$running_re" \
+    "resume all after interrupting"
+
+sleep 1
+mi_check_thread_states \
+    {"running" "running" "running" "running" "running" "running"} \
+    "thread state, resume all after interrupting"
+
+mi_gdb_exit

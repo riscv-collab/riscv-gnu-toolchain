@@ -1,0 +1,196 @@
+# Copyright (C) 2021-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Create a TUI window in Python that responds to GDB event.  Each
+# event will trigger the TUI window to redraw itself.
+#
+# This test is checking how GDB behaves if the user first displays a
+# Python based tui window, and then does 'tui disable'.  At one point
+# it was possible that GDB would try to redraw the tui window even
+# though the tui should be disabled.
+
+load_lib gdb-python.exp
+require allow_tui_tests allow_python_tests
+tuiterm_env
+
+standard_testfile
+
+set flags {}
+lappend flags debug
+lappend_include_file flags $srcdir/lib/attributes.h
+
+if {[build_executable "failed to prepare" ${testfile} ${srcfile} $flags] == -1} {
+    return -1
+}
+
+clean_restart
+
+# Copy the Python script to where the tests are being run.
+set remote_python_file [gdb_remote_download host \
+			    ${srcdir}/${subdir}/${testfile}.py]
+
+proc clean_restart_and_setup { prefix } {
+    global testfile
+    global remote_python_file
+
+    with_test_prefix $prefix {
+
+	Term::clean_restart 24 80 $testfile
+
+	# Now source the python script.
+	gdb_test_no_output "source ${remote_python_file}" \
+	    "source ${testfile}.py"
+
+	# Create a new layout making use of our new event window.
+	gdb_test_no_output "tui new-layout test events 1 cmd 1"
+
+	# Disable source code highlighting.
+	gdb_test_no_output "set style sources off"
+
+	if {![runto_main]} {
+	    perror "test suppressed"
+	    return 0
+	}
+    }
+
+    return 1
+}
+
+# Run the test.  CLEANUP_PROPERLY is either true or false.  This is
+# used to set a flag in the Python code which controls whether the
+# Python TUI window cleans up properly or not.
+#
+# When the Python window does not cleanup properly then it retains a
+# cyclic reference to itself, this means that it is still possible for
+# the object to try and redraw itself even when the tui is disabled.
+proc run_test { cleanup_properly } {
+
+    if { ![clean_restart_and_setup "initial restart"] } {
+	unsupported "couldn't restart GDB"
+	return
+    }
+
+    if { $cleanup_properly } {
+	gdb_test_no_output "python cleanup_properly = True"
+    } else {
+	gdb_test_no_output "python cleanup_properly = False"
+    }
+
+    if {![Term::enter_tui]} {
+	unsupported "TUI not supported"
+	return
+    }
+
+    Term::command "layout test"
+
+    # Confirm that the events box is initially empty, then perform two
+    # actions that will add two events to the window.
+    Term::check_box_contents "no events yet" 0 0 80 16 ""
+    Term::command "next"
+    Term::check_box_contents "single stop event" 0 0 80 16 "stop"
+    Term::command "next"
+    Term::check_box_contents "two stop events" 0 0 80 16 \
+	"stop\[^\n\]+\nstop"
+
+    # Now disable the tui, we should end up back at a standard GDB prompt.
+    Term::command "tui disable"
+
+    # Do something just so we know that the CLI is working.
+    gdb_test "print 1 + 1 + 1" " = 3"
+
+    # Now perform an action that would trigger an event.  At one point
+    # there was a bug where the TUI window might try to redraw itself.
+    # This is why we use GDB_TEST_MULTIPLE here, so we can spot the tui
+    # window title and know that things have gone wrong.
+    gdb_test_multiple "next" "next at cli" {
+	-re -wrap "func \\(3\\);" {
+	    pass $gdb_test_name
+	}
+
+	-re "This Is The Event Window" {
+	    fail $gdb_test_name
+	}
+    }
+
+    # Do something just so we know that the CLI is still working.  This
+    # also serves to drain the expect buffer if the above test failed.
+    gdb_test "print 2 + 2 + 2" " = 6"
+
+    # Now tell the Python code not to check the window is valid before
+    # calling render.  The result is the Python code will try to draw to
+    # the screen.  This should throw a Python exception.
+    gdb_test_no_output "python perform_valid_check = False"
+    set exception_pattern "\r\nPython Exception\[^\n\r\]+TUI window is invalid\[^\n\r\]+"
+    gdb_test_multiple "next" "next at cli, with an exception" {
+	-re -wrap "func \\(4\\);${exception_pattern}" {
+	    pass $gdb_test_name
+	}
+
+	-re "This Is The Event Window" {
+	    fail $gdb_test_name
+	}
+    }
+
+    # Do something just so we know that the CLI is still working.  This
+    # also serves to drain the expect buffer if the above test failed.
+    gdb_test "print 3 + 3 + 3" " = 9"
+
+    # Set 'update_title' to True.  The Python script will now try to set
+    # the window title when an event occurs (instead of trying to redraw
+    # the window). As the window is still not displayed this will again
+    # throw an exception.
+    gdb_test_no_output "python update_title = True"
+    gdb_test_multiple "next" "next at cli, with an exception for setting the title" {
+	-re -wrap "func \\(5\\);${exception_pattern}" {
+	    pass $gdb_test_name
+	}
+
+	-re "This Is The Event Window" {
+	    fail $gdb_test_name
+	}
+    }
+
+    # We need to perform a restart here as the TUI library we use for
+    # testing doesn't seem to handle output in the command window
+    # correctly, and gets really upset as we approach the bottom of
+    # the screen.
+    #
+    # Restart GDB, enable tui mode, select the new layout.  Then
+    # disable tui and re-enable again.
+    if { ![clean_restart_and_setup "second restart"] } {
+	unsupported "couldn't restart GDB"
+	return
+    }
+
+    with_test_prefix "enter tui again" {
+	if {![Term::enter_tui]} {
+	    unsupported "TUI not supported"
+	    return
+	}
+    }
+
+    Term::command "layout test"
+    Term::command "tui disable"
+
+    send_gdb "tui enable\n"
+    gdb_assert { [Term::wait_for "^$::gdb_prompt tui disable"] } "TUI renabled"
+
+    Term::check_box "check for python window" 0 0 80 16
+}
+
+# Run the tests in both cleanup modes.
+foreach_with_prefix cleanup_properly { True False } {
+    run_test $cleanup_properly
+}

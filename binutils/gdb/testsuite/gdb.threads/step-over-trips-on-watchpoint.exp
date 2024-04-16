@@ -1,0 +1,137 @@
+# Copyright (C) 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that when a step-over trips on a watchpoint, that watchpoint is
+# reported.
+
+standard_testfile
+set executable ${testfile}
+
+# This test verifies that a watchpoint is detected in a multithreaded
+# program so the test is only meaningful on a system with hardware
+# watchpoints.
+require allow_hw_watchpoint_tests
+
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" \
+	 executable [list debug "incdir=${objdir}"]] != "" } {
+    return -1
+}
+
+# The test proper.  DISPLACED is true if we should try with displaced
+# stepping.  WITH_BP is true if we should try with a thread-specific
+# breakpoint (for the wrong thread) right after the instruction that
+# triggers the watchpoint.
+proc do_test { displaced with_bp } {
+    global executable
+    global gdb_prompt
+    global hex
+
+    if ${with_bp} {
+	set prefix "with thread-specific bp"
+    } else {
+	set prefix "no thread-specific bp"
+    }
+    with_test_prefix "displaced=$displaced: $prefix" {
+	# Cover both stepping and non-stepping execution commands.
+	foreach command {"step" "next" "continue" } {
+	    with_test_prefix $command {
+		clean_restart $executable
+
+		if ![runto_main] {
+		    continue
+		}
+
+		gdb_test_no_output "set displaced-stepping $displaced"
+
+		set line [gdb_get_line_number "set wait-thread breakpoint here"]
+		if { ![gdb_breakpoint $line] } {
+		    return
+		}
+		gdb_continue_to_breakpoint "run to wait-thread breakpoint"
+		gdb_test "info threads" "\\\* 1 .*  2 .*" "info threads shows all threads"
+
+		gdb_test_no_output "set scheduler-locking on"
+
+		delete_breakpoints
+
+		gdb_breakpoint [gdb_get_line_number "set breakpoint child here"]
+		gdb_test "thread 2" "Switching to .*"
+		gdb_continue_to_breakpoint "run to breakpoint in thread 2"
+
+		set address_triggers_watch "<invalid>"
+		set after_address_triggers_watch "<invalid>"
+
+		# Let the watchpoint trigger once (with the other
+		# thread locked), in order to find both the address of
+		# the instruction that triggers the watchpoint and the
+		# address of the instruction immediately after.
+		with_test_prefix "find addresses" {
+		    gdb_test "p watch_me = 0" " = 0" "clear watch_me"
+		    gdb_test "watch watch_me" "Hardware watchpoint .*"
+
+		    gdb_test "continue" \
+			"Hardware watchpoint.*: watch_me.*New value = 1.*" \
+			"continue to watchpoint"
+
+		    set msg "find addresses"
+		    gdb_test_multiple "disassemble" $msg {
+			-re " ($hex) \[^\r\n\]*\r\n=> ($hex) .*$gdb_prompt $" {
+			    set address_triggers_watch $expect_out(1,string)
+			    set after_address_triggers_watch $expect_out(2,string)
+			    pass $msg
+			}
+		    }
+
+		    delete_breakpoints
+		}
+
+		gdb_test "break *$address_triggers_watch" "Breakpoint .*" \
+		    "set breakpoint at address that triggers watch"
+		gdb_continue_to_breakpoint \
+		    "run to instruction that triggers watch in thread 2"
+
+		gdb_test "p counter = 0" " = 0" "unbreak loop in thread 2"
+		gdb_test "p watch_me = 0" " = 0" "clear watch_me"
+		gdb_test "watch watch_me" "Hardware watchpoint .*"
+
+		if ${with_bp} {
+		    gdb_test "b *$after_address_triggers_watch thread 1" \
+			"Breakpoint .*" \
+			"set breakpoint specific to thread 1"
+		}
+
+		# Switch back to thread 1 and disable scheduler locking.
+		gdb_test "thread 1" "Switching to .*"
+		gdb_test_no_output "set scheduler-locking off"
+
+		# Thread 2 is still stopped at a breakpoint that needs
+		# to be stepped over.  However, the instruction that
+		# is under the breakpoint triggers a watchpoint, which
+		# should trap and be reported to the user.
+		gdb_test "$command" "Hardware watchpoint.*: watch_me.*New value = 1.*"
+	    }
+	}
+    }
+}
+
+foreach displaced { "off" "on" } {
+    if { $displaced != "off" && ![support_displaced_stepping] } {
+	continue
+    }
+
+    foreach with_bp { 0 1 } {
+	do_test $displaced $with_bp
+    }
+}

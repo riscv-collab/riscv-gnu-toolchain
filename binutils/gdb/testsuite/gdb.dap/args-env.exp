@@ -1,0 +1,90 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test environment variables and command line arguments via DAP.
+
+require allow_dap_tests !use_gdb_stub
+
+load_lib dap-support.exp
+
+standard_testfile
+
+if {[build_executable ${testfile}.exp $testfile] == -1} {
+    return
+}
+
+if {[dap_launch $testfile arguments {a "b c"} env {{DEI something}}] == ""} {
+    return
+}
+
+set line [gdb_get_line_number "BREAK"]
+set obj [dap_check_request_and_response "set breakpoint by line number" \
+	     setBreakpoints \
+	     [format {o source [o path [%s]] breakpoints [a [o line [i %d]]]} \
+		  [list s $srcfile] $line]]
+set line_bpno [dap_get_breakpoint_number $obj]
+
+dap_check_request_and_response "start inferior" configurationDone
+dap_wait_for_event_and_check "inferior started" thread "body reason" started
+
+dap_wait_for_event_and_check "stopped at line breakpoint" stopped \
+    "body reason" breakpoint \
+    "body hitBreakpointIds" $line_bpno
+
+set bt [lindex [dap_check_request_and_response "backtrace" stackTrace \
+		    {o threadId [i 1]}] \
+	    0]
+set frame_id [dict get [lindex [dict get $bt body stackFrames] 0] id]
+
+set obj [dap_check_request_and_response \
+	     "evaluate argc in function" \
+	     evaluate [format {o expression [s argc] frameId [i %s]} \
+			   $frame_id]]
+dap_match_values "argc in function" [lindex $obj 0] \
+    "body result" 3
+
+set obj [dap_check_request_and_response \
+	     "evaluate first argument in function" \
+	     evaluate [format {o expression [s {argv[1]}] frameId [i %s]} \
+			   $frame_id]]
+set val [dict get [lindex $obj 0] body result]
+# This ends up with some extra quoting.
+gdb_assert {[string first "\\\"a\\\"" $val] != -1} \
+    "first argument in function"
+
+set obj [dap_check_request_and_response \
+	     "evaluate second argument in function" \
+	     evaluate [format {o expression [s {argv[2]}] frameId [i %s]} \
+			   $frame_id]]
+set val [dict get [lindex $obj 0] body result]
+# This ends up with some extra quoting.
+gdb_assert {[string first "\\\"b c\\\"" $val] != -1} \
+    "second argument in function"
+
+set obj [dap_check_request_and_response "evaluate value in function" \
+	     evaluate [format {o expression [s value] frameId [i %s]} \
+			   $frame_id]]
+set val [dict get [lindex $obj 0] body result]
+# This ends up with some extra quoting.
+gdb_assert {[string first "\\\"something\\\"" $val] != -1} \
+    "value in function"
+
+set obj [dap_check_request_and_response "evaluate no_value in function" \
+	     evaluate [format {o expression [s no_value] frameId [i %s]} \
+			   $frame_id]]
+dap_match_values "no_value in function" [lindex $obj 0] \
+    "body result" 0
+
+dap_shutdown

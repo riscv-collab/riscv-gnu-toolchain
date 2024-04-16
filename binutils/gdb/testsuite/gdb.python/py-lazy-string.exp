@@ -1,0 +1,75 @@
+# Copyright (C) 2015-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It tests lazy string support
+# not tested by py-prettyprinter.exp.
+
+load_lib gdb-python.exp
+
+require allow_python_tests
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile {debug c++}]} {
+    return -1
+}
+
+if ![runto_main ] {
+    return -1
+}
+
+gdb_breakpoint [gdb_get_line_number "break here"]
+gdb_continue_to_breakpoint "break here"
+
+gdb_py_test_silent_cmd "python null = gdb.parse_and_eval(\"null\")" "get null value" 1
+
+gdb_py_test_silent_cmd "python nullstr = null.lazy_string(length=0)" "create a null lazy string" 1
+gdb_test "python print (nullstr.length)" "0" "null lazy string length"
+gdb_test "python print (nullstr.address)" "0" "null lazy string address"
+gdb_test "python print (nullstr.type)" "const char \\*" "null lazy string type"
+gdb_test "python print(nullstr.value())" \
+    "gdb.MemoryError: Cannot create a value from NULL.*Error while executing Python code." \
+    "create value from NULL"
+gdb_test "python print(null.lazy_string(length=3).value())" \
+    "gdb.MemoryError: Cannot create a lazy string with address 0x0, and a non-zero length.*Error while executing Python code." \
+    "null lazy string with non-zero length"
+gdb_test "python print(null.lazy_string(length=-2))" \
+    "ValueError: Invalid length.*Error while executing Python code." \
+    "bad length"
+
+foreach var_spec { { "ptr" "pointer" "const char \\*" -1 } \
+		   { "array" "array" "const char \\[6\\]" 6 } \
+		   { "typedef_ptr" "typedef pointer" "pointer" -1 } } {
+    set var [lindex $var_spec 0]
+    set value [lindex $var_spec 1]
+    set type [lindex $var_spec 2]
+    set length [lindex $var_spec 3]
+    with_test_prefix $var {
+	gdb_test "print $var" "\"$value\""
+	gdb_py_test_silent_cmd "python $var = gdb.history (0)" "get value from history" 1
+	gdb_py_test_silent_cmd "python l$var = $var.lazy_string()" "acquire lazy string" 1
+	gdb_test "python print ($var.type)" "$type" "string type name equality"
+	gdb_test "python print (l$var.type)" "$type" "lazy-string type name equality"
+	gdb_test "python print (l$var.length)" "$length" "lazy string length"
+	gdb_test "python print (l$var.value())" "\"$value\"" "lazy string value"
+	gdb_py_test_silent_cmd "python l2$var = $var.lazy_string(length=2)" "acquire lazy string, length 2" 1
+	gdb_test "python print (l2$var.length)" "2" "lazy string length 2"
+	gdb_test "python print (l2$var.value())" "\"[string range $value 0 1]\"" "lazy string length 2 value"
+	# This test will have to wait until gdb can handle it. There's no way,
+	# currently, to internally specify an array of length zero in the C
+	# language support.  PR 20786
+	#gdb_test "python print ($var.lazy_string(length=0).value())" "\"\"" "empty lazy string value"
+    }
+}

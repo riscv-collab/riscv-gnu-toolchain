@@ -1,0 +1,121 @@
+# Copyright (C) 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check that when GDB fails to evaluate the condition of a conditional
+# breakpoint we only get one *stopped notification.  In this test case
+# the breakpoint condition fails due to throwing an uncaught C++
+# excpetion.
+
+require allow_cplus_tests
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+standard_testfile .cc
+
+if [build_executable ${testfile}.exp ${binfile} ${srcfile} {debug c++}] {
+    return -1
+}
+
+# Create a breakpoint with a condition that invokes an inferior
+# function call, that will segfault.  Run until GDB hits the
+# breakpoint and check how GDB reports the failed condition check.
+#
+# UNWIND_ON_EXCEPTION is either 'on' or 'off'.  This is used to configure
+# GDB's 'set unwind-on-terminating-exception' setting.
+
+proc run_test { unwind_on_exception } {
+
+    if {[mi_clean_restart $::binfile]} {
+	return
+    }
+
+    if {[mi_runto_main] == -1} {
+	return
+    }
+
+    mi_gdb_test "-gdb-set unwind-on-terminating-exception ${unwind_on_exception}" {\^done} \
+	"set unwind-on-terminating-exception"
+
+    # Create the conditional breakpoint.
+    set bp_location [gdb_get_line_number "Set breakpoint here"]
+    mi_create_breakpoint "-c \"cond_throw ()\" $::srcfile:$bp_location" \
+	"insert conditional breakpoint" \
+	-func "foo\\(\\)" -file ".*$::srcfile" -line "$bp_location" \
+	-cond "cond_throw \\(\\)"
+
+    # Number of the previous breakpoint.
+    set bpnum [mi_get_valueof "/d" "\$bpnum" "INVALID" \
+		   "get number for breakpoint"]
+
+    # The line where we expect the inferior to crash.
+    set crash_linenum 0
+    #[gdb_get_line_number "Crash here"]
+
+    # Run the inferior and wait for it to stop.
+    mi_send_resuming_command "exec-continue" "continue the inferior"
+
+    if {$unwind_on_exception} {
+	mi_gdb_test "" \
+	    [multi_line \
+		 "&\"Error in testing condition for breakpoint $bpnum:\\\\n\"" \
+		 "&\"The program being debugged entered a std::terminate call, most likely\\\\n\"" \
+		 "&\"caused by an unhandled C\\+\\+ exception.  GDB blocked this call in order\\\\n\"" \
+		 "&\"to prevent the program from being terminated, and has restored the\\\\n\"" \
+		 "&\"context to its original state before the call.\\\\n\"" \
+		 "&\"To change this behaviour use \\\\\"set unwind-on-terminating-exception off\\\\\"\\.\\\\n\"" \
+		 "&\"Evaluation of the expression containing the function \\(cond_throw\\(\\)\\)\\\\n\"" \
+		 "&\"will be abandoned.\\\\n\"" \
+		 "=breakpoint-modified,bkpt={number=\"$bpnum\",type=\"breakpoint\",\[^\r\n\]+times=\"1\",\[^\r\n\]+}" \
+		 "~\"\\\\n\"" \
+		 "~\"Breakpoint $bpnum, foo \\(\\) at \[^\r\n\]+/${::srcfile}:${bp_location}\\\\n\"" \
+		 "~\"${bp_location}\\\\t\[^\r\n\]+Set breakpoint here\\.\[^\r\n\]+\\\\n\"" \
+		 "\\*stopped,reason=\"breakpoint-hit\",disp=\"keep\",bkptno=\"$bpnum\",frame=\\{addr=\"$::hex\",func=\"foo\"\\,args=\\\[\\\],file=\"\[^\r\n\]+\",fullname=\"\[^\r\n\]+\",line=\"$bp_location\",\[^\r\n\]+}\[^\r\n\]+"] \
+	    "wait for stop"
+
+	mi_info_frame "check the current frame" \
+	    -level 0 -func foo -line $bp_location
+    } else {
+	# This pattern matches multiple lines being sent to MI's
+	# stdout stream (that is wrapped in ~"...").  Depending on
+	# where exactly the thread stops, and which debug info is
+	# available, the following stop will produce different numbers
+	# of lines.
+	set out_ln_re "(?:\r\n\[~&\]\"\[^\r\n\]+\")*"
+
+	mi_gdb_test "" \
+	    [multi_line \
+		 ".*~\"\\\\nProgram\"" \
+		 "~\" received signal SIGABRT, Aborted\\.\\\\n\"${out_ln_re}" \
+		 "\\*stopped,reason=\"signal-received\",signal-name=\"SIGABRT\"\[^\r\n\]+frame=\\{addr=\"$::hex\",\[^\r\n\]+\\}\[^\r\n\]+" \
+		 "&\"Error in testing condition for breakpoint $bpnum:\\\\n\"" \
+		 "&\"The program being debugged was signaled while in a function called from GDB\\.\\\\n\"" \
+		 "&\"GDB remains in the frame where the signal was received\\.\\\\n\"" \
+		 "&\"To change this behavior use \\\\\"set unwindonsignal on\\\\\"\\.\\\\n\"" \
+		 "&\"Evaluation of the expression containing the function\\\\n\"" \
+		 "&\"\\(cond_throw\\(\\)\\) will be abandoned\\.\\\\n\"" \
+		 "&\"When the function is done executing, GDB will silently stop\\.\\\\n\"" \
+		 "=breakpoint-modified,bkpt={number=\"$bpnum\",type=\"breakpoint\",\[^\r\n\]+times=\"1\",\[^\r\n\]+}"] \
+	    "wait for stop"
+
+	# Don't try to check the current frame here, the inferior will
+	# be stopped somewhere in the C++ runtime at the point where
+	# it is determined that the exception has not been handled.
+    }
+}
+
+foreach_with_prefix unwind_on_exception { off } {
+    run_test $unwind_on_exception
+}

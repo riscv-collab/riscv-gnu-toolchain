@@ -1,0 +1,133 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test DAP stack format options.
+
+require allow_dap_tests
+
+load_lib dap-support.exp
+
+standard_testfile
+
+if {[build_executable ${testfile}.exp $testfile] == -1} {
+    return
+}
+
+set remote_python_file [gdb_remote_download host \
+			    ${srcdir}/${subdir}/${testfile}.py]
+
+save_vars GDBFLAGS {
+    append GDBFLAGS " -iex \"source $remote_python_file\""
+
+    if {[dap_launch $testfile] == ""} {
+	return
+    }
+}
+
+set line [gdb_get_line_number "BREAK"]
+set obj [dap_check_request_and_response "set breakpoint by line number" \
+	     setBreakpoints \
+	     [format {o source [o path [%s]] breakpoints [a [o line [i %d]]]} \
+		  [list s $srcfile] $line]]
+set line_bpno [dap_get_breakpoint_number $obj]
+
+dap_check_request_and_response "start inferior" configurationDone
+
+dap_wait_for_event_and_check "stopped at line breakpoint" stopped \
+    "body reason" breakpoint \
+    "body hitBreakpointIds" $line_bpno
+
+
+# Each request should return the same frame ID.  Store it here,
+# indexed by requested frame.
+array set frame_id {}
+
+# Request a single frame of the stack trace and check it.  NAME is the
+# name of the test.  FRAME is the number of the frame to request.
+# FORMAT is contents of the StackFrameFormat object to use.  It is in
+# TON form.  EXPECTED is the expected 'name' value of the resulting
+# frame.  If REGEXP is set, then EXPECTED is a regular expression;
+# otherwise it is treated as the exact string result.
+proc check_stack_frame {name frame format expected {regexp 0}} {
+    with_test_prefix $name {
+	set args [format {o startFrame [i %d] levels [i 1] threadId [i 1]} \
+		      $frame]
+	if {$format != ""} {
+	    append args " format \[o $format\]"
+	}
+
+	set bt [lindex [dap_check_request_and_response "backtrace" \
+			    stackTrace $args] \
+		    0]
+	set frame_info [lindex [dict get $bt body stackFrames] 0]
+
+	# Each request at this level should return the same frame ID.
+	set this_id [dict get $frame_info id]
+	global frame_id
+	if {[info exists frame_id($frame)]} {
+	    gdb_assert {$frame_id($frame) == $this_id} "unchanging frame id"
+	} else {
+	    set frame_id($frame) $this_id
+	}
+
+	if {$regexp} {
+	    gdb_assert {[regexp $expected [dict get $frame_info name]]} \
+		"got expected name"
+	} else {
+	    gdb_assert {[dict get $frame_info name] == $expected} \
+		"got expected name"
+	}
+    }
+}
+
+check_stack_frame empty 0 {} "function"
+
+check_stack_frame parameters 0 {parameters [l true] \
+				    parameterTypes [l true] \
+				    parameterNames [l true] \
+				    parameterValues [l true]} \
+    {function([int] x = 64, [char] y = 65 'A')}
+
+# When 'parameters' is false, it disables the other parameter*
+# options.  This was clarified in
+# https://github.com/microsoft/debug-adapter-protocol/issues/411
+check_stack_frame noparams 0 {parameters [l false] \
+				  parameterTypes [l true] \
+				  parameterNames [l true] \
+				  parameterValues [l true]} \
+    "function"
+
+check_stack_frame line 0 {line [l true] module [l true]} \
+    "function, line $line, module .*stack-format" \
+    1
+
+check_stack_frame hex 0 \
+    {parameters [l true] parameterValues [l true] hex [l true]} \
+    "function(0x40, 0x41)"
+
+check_stack_frame elided-main 1 {} "main"
+
+# The next requests will ask for all frames, so the old frame 1 will
+# be the new frame 4.  Update the map to check this.
+set frame_id(4) $frame_id(1)
+unset frame_id(1)
+
+check_stack_frame no-elide 0 {includeAll [l true]} "function"
+check_stack_frame z-frame-1 1 {includeAll [l true]} "z_1"
+check_stack_frame z-frame-2 2 {includeAll [l true]} "z_2"
+check_stack_frame z-frame-3 3 {includeAll [l true]} "z_3"
+check_stack_frame main-include-all 4 {includeAll [l true]} "main"
+
+dap_shutdown

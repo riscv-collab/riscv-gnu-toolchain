@@ -1,0 +1,67 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test continuing over a thread spawn with scheduler-locking on.
+
+standard_testfile .c
+
+foreach_with_prefix schedlock {off on} {
+    set sl [expr $schedlock == "on" ? 1 : 0]
+    if { [build_executable "failed to prepare" $testfile-$sl \
+	      $srcfile \
+	      [list debug pthreads additional_flags=-DSCHEDLOCK=$sl]] \
+	     == -1 } {
+	return
+    }
+}
+
+proc test {non-stop schedlock} {
+    save_vars ::GDBFLAGS {
+	append ::GDBFLAGS " -ex \"set non-stop ${non-stop}\""
+	set sl [expr $schedlock == "on" ? 1 : 0]
+	clean_restart $::binfile-$sl
+    }
+
+    set linenum1 [gdb_get_line_number "set break 1 here"]
+
+    if { ![runto $::srcfile:$linenum1] } {
+	return
+    }
+
+    delete_breakpoints
+
+    set linenum2 [gdb_get_line_number "set break 2 here"]
+    gdb_breakpoint $linenum2
+
+    gdb_breakpoint "thread_func"
+
+    gdb_test_no_output "set scheduler-locking $schedlock"
+
+    if {$schedlock} {
+	gdb_test "continue" \
+	    "return 0.*set break 2 here .*" \
+	    "continue does not stop in new thread"
+    } else {
+	gdb_test "continue" \
+	    "thread_func .*" \
+	    "continue stops in new thread"
+    }
+}
+
+foreach_with_prefix non-stop {off on} {
+    foreach_with_prefix schedlock {off on} {
+	test ${non-stop} ${schedlock}
+    }
+}

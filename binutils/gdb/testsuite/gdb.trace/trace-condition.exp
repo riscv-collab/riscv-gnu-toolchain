@@ -1,0 +1,305 @@
+# Copyright 2011-2024 Free Software Foundation, Inc.
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "trace-support.exp"
+
+require allow_shlib_tests
+
+standard_testfile
+set executable $testfile
+set expfile $testfile.exp
+
+# Some targets have leading underscores on assembly symbols.
+set additional_flags [gdb_target_symbol_prefix_flags]
+
+require gdb_trace_common_supports_arch
+
+if [prepare_for_testing "failed to prepare" $executable $srcfile \
+	[list debug $additional_flags]] {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+if ![gdb_target_supports_trace] {
+    unsupported "target does not support trace"
+    return -1
+}
+
+set libipa [get_in_proc_agent]
+set remote_libipa [gdb_load_shlib $libipa]
+
+# Can't use prepare_for_testing, because that splits compiling into
+# building objects and then linking, and we'd fail with "linker input
+# file unused because linking not done" when building the object.
+
+if { [gdb_compile "$srcdir/$subdir/$srcfile" $binfile \
+	  executable [list debug $additional_flags shlib=$libipa] ] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+clean_restart ${executable}
+
+if ![runto_main] {
+    return 0
+}
+
+if { [gdb_test "info sharedlibrary" ".*${remote_libipa}.*" "IPA loaded"] != 0 } {
+    untested "could not find IPA lib loaded"
+    return 1
+}
+
+proc test_tracepoints { trace_command condition num_frames { kfail_proc 0 } } {
+    global executable gdb_prompt
+
+    clean_restart ${executable}
+
+    if ![runto_main] {
+	return 0
+    }
+
+    gdb_breakpoint "begin" qualified
+
+    gdb_breakpoint "end" qualified
+
+    with_test_prefix "${trace_command}: ${condition}" {
+
+	gdb_test "${trace_command} set_point if ${condition}" \
+	    "\(Fast t|T\)racepoint .*" \
+	    "set tracepoint"
+
+	gdb_test "continue" ".*Breakpoint \[0-9\]+, begin .*" \
+	    "advance to trace begin"
+
+	gdb_test_no_output "tstart" "start trace experiment"
+
+	gdb_test_multiple "continue" "advance through tracing" {
+	    -re ".*Breakpoint \[0-9\]+, end .*$gdb_prompt $" {
+		pass "advance through tracing"
+	    }
+	    -re "Program received signal SIGSEGV, Segmentation fault\\..*$gdb_prompt $" {
+		if { $kfail_proc != 0 } {
+		    $kfail_proc $trace_command
+		}
+		fail "advance through tracing"
+	    }
+	}
+
+	if { $kfail_proc != 0 } {
+	    $kfail_proc $trace_command
+	}
+	gdb_test "tstatus" \
+	    ".*Trace .*Collected $num_frames .*" \
+	    "check $num_frames frames were collected."
+
+	gdb_test "tstop" "" ""
+    }
+}
+
+# These callbacks identify known failures for certain architectures.  They
+# are called either if GDBserver crashes or has not traced the correct
+# number of frames.
+
+proc 18955_x86_64_failure { trace_command } {
+    if { $trace_command == "ftrace" } {
+	setup_kfail "gdb/18955" "x86_64-*-linux*"
+    }
+}
+
+proc 18955_i386_failure { trace_command } {
+    if { $trace_command == "ftrace" } {
+	setup_kfail "gdb/18955" "i\[34567\]86-*-*"
+    }
+}
+
+foreach trace_command { "trace" "ftrace" } {
+    # This condition is always true as the PC should be set to the tracepoint
+    # address when hit.
+    test_tracepoints $trace_command "\$$pcreg == *set_point" 10
+
+    # Can we read local variables?
+    test_tracepoints $trace_command "arg8 == 1 || arg8 == 2" 2 18955_x86_64_failure
+    test_tracepoints $trace_command "arg16 == 257 || arg16 == 258" 2 18955_x86_64_failure
+    test_tracepoints $trace_command "arg32 == 65537 || arg32 == 65538" 2 18955_x86_64_failure
+    test_tracepoints $trace_command "arg64 == 4294967297 || arg64 == 4294967298" 2 18955_x86_64_failure
+    # Can we read global variables?
+    test_tracepoints $trace_command "arg16 == 257 && globvar == 1" 1 18955_x86_64_failure
+
+    # Test various operations to cover as many opcodes as possible.
+    test_tracepoints $trace_command "21 == 21" 10
+    test_tracepoints $trace_command "11 == 21" 0
+
+    test_tracepoints $trace_command "21 != 42" 10
+    test_tracepoints $trace_command "42 != 42" 0
+
+    test_tracepoints $trace_command "21 + 21 == 42" 10
+    test_tracepoints $trace_command "21 + 21 == 11" 0
+
+    test_tracepoints $trace_command "42 - 21 == 21" 10
+    test_tracepoints $trace_command "42 - 21 == 11" 0
+
+    test_tracepoints $trace_command "21 * 2 == 42" 10
+    test_tracepoints $trace_command "21 * 2 == 11" 0
+
+    test_tracepoints $trace_command "21 << 1 == 42" 10
+    test_tracepoints $trace_command "21 << 1 == 11" 0
+
+    test_tracepoints $trace_command "42 >> 1 == 21" 10
+    test_tracepoints $trace_command "42 >> 1 == 11" 0
+
+    test_tracepoints $trace_command "-(21 << 1) == -42" 10
+    test_tracepoints $trace_command "-(21 << 1) == -11" 0
+
+    test_tracepoints $trace_command "-42 >> 1 == -21" 10
+    test_tracepoints $trace_command "-42 >> 1 == -11" 0
+
+    test_tracepoints $trace_command "(0xabababab & 0x0000ffff) == 0xabab" 10
+    test_tracepoints $trace_command "(0xabababab & 0x0000ffff) == 0xffff" 0
+
+    test_tracepoints $trace_command "(0xabababab | 0x0000ffff) == 0xababffff" 10
+    test_tracepoints $trace_command "(0xabababab | 0x0000ffff) == 0xeeeedddd" 0
+
+    test_tracepoints $trace_command "(0xaaaaaaaa ^ 0x55555555) == 0xffffffff" 10
+    test_tracepoints $trace_command "(0xaaaaaaaa ^ 0x55555555) == 0xaaaaaaaa" 0
+
+    test_tracepoints $trace_command "~0xaaaaaaaa == 0x55555555" 10
+    test_tracepoints $trace_command "~0xaaaaaaaa == 0x11111111" 0
+
+    test_tracepoints $trace_command "21 < 42" 10
+    test_tracepoints $trace_command "61 < 42" 0
+
+    test_tracepoints $trace_command "21U < 42U" 10
+    test_tracepoints $trace_command "61U < 42U" 0
+
+    test_tracepoints $trace_command "42 <= 42" 10
+    test_tracepoints $trace_command "42 <= 11" 0
+
+    test_tracepoints $trace_command "42 >= 42" 10
+    test_tracepoints $trace_command "11 >= 42" 0
+
+    test_tracepoints $trace_command "42 > 21" 10
+    test_tracepoints $trace_command "11 > 21" 0
+
+    test_tracepoints $trace_command "(21 < 42 ? 0 : 1) == 0" 10 18955_i386_failure
+    test_tracepoints $trace_command "(66 < 42 ? 0 : 1) == 0" 0 18955_i386_failure
+
+    test_tracepoints $trace_command "(42 <= 42 ? 0 : 1) == 0" 10
+    test_tracepoints $trace_command "(66 <= 42 ? 0 : 1) == 0" 0
+
+    test_tracepoints $trace_command "(42 >= 42 ? 0 : 1) == 0" 10
+    test_tracepoints $trace_command "(11 >= 42 ? 0 : 1) == 0" 0
+
+    test_tracepoints $trace_command "(42 > 21 ? 0 : 1) == 0" 10 18955_i386_failure
+    test_tracepoints $trace_command "(11 > 21 ? 0 : 1) == 0" 0 18955_i386_failure
+
+    test_tracepoints $trace_command "\$trace_timestamp >= 0" 10
+
+    # Test operations with 64 bit operands.
+    test_tracepoints $trace_command "0xabababab00000000 == 0xcdcdcdcd00000000" 0
+    test_tracepoints $trace_command "0xabababab00000000 == 0xabababab00000000" 10
+
+    test_tracepoints $trace_command "!0xabababab00000000 == 0" 10
+    test_tracepoints $trace_command "!0x0 == 0" 0
+
+    test_tracepoints $trace_command "0xababababcdcdcdcd + 0x1111111143434343 == 0xbcbcbcbd11111110" 10
+    test_tracepoints $trace_command "0xababababcdcdcdff + 0x1111111143434343 == 0xbcbcbcbd11111110" 0
+
+    test_tracepoints $trace_command "0xababababcdcdcdcd - 0x11111111dc111111 == 0x9a9a9a99f1bcbcbc" 10
+    test_tracepoints $trace_command "0xababababcdcdcdff - 0x11111111dc111111 == 0x9a9a9a99f1bcbcbc" 0
+
+    test_tracepoints $trace_command "0xababababcdcdcdcd * 0xababababcdcdcdcd == 0x55320eeb91c3f629" 10
+    test_tracepoints $trace_command "0xababababcdcdcdff * 0xababababcdcdcdcd == 0x55320eeb91c3f629" 0
+
+    test_tracepoints $trace_command "0x00abababcdcdcdcd << 1 == 0x15757579b9b9b9a" 10
+    test_tracepoints $trace_command "0x00abababcdcdcdff << 1 == 0x15757579b9b9b9a" 0
+
+    test_tracepoints $trace_command "0x00abababcdcdcdcd << 46 == 0x7373400000000000" 10
+    test_tracepoints $trace_command "0x00abababcdcdcdff << 46 == 0x7373400000000000" 0
+
+    # signed rsh
+    test_tracepoints $trace_command "0x00abababcdcdcdcd >> 1 == 0x55d5d5e6e6e6e6" 10
+    test_tracepoints $trace_command "0x00bcababcdcdcdcd >> 1 == 0x55d5d5e6e6e6e6" 0
+
+    test_tracepoints $trace_command "0x00abababcdcdcdcd >> 46 == 0x2ae" 10
+    test_tracepoints $trace_command "0x00bcababcdcdcdcd >> 46 == 0x2ae" 0
+
+    # unsigned rsh
+    test_tracepoints $trace_command "0xababababcdcdcdcdUL >> 1 == 0x55d5d5d5e6e6e6e6UL" 10
+    test_tracepoints $trace_command "0xcdabababcdcdcdcdUL >> 1 == 0x55d5d5d5e6e6e6e6UL" 0
+
+    test_tracepoints $trace_command "0xababababcdcdcdcdUL >> 46 == 0x2aeaeUL" 10
+    test_tracepoints $trace_command "0xcdabababcdcdcdcdUL >> 46 == 0x2aeaeUL" 0
+
+    test_tracepoints $trace_command "-(0x00abababcdcdcdcd << 1) == -0x15757579b9b9b9a" 10
+    test_tracepoints $trace_command "-(0x00abababcdcdcdff << 1) == -0x15757579b9b9b9a" 0
+
+    test_tracepoints $trace_command "-(0x00abababcdcdcdcd >> 1) == -0x55d5d5e6e6e6e6" 10
+    test_tracepoints $trace_command "-(0x00cdababcdcdcdcd >> 1) == -0x55d5d5e6e6e6e6" 0
+
+    test_tracepoints $trace_command "(0xababababcdcdcdcd & 0x00000fffffffffff) == 0x00000babcdcdcdcd" 10
+    test_tracepoints $trace_command "(0xababababcdcdcdcd & 0x00000fffffffff00) == 0x00000babcdcdcdcd" 0
+
+    test_tracepoints $trace_command "(0xababababcdcdcdcd | 0x00000fffffffffff) == 0xababafffffffffff" 10
+    test_tracepoints $trace_command "(0xababababcdcdcdcd | 0x00000fffffffff00) == 0xababafffffffffff" 0
+
+    test_tracepoints $trace_command "(0xaaaaaaaaaaaaaaaa ^ 0x5555555555555555) == 0xffffffffffffffff" 10
+    test_tracepoints $trace_command "(0xaaaaaaaaaaaaaaaa ^ 0x5555555555555111) == 0xffffffffffffffff" 0
+
+    test_tracepoints $trace_command "~0xaaaaaaaaaaaaaaaa == 0x5555555555555555" 10
+    test_tracepoints $trace_command "~0xaaaaaaaaaaaaaaaa == 0x5555555555555111" 0
+
+    # less unsigned
+    test_tracepoints $trace_command "0x99999999bbbbbbbb < 0xaaaaaaaaaaaaaaaa" 10
+    test_tracepoints $trace_command "0xbb999999bbbbbbbb < 0xaaaaaaaaaaaaaaaa" 0
+
+    test_tracepoints $trace_command "0x99999999bbbbbbbb < 0x99999999cccccccc" 10
+    test_tracepoints $trace_command "0x99999999eebbbbbb < 0x99999999cccccccc" 0
+
+    test_tracepoints $trace_command "0x99999999bbbbbbbb <= 0x99999999bbbbbbbb" 10
+    test_tracepoints $trace_command "0xbb999999eebbbbbb <= 0x99999999bbbbbbbb" 0
+
+    # less signed
+    test_tracepoints $trace_command "0x09999999bbbbbbbb < 0x0aaaaaaaaaaaaaaa" 10
+    test_tracepoints $trace_command "0x0bb99999ccbbbbbb < 0x0aaaaaaaaaaaaaaa" 0
+
+    test_tracepoints $trace_command "0x09999999bbbbbbbb < 0x09999999cccccccc" 10
+    test_tracepoints $trace_command "0x09999999ddbbbbbb < 0x09999999cccccccc" 0
+
+    test_tracepoints $trace_command "0x09999999bbbbbbbb <= 0x09999999bbbbbbbb" 10
+    test_tracepoints $trace_command "0x0aa99999bbbbbbbb <= 0x09999999bbbbbbbb" 0
+
+    test_tracepoints $trace_command "0x0aaaaaaaaaaaaaaa > 0x09999999bbbbbbbb" 10
+    test_tracepoints $trace_command "0x088aaaaabbaaaaaa > 0x09999999bbbbbbbb" 0
+
+    test_tracepoints $trace_command "(0xabababab00000000 == 0xcdcdcdcd00000000 ? 1 : 0) == 0" 10
+    test_tracepoints $trace_command "(0xcdcdcdcd00000000 == 0xcdcdcdcd00000000 ? 1 : 0) == 0" 0
+
+    test_tracepoints $trace_command "(0xabababab00000000 != 0xcdcdcdcd00000000 ? 1 : 0) == 1" 10
+    test_tracepoints $trace_command "(0xcdcdcdcd00000000 != 0xcdcdcdcd00000000 ? 1 : 0) == 1" 0
+
+    test_tracepoints $trace_command "(0x09999999bbbbbbbb < 0x09999999cccccccc ? 1 : 0) == 1" 10 18955_i386_failure
+    test_tracepoints $trace_command "(0x09999999eeebbbbb < 0x09999999cccccccc ? 1 : 0) == 1" 0 18955_i386_failure
+
+    test_tracepoints $trace_command "(0x09999999bbbbbbbb <= 0x09999999bbbbbbbb ? 1 : 0) == 1" 10
+    test_tracepoints $trace_command "(0x09999999eeebbbbb <= 0x09999999bbbbbbbb ? 1 : 0) == 1" 0
+
+    test_tracepoints $trace_command "(0x09999999bbbbbbbb >= 0x09999999bbbbbbbb ? 1 : 0) == 1" 10
+    test_tracepoints $trace_command "(0x00099999bbbbbbbb >= 0x09999999bbbbbbbb ? 1 : 0) == 1" 0
+
+    test_tracepoints $trace_command "(0x0aaaaaaaaaaaaaaa > 0x09999999bbbbbbbb ? 1 : 0) == 1" 10
+    test_tracepoints $trace_command "(0x00088888ccaaaaaa > 0x09999999bbbbbbbb ? 1 : 0) == 1" 0
+}

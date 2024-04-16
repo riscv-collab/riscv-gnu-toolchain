@@ -1,0 +1,127 @@
+# Copyright 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the gdb testsuite.
+
+
+require is_x86_like_target
+
+standard_testfile
+
+# some targets have leading underscores on assembly symbols.
+set additional_flags [gdb_target_symbol_prefix_flags]
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile \
+	 [list debug $additional_flags]]} {
+    return -1
+}
+
+runto_main
+
+# Record to end of main
+
+set location [gdb_get_line_number "END I387-FLOAT-REVERSE"]
+gdb_test_no_output "record"  "Turn on process record"
+# This can take awhile.
+set oldtimeout $timeout
+set timeout [expr $oldtimeout + 120]
+gdb_test "until $location" ".*$srcfile:$location.*" \
+    "record to end of main"
+set timeout $oldtimeout
+
+# Now rewind to beginning so we can begin testing.
+
+set location [gdb_get_line_number "BEGIN I387-FLOAT-REVERSE"]
+gdb_test_no_output "set exec-dir reverse" "set reverse direction"
+gdb_test "until $location" ".*$srcfile:$location.*" \
+    "rewind to beginning of main"
+gdb_test_no_output "set exec-dir forward" "set forward direction"
+
+with_test_prefix "forward" {
+    # Test FPU env particularly ftag and fstatus reigters.
+
+    set location [gdb_get_line_number "TEST ENV"]
+    gdb_test "until $location" ".*$srcfile:$location.*asm.*nop.*" \
+	"begin testing fpu env"
+
+    gdb_test "n" "asm.*fsave.*"               "save FPU env in memory"
+    gdb_test "n" "asm.*frstor.*"              "restore FPU env"
+    gdb_test "n" "asm.*fstsw.*"               "store status word in EAX"
+    gdb_test "n" "asm.*fld1.*"                "push st0"
+
+    gdb_test "info register ax" "ax *0x0.*\[ \t\]+.*"  "verify eax == 0x0"
+    gdb_test "info register fstat" "fstat *0.*\[ \t\]+.*"      "verify fstat == 0"
+    gdb_test "info register ftag" "ftag *0xffff.*\[ \t\]+.*"   "verify ftag == 0xffff"
+
+    gdb_test "stepi" "asm.*fldl2t.*"                      "step to fldl2t"
+    gdb_test "info register fstat" "fstat *0x3800.*\[ \t\]+.*"  "verify fstat == 0x3800"
+    gdb_test "info register ftag" "ftag *0x3fff.*\[ \t\]+.*"    "verify ftag  == 0x3fff"
+
+    gdb_test "stepi" "asm.*fldl2e.*"                  "step to fldl2e"
+    gdb_test "info register fstat" "fstat *0x3000.*\[ \t\]+.*"  "verify fstat == 0x3000"
+    gdb_test "info register ftag" "ftag *0xfff.*\[ \t\]+.*"     "verify ftag  == 0xfff"
+
+    gdb_test "stepi" "asm.*fldpi.*"                   "step to fldpi"
+    gdb_test "info register fstat" "fstat *0x2800.*\[ \t\]+.*"  "verify fstat == 0x2800"
+    gdb_test "info register ftag" "ftag *0x3ff.*\[ \t\]+.*"     "verify ftag  == 0x3ff"
+
+    gdb_test "stepi" "asm.*fldlg2.*"                  "step to fldlg2"
+    gdb_test "info register fstat" "fstat *0x2000.*\[ \t\]+.*"  "verify fstat == 0x2000"
+    gdb_test "info register ftag" "ftag *0xff.*\[ \t\]+.*"      "verify ftag  == 0xff"
+
+    gdb_test "stepi" "asm.*fldln2.*"                  "step to fldln2"
+    gdb_test "info register fstat" "fstat *0x1800.*\[ \t\]+.*"  "verify fstat == 0x1800"
+    gdb_test "info register ftag" "ftag *0x3f.*\[ \t\]+.*"      "verify ftag  == 0x3f"
+
+    gdb_test "stepi" "asm.*fldz.*"                    "step to fldz"
+    gdb_test "info register fstat" "fstat *0x1000.*\[ \t\]+.*"  "verify fstat == 0x1000"
+    gdb_test "info register ftag" "ftag *0xf.*\[ \t\]+.*"       "verify ftag  == 0xf"
+
+    gdb_test "stepi" "asm.*nop.*"                    "step to nop"
+    gdb_test "info register fstat" "fstat *0x800.*\[ \t\]+.*"  "verify fstat == 0x800"
+    gdb_test "info register ftag" "ftag *0x7.*\[ \t\]+.*"      "verify ftag  == 0x7"
+}
+
+# Move backward and check we get the same registers back.
+
+with_test_prefix "backward" {
+    gdb_test "reverse-stepi" "asm.*fldz.*"           "step to fldz"
+    gdb_test "info register fstat" "fstat *0x1000.*\[ \t\]+.*" "verify fstat == 0x1000"
+    gdb_test "info register ftag" "ftag *0xf.*\[ \t\]+.*"      "verify ftag  == 0xf"
+
+    gdb_test "reverse-stepi" "asm.*fldln2.*"          "step to fldln2"
+    gdb_test "info register fstat" "fstat *0x1800.*\[ \t\]+.*"  "verify fstat == 0x1800"
+    gdb_test "info register ftag" "ftag *0x3f.*\[ \t\]+.*"      "verify ftag  == 0x3f"
+
+    gdb_test "reverse-stepi" "asm.*fldlg2.*"          "step to fldlg2"
+    gdb_test "info register fstat" "fstat *0x2000.*\[ \t\]+.*"  "verify fstat == 0x2000"
+    gdb_test "info register ftag" "ftag *0xff.*\[ \t\]+.*"      "verify ftag  == 0xff"
+
+    gdb_test "reverse-stepi" "asm.*fldpi.*"          "step to fldpi"
+    gdb_test "info register fstat" "fstat *0x2800.*\[ \t\]+.*" "verify fstat == 0x2800"
+    gdb_test "info register ftag" "ftag *0x3ff.*\[ \t\]+.*"    "verify ftag  == 0x3ff"
+
+    gdb_test "reverse-stepi" "asm.*fldl2e.*"          "step tp fldl2d"
+    gdb_test "info register fstat" "fstat *0x3000.*\[ \t\]+.*"  "verify fstat == 0x3000"
+    gdb_test "info register ftag" "ftag *0xfff.*\[ \t\]+.*"     "verify ftag  == 0xfff"
+
+    gdb_test "reverse-stepi" "asm.*fldl2t.*"          "step to fldl2t"
+    gdb_test "info register fstat" "fstat *0x3800.*\[ \t\]+.*"  "verify fstat == 0x3800"
+    gdb_test "info register ftag" "ftag *0x3fff.*\[ \t\]+.*"    "verify ftag  == 0x3fff"
+
+    gdb_test "reverse-stepi" "asm.*fld1.*"            "step to fld1"
+    gdb_test "info register fstat" "fstat *0.*\[ \t\]+.*"       "verify fstat == 0"
+    gdb_test "info register ftag" "ftag *0xffff.*\[ \t\]+.*"    "verify ftag == 0xffff"
+}

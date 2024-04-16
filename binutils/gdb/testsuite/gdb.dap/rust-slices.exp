@@ -1,0 +1,119 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test "scopes" and "variables".
+
+load_lib rust-support.exp
+load_lib dap-support.exp
+
+require allow_dap_tests
+require allow_rust_tests
+require {can_compile rust}
+
+standard_testfile .rs
+
+if {[build_executable ${testfile}.exp $testfile $srcfile {debug rust}] == -1} {
+    return
+}
+
+if {[dap_launch $testfile] == ""} {
+    return
+}
+
+set line [gdb_get_line_number "STOP"]
+set obj [dap_check_request_and_response "set breakpoint by line number" \
+	     setBreakpoints \
+	     [format {o source [o path [%s]] breakpoints [a [o line [i %d]]]} \
+		  [list s $srcfile] $line]]
+set line_bpno [dap_get_breakpoint_number $obj]
+
+dap_check_request_and_response "start inferior" configurationDone
+dap_wait_for_event_and_check "inferior started" thread "body reason" started
+
+dap_wait_for_event_and_check "stopped at line breakpoint" stopped \
+    "body reason" breakpoint \
+    "body hitBreakpointIds" $line_bpno
+
+set bt [lindex [dap_check_request_and_response "backtrace" stackTrace \
+		    {o threadId [i 1]}] \
+	    0]
+set frame_id [dict get [lindex [dict get $bt body stackFrames] 0] id]
+
+set scopes [dap_check_request_and_response "get scopes" scopes \
+		[format {o frameId [i %d]} $frame_id]]
+set scopes [dict get [lindex $scopes 0] body scopes]
+
+gdb_assert {[llength $scopes] == 2} "two scopes"
+
+lassign $scopes scope ignore
+gdb_assert {[dict get $scope name] == "Locals"} "scope is locals"
+gdb_assert {[dict get $scope presentationHint] == "locals"} \
+    "locals presentation hint"
+gdb_assert {[dict get $scope namedVariables] == 3} "three vars in scope"
+
+set num [dict get $scope variablesReference]
+set refs [lindex [dap_check_request_and_response "fetch variables" \
+		      "variables" \
+		      [format {o variablesReference [i %d]} $num]] \
+	      0]
+
+# Helper to check the contents of a single array-like object.  VAR is
+# the variable entry.  NAME is the name of the variable, pulled out
+# for convenience.  ARGS are the expected child values.
+proc check_array_contents {var name args} {
+    set len [llength $args]
+    gdb_assert {[dict get $var indexedVariables] == $len} \
+	"check length of $name variable"
+
+    set num [dict get $var variablesReference]
+    set refs [lindex [dap_check_request_and_response \
+			  "fetch contents of $name" \
+			  "variables" \
+			  [format {o variablesReference [i %d]} $num]] \
+		  0]
+
+    foreach subvar [dict get $refs body variables] subvalue $args {
+	set subname [dict get $subvar name]
+	gdb_assert {[dict get $subvar value] == $subvalue} \
+	    "check value of $name entry $subname"
+    }
+}
+
+foreach var [dict get $refs body variables] {
+    set name [dict get $var name]
+    switch $name {
+	"array" {
+	    check_array_contents $var $name 1 2 3 4
+	}
+
+	"slice" {
+	    check_array_contents $var $name 2
+	}
+
+	"hello" {
+	    # Note that the expected value looks strange here -- there
+	    # are too many backslashes.  This is a TON issue, as the
+	    # JSON looks ok: "value": "\"hello\"".
+	    gdb_assert {[dict get $var value] == "\\\"hello\\\""} \
+		"value of hello variable"
+	}
+
+	default {
+	    fail "unknown variable $name"
+	}
+    }
+}
+
+dap_shutdown

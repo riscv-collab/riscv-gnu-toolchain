@@ -1,0 +1,275 @@
+#   Copyright 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require {!target_info exists gdb,nosignals}
+
+require supports_reverse
+
+standard_testfile
+
+if {[build_executable $testfile.exp $testfile $srcfile debug] == -1} {
+    return -1
+}
+
+proc test_one_sig {nextsig} {
+    global sig_supported
+    global gdb_prompt
+    global thissig
+    global record_instruction_kfail
+
+    set this_sig_supported $sig_supported
+    gdb_test "handle SIG$thissig stop print" \
+	"SIG$thissig\[ \t\]*Yes\[ \t\]*Yes\[ \t\]*Yes.*"
+    gdb_test "b handle_$thissig" "Breakpoint \[0-9\]+ .*"
+    gdb_test "b gen_$nextsig" "Breakpoint \[0-9\]+ .*"
+
+    set need_another_continue 1
+    set missed_handler 0
+    if {$this_sig_supported} {
+	if { $thissig == "IO" } {
+	    setup_xfail "i*86-pc-linuxoldld-gnu" "i*86-pc-linuxaout-gnu"
+	}
+	gdb_test_multiple "continue" "get signal $thissig" {
+	    -wrap -re \
+		"Program received signal SIG$thissig.*handle_$thissig.*" {
+		fail "$gdb_test_name (wrong location)"
+	    }
+	    -wrap -re "Program received signal SIG$thissig.*" {
+		pass $gdb_test_name
+	    }
+	    -wrap -re "Breakpoint.* handle_$thissig.*" {
+		xfail $gdb_test_name
+		set need_another_continue 0
+	    }
+	    -wrap -re \
+		"Process record does not support instruction 0xfae64 at.*" {
+		kfail "gdb/25038" $gdb_test_name
+		set record_instruction_kfail 1
+		return
+	    }
+	}
+    }
+
+    if {$need_another_continue} {
+	if { $thissig == "URG" } {
+	    setup_xfail "i*86-pc-linuxoldld-gnu" "i*86-pc-linuxaout-gnu"
+	}
+        # Either Lynx or GDB screws up on SIGPRIO
+	if { $thissig == "PRIO" } {
+	    setup_xfail "*-*-*lynx*"
+	}
+	set testmsg "send signal $thissig"
+	gdb_test_multiple "continue" $testmsg {
+	    -re "Breakpoint.*handle_$thissig.*$gdb_prompt $" {
+		pass $testmsg
+	    }
+	    -re "Breakpoint.*gen_$nextsig.*kill.*$gdb_prompt $" {
+		fail "missed breakpoint at handle_$thissig"
+		set missed_handler 1
+	    }
+	}
+    }
+
+    if {$missed_handler == "0"} {
+	set testmsg "advance to $nextsig"
+        gdb_test_multiple "signal 0" $testmsg {
+	    -re "Breakpoint.*gen_$nextsig.*kill.*$gdb_prompt $" {
+	        pass $testmsg
+	        set sig_supported 1
+	    }
+	    -re "Breakpoint.*gen_$nextsig.*handle.*$gdb_prompt $" {
+	        pass $testmsg
+	        set sig_supported 0
+	    }
+        }
+    }
+    set thissig $nextsig
+}
+
+proc test_one_sig_reverse {prevsig} {
+    global gdb_prompt
+
+    gdb_test "reverse-continue" "Breakpoint .* handle_$prevsig.*" \
+	"reverse to handler of $prevsig"
+
+    set saw_signal 0
+    set testmsg "reverse to gen_$prevsig"
+    gdb_test_multiple "reverse-continue" $testmsg {
+	-re "Breakpoint.*handle_.*$gdb_prompt " {
+	    pass "$testmsg (un-handled)"
+	}
+	-re "Program received signal SIG$prevsig.*$gdb_prompt " {
+	    pass "reverse to signal event, $prevsig"
+
+	    set nested_testmsg "reverse signal $prevsig delivered"
+	    gdb_test_multiple "frame" $nested_testmsg {
+		-re ".*handle_$prevsig.*$gdb_prompt " {
+		    fail "$nested_testmsg (wrong location)"
+		}
+		-re ".*$gdb_prompt " {
+		    pass $nested_testmsg
+		}
+	    }
+
+	    set saw_signal 1
+	    send_gdb "reverse-continue\n"
+	    exp_continue
+	}
+	-re "Breakpoint.*kill.*$gdb_prompt " {
+	    if {$saw_signal} {
+		pass "$testmsg (handled)"
+	    } else {
+		xfail "$testmsg (handled)"
+	    }
+	}
+	-re "No more reverse-execution history.*kill.*$gdb_prompt " {
+	    if {$saw_signal} {
+		pass "$testmsg (handled)"
+	    } else {
+		xfail "$testmsg (handled)"
+	    }
+	}	    
+    }
+}
+
+clean_restart $binfile
+
+runto gen_ABRT
+
+if [supports_process_record] {
+    # Activate process record/replay
+    gdb_test_no_output "record" "turn on process record"
+}
+
+# The list of signals that the program generates, in the order they
+# are generated.
+set signals {
+    ABRT
+    HUP
+    QUIT
+    ILL
+    EMT
+    FPE
+    BUS
+    SEGV
+    SYS
+    PIPE
+    ALRM
+    URG
+    TSTP
+    CONT
+    CHLD
+    TTIN
+    TTOU
+    IO
+    XCPU
+    XFSZ
+    VTALRM
+    PROF
+    WINCH
+    LOST
+    USR1
+    USR2
+    PWR
+    POLL
+    WIND
+    PHONE
+    WAITING
+    LWP
+    DANGER
+    GRANT
+    RETRACT
+    MSG
+    SOUND
+    SAK
+    PRIO
+    33
+    34
+    35
+    36
+    37
+    38
+    39
+    40
+    41
+    42
+    43
+    44
+    45
+    46
+    47
+    48
+    49
+    50
+    51
+    52
+    53
+    54
+    55
+    56
+    57
+    58
+    59
+    60
+    61
+    62
+    63
+    TERM
+}
+
+# Make the first signal SIGABRT because it is always supported.
+set sig_supported 1
+set thissig "ABRT"
+
+# test signal handling
+with_test_prefix "sig-test-1" {
+    set record_instruction_kfail 0
+    foreach sig [lrange $signals 1 end] {
+	test_one_sig $sig
+	if { $record_instruction_kfail } {
+	    return -1
+	}
+    }
+}
+
+# The last signal (SIGTERM) gets handled slightly differently because
+# we are not setting up for another test.
+gdb_test "handle SIGTERM stop print" \
+    "SIGTERM\[ \t\]*Yes\[ \t\]*Yes\[ \t\]*Yes.*"
+gdb_test "b handle_TERM" "Breakpoint \[0-9\]+ .*"
+gdb_test "continue" \
+    "Continuing.*Program received signal SIGTERM.*" \
+    "get signal TERM"
+gdb_test "continue" "Breakpoint.*handle_TERM.*" "send signal TERM"
+
+with_timeout_factor 2 {
+    gdb_test "continue" "\[process \[0-9\]+ .*" "continue to signal exit" \
+	"The next instruction is syscall exit_group.* program...y. or n. " \
+	"yes"
+}
+
+foreach sig [lreverse $signals] {
+    test_one_sig_reverse $sig
+}
+
+# Make the first signal SIGABRT because it is always supported.
+set sig_supported 1
+set thissig "ABRT"
+
+with_test_prefix "sig-test-2" {
+    foreach sig [lrange $signals 1 end] {
+	test_one_sig $sig
+    }
+}

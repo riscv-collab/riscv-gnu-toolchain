@@ -1,0 +1,79 @@
+# Copyright 2015-2024 Free Software Foundation, Inc.
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile insn-reloc.c
+set executable $testfile
+set expfile $testfile.exp
+
+require support_displaced_stepping
+
+# Some targets have leading underscores on assembly symbols.
+set additional_flags [gdb_target_symbol_prefix_flags]
+
+if [prepare_for_testing "failed to prepare" $executable $srcfile \
+	[list debug $additional_flags]] {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+# Read function name from testcases[N].
+
+proc read_testcase { n } {
+    global gdb_prompt
+
+    set result -1
+    gdb_test_multiple "print testcases\[${n}\]" "read name of test case ${n}" {
+	-re "\[$\].*= .*<(.*)>.*$gdb_prompt $" {
+	    set result $expect_out(1,string)
+	}
+	-re "$gdb_prompt $" { }
+    }
+
+    return $result
+}
+
+set n_testcases [get_integer_valueof "n_testcases" 0]
+if { ${n_testcases} == 0 } {
+    untested "no instruction relocation to test"
+    return 1
+}
+
+# Set a fast tracepoint on each set_point${i} symbol.  There is one for
+# each testcase.
+for { set i 0 } { ${i} < ${n_testcases} } { incr i } {
+    set testcase [read_testcase $i]
+
+    gdb_test "break *set_point$i" "Breakpoint .*" "breakpoint on ${testcase}"
+}
+
+gdb_test "break pass" ".*" ""
+gdb_test "break fail" ".*" ""
+
+gdb_test_no_output "set displaced-stepping on"
+
+# Make sure we have hit the pass breakpoint for each testcase.
+for { set i 0 } { ${i} < ${n_testcases} } { incr i } {
+    set testcase [read_testcase $i]
+
+    with_test_prefix "${testcase}" {
+	gdb_test "continue" ".*Breakpoint \[0-9\]+, .*" \
+	    "go to breakpoint $i"
+
+	gdb_test "continue" ".*Breakpoint \[0-9\]+, pass \(\).*" \
+	    "relocated instruction"
+    }
+}

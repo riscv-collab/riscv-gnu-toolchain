@@ -1,0 +1,72 @@
+# Copyright (C) 2011-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile .c
+
+require can_single_step_to_signal_handler
+
+require {!target_info exists gdb,nosignals}
+
+if [prepare_for_testing "failed to prepare" ${testfile}] {
+    return -1
+}
+
+gdb_test "handle SIGUSR1 stop print pass" "SIGUSR1\[ \t\]+Yes\[ \t\]+Yes\[ \t\]+Yes\[ \t\]+.*"
+
+if ![runto_main] {
+    return -1
+}
+
+gdb_test "continue" "Program received signal SIGUSR1, .*"
+
+set test "handler"
+gdb_test_multiple "stepi" $test {
+    -re -wrap "\r\nhandler .*" {
+	pass $test
+    }
+    -re "signal handler called.*$gdb_prompt $" {
+	# After PowerPC Linux kernel commit:
+	#
+	#   commit: 0138ba5783ae0dcc799ad401a1e8ac8333790df9
+	#   powerpc/64/signal: Balance return predictor
+	#   stack in signal trampoline.
+	#
+	# The kernel places an additional brctl instruction
+	# in the vdso to call the user handler.
+	#
+	# And then this commit:
+	#
+	#   commit 24321ac668e452a4942598533d267805f291fdc9
+	#   powerpc/64/signal: Fix regression in
+	#   __kernel_sigtramp_rt64() semantics
+	#
+	# updates the semantics of __kernel_sigtramp_rt64().
+	# It added a new symbol to serve as a jump target from
+	# the kernel to the trampoline.
+	#
+	# The net result of these changes is that gdb stops
+	# at  __kernel_start_sigtramp_rt64.  Need to do one
+	# more stepi to reach the expected location in the user
+	# signal handler.
+	gdb_test "p \$pc" ".*__kernel_start_sigtramp_rt64.*" "in kernel code"
+	gdb_test "stepi" "\r\nhandler .*" $test
+    }
+}
+
+gdb_test_multiple "kill" "kill" {
+    -re "Kill the program being debugged\\? \\(y or n\\) $" {
+       gdb_test "y" "\\\[Inferior $decimal \\(.*\\) killed\\\]" "kill"
+    }
+}

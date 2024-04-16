@@ -1,0 +1,406 @@
+# Copyright (C) 1998-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+
+#
+# Support procedures for trace testing
+#
+
+
+#
+# Program counter / stack pointer / frame pointer for supported targets.
+# Used in many tests, kept here to avoid duplication.
+#
+
+if [is_amd64_regs_target] {
+    set fpreg "rbp"
+    set spreg "rsp"
+    set pcreg "rip"
+} elseif [is_x86_like_target] {
+    set fpreg "ebp"
+    set spreg "esp"
+    set pcreg "eip"
+} elseif [is_aarch64_target] {
+    set fpreg "x29"
+    set spreg "sp"
+    set pcreg "pc"
+} elseif [istarget "powerpc*-*-*"] {
+    set fpreg "r31"
+    set spreg "r1"
+    set pcreg "pc"
+} elseif { [istarget "s390*-*-*"] } {
+    set fpreg "r11"
+    set spreg "r15"
+    set pcreg "pc"
+} else {
+    set fpreg "fp"
+    set spreg "sp"
+    set pcreg "pc"
+}
+
+#
+# Procedure: gdb_trace_common_supports_arch
+# Returns true if gdb.trace/trace-common.h knows about this target.
+# Allows skipping tests that depend on being able to include this file.
+# Please keep this in sync with the supported targets in the header.
+#
+
+proc gdb_trace_common_supports_arch { } {
+  if { [istarget "x86_64*-*-*"]
+	|| [istarget "i386*-*-*"]
+	|| [istarget "aarch64*-*-*"]
+	|| [istarget "powerpc*-*-*"]
+	|| [istarget "s390*-*-*"] } {
+	return 1
+    } else {
+	return 0
+    }
+}
+
+#
+# Procedure: gdb_target_supports_trace
+# Returns true if GDB is connected to a target that supports tracing.
+# Allows tests to abort early if not running on a trace-aware target.
+#
+
+proc gdb_target_supports_trace { } {
+    global gdb_prompt
+
+    send_gdb "tstatus\n"
+    gdb_expect {
+	-re "\[Tt\]race can only be run on.*$gdb_prompt $" {
+	    return 0
+	}
+	-re "\[Tt\]race can not be run on.*$gdb_prompt $" {
+	    return 0
+	}
+	-re "\[Tt\]arget does not support.*$gdb_prompt $" {
+	    return 0
+	}
+	-re ".*\[Ee\]rror.*$gdb_prompt $" {
+	    return 0
+	}
+	-re ".*\[Ww\]arning.*$gdb_prompt $" {
+	    return 0
+	}
+	-re ".*$gdb_prompt $" {
+	    return 1
+	}
+	timeout {
+	    return 0
+	}
+    }
+}
+
+
+#
+# Procedure: gdb_delete_tracepoints
+# Many of the tests depend on setting tracepoints at various places and
+# running until that tracepoint is reached.  At times, we want to start
+# with a clean slate with respect to tracepoints, so this utility proc 
+# lets us do this without duplicating this code everywhere.
+#
+
+proc gdb_delete_tracepoints {} {
+    global gdb_prompt
+
+    send_gdb "delete tracepoints\n"
+    gdb_expect 30 {
+	-re "Delete all tracepoints.*y or n.*$" {
+	    send_gdb "y\n"
+	    exp_continue
+	}
+	-re ".*$gdb_prompt $" { # This happens if there were no tracepoints }
+	timeout { 
+	    perror "Delete all tracepoints in delete_tracepoints (timeout)" 
+	    return 
+	}
+    }
+    send_gdb "info tracepoints\n"
+    gdb_expect 30 {
+	 -re "No tracepoints.*$gdb_prompt $" {}
+	 -re "$gdb_prompt $" { perror "tracepoints not deleted" ; return }
+	 timeout { perror "info tracepoints (timeout)" ; return }
+    }
+}
+
+#   Define actions for a tracepoint.
+#   Arguments:
+#       actions_command -- the command used to create the actions.
+#                          either "actions" or "commands".
+#	testname   -- identifying string for pass/fail output
+#	tracepoint -- to which tracepoint(s) do these actions apply? (optional)
+#	args       -- list of actions to be defined.
+#   Returns:
+#	zero       -- success
+#	non-zero   -- failure
+
+proc gdb_trace_setactions_command { actions_command testname tracepoint args } {
+    global gdb_prompt
+
+    set state 0
+    set passfail "pass"
+    send_gdb "$actions_command $tracepoint\n"
+    set expected_result ""
+    gdb_expect 5 {
+	-re "No tracepoint number .*$gdb_prompt $" {
+	    fail $testname
+	    return 1
+	}
+	-re "Enter actions for tracepoint $tracepoint.*>" {
+	    if { [llength $args] > 0 } {
+		set lastcommand "[lindex $args $state]"
+		send_gdb "[lindex $args $state]\n"
+		incr state
+		set expected_result [lindex $args $state]
+		incr state
+	    } else {
+		send_gdb "end\n"
+	    }
+	    exp_continue
+	}
+	-re "\(.*\)\[\r\n\]+\[ \t]*>$" {
+	    if { $expected_result != "" } {
+		regsub "^\[^\r\n\]+\[\r\n\]+" "$expect_out(1,string)" "" out
+		if ![regexp $expected_result $out] {
+		    set passfail "fail"
+		}
+		set expected_result ""
+	    }
+	    if { $state < [llength $args] } {
+		send_gdb "[lindex $args $state]\n"
+		incr state
+		set expected_result [lindex $args $state]
+		incr state
+	    } else {
+		send_gdb "end\n"
+		set expected_result ""
+	    }
+	    exp_continue
+	}
+	-re "\(.*\)$gdb_prompt $" {
+	    if { $expected_result != "" } {
+		if ![regexp $expected_result $expect_out(1,string)] {
+		    set passfail "fail"
+		}
+		set expected_result ""
+	    }
+	    if { [llength $args] < $state } {
+		set passfail "fail"
+	    }
+	}
+	default {
+	    set passfail "fail"
+	}
+    }
+    if { $testname != "" } {
+	$passfail $testname
+    }
+    if {$passfail == "pass"} {
+	return 0
+    } else {
+	return 1
+    }
+}
+
+# Define actions for a tracepoint, using the "actions" command.  See
+# gdb_trace_setactions_command.
+#
+proc gdb_trace_setactions { testname tracepoint args } {
+    eval gdb_trace_setactions_command "actions" {$testname} {$tracepoint} $args
+}
+
+# Define actions for a tracepoint, using the "commands" command.  See
+# gdb_trace_setactions_command.
+#
+proc gdb_trace_setcommands { testname tracepoint args } {
+    eval gdb_trace_setactions_command "commands" {$testname} {$tracepoint} $args
+}
+
+#
+# Procedure: gdb_tfind_test
+#   Find a specified trace frame.
+#   Arguments: 
+#	testname   -- identifying string for pass/fail output
+#	tfind_arg  -- frame (line, PC, etc.) identifier
+#	exp_res    -- Expected result of frame test
+#	args       -- Test expression
+#   Returns:
+#	zero       -- success
+#	non-zero   -- failure
+#
+
+proc gdb_tfind_test { testname tfind_arg exp_res args } {
+    global gdb_prompt
+
+    if { "$args" != "" } {
+	set expr "$exp_res"
+	set exp_res "$args"
+    } else {
+	set expr "(int) \$trace_frame"
+    }
+    set passfail "fail"
+
+    gdb_test -nopass "tfind $tfind_arg" ""
+    send_gdb "printf \"x \%d x\\n\", $expr\n"
+    gdb_expect 10 {
+	-re "x (-*\[0-9\]+) x" {
+	    if { $expect_out(1,string) == $exp_res } {
+		set passfail "pass"
+	    }
+	    exp_continue
+	}
+	-re "$gdb_prompt $" { }
+    }
+    $passfail "$testname"
+    if {$passfail == "pass"} {
+	return 0
+    } else {
+	return 1
+    }
+}
+
+#
+# Procedure: gdb_readexpr
+#   Arguments:
+#	gdb_expr    -- the expression whose value is desired
+#   Returns:
+#	the value of gdb_expr, as evaluated by gdb.
+#       [FIXME: returns -1 on error, which is sometimes a legit value]
+#
+
+proc gdb_readexpr { gdb_expr } {
+    global gdb_prompt
+
+    set result -1
+    send_gdb "print $gdb_expr\n"
+    gdb_expect 5 {
+	-re "\[$\].*= (\[0-9\]+).*$gdb_prompt $" {
+	    set result $expect_out(1,string)
+	}
+	-re "$gdb_prompt $" { }
+	default { }
+    }
+    return $result
+}
+
+#
+# Procedure: gdb_gettpnum
+#   Arguments:
+#	tracepoint (optional): if supplied, set a tracepoint here.
+#   Returns:
+#	the tracepoint ID of the most recently set tracepoint.
+#
+
+proc gdb_gettpnum { tracepoint } {
+    global gdb_prompt
+
+    if { $tracepoint != "" } {
+	gdb_test -nopass "trace $tracepoint"
+    }
+    return [gdb_readexpr "\$tpnum"]
+}
+
+
+#
+# Procedure: gdb_find_function_baseline
+#   Arguments:
+#	func_name -- name of source function
+#   Returns:
+#	Sourcefile line of function definition (open curly brace),
+#	or -1 on failure.  Caller must check return value.
+#   Note:
+#	Works only for open curly brace at beginning of source line!
+#
+
+proc gdb_find_function_baseline { func_name } {
+    global gdb_prompt
+
+    set baseline -1
+
+    send_gdb "list $func_name\n"
+#    gdb_expect {
+#	-re "\[\r\n\]\[\{\].*$gdb_prompt $" {
+#	    set baseline 1
+#        }
+#    }
+}
+
+#
+# Procedure: gdb_find_function_baseline
+#   Arguments:
+#	filename: name of source file of desired function.
+#   Returns:
+#	Sourcefile line of function definition (open curly brace),
+#	or -1 on failure.  Caller must check return value.
+#   Note:
+#	Works only for open curly brace at beginning of source line!
+#
+
+proc gdb_find_recursion_test_baseline { filename } {
+    global gdb_prompt
+
+    set baseline -1
+
+    gdb_test "list $filename:1" "" ""
+    send_gdb "search gdb_recursion_test line 0\n"
+    gdb_expect {
+	-re "(\[0-9\]+)\[\t \]+\{.*line 0.*$gdb_prompt $" {
+	    set baseline $expect_out(1,string)
+	}
+	-re "$gdb_prompt $" { }
+	default { }
+    }
+    return $baseline
+}
+
+# Return the location of the IPA library.
+
+proc get_in_proc_agent {} {
+    global objdir
+
+    if [target_info exists in_proc_agent] {
+	return [target_info in_proc_agent]
+    } else {
+	return $objdir/../../gdbserver/libinproctrace.so
+    }
+}
+
+# Execute BINFILE on target to generate tracefile.  Return 1 if
+# tracefile is generated successfully, return 0 otherwise.
+
+proc generate_tracefile { binfile } {
+    set status [remote_exec target "$binfile"]
+
+    if { [lindex $status 0] != 0 } {
+	# Failed to execute $binfile, for example on bare metal targets.
+	# Alternatively, load the binary and run it.  If target doesn't
+	# have fileio capabilities, tracefile can't be generated.  Skip
+	# the test.
+	if [target_info exists gdb,nofileio] {
+	    return 0
+	}
+
+	clean_restart $binfile
+
+	if {![runto_main]} {
+	    return 0
+	}
+	gdb_continue_to_end "" continue 1
+	gdb_exit
+    }
+
+    return 1
+}

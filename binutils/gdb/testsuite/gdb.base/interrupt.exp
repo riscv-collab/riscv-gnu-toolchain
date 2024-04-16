@@ -1,0 +1,224 @@
+# Copyright 1994-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require {!target_info exists gdb,nointerrupts}
+
+require {!target_info exists gdb,noinferiorio}
+
+standard_testfile
+
+set options {}
+lappend options debug
+lappend_include_file options $srcdir/lib/unbuffer_output.c
+
+if { ! [target_info exists gdb,nosignals] } {
+    lappend options "additional_flags=-DSIGNALS"
+}
+
+if {[build_executable $testfile.exp $testfile $srcfile $options] == -1} {
+    untested "failed to compile"
+    return -1
+}
+
+gdb_start
+
+
+if {![file exists $binfile]} {
+    return 0
+} else {
+    gdb_reinitialize_dir $srcdir/$subdir
+    gdb_load $binfile
+    # Hope this is unix :-)
+    gdb_test "shell stty intr '^C'" ".*" \
+	"set interrupt character"
+    if {[runto_main]} {
+	global inferior_spawn_id gdb_spawn_id
+
+	set msg "process is alive"
+	gdb_test_multiple "continue" $msg {
+	    -i "$inferior_spawn_id" -re "talk to me baby\r\n" {
+		pass $msg
+	    }
+	}
+
+	# This should appear twice, once for the echo and once for the
+	# program's output.
+
+	set msg "child process ate our char"
+	send_inferior "a\n"
+	gdb_test_multiple "" $msg {
+	    -i "$inferior_spawn_id" -re "^a\r\na\r\n$" {
+		pass $msg
+	    }
+	}
+
+	# Wait until the program is in the read system call again.
+	sleep 2
+
+	# Cntrl-c may fail for simulator targets running on a BSD host.
+	# This is the result of a combination of the read syscall
+	# being restarted and gdb capturing the cntrl-c signal.
+
+	# Cntrl-c may fail for simulator targets on slow hosts.
+	# This is because there is a race condition between entering
+	# the read and delivering the cntrl-c.
+
+	send_gdb "\003"
+	set msg "send_gdb control C"
+	gdb_test_multiple "" $msg {
+	    -re "Program received signal SIGINT.*$gdb_prompt $" {
+		pass $msg
+	    }
+	}
+
+	set msg "call function when asleep"
+	send_gdb "p func1 ()\n"
+	gdb_test_multiple "" $msg {
+	    -re " = 4.*$gdb_prompt $" {
+		pass $msg
+	    }
+	    -re ".*Program received signal SIG(SEGV|ILL).*$gdb_prompt $" {
+		setup_xfail "i*86-pc-linux*-gnu*"
+		fail "child died when we called func1, skipped rest of tests"
+		return
+	    }
+	    -re "$gdb_prompt $" {
+		fail "call function when asleep (wrong output)"
+	    }
+	    default {
+
+		# This fail probably happens whenever we use /proc (we
+		# don't use PRSABORT), but apparently also happens on
+		# other machines as well.
+
+		setup_xfail "sparc*-*-solaris2*"
+		setup_xfail "i*86-*-solaris2*"
+		setup_xfail "*-*-sysv4*"
+		setup_xfail "vax-*-*"
+		setup_xfail "alpha-*-*"
+		setup_xfail "*-*-*bsd*"
+		setup_xfail "*-*-*lynx*"
+		fail "$msg (stays asleep)"
+		# Send the inferior a newline to wake it up.
+		send_inferior "\n"
+		gdb_test "" " = 4" "call function after waking it"
+	    }
+	}
+
+	# Now try calling the function again.
+	gdb_test "p func1 ()" " = 4" "call function a second time"
+
+	# And the program should still be doing the same thing.
+	# The optional trailing \r\n is in case we sent a newline above
+	# to wake the program, in which case the program now sends it
+	# back.  We check for it either here or in the next gdb_expect
+	# command, because which one it ends up in is timing dependent.
+	send_gdb "continue\n"
+	# For some reason, i386-*-sysv4 gdb fails to issue the Continuing
+	# message, but otherwise appears normal (FIXME).
+
+	set msg "continue"
+	gdb_test_multiple "" "$msg" {
+	    -re "^continue\r\nContinuing.\r\n(\r\n|)$" {
+		pass $msg
+	    }
+	    -re "^continue\r\n\r\n" {
+		fail "$msg (missing Continuing.)"
+	    }
+	}
+
+	send_inferior "data\n"
+	# The optional leading \r\n is in case we sent a newline above
+	# to wake the program, in which case the program now sends it
+	# back.
+
+	set msg "echo data"
+	gdb_test_multiple "" $msg {
+	    -i "$inferior_spawn_id" -re "^(\r\n|)data\r\ndata\r\n$" {
+		pass $msg
+	    }
+	    -i "$gdb_spawn_id" -re "Undefined command.*$gdb_prompt " {
+		fail $msg
+	    }
+	}
+
+ 	if { ! [target_info exists gdb,nosignals] } {
+	    # Wait until the program is in the read system call again.
+	    sleep 2
+
+	    # Stop the program for another test.
+	    set msg "Send Control-C, second time"
+	    send_gdb "\003"
+	    gdb_test_multiple "" "$msg" {
+		-re "Program received signal SIGINT.*$gdb_prompt $" {
+		    pass "$msg"
+		}
+	    }
+
+	    # The "signal" command should deliver the correct signal and
+	    # return to the loop.
+	    set msg "signal SIGINT"
+	    gdb_test_multiple "signal SIGINT" "$msg" {
+		-re "^signal SIGINT\r\nContinuing with signal SIGINT.\r\n(\r\n|)$" {
+		    pass "$msg"
+		}
+	    }
+
+	    # We should be back in the loop.
+	    send_inferior "more data\n"
+
+	    set msg "echo more data"
+	    gdb_test_multiple "" $msg {
+		-i "$inferior_spawn_id" -re "^(\r\n|)more data\r\nmore data\r\n$" {
+		    pass $msg
+		}
+	    }
+	}
+
+	set saw_end_of_file 0
+	set saw_inferior_exit 0
+
+	set msg "send end of file"
+	send_inferior "\004"
+
+	set spawn_list "$inferior_spawn_id"
+
+	gdb_test_multiple "" $msg {
+	    -i spawn_list -re "end of file" {
+		set saw_end_of_file 1
+		verbose -log "saw \"end of file\""
+		if {!$saw_inferior_exit} {
+		    # When $inferior_spawn_id != $gdb_spawn_id, such
+		    # as when testing with gdbserver, we may see the
+		    # eof (the process exit, not the string just
+		    # matched) for $inferior_spawn_id before the
+		    # expected gdb output.  Clear this so we no longer
+		    # expect anything out of $inferior_spawn_id.
+		    set spawn_list ""
+		    exp_continue
+		}
+	    }
+	    -i "$gdb_spawn_id" -re "$inferior_exited_re normally.*$gdb_prompt " {
+		set saw_inferior_exit 1
+		verbose -log "saw inferior exit"
+		if {!$saw_end_of_file} {
+		    exp_continue
+		}
+	    }
+	}
+
+	gdb_assert { $saw_end_of_file && $saw_inferior_exit } $msg
+    }
+}

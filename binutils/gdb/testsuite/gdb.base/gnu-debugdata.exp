@@ -1,0 +1,156 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile
+
+if [build_executable ${testfile}.exp $testfile] {
+    return -1
+}
+
+set pipeline_counter 0
+
+set objcopy_program [gdb_find_objcopy]
+
+# Run a pipeline of processes through 'run_on_host'.
+# TEST is the base name of the test, it is modified and passed to 'run_on_host'.
+# Each subsequent argument is a list of the form {PROGRAM [ARG]...}.
+# It is passed to 'run_on_host'.  However, before being passed, if input and
+# output files are not specified in the list, then this proc provides them.
+# Each program in the pipeline takes its input from the previous
+# program's output.
+
+proc pipeline {test args} {
+    global pipeline_counter
+
+    set input_file {}
+    foreach arglist $args {
+	verbose "raw args are $arglist"
+
+	set program [lindex $arglist 0]
+	set arguments [lindex $arglist 1]
+	set input [lindex $arglist 2]
+	set output [lindex $arglist 3]
+
+	if {$input == ""} {
+	    set input $input_file
+	}
+	if {$output == ""} {
+	    set output [standard_output_file pipe.[pid].$pipeline_counter]
+	    incr pipeline_counter
+	}
+	verbose "cooked args are [list $program $arguments $input $output]"
+
+	if {[run_on_host "$test - invoke $program" $program $arguments \
+		 $input $output]} {
+	    return -1
+	}
+
+	set input_file $output
+    }
+    return 0
+}
+
+# Extract the dynamic symbols from the main binary, there is no need
+# to also have these in the normal symbol table.
+remote_file host delete ${binfile}.dynsyms
+if {[pipeline "nm -D" \
+	 [list [transform nm] "-D ${binfile} --format=posix --defined-only"] \
+	 [list awk "\\{print\\ \\\$1\\}"] \
+	 [list sort "" "" "${binfile}.dynsyms"]]} {
+    return -1
+}
+
+# Extract all the text (i.e. function) symbols from the debuginfo.
+# (Note that we actually also accept "D" symbols, for the benefit
+# of platforms like PowerPC64 that use function descriptors.)
+remote_file host delete ${binfile}.funcsyms
+if {[pipeline "nm" \
+	 [list [transform nm] "${binfile} --format=posix --defined-only"] \
+	 [list awk "\\{if(\\\$2==\"T\"||\\\$2==\"t\"||\\\$2==\"D\")print\\ \\\$1\\}"] \
+	 [list sort "" "" "${binfile}.funcsyms"]]} {
+    return -1
+}
+
+# Keep all the function symbols not already in the dynamic symbol
+# table.
+remote_file host delete ${binfile}.keep_symbols
+if {[run_on_host "comm" "comm" "-13 ${binfile}.dynsyms ${binfile}.funcsyms" "" \
+	 "${binfile}.keep_symbols"]} {
+    return -1
+}
+
+# GDB specific - we do not have split executable in advance.
+remote_file host delete ${binfile}.strip
+if {[run_on_host "strip" [transform strip] \
+	 "--strip-all -R .comment -o ${binfile}.strip ${binfile}"]} {
+    return -1
+}
+
+# Separate full debug info into ${binfile}.debug.
+remote_file host delete ${binfile}.debug
+if {[run_on_host "copydebug" ${objcopy_program} \
+	 "--only-keep-debug ${binfile} ${binfile}.debug"]} {
+    return -1
+}
+
+# Copy the full debuginfo, keeping only a minimal set of symbols and
+# removing some unnecessary sections.
+remote_file host delete ${binfile}.mini_debuginfo
+if {[run_on_host "objcopy 1" ${objcopy_program} "-S --remove-section .gdb_index --remove-section .comment --keep-symbols=${binfile}.keep_symbols ${binfile}.debug ${binfile}.mini_debuginfo"]} {
+    return -1
+}
+
+# Add the .gnu_debuglink section to the .gnu_debugdata file.
+# .gnu_debuglink is normally not present in the .gnu_debugdata section but in
+# some files there may be PT_NOTE with NT_GNU_BUILD_ID and GDB could look up
+# the .debug file from it.  This is only an additional test of GDB, such link
+# is not present in usual MiniDebugInfo sections.
+if {[run_on_host "addlink" ${objcopy_program} \
+	 "--add-gnu-debuglink=${binfile}.debug ${binfile}.mini_debuginfo ${binfile}.mini_debuginfo-debuglink"]} {
+    return -1
+}
+
+# Inject the compressed data into the .gnu_debugdata section of the
+# original binary.
+remote_file host delete ${binfile}.mini_debuginfo-debuglink.xz
+if {[run_on_host "xz" "xz" "-k ${binfile}.mini_debuginfo-debuglink"]} {
+    return -1
+}
+remote_file host delete ${binfile}.test
+if {[run_on_host "objcopy 2" ${objcopy_program} "--add-section .gnu_debugdata=${binfile}.mini_debuginfo-debuglink.xz ${binfile}.strip ${binfile}.test"]} {
+    return -1
+}
+
+clean_restart "$testfile.strip"
+
+gdb_test "p debugdata_function" \
+    {No symbol table is loaded\.  Use the "file" command\.} \
+    "no symtab"
+
+clean_restart "$testfile.test"
+
+if {$gdb_file_cmd_debug_info == "lzma"} {
+    unsupported "LZMA support not available in this gdb"
+} else {
+    gdb_test "p debugdata_function" \
+	{ = {<text variable, no debug info>} 0x[0-9a-f]+ <debugdata_function>} \
+	"have symtab"
+}
+
+# Be sure to test the 'close' method on the MiniDebugInfo BFD.
+# gdb_unload records a pass/fail.
+gdb_unload
+
+gdb_exit

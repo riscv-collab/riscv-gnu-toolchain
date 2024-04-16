@@ -1,0 +1,115 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test aims at testing various operations after getting rid of an inferior
+# that was running in background, or while we have an inferior running in
+# background.  The original intent was to expose cases where the commit-resumed
+# state of the process stratum target was not reset properly after killing an
+# inferior running in background, which would be a problem when trying to run
+# again.  The test was expanded to test various combinations of
+# run-control-related actions done with an inferior running in background.
+
+require !use_gdb_stub
+
+standard_testfile
+
+if {[build_executable "failed to prepare" $testfile $srcfile]} {
+    return
+}
+
+# Run one variation of the test:
+#
+# 1. Start an inferior in the background with "run &"
+# 2. Do action 1
+# 3. Do action 2
+#
+# Action 1 indicates what to do with the inferior running in background:
+#
+#  - kill: kill it
+#  - detach: detach it
+#  - add: add a new inferior and switch to it, leave the inferior running in
+#    background alone
+#  - none: do nothing, leave the inferior running in background alone
+#
+# Action 2 indicates what to do after that:
+#
+#  - start: use the start command
+#  - run: use the run command
+#  - attach: start a process outside of GDB and attach it
+proc do_test { action1 action2 } {
+    save_vars { ::GDBFLAGS } {
+	append ::GDBFLAGS " -ex \"maintenance set target-non-stop on\""
+	clean_restart $::binfile
+    }
+
+    # Ensure we are at least after the getpid call, should we need it.
+    if { ![runto "after_getpid"] } {
+	return
+    }
+
+    # Some commands below ask for confirmation.  Turn that off for simplicity.
+    gdb_test "set confirm off"
+    gdb_test -no-prompt-anchor "continue &"
+
+    if { $action1 == "kill" } {
+	gdb_test "kill" "Inferior 1 .* killed.*"
+    } elseif { $action1 == "detach" } {
+	set child_pid [get_integer_valueof "mypid" -1]
+	if { $child_pid == -1 } {
+	    fail "failed to extract child pid"
+	    return
+	}
+
+	gdb_test "detach" "Inferior 1 .* detached.*" "detach from first instance"
+
+	# Kill the detached process, to avoid hanging when exiting GDBserver,
+	# when testing with the native-extended-gdbserver board.
+	remote_exec target "kill $child_pid"
+    } elseif { $action1 == "add" } {
+	gdb_test "add-inferior -exec $::binfile" \
+	    "Added inferior 2 on connection 1.*" "add-inferior"
+	gdb_test "inferior 2" "Switching to inferior 2 .*"
+    } elseif { $action1 == "none" } {
+
+    } else {
+	error "invalid action 1"
+    }
+
+    if { $action2 == "start" } {
+	gdb_test "start" "Temporary breakpoint $::decimal\(?:\.$::decimal\)?, main .*"
+    } elseif { $action2 == "run" } {
+	gdb_test "break main" "Breakpoint $::decimal at $::hex.*"
+	gdb_test "run" "Breakpoint $::decimal\(?:\.$::decimal\)?, main .*"
+    } elseif { $action2 == "attach" } {
+	set test_spawn_id [spawn_wait_for_attach $::binfile]
+	set test_pid [spawn_id_get_pid $test_spawn_id]
+
+	if { [gdb_attach $test_pid] } {
+	    gdb_test "detach" "Inferior $::decimal .* detached.*" \
+		"detach from second instance"
+	}
+
+	# Detach and kill this inferior so we don't leave it around.
+	kill_wait_spawned_process $test_spawn_id
+    } else {
+	error "invalid action 2"
+    }
+}
+
+foreach_with_prefix action1 { kill detach add none } {
+    foreach_with_prefix action2 { start run attach } {
+	do_test $action1 $action2
+    }
+}

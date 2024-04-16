@@ -1,0 +1,151 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test MIPS Floating Point General Register handling in core files.
+
+require {istarget "mips*-*-*"}
+
+standard_testfile
+
+if { [prepare_for_testing "failed to prepare" ${testfile}] } {
+    return
+}
+
+# Procedure to get current content of all floating-point registers.
+proc mips_fpregset_core_fetch_float_registers { test } {
+    global gdb_prompt
+
+    set all_registers_lines {}
+    set bad -1
+    # Former trailing `\[\r\n\]+' may eat just \r leaving \n in the buffer
+    # corrupting the next matches.
+    if { [gdb_test_multiple "info registers float" $test {
+	-re "info registers float\r\n" {
+	    exp_continue
+	}
+	-ex "The program has no registers now" {
+	    set bad 1
+	    exp_continue
+	}
+	-re "^\(?:fcsr\|fir\):\[ \t\]+\[^\r\n\]+\r\n" {
+	    # Filter out control registers.  They may or may not be a part
+	    # of the float group depending on whether XML descriptions are
+	    # used or not.
+	    exp_continue
+	}
+	-re "^\[^ \t\]+\[ \t\]+\[^\r\n\]+\r\n" {
+	    lappend all_registers_lines $expect_out(0,string)
+	    exp_continue
+	}
+	-re "$gdb_prompt $" {
+	    incr bad
+	}
+	-re "^\[^\r\n\]+\r\n" {
+	    if { !$bad } {
+		warning "Unrecognized output: $expect_out(0,string)"
+		set bad 1
+	    }
+	    exp_continue
+	}
+    }] != 0 } {
+	return {}
+    }
+
+    if { $bad } {
+	fail $test
+	return {}
+    }
+
+    pass $test
+    return $all_registers_lines
+}
+
+# Generate a native core file.
+
+set corefile [core_find $binfile]
+set core_supported [expr {$corefile != ""}]
+
+# Generate a core file with "gcore".
+
+clean_restart ${binfile}
+
+runto break_here
+
+# Check if we have an FPU available.
+gdb_test_multiple "show mipsfpu" "check for MIPS floating-point coprocessor" {
+    -re "The MIPS floating-point coprocessor\
+	 .*\(absent\|unknown\).*$gdb_prompt $" {
+        unsupported "no MIPS floating-point coprocessor in the processor"
+        return
+    }
+    -re "The MIPS floating-point coprocessor .*$gdb_prompt $" {
+        verbose "MIPS floating-point coprocessor check successful."
+    }
+    default {
+        fail
+        return
+    }
+}
+
+# Save live FGR register contents.
+set live_fgr_contents [mips_fpregset_core_fetch_float_registers \
+    "retrieve live FGR register contents"]
+
+set gcorefile [standard_output_file gcore.test]
+set gcore_supported [gdb_gcore_cmd "$gcorefile" "gcore"]
+
+# Restart gdb and load COREFILE as a core file.  SUPPORTED is true iff
+# the core was generated successfully; otherwise, the tests are marked
+# unsupported.
+#
+proc mips_fpregset_core_test { supported corefile } {
+    upvar live_fgr_contents live_fgr_contents
+    upvar target_triplet target_triplet
+    upvar host_triplet host_triplet
+    upvar binfile binfile
+
+    clean_restart ${binfile}
+
+    set test "load core file"
+    if { $supported } {
+	set core_loaded [gdb_core_cmd $corefile $test]
+    } else {
+	set core_loaded 0
+	unsupported $test
+    }
+
+    if { $core_loaded == 1 } {
+	set test "core file FGR register contents"
+	set core_fgr_contents \
+	    [mips_fpregset_core_fetch_float_registers "retrieve $test"]
+	if {$core_fgr_contents == $live_fgr_contents} {
+	    pass $test
+	} else {
+	    fail $test
+	}
+    } else {
+	unsupported $test
+    }
+}
+
+with_test_prefix "native" {
+    mips_fpregset_core_test $core_supported $corefile
+}
+
+with_test_prefix "gcore" {
+    mips_fpregset_core_test $gcore_supported $gcorefile
+}
+
+gdb_exit

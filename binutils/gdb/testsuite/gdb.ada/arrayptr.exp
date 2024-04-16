@@ -1,0 +1,103 @@
+# Copyright 2008-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "ada.exp"
+
+require allow_ada_tests
+
+standard_ada_testfile foo
+
+foreach_with_prefix scenario {all minimal} {
+    set flags [list debug additional_flags=-fgnat-encodings=$scenario]
+
+    if {[gdb_compile_ada "${srcfile}" "${binfile}-${scenario}" executable $flags] != ""} {
+	return -1
+    }
+
+    clean_restart ${testfile}-${scenario}
+
+    set bp_location [gdb_get_line_number "STOP" ${testdir}/foo.adb]
+    if {![runto "foo.adb:$bp_location"]} {
+	return
+    }
+
+    gdb_test "print string_p" \
+	"= \\(foo\\.string_access\\) 0x\[0-9a-zA-Z\]+"
+
+    gdb_test "print string_p(3..4)" "= \"ll\""
+
+    gdb_test "print null_string" "= \\(foo\\.string_access\\) 0x0"
+
+    gdb_test "print arr_ptr" "= \\(access foo\\.little_array\\) 0x\[0-9a-zA-Z\]+"
+
+    gdb_test "print arr_ptr(2)" "= 22"
+
+    gdb_test "print arr_ptr(3..4)" "= \\(3 => 23, 24\\)"
+
+    gdb_test "ptype string_access" "= access array \\(<>\\) of character"
+
+    # GNAT >= 12.0 has the needed fix here.
+    set xfail_expected 0
+    if {$scenario == "minimal" && ![test_compiler_info {gcc-1[2-9]-*}]} {
+	set xfail_expected 1
+    }
+
+    gdb_test_multiple "print pa_ptr.all" "" {
+	-re -wrap " = \\(10, 20, 30, 40, 50, 60, 62, 63, -23, 42\\)" {
+	    pass $gdb_test_name
+	}
+	-re -wrap " = \[0-9\]+" {
+	    if { $xfail_expected } {
+		xfail $gdb_test_name
+	    } else {
+		fail $gdb_test_name
+	    }
+	}
+    }
+
+    set xfail_cannot_subscript_re \
+	"cannot subscript or call something of type `foo__packed_array_ptr'"
+
+    gdb_test_multiple "print pa_ptr(3)" "" {
+	-re -wrap " = 30" {
+	    pass $gdb_test_name
+
+	}
+	-re -wrap $xfail_cannot_subscript_re {
+	    if { $xfail_expected } {
+		xfail $gdb_test_name
+	    } else {
+		fail $gdb_test_name
+	    }
+	}
+    }
+
+    set xfail_attempt_to_index_re \
+	"Attempt to index or call something other than an array or function"
+
+    gdb_test_multiple "print pa_ptr.all(3)" "" {
+	-re -wrap " = 30" {
+	    pass $gdb_test_name
+
+	}
+	-re -wrap $xfail_attempt_to_index_re {
+	    if { $xfail_expected } {
+		xfail $gdb_test_name
+	    } else {
+		fail $gdb_test_name
+	    }
+	}
+    }
+}

@@ -1,0 +1,363 @@
+# Copyright 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+standard_testfile .c inline-markers.c
+
+if {[prepare_for_testing "failed to prepare" $testfile \
+	 [list $srcfile $srcfile2] {debug additional_flags=-Winline}]} {
+    return -1
+}
+
+gdb_test_no_output "set listsize 1"
+
+runto_main
+
+get_debug_format
+if { [skip_inline_frame_tests] } {
+    untested "skipping inline frame tests"
+    return
+}
+
+# First, check that the things we expected to be inlined really were,
+# and those that shouldn't be weren't.
+set line1 [gdb_get_line_number "set breakpoint 1 here" ${srcfile2}]
+gdb_breakpoint $srcfile2:$line1
+set line2 [gdb_get_line_number "set breakpoint 2 here" ${srcfile2}]
+gdb_breakpoint $srcfile2:$line2
+
+gdb_test "continue" ".*set breakpoint 1 here.*" "continue to bar (1)"
+gdb_test "backtrace" "#0  bar.*#1  .*func1.*#2  .*main.*" \
+    "backtrace from bar (1)"
+gdb_test "up" "#1  .*func1.*" "up from bar (1)"
+gdb_test "info frame" ".*inlined into frame.*" "func1 inlined (1)"
+
+gdb_test "continue" ".*set breakpoint 1 here.*" "continue to bar (2)"
+gdb_test "backtrace" "#0  bar.*#1  .*func1.*#2  .*func2.*#3  .*main.*" \
+    "backtrace from bar (2)"
+gdb_test "up" "#1  .*func1.*" "up from bar (2)"
+gdb_test "info frame" ".*inlined into frame.*" "func1 inlined (2)"
+gdb_test "up" "#2  .*func2.*" "up from func1 (2)"
+gdb_test "info frame" ".*inlined into frame.*" "func2 inlined (2)"
+
+gdb_test "continue" ".*set breakpoint 2 here.*" "continue to marker"
+gdb_test "backtrace" "#0  marker.*#1  .*main.*" "backtrace from marker"
+gdb_test "info frame" ".*called by frame.*" "marker not inlined"
+
+# Next, check that we can next over inlined functions.  We should not end up
+# inside any of them.
+delete_breakpoints
+runto_main
+
+# The lines before the first inlined call.
+set first "x = 7|y = 8"
+
+# Some extra lines that end up in our stepping due to code motion.
+set opt "start of main|result = 0"
+
+# We start this test with a "list" instead of a "next", in case the
+# first non-prologue instruction in main comes from the inlined function.
+set msg "next over inlined functions"
+gdb_test_multiple "list" $msg {
+    -re "($first|result = func1|result = func2|$opt).*$gdb_prompt $" {
+	send_gdb "next\r"
+	exp_continue
+    }
+    -re "marker \\\(\\\);\r\n$gdb_prompt $" {
+	pass $msg
+    }
+}
+
+# Check that when next shows the call of func1, it has not happened yet.
+runto_main
+
+# Like the return value of gdb_test: -1 something is wrong, 0 passed, 1 failed.
+set bt_test -1
+set x_test -1
+set func1_step -1
+
+set last_was_func1_call 0
+set msg "next past inlined func1"
+gdb_test_multiple "list" $msg {
+    -re "($first|$opt).*$gdb_prompt $" {
+	set last_was_func1_call 0
+	send_gdb "next\r"
+	exp_continue
+    }
+    -re "result = func1 \\\(\\\);\r\n$gdb_prompt $" {
+	# Check whether x has been set.  If 0, we may be doing something
+	# else associated with this line besides the inlined call - e.g.
+	# loading the address of result.  If 7, we may be at the call site.
+	# If 15, though, we might be past the call and back at the store to
+	# result - that's OK, as long as we weren't just here (see
+	# func1_step above).
+	set x_val -1
+	gdb_test_multiple "print x" "" {
+	    -re "\\\$$decimal = (\[0-9\]*)\r\n$gdb_prompt $" {
+		set x_val $expect_out(1,string)
+	    }
+	    -re "$gdb_prompt $" { }
+	}
+	if { $x_val == 0 || $x_val == 7 } {
+	    if { $x_test != 1 } {
+		set x_test 0
+	    }
+	} elseif { $x_val == 15 } {
+	    if { $func1_step == -1 } {
+		# We passed func1 without stopping at the call site.
+		set x_test 1
+	    }
+	} else {
+	    set x_test 1
+	}
+
+	# func1 should not show up on backtraces if we are at its call
+	# site.
+	if { $bt_test != 1 } {
+	    set bt_test [gdb_test "backtrace" "#0  \[^#]*main.*" ""]
+	}
+
+	# When we next over func1, we should not return to the same
+	# line.  But we might go past the line, according to source
+	# code order, and then come back.  A valid but odd layout is
+	# body of func1, load result's address into a register using
+	# the source location of "result = 0" several lines down, and
+	# then return to this line for the store.  GCC 4.3 does that
+	# on ARM.
+	if { $last_was_func1_call } {
+	    set func1_step 1
+	} elseif { $func1_step == -1 } {
+	    set func1_step 0
+	}
+	set last_was_func1_call 1
+
+	send_gdb "next\r"
+	exp_continue
+    }
+
+    -re "result = func2 \\\(\\\);\r\n$gdb_prompt $" {
+	pass $msg
+    }
+}
+
+if { $x_test == 0 } {
+    pass "print x before func1"
+} else {
+    fail "print x before func1"
+}
+
+if { $bt_test == 0 } {
+    pass "backtrace does not include func1"
+} else {
+    fail "backtrace does not include func1"
+}
+
+if { $bt_test == 0 } {
+    pass "stepped over call to func1"
+} else {
+    fail "stepped over call to func1"
+}
+
+# Next, check that we can single step into inlined functions.  We should always
+# "stop" at the call sites before entering them.
+runto_main
+
+set msg "step into func1"
+set saw_call_site 0
+gdb_test_multiple "list" $msg {
+    -re "($first|$opt).*$gdb_prompt $" {
+	send_gdb "step\r"
+	exp_continue
+    }
+    -re "result = func1.*$gdb_prompt $" {
+	set saw_call_site 1
+	send_gdb "step\r"
+	exp_continue
+    }
+    -re "func1 \\\(\\\) at .*\r\n$decimal.*bar \\\(\\\);\r\n$gdb_prompt $" {
+	if { $saw_call_site } {
+	    pass $msg
+	} else {
+	    fail $msg
+	}
+    }
+}
+
+# Check finish out of an inlined function.
+set msg "finish from func1"
+gdb_test_multiple "finish" $msg {
+    -re "result = func1 \\\(\\\);\r\n$gdb_prompt $" {
+	pass $msg
+    }
+    -re "($first|$opt).*$gdb_prompt $" {
+	# Whoops.  We finished, but ended up back at an earlier line.  Keep
+	# trying.
+	send_gdb "step\r"
+	exp_continue
+    }
+    -re "func1 \\\(\\\) at .*\r\n$decimal.*bar \\\(\\\);\r\n$gdb_prompt $" {
+	send_gdb "finish\r"
+	exp_continue
+    }
+}
+
+# Test some corner cases involving consecutive inlined functions.
+set line3 [gdb_get_line_number "set breakpoint 3 here"]
+gdb_breakpoint $line3
+gdb_continue_to_breakpoint "consecutive func1"
+
+gdb_test "next" ".*func1 .*first call.*" "next to first func1"
+gdb_test "next" ".*func1 .*second call.*" "next to second func1"
+
+# It is easier when the two inlined functions are not on the same line.
+set line4 [gdb_get_line_number "set breakpoint 4 here"]
+gdb_breakpoint $line4
+gdb_continue_to_breakpoint "func1 then func3"
+
+gdb_test "next" ".*func1 \\\(\\\);" "next to func1 before func3"
+gdb_test "next" ".*func3 \\\(\\\);" "next to func3"
+
+# Test finishing out of one thing and into another.
+set line5 [gdb_get_line_number "set breakpoint 5 here"]
+gdb_breakpoint $line5
+gdb_continue_to_breakpoint "finish into func1"
+
+gdb_test "next" ".*marker \\\(\\\);" "next to finish marker"
+gdb_test "step" ".*set breakpoint 2 here.*" "step into finish marker"
+
+# Some architectures will have one or more instructions after
+# the call instruction which still are part of the call sequence,
+# so it should be expected to return to the caller line after issue 
+# a 'finish' command.
+gdb_test_multiple "finish" "finish from marker" {
+    -re "func1 \\\(\\\);.*\r\n$gdb_prompt $" {
+	pass "finish from marker to func1"
+    }
+    -re "marker \\\(\\\);.*\r\n$gdb_prompt $" {
+	pass "finish from marker"
+	gdb_test "step" "func1 \\\(\\\);.*" "step after marker to reach func1"
+    }
+}
+
+gdb_test "step" "bar \\\(\\\);" "step into func1 for finish"
+gdb_test "finish" "func3 \\\(\\\);" "finish from func1 to func3"
+
+# Test a deeper call stack.
+set line6 [gdb_get_line_number "set breakpoint 6 here"]
+gdb_breakpoint $line6
+gdb_continue_to_breakpoint "before the outer_inline call"
+gdb_test "step" "marker \\\(\\\) at .*" "reach 1 the outer_inline call"
+gdb_test_multiple "finish" "finish from marker" {
+    -re "main \\\(\\\) at .*outer_inline2 \\\(\\\);.*\r\n$gdb_prompt $" {
+	pass "reach outer_inline2"
+    }
+    -re "main \\\(\\\) at .*marker \\\(\\\);.*\r\n$gdb_prompt $" {
+	pass "finish from marker"
+	gdb_test "step" "outer_inline2 \\\(\\\);.*" "step after marker to reach outer_inline2"
+    }
+}
+gdb_test "bt" "#0  main.*" "backtrace at main of outer_inline"
+gdb_test "step" "outer_inline2 \\\(\\\) at .*" "enter outer_inline2"
+gdb_test "bt" "#0  outer_inline2.*#1  main.*" "backtrace at outer_inline2"
+gdb_test "step" "outer_inline1 \\\(\\\) at .*" "enter outer_inline1 from outer_inline2"
+
+set msg "backtrace at outer_inline1"
+gdb_test_multiple "bt" $msg {
+    -re "#0  outer_inline1.*#1  outer_inline2.*#2  main.*$gdb_prompt $" {
+	pass $msg
+    }
+    -re "#0  $hex in outer_inline1.*#1  outer_inline2.*#2  main.*$gdb_prompt $" {
+	# Binutils PR gas/6717.  Gas moves .loc past .p2align and the
+	# leading nop of the inlined call appears to be on the same line
+	# as main's call to marker.
+	xfail $msg
+	gdb_test "step" "noinline \\\(\\\);" "step to call of noinline"
+    }
+}
+
+gdb_test "step" "noinline \\\(\\\) at .*" "enter noinline from outer_inline1"
+gdb_test "bt" "#0  noinline.*#1  .*outer_inline1.*#2  .*outer_inline2.*#3  main.*" "backtrace at noinline from outer_inline1"
+gdb_test "step" "inlined_fn \\\(\\\) at .*" "enter inlined_fn from noinline"
+gdb_test "bt" "#0  inlined_fn.*#1  noinline.*#2  .*outer_inline1.*#3  .*outer_inline2.*#4  main.*" "backtrace at inlined_fn from noinline"
+gdb_test "info frame" ".*inlined into frame.*" "inlined_fn from noinline inlined"
+gdb_test "up" "#1  noinline.*" "up to noinline"
+gdb_test "info frame" ".*\n called by frame.*" "noinline from outer_inline1 not inlined"
+gdb_test "up" "#2  .*outer_inline1.*" "up to outer_inline1"
+gdb_test "info frame" ".*inlined into frame.*" "outer_inline1 inlined"
+gdb_test "up" "#3  .*outer_inline2.*" "up to outer_inline2"
+gdb_test "info frame" ".*inlined into frame.*" "outer_inline2 inlined"
+gdb_test "up" "#4  main.*" "up from outer_inline2"
+gdb_test "info frame" ".*\n caller of frame.*" "main not inlined"
+
+gdb_exit
+
+# Send a CLI "step" command over MI.  CLI_OUTPUT_RE is a regexp that
+# matches the expected CLI output.  MESSAGE is used as test message.
+
+proc mi_cli_step {cli_output_re message} {
+    global mi_gdb_prompt
+    global srcfile
+    global decimal
+
+    send_gdb "interpreter-exec console \"step\"\n"
+    gdb_expect {
+	-re "\\^running\r\n\\*running,thread-id=\"all\"\r\n${mi_gdb_prompt}${cli_output_re}" {
+	    pass $message
+	}
+	timeout {
+	    fail "$message (timeout)"
+	}
+	eof {
+	    fail "$message (eof)"
+	}
+    }
+
+    # mi_expect_stop handles "set mi-async on/off" differences.
+    mi_expect_stop "end-stepping-range" "\[^\r\n\]*" "" ".*$srcfile" "$decimal" \
+	"" "got *stopped for $message"
+}
+
+# Test that stepping into an inlined function with the CLI "step"
+# command run while the top interpreter is MI results in the expected
+# CLI output sent to MI's console.
+with_test_prefix "mi" {
+    if [mi_gdb_start] {
+	return
+    }
+    mi_gdb_load ${binfile}
+    mi_runto_main
+
+    set line_number [gdb_get_line_number "set mi break here"]
+    mi_gdb_test "-break-insert ${srcfile}:${line_number}" \
+	{\^done,bkpt=.number="2",type="breakpoint".*\}} \
+	"set breakpoint"
+
+    mi_execute_to "exec-continue" "breakpoint-hit" "main" "" ".*" ".*" \
+	{ "" "disp=\"keep\"" } "breakpoint hit"
+
+    incr line_number 2
+
+    # Step to the line that does an inline call.
+    set re "~\"$line_number\\\\t  result = func1 \\(\\);\\\\n\"\r\n"
+    mi_cli_step "${re}" "step to inline call"
+
+    # Step into the inlined function.
+    set re [multi_line \
+		"~\"func1 \\(\\) at .*$srcfile:$decimal\\\\n\"" \
+		"~\"$decimal\\\\t  bar \\(\\);\\\\n\"\r\n"]
+    mi_cli_step "${re}" "step into inline call"
+}

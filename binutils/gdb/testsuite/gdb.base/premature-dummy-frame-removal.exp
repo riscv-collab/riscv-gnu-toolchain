@@ -1,0 +1,71 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Make an inferior call to a function which uses longjmp.  However,
+# the backtrace for the function that is called is broken at the point
+# where the longjmp is handled.  This test is checking to see if the
+# inferior call still completes successfully.
+#
+# This test forces a broken backtrace using Python, but in real life a
+# broken backtrace can easily occur when calling through code for
+# which there is no debug information if the prologue unwinder fails,
+# which can often happen if the code has been optimized.
+#
+# The problem was that, due to the broken backtrace, GDB failed to
+# find the inferior call's dummy frame.  GDB then concluded that the
+# inferior had longjmp'd backward past the dummy frame and so garbage
+# collected the dummy frame, this causes the breakpoint within the
+# dummy frame to be deleted.
+#
+# When the inferior continued, and eventually returned to the dummy
+# frame, it would try to execute instruction from the dummy frame
+# (which for most, or even all, targets, is on the stack), and then
+# experience undefined behaviuor, often a SIGSEGV.
+
+standard_testfile .c
+
+require allow_python_tests
+
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile] } {
+    return -1
+}
+
+if {![runto_main]} {
+    return 0
+}
+
+set pyfile [gdb_remote_download host ${srcdir}/${subdir}/${testfile}.py]
+gdb_test_no_output "source ${pyfile}" "load python file"
+
+gdb_test "p some_func ()" " = 0"
+
+# When frame debugging is turned on, this test has (previously)
+# revealed some crashes due to the Python frame unwinder trying to
+# read registers.
+#
+# Enable frame debug and rerun the test.  We don't bother checking the
+# output of calling 'p some_func ()' as the output will be full of
+# debug, to format of which isn't fixed.  All we care about is that
+# GDB is still running afterwards.
+#
+# All of the debug output makes this really slow when testing with the
+# special read1 version of expect, hence the timeout factor.
+with_read1_timeout_factor 10 {
+    gdb_test_no_output "set debug frame on"
+    gdb_test "p some_func ()" ".*" \
+	"repeat p some_func () with frame debug on"
+    gdb_test_no_output "set debug frame off"
+}
+gdb_test "p 1 + 2 + 3" " = 6"

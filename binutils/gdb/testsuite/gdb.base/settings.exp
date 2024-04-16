@@ -1,0 +1,668 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2019-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test the set/show commands framework.  The test uses the
+# "maintenance test-settings set/show xxx" subcommands to exercise
+# TAB-completion and setting processing.
+
+load_lib completion-support.exp
+
+standard_testfile .c
+
+if {[build_executable "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+clean_restart
+
+if { ![readline_is_used] } {
+    untested "no tab completion support without readline"
+    return -1
+}
+
+# Test the show command SHOW_CMD.  EXPECTED_RE is the expected output.
+# Also verifies that $_gdb_maint_setting_str produces an equivalent output,
+# matching it with EXPECTED_RE.  EXPECTED_RE double quotes are escaped
+# unless EXPECTED_RE_ESCAPED is true, indicating the quotes in EXPECTED_RE
+# are already escaped.
+# The value for the setting corresponding to SHOW_CMD is then reset
+# to RESET_VALUE, then set again to the value given by $_gdb_maint_setting_str
+# and $_gdb_maint_setting.  The default value of RESET_VALUE (0) should work for
+# most settings.  Note that we do not check that RESET_VALUE differs from
+# the expected value, as we assume different values will be verified.
+# The setting value must still be the one in force before calling show_setting.
+# In other words, this verifies that
+#   maint set test-settings <some_setting> $_gdb_maint_setting_str(<some_setting>)
+#   maint set test-settings <some_setting> $_gdb_maint_setting(<some_setting>)
+# do not change the setting value.
+# This procedure makes it easier to make the test
+# name/message unique, since we test the "show" commands many times.
+# EXPECTED_RE is made part of the test name.
+proc show_setting {show_cmd expected_re {expected_re_escaped 0} {reset_value 0}} {
+    global gdb_prompt
+
+    with_test_prefix "$show_cmd $expected_re" {
+	gdb_test "$show_cmd" $expected_re "show"
+
+	# Remove the first two words (such as "maint show") to have the
+	# setting name to use for $_gdb_maint_setting_str.
+	regsub "\[^ \]+ +\[^ \]+ +\(.*\)" $show_cmd "\\1" maint_setting
+	if {$expected_re_escaped} {
+	    set escaped_expected_re $expected_re
+	} else {
+	    regsub -all "\"" $expected_re "\\\\\\\"" escaped_expected_re
+	}
+	set test "print \$_gdb_maint_setting_str"
+	set setting_str_value "xxxYYYxxx"
+	gdb_test_multiple "print \$_gdb_maint_setting_str(\"$maint_setting\")" $test {
+	    -re " = \"\($escaped_expected_re\)\".*$gdb_prompt $" {
+		set setting_str_value $expect_out(1,string)
+		regsub -all "\\\\" $expect_out(1,string) "" setting_str_value
+		pass $test
+	    }
+	}
+
+	# Change the setting value to RESET_VALUE, set it back to setting_str_value
+	# and check we still have the original value.
+	gdb_test_no_output "maintenance set $maint_setting $reset_value" "str reset $reset_value"
+	gdb_test_no_output "maintenance set $maint_setting $setting_str_value" "str set again"
+	gdb_test "$show_cmd" $expected_re "str show after reset+set again"
+
+	# Same test, but with value captured from $_gdb_maint_setting.
+	set test "print \$_gdb_maint_setting"
+	set setting_value "xxxYYYxxx"
+	gdb_test_multiple "print \$_gdb_maint_setting(\"$maint_setting\")" $test {
+	    -re " = \"\(.*\)\".*$gdb_prompt $" {
+		set setting_value $expect_out(1,string)
+		regsub -all "\\\\" $expect_out(1,string) "" setting_value
+		pass $test
+	    }
+	    -re " = \(.*\)\r\n$gdb_prompt $" {
+		set setting_value $expect_out(1,string)
+		pass $test
+	    }
+	}
+
+	gdb_test_no_output "maintenance set $maint_setting $reset_value" "reset $reset_value"
+	gdb_test_no_output "maintenance set $maint_setting $setting_value" "set again"
+	gdb_test "$show_cmd" $expected_re "show after reset+set again"
+    }
+}
+
+# Verifies that $_gdb_setting (SETTING) gives a value whose ptype matches EXPECTED.
+proc check_type {setting expected} {
+    with_test_prefix "check_type $setting $expected" {
+	gdb_test "print \$_gdb_maint_setting(\"$setting\")"
+	gdb_test "ptype $" "$expected"
+
+	# Currently, GDB ptype <internal function> always tells it is type int.
+	# ptype should better report an error such as:
+	#   "No type information for GDB functions"
+	# Test 'type int', so as to make it fail if ptype is changed.
+	gdb_test "ptype \$_gdb_maint_setting(\"$setting\")" \
+            "type = int"
+    }
+}
+
+# var_Xinteger tests.  VARIANT determines which command/variant to
+# exercise.
+proc test-integer {variant} {
+    set set_cmd "maint set test-settings $variant"
+    set show_cmd "maint show test-settings $variant"
+
+    # A bogus value.
+    gdb_test "$set_cmd bogus" \
+	"No symbol table is loaded\\.  Use the \"file\" command\\."
+
+    # Seemingly-valid but not quite valid value.
+    gdb_test "$set_cmd 1a" \
+	"Invalid number \"1a\"\\."
+
+    # Valid value followed by garbage.
+    gdb_test "$set_cmd 1 1" \
+	"A syntax error in expression, near `1'\\."
+
+    # Valid value followed by garbage.
+    gdb_test "$set_cmd 1 x" \
+	"A syntax error in expression, near `x'\\."
+
+    if {$variant == "zuinteger-unlimited"} {
+	# -1 means unlimited.  Other negative values are rejected.  -1
+	# -is tested further below, along the "unlimited" tests.
+	gdb_test "$set_cmd -2" "integer -2 out of range"
+	check_type "test-settings $variant" "type = int"
+    } elseif {$variant == "uinteger" || $variant == "zuinteger"} {
+	# Negative values are not accepted.
+	gdb_test "$set_cmd -1" "integer -1 out of range"
+	gdb_test "$set_cmd -2" "integer -2 out of range"
+	check_type "test-settings $variant" "type = unsigned int"
+    } else {
+	# Negative values are not accepted.
+	gdb_test_no_output "$set_cmd -1"
+	show_setting "$show_cmd" "-1"
+	gdb_test_no_output "$set_cmd -2"
+	show_setting "$show_cmd" "-2"
+	check_type "test-settings $variant" "type = int"
+    }
+
+    # Regular integer is accepted.
+    gdb_test_no_output "$set_cmd 999"
+    show_setting "$show_cmd" "999"
+
+    if {$variant == "zinteger" || $variant == "zuinteger"} {
+	# 0 means 0.
+	gdb_test_no_output "$set_cmd 0"
+	show_setting "$show_cmd" "0"
+    } else {
+	# Either 0 or -1 mean unlimited.  Test both the number and
+	# "unlimited".  For the latter, test both full name and
+	# abbreviations.
+
+	if {$variant == "zuinteger-unlimited"} {
+	    gdb_test_no_output "$set_cmd -1"
+	} else {
+	    gdb_test_no_output "$set_cmd 0"
+	}
+	show_setting "$show_cmd" "unlimited"
+
+	foreach_with_prefix value {
+	    "u"
+	    "un"
+	    "unl"
+	    "unli"
+	    "unlim"
+	    "unlimi"
+	    "unlimit"
+	    "unlimite"
+	    "unlimited"
+	} {
+	    # Alternate between integer and unlimited, to make sure the
+	    # setting really took effect.
+	    gdb_test_no_output "$set_cmd 1"
+	    show_setting "$show_cmd" "1"
+
+	    gdb_test_no_output "$set_cmd $value"
+	    show_setting "$show_cmd" "unlimited"
+	}
+    }
+
+    if {$variant == "zuinteger"} {
+	test_gdb_complete_multiple "maint set test-settings " "zuinteger" "" {
+	    "zuinteger"
+	    "zuinteger-unlimited"
+	}
+    } else {
+	test_gdb_complete_unique \
+	    "$set_cmd" \
+	    "$set_cmd"
+    }
+
+    if {$variant == "zinteger" || $variant == "zuinteger"} {
+	test_gdb_complete_none \
+	    "$set_cmd "
+    } else {
+	test_gdb_complete_multiple "$set_cmd " "" "" {
+	    "NUMBER"
+	    "unlimited"
+	}
+	test_gdb_complete_none \
+	    "$set_cmd 1"
+	test_gdb_complete_unique \
+	    "$set_cmd u" \
+	    "$set_cmd unlimited"
+    }
+
+    # Check junk after "unlimited".
+    gdb_test "$set_cmd unlimitedu" "No symbol table is loaded.*"
+
+    if {$variant == "zinteger" || $variant == "zuinteger"} {
+	gdb_test "$set_cmd unlimited u" "No symbol table is loaded.*"
+	gdb_test "$set_cmd unlimited 1" "No symbol table is loaded.*"
+	gdb_test "$set_cmd unlimited -1" "No symbol table is loaded.*"
+    } else {
+	gdb_test "$set_cmd unlimited u" "Junk after \"unlimited\": u"
+	gdb_test "$set_cmd unlimited 1" "Junk after \"unlimited\": 1"
+	gdb_test "$set_cmd unlimited -1" "Junk after \"unlimited\": -1"
+    }
+
+    test_gdb_complete_none "$set_cmd unlimited "
+    test_gdb_complete_none "$set_cmd unlimitedu"
+    test_gdb_complete_none "$set_cmd unlimited u"
+    test_gdb_complete_none "$set_cmd unlimited 1"
+    test_gdb_complete_none "$set_cmd x"
+    test_gdb_complete_none "$set_cmd x "
+    test_gdb_complete_none "$set_cmd -1"
+    test_gdb_complete_none "$set_cmd -1 "
+    test_gdb_complete_none "$set_cmd 1 "
+
+    # Check show command completion.
+    if {$variant == "zuinteger"} {
+	test_gdb_complete_multiple "maintenance show test-settings " "zuinteger" "" {
+	    "zuinteger"
+	    "zuinteger-unlimited"
+	}
+    } else {
+	test_gdb_complete_unique \
+	    "$show_cmd" \
+	    "$show_cmd"
+    }
+    test_gdb_complete_none "$show_cmd "
+}
+
+# boolean tests.
+proc_with_prefix test-boolean {} {
+    # Use these variables to make sure we don't call the wrong command
+    # by mistake.
+    set set_cmd "maint set test-settings boolean"
+    set show_cmd "maint show test-settings boolean"
+
+    # A bogus value.
+    gdb_test "$set_cmd bogus" \
+	"\"on\" or \"off\" expected\\."
+
+    # Seemingly-valid but not quite valid value.
+    gdb_test "$set_cmd on1" \
+	"\"on\" or \"off\" expected\\."
+
+    # Valid value followed by garbage.
+    gdb_test "$set_cmd on 1" \
+	"\"on\" or \"off\" expected\\."
+
+    # Unlike auto-bool settings, "-1" is not accepted.
+    gdb_test "$set_cmd -1" \
+	"\"on\" or \"off\" expected\\."
+
+    # Nor "auto".
+    gdb_test "$set_cmd auto" \
+	"\"on\" or \"off\" expected\\."
+
+    # "o" is ambiguous.
+    gdb_test "$set_cmd o" \
+	"\"on\" or \"off\" expected\\."
+
+    # Various valid values.  Test both full value names and
+    # abbreviations.
+
+    # Note that unlike with auto-bool, empty value implies "on".
+    foreach_with_prefix value {
+	""
+	"on"
+	"1"
+	"y"
+	"ye"
+	"yes"
+	"e"
+	"en"
+	"ena"
+	"enab"
+	"enabl"
+	"enable"
+    } {
+	gdb_test_no_output "$set_cmd off"
+	show_setting "$show_cmd" "off"
+
+	gdb_test_no_output "$set_cmd $value"
+	show_setting "$show_cmd" "on"
+    }
+
+    check_type "test-settings boolean" "type = int"
+
+    foreach_with_prefix value {
+	"of"
+	"off"
+	"0"
+	"n"
+	"no"
+	"d"
+	"di"
+	"dis"
+	"disa"
+	"disab"
+	"disabl"
+	"disable"
+    } {
+	gdb_test_no_output "$set_cmd on"
+	show_setting "$show_cmd" "on"
+
+	gdb_test_no_output "$set_cmd $value"
+	show_setting "$show_cmd" "off"
+    }
+
+    test_gdb_complete_multiple "$set_cmd " "" "o" {
+	"off"
+	"on"
+    }
+
+    test_gdb_complete_unique \
+	"$set_cmd of" \
+	"$set_cmd off"
+
+    test_gdb_complete_none "$set_cmd x"
+
+    # Check that the show command doesn't complete anything.
+    test_gdb_complete_unique \
+	"$show_cmd" \
+	"$show_cmd"
+    test_gdb_complete_none "$show_cmd "
+}
+
+# auto-boolean tests.
+proc_with_prefix test-auto-boolean {} {
+    # Use these variables to make sure we don't call the wrong command
+    # by mistake.
+    set set_cmd "maint set test-settings auto-boolean"
+    set show_cmd "maint show test-settings auto-boolean"
+
+    # A bogus value.
+    gdb_test "$set_cmd bogus" \
+	"\"on\", \"off\" or \"auto\" expected\\."
+
+    # Seemingly-valid but not quite valid value.
+    gdb_test "$set_cmd on1" \
+	"\"on\", \"off\" or \"auto\" expected\\."
+
+    # Valid value followed by garbage.
+    gdb_test "$set_cmd on 1" \
+	"\"on\", \"off\" or \"auto\" expected\\."
+
+    # "o" is ambiguous.
+    gdb_test "$set_cmd o" \
+	"\"on\", \"off\" or \"auto\" expected\\."
+
+    # Various valid values.  Test both full value names and
+    # abbreviations.
+
+    foreach_with_prefix value {
+	"on"
+	"1"
+	"y"
+	"ye"
+	"yes"
+	"e"
+	"en"
+	"ena"
+	"enab"
+	"enabl"
+	"enable"
+    } {
+	gdb_test_no_output "$set_cmd off"
+	show_setting "$show_cmd" "off"
+
+	gdb_test_no_output "$set_cmd $value"
+	show_setting "$show_cmd" "on"
+    }
+
+    foreach_with_prefix value {
+	"of"
+	"off"
+	"0"
+	"n"
+	"no"
+	"d"
+	"di"
+	"dis"
+	"disa"
+	"disab"
+	"disabl"
+	"disable"
+    } {
+	gdb_test_no_output "$set_cmd on"
+	show_setting "$show_cmd" "on"
+
+	gdb_test_no_output "$set_cmd $value"
+	show_setting "$show_cmd" "off"
+    }
+
+    foreach_with_prefix value {
+	"a"
+	"au"
+	"aut"
+	"auto"
+	"-1"
+    } {
+	gdb_test_no_output "$set_cmd on"
+	show_setting "$show_cmd" "on"
+
+	gdb_test_no_output "$set_cmd $value"
+	show_setting "$show_cmd" "auto"
+    }
+
+    check_type "test-settings auto-boolean" "type = int"
+
+    # "-" is not accepted as abbreviation of "-1".
+    gdb_test "$set_cmd -" \
+	"\"on\", \"off\" or \"auto\" expected\\."
+
+    test_gdb_complete_multiple "$set_cmd " "" "" {
+	"auto"
+	"off"
+	"on"
+    }
+
+    test_gdb_complete_unique \
+	"$set_cmd of" \
+	"$set_cmd off"
+
+    test_gdb_complete_none "$set_cmd x"
+
+    # Check that the show command doesn't complete anything.
+    test_gdb_complete_unique \
+	"$show_cmd" \
+	"$show_cmd"
+    test_gdb_complete_none "$show_cmd "
+}
+
+# Enum option tests.
+proc_with_prefix test-enum {} {
+    # Use these variables to make sure we don't call the wrong command
+    # by mistake.
+    set set_cmd "maint set test-settings enum"
+    set show_cmd "maint show test-settings enum"
+
+    # Missing value.
+    gdb_test "$set_cmd" \
+	"Requires an argument\\. Valid arguments are xxx, yyy, zzz\\."
+
+    # A bogus value.
+    gdb_test "$set_cmd bogus" \
+	"Undefined item: \"bogus\"."
+
+    # Seemingly-valid but not quite valid value.
+    gdb_test "$set_cmd xxx1" \
+	"Undefined item: \"xxx1\"."
+
+    # Valid value followed by garbage.
+    gdb_test "$set_cmd xxx 1" \
+	"Junk after item \"xxx\": 1"
+    # Valid value followed by garbage, with extra spaces.
+    gdb_test "$set_cmd xxx      1" \
+	"Junk after item \"xxx\": 1"
+    # Abbreviated value followed by garbage.
+    gdb_test "$set_cmd xx 1" \
+	"Junk after item \"xx\": 1"
+
+    # Various valid values.  Test both full value names and
+    # abbreviations.
+    gdb_test_no_output "$set_cmd x"
+    show_setting "$show_cmd" "xxx" 0 "zzz"
+    gdb_test_no_output "$set_cmd yy"
+    show_setting "$show_cmd" "yyy" 0 "zzz"
+    gdb_test_no_output "$set_cmd zzz"
+    show_setting "$show_cmd" "zzz" 0 "yyy"
+
+    check_type "test-settings enum" "type = char \\\[4\\\]"
+
+    test_gdb_complete_multiple "$set_cmd " "" "" {
+	"xxx"
+	"yyy"
+	"zzz"
+    }
+
+    test_gdb_complete_unique \
+	"$set_cmd x" \
+	"$set_cmd xxx"
+
+    test_gdb_complete_none "$set_cmd a"
+
+    # Check that the show command doesn't complete anything.
+    test_gdb_complete_unique \
+	"$show_cmd" \
+	"$show_cmd"
+    test_gdb_complete_none "$show_cmd "
+}
+
+# string settings tests.
+proc test-string {variant} {
+    global gdb_prompt
+    global srcfile binfile
+
+    # Load symbols for the completion test below.
+    clean_restart $binfile
+
+    # Use these variables to make sure we don't call the wrong command
+    # by mistake.
+    set set_cmd "maint set test-settings $variant"
+    set show_cmd "maint show test-settings $variant"
+
+    # Checks that gdb doesn't crash if we haven't set the string yet.
+    if {$variant != "filename"} {
+	# This odd expected output here is because we expect GDB to
+	# emit a single blank line as a result of this command.
+	gdb_test -nonl "$show_cmd" "^\r\n" "$show_cmd: show default"
+    } else {
+	gdb_test "$show_cmd" "/foo/bar" "$show_cmd: show default"
+    }
+
+    # A string value.
+    gdb_test_no_output "$set_cmd hello world"
+    show_setting "$show_cmd" "hello world"
+
+    check_type "test-settings $variant" "type = char \\\[\[1-9\]\[0-9\]*\\\]"
+
+    # A quoted string value.
+    if {$variant == "string"} {
+	gdb_test_no_output "$set_cmd \"hello world\""
+	show_setting "$show_cmd" "\\\\\"hello world\\\\\"" 1
+    } else {
+	gdb_test_no_output "$set_cmd \"hello world\""
+	show_setting "$show_cmd" "\"hello world\""
+    }
+
+    # Test clearing the string.
+    with_test_prefix "clear string" {
+	if {$variant == "filename"} {
+	    gdb_test "$set_cmd" \
+		"Argument required \\(filename to set it to\\.\\)\\."
+
+	    # Check the value didn't change.
+	    show_setting "$show_cmd" "\"hello world\""
+	} else {
+	    gdb_test_no_output "$set_cmd"
+	    # This odd expected output here is because we expect GDB to
+	    # emit a single blank line as a result of this command.
+	    gdb_test -nonl "$show_cmd" "^\r\n" "$show_cmd: empty second time"
+	}
+    }
+
+    # Test completion.
+    if {$variant == "string" || $variant == "string-noescape" } {
+	# Make sure GDB doesn't try to complete on symbols, which
+	# doesn't make any sense.
+	test_gdb_complete_none "$set_cmd "
+    } else {
+	# Complete on filename.
+
+	# See comments in gdb.base/completion.exp.
+
+	# We `cd' to ${srcdir}, and then do the completion relative to
+	# the current directory.
+
+	# ${srcdir} may be a relative path.  We want to make sure we
+	# end up in the right directory - so make sure we know where
+	# it is.
+	with_cwd $::srcdir {
+	    set fullsrcdir [pwd]
+	}
+
+	gdb_test "cd ${fullsrcdir}" \
+	    "Working directory [string_to_regexp ${fullsrcdir}].*" \
+	    "cd to \${srcdir}"
+
+	set unique_file ../testsuite/gdb.base/comp-dir/subdir/dummy
+
+	test_gdb_complete_unique \
+	    "$set_cmd ${unique_file}" \
+	    "$set_cmd ${unique_file}.txt"
+
+	test_gdb_complete_none "$set_cmd ${unique_file}.abc"
+    }
+
+    # Check show command completion.
+    if {$variant == "string"} {
+	test_gdb_complete_multiple "maint show test-settings " "string" "" {
+	    "string"
+	    "string-noescape"
+	}
+    } else {
+	test_gdb_complete_unique \
+	    "$show_cmd" \
+	    "$show_cmd"
+    }
+    test_gdb_complete_none "$show_cmd "
+}
+
+# Check that $_gdb_setting & co report the correct error strings.
+proc test-setting-error {} {
+    gdb_test {print $_gdb_setting("xxx")} \
+	"First argument of \\\$_gdb_setting must be a valid setting of the 'show' command\\."
+    gdb_test {print $_gdb_setting_str("xxx")} \
+	"First argument of \\\$_gdb_setting_str must be a valid setting of the 'show' command\\."
+
+    gdb_test {print $_gdb_maint_setting("xxx")} \
+	"First argument of \\\$_gdb_maint_setting must be a valid setting of the 'maintenance show' command\\."
+    gdb_test {print $_gdb_maint_setting_str("xxx")} \
+	"First argument of \\\$_gdb_maint_setting_str must be a valid setting of the 'maintenance show' command\\."
+}
+
+foreach variant {
+    uinteger
+    integer
+    zinteger
+    zuinteger
+    zuinteger-unlimited
+} {
+    with_test_prefix "test-integer $variant" {
+	test-integer $variant
+    }
+}
+
+test-boolean
+test-auto-boolean
+test-enum
+
+foreach variant {
+    string
+    string-noescape
+    optional-filename
+    filename
+} {
+    with_test_prefix "test-string $variant" {
+	test-string $variant
+    }
+}
+
+test-setting-error

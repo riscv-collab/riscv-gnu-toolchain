@@ -1,0 +1,116 @@
+# Copyright 2019-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Basic TUI tests.
+
+tuiterm_env
+
+# Use main-one-line.c to get the line info at a predictable location without
+# resorting to a dwarf assembly test-case.
+standard_testfile main-one-line.c
+
+set main_line [gdb_get_line_number "int main"]
+
+if {[build_executable "failed to prepare" ${testfile} ${srcfile}] == -1} {
+    return -1
+}
+
+Term::clean_restart 24 80 $testfile
+if {![Term::enter_tui]} {
+    unsupported "TUI not supported"
+    return
+}
+
+set text [Term::get_all_lines]
+gdb_assert {![string match "No Source Available" $text]} \
+    "initial source listing"
+
+Term::command "list -q main"
+set main_re "int main \\(\\) { return 0; }"
+Term::check_contents "list -q main" "$main_line *$main_re"
+
+# Get the first source line.
+set line [Term::get_line 1]
+# Send an up arrow.
+send_gdb "\033\[A"
+# Wait for a redraw and check that the first line changed.
+if {[Term::wait_for [string_to_regexp $line]] \
+	&& [Term::get_line 1] != $line\
+	&& [Term::get_line 2] == $line} {
+    pass "scroll up"
+} else {
+    fail "scroll up"
+}
+
+# Get the actual screen line that main is on.
+set main_screen_line -1
+for { set i 1 } { $i <= $Term::_cols } { incr i } {
+    set line [Term::get_line $i]
+    if { [regexp -- "$main_line\[\\t \]+$main_re" $line] } {
+	set main_screen_line $i
+	break
+    }
+}
+
+# Confirm that 'main ()' is where we expect it to be.  This relies on the
+# current way we position source code on the screen, which might change in
+# the future.
+gdb_assert { $main_screen_line == 7 } \
+    "check main is where we expect on the screen"
+if { $main_screen_line == -1 } {
+    return 0
+}
+
+# Check the horizontal scrolling.
+set shifted_main_re [string range $main_re 1 end]
+set regexp "$main_line\[\\t \]+$shifted_main_re"
+# Send a right arrow.
+send_gdb "\033\[C"
+if {[Term::wait_for $regexp]} {
+    pass "scroll right"
+} else {
+    fail "scroll right"
+}
+set line [Term::get_line $main_screen_line]
+# Send a down arrow.
+send_gdb "\033\[B"
+if {[Term::wait_for $regexp] \
+	&& [Term::get_line [expr {$main_screen_line - 1}]] == $line} {
+    pass "scroll down"
+} else {
+    fail "scroll down"
+}
+
+Term::check_box "source box" 0 0 80 15
+
+Term::command "layout asm"
+Term::check_contents "asm window shows main" "$hex <main>"
+
+Term::check_box "asm box" 0 0 80 15
+
+Term::command "layout split"
+Term::check_contents "split layout contents" \
+    "$main_line *$main_re.*$hex <main>"
+
+Term::check_box "source box in split layout" 0 0 80 8
+Term::check_box "asm box in split layout" 0 7 80 8
+
+set re_noattr "\[^<\]"
+
+set status_window_line 15
+
+set status [Term::get_line_with_attrs $status_window_line]
+gdb_assert { [regexp "^<reverse:1>$re_noattr*<reverse:0>$" $status] == 1} \
+    "status window: reverse"

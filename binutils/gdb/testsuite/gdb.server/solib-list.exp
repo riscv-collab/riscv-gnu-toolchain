@@ -1,0 +1,122 @@
+# Copyright 2010-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+# In some cases gdbserver cannot find the DT_DEBUG library list on its own and
+# it needs to fall back to GDB solib-svr4.c look up via symbols from the main
+# executable.
+# gdbserver :1234 ld-linux-x86-64.so.2 /bin/prog
+# gdb /bin/prog
+# (gdb) target remote ...
+
+load_lib gdbserver-support.exp
+load_lib prelink-support.exp
+
+require allow_gdbserver_tests allow_shlib_tests
+
+standard_testfile solib-list-main.c
+set srclibfile ${testfile}-lib.c
+set binlibfile [standard_output_file ${testfile}.so]
+
+if { [gdb_compile_shlib "${srcdir}/${subdir}/${srclibfile}" "${binlibfile}" {debug}] != ""
+     || [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable "shlib=${binlibfile}"] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+set interp_system [section_get ${binfile} .interp]
+verbose -log "system interpreter is: $interp_system"
+
+foreach nonstop { 0 1 } { with_test_prefix "non-stop $nonstop" {
+    save_vars { GDBFLAGS } {
+	# If GDB and GDBserver are both running locally, set the sysroot to avoid
+	# reading files via the remote protocol.
+	if { ![is_remote host] && ![is_remote target] } {
+	    set GDBFLAGS "$GDBFLAGS -ex \"set sysroot\""
+	}
+
+	clean_restart
+    }
+
+    gdb_load_shlib ${binlibfile}
+
+    set target_binfile [gdb_remote_download target $binfile]
+    set host_binfile [gdb_remote_download host $binfile]
+
+    # When testing remote, the file path we receive may be only the file name,
+    # "solib-list".  ld-linux doesn't seem to be able to find the file when
+    # passing just the file name, it wants either the absolute path or a
+    # relative path with at least one directory component.  Calling readlink on
+    # the target to get the full path will make it happy.
+    set target_binfile [lindex [remote_exec target "readlink -f $target_binfile"] 1]
+
+    # Make sure we're disconnected, in case we're testing with an
+    # extended-remote board, therefore already connected.
+    gdb_test "disconnect" ".*"
+
+    gdb_test "set non-stop $nonstop"
+
+    # It is required for the non-stop mode, GDB would try to step over
+    # _dl_debug_state breakpoint will still only ld.so loaded in gdbserver.
+    # But GDB having symbols from the main executable it would try to use
+    # displaced-stepping buffer at unmapped that time address _start.
+    gdb_test "set displaced-stepping off"
+
+    # Unset last_loaded_file because we want GDBserver spawn
+    # ${interp_system} not ${last_loaded_file}.
+    global last_loaded_file
+    unset -nocomplain last_loaded_file
+
+    # Note we pass ${interp_system}, the program gdbserver spawns, as
+    # argument here, instead of using gdb_load, because we don't want
+    # to download the interpreter to the target (it's already there)
+    # or to the test output directory.
+    set res [gdbserver_spawn "${interp_system} ${target_binfile}"]
+    set gdbserver_protocol [lindex $res 0]
+    set gdbserver_gdbport [lindex $res 1]
+
+    # Load BINFILE after gdbserver_spawn (so that gdbserver executes ld.so)
+    # but before "target remote" below so that qSymbol data get already
+    # initialized from BINFILE (and not from ld.so first needing a change to
+    # BINFILE later).
+    gdb_test "file ${host_binfile}" {Reading symbols from .*\.\.\..*} "file binfile"
+
+    set test "target $gdbserver_protocol"
+    set ok 0
+    set new_symbol_table 0
+    gdb_test_multiple "target $gdbserver_protocol $gdbserver_gdbport" $test {
+	-re "Remote debugging using" {
+	    set ok 1
+	    exp_continue
+	}
+	-re {.*Load new symbol table from ".*"\? \(y or n\) } {
+	    set new_symbol_table 1
+	    send_gdb "y\n" answer
+	    exp_continue
+	}
+	-re ".*\r\n$gdb_prompt " {
+	    # Do not anchor end, there may be more output in non-stop mode.
+	    if ($ok) {
+		pass $test
+	    } else {
+		fail $test
+	    }
+	}
+    }
+    gdb_assert {$new_symbol_table == 1}
+
+    gdb_test "continue" "Program received signal SIGUSR1, .*"
+    gdb_test "sharedlibrary" ".*"
+    gdb_test "p libvar" " = 23"
+}}

@@ -1,0 +1,295 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require allow_shlib_tests
+
+load_lib mi-support.exp
+
+standard_testfile pending.c
+set libfile1 "pendshr1"
+set libfile2 "pendshr2"
+set executable $testfile
+set libsrc1  $srcdir/$subdir/$libfile1.c
+set libsrc2  $srcdir/$subdir/$libfile2.c
+set lib_sl1  [standard_output_file pendshr1.sl]
+set lib_sl2  [standard_output_file pendshr2.sl]
+set lib_opts "debug"
+
+if { [gdb_compile_shlib $libsrc1 $lib_sl1 $lib_opts] != ""
+     || [gdb_compile_shlib $libsrc2 $lib_sl2 $lib_opts] != ""} {
+    untested "failed to compile shared library"
+    return -1
+}
+
+set MIFLAGS "-i=mi"
+
+set exec_opts [list debug shlib=$lib_sl1 shlib_load]
+if { [gdb_compile $srcdir/$subdir/$srcfile $binfile executable $exec_opts] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+proc test_insert_delete_modify { } {
+    global mi_gdb_prompt
+    global lib_sl1 lib_sl2
+    global binfile
+
+    mi_clean_restart $binfile
+
+    mi_load_shlibs $lib_sl1 $lib_sl2
+
+    mi_runto_main
+
+    mi_gdb_test "break marker" \
+	{(&.*)*.*~"Breakpoint 2 at.*\\n".*=breakpoint-created,bkpt=\{number="2",type="breakpoint".*\}.*\n\^done}
+
+    # Verify that '=breakpoint-modified' notification is correctly emitted:
+
+    # 1. when modifying command
+    send_gdb "commands\n"
+    gdb_expect {
+	-re "End with" {
+	}
+    }
+
+    send_gdb "silent\nend\n"
+    set test "change command"
+    gdb_expect {
+	-re ".*=breakpoint-modified.*${mi_gdb_prompt}$" {
+	    pass $test
+	}
+	-re ".*${mi_gdb_prompt}$" {
+	    fail $test
+	}
+	timeout {
+	    fail "$test (timeout)"
+	}
+    }
+
+    # Verify that '=breakpoint-created' notification is correctly emitted when
+    # creating any type of breakpoint.
+
+    set test "watch watch"
+    mi_gdb_test ${test} \
+	{(&.*)*.*~".*atchpoint 3: .*\\n".*=breakpoint-created,bkpt=\{number="3",type="(hw |)watchpoint".*\}.*\n\^done} \
+	$test
+    set test "trace marker"
+    mi_gdb_test $test \
+	{(&.*)*.*~"Tracepoint 4 at .*\\n".*=breakpoint-created,bkpt=\{number="4",type="tracepoint".*\}.*\n\^done} \
+	$test
+    set test "catch syscall"
+    mi_gdb_test $test \
+	{(&.*)*.*~"Catchpoint 5 .*\\n".*=breakpoint-created,bkpt=\{number="5",type="catchpoint".*\}.*\n\^done} \
+	$test
+    set test "dprintf marker, \"arg\" \""
+    mi_gdb_test $test \
+	{.*=breakpoint-created,bkpt=\{number="6",type="dprintf".*,script=\[\"printf \\\"arg\\\" \\\"\"\].*\}\r\n\^done} \
+	$test
+
+    # 2. when modifying condition
+    set test "condition 2 main > 0x0"
+    mi_gdb_test $test \
+	{.*=breakpoint-modified,bkpt=\{number="2",.*,cond=\"main > 0x0\".*\}.*\n\^done} \
+	$test
+    # Modify condition through MI command shouldn't trigger MI notification.
+    mi_gdb_test "-break-condition 2 main == 0x0" "\\^done" \
+	"-break-condition 2 main == 0x0"
+
+    # 3. when modifying enableness
+    set test "disable 3"
+    mi_gdb_test $test \
+	{.*=breakpoint-modified,bkpt=\{number="3",.*,enabled=\"n\".*\}.*\n\^done} \
+	$test
+    set test "enable 3"
+    mi_gdb_test $test \
+	{.*=breakpoint-modified,bkpt=\{number="3",.*,enabled=\"y\".*\}.*\n\^done} \
+	$test
+    # Modify enableness through MI commands shouldn't trigger MI
+    # notification.
+    mi_gdb_test "-break-enable 3" "\\^done" "-break-enable 3"
+    mi_gdb_test "-break-disable 3" "\\^done" "-break-disable 3"
+
+    # 4. when modifying ignore count.
+    set test "ignore 5 1"
+    mi_gdb_test $test \
+	{.*=breakpoint-modified,bkpt=\{number="5",.*,ignore=\"1\".*\}.*\n\^done} \
+	$test
+    # Modify ignore count through MI command shouldn't trigger MI
+    # notification.
+    mi_gdb_test "-break-after 5 1" "\\^done" \
+	"-break-after 5 1"
+
+    # 5. when modifying pass count.
+    set test "passcount 1 4"
+    mi_gdb_test $test \
+	{.*=breakpoint-modified,bkpt=\{number="4",.*pass="1".*\}.*\n\^done} \
+	$test
+    # Modify pass count through MI command shouldn't trigger MI
+    # notification.
+    mi_gdb_test "-break-passcount 4 1" "\\^done" \
+	"-break-passcount 4 1"
+
+    # Delete some breakpoints and verify that '=breakpoint-deleted
+    # notification is correctly emitted.
+    for {set i 3} {$i < 7} {incr i} {
+	mi_gdb_test "delete ${i}" ".*=breakpoint-deleted,id=\"${i}\".*\\^done" \
+	    "delete ${i}"
+    }
+}
+
+with_test_prefix "test_insert_delete_modify" {
+    test_insert_delete_modify
+}
+
+# Test 'breakpoint-modified' notification is emited when pending breakpoints are
+# resolved.
+
+proc test_pending_resolved { } {
+    with_test_prefix "pending resolved" {
+	global decimal hex
+	global srcdir
+	global subdir
+	global binfile
+	global lib_sl1 lib_sl2
+	global mi_gdb_prompt
+
+	if {[mi_clean_restart $binfile]} {
+	    return
+	}
+	mi_load_shlibs $lib_sl1 $lib_sl2
+
+	# Create a pending breakpoint on pendfunc1
+	mi_gdb_test "-break-insert -f pendfunc1" \
+	    {.*\^done,bkpt=.*addr=\"<PENDING>\".*} \
+	    "insert breakpoint on pendfunc1"
+	mi_run_cmd
+
+	set test "breakpoint on pendfunc1 resolved"
+	gdb_expect {
+	    -re ".*=breakpoint-modified,bkpt=\{number=\"1\".*addr=\"${hex}\".*,times=\"0\"" {
+		pass $test
+		exp_continue
+	    }
+	    -re ".*=breakpoint-modified,bkpt=\{number=\"1\".*addr=\"${hex}\".*,times=\"1\"" {
+		pass "$test: hit_count is updated"
+	    }
+	    -re ".*${mi_gdb_prompt}$" {
+		fail $test
+	    }
+	    timeout {
+		fail "$test (timeout)"
+	    }
+	}
+	mi_expect_stop "breakpoint-hit" "pendfunc1" ""\
+	    ".*" ".*" {"" "disp=\"keep\""} \
+	    "continue to pendfunc1 breakpoint"
+
+	# Delete breakpoint on pendfunc1
+	mi_gdb_test "-break-delete 1" {\^done} \
+	    "delete breakpoint on pendfunc1"
+	# Insert breakpoint on marker
+	mi_gdb_test "-break-insert marker" {.*\^done,bkpt=.*} \
+	    "insert breakpoint on marker"
+	# Create a pending breakpoint on pendfunc3
+	mi_gdb_test "-break-insert -f pendfunc3" \
+	    {.*\^done,bkpt=.*addr=\"<PENDING>\".*} \
+	    "insert breakpoint on pendfunc3"
+
+	mi_execute_to "exec-continue" "breakpoint-hit" "marker" ".*" ".*" ".*" \
+	    {"" "disp=\"keep\""} "continue to marker 1"
+
+	mi_send_resuming_command "exec-continue" "continuing execution to marker"
+
+	set test "breakpoint on pendfunc3 resolved"
+	gdb_expect {
+	    -re ".*=breakpoint-modified,bkpt=\{number=\"2\".*addr=\"${hex}\",.*func=\"marker\",.*times=\"1\"" {
+		pass "$test: hit_count is updated"
+		exp_continue
+	    }
+	    -re ".*=breakpoint-modified,bkpt=\{number=\"3\".*addr=\"${hex}\",.*func=\"pendfunc3\",.*times=\"0\"" {
+		pass $test
+	    }
+	    -re ".*${mi_gdb_prompt}$" {
+		fail $test
+	    }
+	    timeout {
+		fail "$test (timeout)"
+	    }
+	}
+	mi_expect_stop "breakpoint-hit" "marker" ".*" ".*" ".*" \
+	    {"" "disp=\"keep\""} "continue to marker 2"
+
+	mi_send_resuming_command "exec-continue" "continuing to exit"
+	set test "breakpoint on pendfunc3 pending again"
+	gdb_expect {
+	    -re ".*=breakpoint-modified,bkpt=\{number=\"3\".*addr=\"<PENDING>\"" {
+		pass $test
+	    }
+	    -re ".*${mi_gdb_prompt}$" {
+		fail $test
+	    }
+	    timeout {
+		fail "$test (timeout)"
+	    }
+	}
+
+	mi_expect_stop "exited-normally" "" "" "" "" "" ""
+    }
+}
+
+with_test_prefix "test_pending_resolved" {
+    test_pending_resolved
+}
+
+# Test auto-disable is effective when notifying breakpoint-modified.
+
+proc test_auto_disable { } {
+    global mi_gdb_prompt
+    global lib_sl1 lib_sl2
+    global binfile
+
+    mi_clean_restart $binfile
+
+    mi_load_shlibs $lib_sl1 $lib_sl2
+
+    mi_runto_main
+
+    # Set the breakpoint.
+    mi_gdb_test "-break-insert -f pendfunc1" \
+	{\^done,bkpt=\{number="2",type="breakpoint".*\}.*}
+
+    # Enable for one shot only.
+    mi_gdb_test "-break-enable count 1 2" \
+	{\^done}
+
+    mi_send_resuming_command "exec-continue" "continuing execution to breakpoint"
+
+    set test "breakpoint auto-disabling after enable count reached"
+    gdb_expect {
+	-re ".*=breakpoint-modified,bkpt=\{number=\"2\".*enabled=\"n\"" {
+	    pass $test
+	}
+	-re ".*${mi_gdb_prompt}$" {
+	    fail $test
+	}
+	timeout {
+	    fail "$test (timeout)"
+	}
+    }
+}
+
+with_test_prefix "test_auto_disable" {
+    test_auto_disable
+}

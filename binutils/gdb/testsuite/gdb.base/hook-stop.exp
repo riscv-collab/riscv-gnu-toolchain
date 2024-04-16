@@ -1,0 +1,168 @@
+# Copyright 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile
+
+if { [build_executable ${testfile}.exp "${testfile}" $srcfile {debug nowarnings}] } {
+    return -1
+}
+
+# Define the hook-stop that runs COMMANDS.
+
+proc define_hook_stop {commands} {
+    set test "define hook-stop command"
+    gdb_test_multiple "define hook-stop" "$test" {
+	-re "Type commands for definition of \"hook-stop\".\r\nEnd with a line saying just \"end\".\r\n>$" {
+	    gdb_test "$commands\nend" "" "$test"
+	}
+    }
+}
+
+# Restart GDB, run to main, set a breakpoint, and define a hook-stop
+# that runs COMMANDS.  If running to main fails, this returns to the
+# caller's caller directly.
+
+proc setup {commands} {
+    global srcfile binfile
+
+    clean_restart $binfile
+
+    if {![runto_main]} {
+	return -code return
+    }
+
+    gdb_test "break func" \
+	"Breakpoint.*at.* file .*$srcfile.*\\." \
+	"breakpoint line number"
+
+    define_hook_stop $commands
+}
+
+# Check that the hook-stop runs before the frame is printed.
+
+proc hook_stop_before_frame {} {
+    with_test_prefix "hook-stop runs before frame print" {
+	global gdb_prompt
+
+	setup "echo \"Hello.\""
+
+	set test "run hook-stop"
+	gdb_test_multiple "continue" "$test" {
+	    -re "\"Hello\\.\"\r\nBreakpo.*func.*set breakpoint here.*${gdb_prompt} $" {
+		pass $test
+	    }
+
+	    -re "Breakpo.*func.*set breakpoint here.*\"Hello\\.\".*${gdb_prompt} $" {
+		fail $test
+	    }
+	}
+    }
+}
+
+# Check that GDB gracefully handles the case of the inferior dying
+# while running the hook-stop.
+
+proc hook_stop_kill {} {
+    with_test_prefix "hook-stop kills inferior" {
+	global gdb_prompt
+	global decimal
+
+	setup "kill"
+
+	gdb_test_no_output "set confirm off"
+
+	set test "run hook-stop"
+	gdb_test_multiple "continue" "$test" {
+	    -re "Continuing.*\r\n\\\[Inferior $decimal \\(.*\\) killed\\\]\r\n${gdb_prompt} $" {
+		pass $test
+	    }
+	}
+
+	gdb_test "info threads" "No threads.*"
+    }
+}
+
+# Check that GDB gracefully handles the case of the hook-stop
+# continuing the inferior in the foreground.
+
+proc hook_stop_continue_fg {} {
+    with_test_prefix "hook-stop runs continue" {
+	global gdb_prompt
+
+	setup "if \$do_continue\nset \$do_continue = 0\ncontinue\nend"
+
+	gdb_test "print \$do_continue = 1" " = 1"
+
+	gdb_test "next" "Breakpoint.*func \\(\\) at .*set breakpoint here \\*/" \
+	    "next triggering hook-stop"
+
+	gdb_test "next" "a = 2;" "next no hook-stop"
+    }
+}
+
+# Check that GDB gracefully handles the case of the hook-stop
+# continuing the inferior in the background.
+
+proc hook_stop_continue_bg {} {
+    with_test_prefix "hook-stop runs continue&" {
+	global gdb_prompt
+
+	setup "if \$do_continue\nset \$do_continue = 0\ncontinue&\nend"
+
+	gdb_test "print \$do_continue = 1" " = 1"
+
+	set test "run hook-stop"
+	gdb_test_multiple "continue" "$test" {
+	    -re "Continuing.\r\n.*${gdb_prompt} " {
+		pass $test
+	    }
+	}
+
+	set test "inferior exits normally"
+	gdb_test_multiple "" "$test" {
+	    -re "exited normally" {
+		pass $test
+	    }
+	}
+	gdb_test "info threads" "No threads.*"
+    }
+}
+
+# Check that GDB gracefully handles the case of the hook-stop running
+# "next".  GDB used to print the stop event twice.
+
+proc hook_stop_next {} {
+    with_test_prefix "hook-stop runs next" {
+	global gdb_prompt
+
+	setup "next"
+
+	set test "run hook-stop"
+	gdb_test_multiple "continue" "$test" {
+	    -re "a = 2.*a = 2${gdb_prompt} $" {
+		fail $test
+	    }
+	    -re "a = 2.*${gdb_prompt} $" {
+		pass $test
+	    }
+	}
+    }
+}
+
+hook_stop_before_frame
+hook_stop_kill
+hook_stop_continue_fg
+hook_stop_continue_bg
+hook_stop_next

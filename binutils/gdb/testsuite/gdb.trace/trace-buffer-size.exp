@@ -1,0 +1,116 @@
+# Copyright 1998-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "trace-support.exp"
+
+standard_testfile
+
+if [prepare_for_testing "failed to prepare" $testfile $srcfile \
+        {debug nowarnings}] {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+if ![gdb_target_supports_trace] {
+    unsupported "target does not support trace"
+    return -1
+}
+
+set BUFFER_SIZE 4
+set default_size -1
+set test "get default buffer size"
+
+# Save default trace buffer size in 'default_size'.
+gdb_test_multiple "tstatus" $test {
+    -re ".*Trace buffer has ($decimal) bytes of ($decimal) bytes free.*$gdb_prompt $" {
+        set default_size $expect_out(2,string)
+        pass $test
+    }
+}
+
+# If we did not get the default size then there is no point in running the
+# tests below.
+if { $default_size < 0 } {
+  return -1
+}
+
+# Change buffer size to 'BUFFER_SIZE'.
+gdb_test_no_output \
+  "set trace-buffer-size $BUFFER_SIZE" \
+  "set trace buffer size 1"
+
+gdb_test "tstatus" \
+  ".*Trace buffer has $decimal bytes of $BUFFER_SIZE bytes free.*" \
+  "tstatus check 2"
+
+gdb_test "show trace-buffer-size $BUFFER_SIZE" \
+  "Requested size of trace buffer is $BUFFER_SIZE.*" \
+  "show trace buffer size"
+
+# -1 means "no limit on GDB's end.  Let the target choose."
+gdb_test_no_output \
+  "set trace-buffer-size -1" \
+  "set trace buffer size 2"
+
+# "unlimited" means the same.
+gdb_test_no_output "set trace-buffer-size unlimited"
+
+# Test that tstatus gives us default buffer size now.
+gdb_test "tstatus" \
+  ".*Trace buffer has $decimal bytes of $default_size bytes free.*" \
+  "tstatus check 3"
+
+gdb_test_no_output \
+  "set trace-buffer-size $BUFFER_SIZE" \
+  "set trace buffer size 3"
+
+# We set trace buffer to very small size.  Then after running trace,
+# we check if it is full.  This will show if setting trace buffer
+# size really worked.
+gdb_breakpoint ${srcfile}:[gdb_get_line_number "breakpoint1"]
+gdb_test "trace test_function" \
+  "Tracepoint \[0-9\]+ at .*" \
+  "set tracepoint at test_function"
+gdb_trace_setactions "Set action for trace point 1" "" \
+  "collect var" "^$"
+gdb_test_no_output "tstart"
+gdb_test "continue" \
+  "Continuing.*Breakpoint $decimal.*" \
+  "run trace experiment 1"
+gdb_test "tstatus" \
+  ".*Trace stopped because the buffer was full.*" \
+  "buffer full check 1"
+
+# Use the default size -- the trace buffer should not end up
+# full this time
+clean_restart ${testfile}
+runto_main
+gdb_breakpoint ${srcfile}:[gdb_get_line_number "breakpoint1"]
+gdb_test "trace test_function" \
+  "Tracepoint \[0-9\]+ at .*" \
+  "set tracepoint at test_function"
+gdb_trace_setactions "Set action for trace point 2" "" \
+  "collect var" "^$"
+gdb_test_no_output "tstart"
+gdb_test "continue" \
+  "Continuing.*Breakpoint $decimal.*" \
+  "run trace experiment 2"
+gdb_test "tstatus" \
+  ".*Trace is running on the target.*" \
+  "buffer full check 2"
+gdb_test_no_output "tstop"

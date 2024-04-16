@@ -1,0 +1,185 @@
+# Copyright 2007-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib libgloss.exp
+
+set pascal_init_done 0
+
+# This procedure looks for a suitable pascal compiler
+# For now only GNU pascal compiler and Free Pascal compiler
+# are searched.
+# First, environment variable GPC is checked
+# if present, GPC compiler is assumed to be the value of
+# that environment variable.
+# Second, environment variable FPC is checked
+# if present, Free Pascal compiler is assumed to be the value of
+# that environment variable.
+# Third, gpc executable is searched using `which gpc`  
+# Lastly, fpc executable is searched using `which fpc` 
+# Using environment variable allows to force
+# which compiler is used in testsuite
+ 
+proc pascal_init {} {
+    global pascal_init_done
+    gdb_persistent_global pascal_compiler_is_gpc
+    gdb_persistent_global pascal_compiler_is_fpc
+    gdb_persistent_global gpc_compiler
+    gdb_persistent_global fpc_compiler
+    global env
+ 
+    if { $pascal_init_done == 1 } {
+	return
+    }
+
+    set pascal_compiler_is_gpc 0
+    set pascal_compiler_is_fpc 0
+    set gpc_compiler [transform gpc]
+    set fpc_compiler [transform fpc]
+
+    if ![is_remote host] {
+	if { [info exists env(GPC)] } {
+	    set pascal_compiler_is_gpc 1
+	    set gpc_compiler $env(GPC)
+	    verbose -log "Assuming GNU Pascal ($gpc_compiler)"
+	} elseif { [info exists env(FPC)] } {
+	    set pascal_compiler_is_fpc 1
+	    set fpc_compiler $env(FPC)
+	    verbose -log "Assuming Free Pascal ($fpc_compiler)"
+	} elseif { [which $gpc_compiler] != 0 } {
+	    set pascal_compiler_is_gpc 1
+	    verbose -log "GNU Pascal compiler found"
+        } elseif { [which $fpc_compiler] != 0 } {
+	    set pascal_compiler_is_fpc 1
+	    verbose -log "Free Pascal compiler found"
+	}
+    }
+    set pascal_init_done 1
+}   
+
+proc gpc_compile {source destfile type options} {
+    global gpc_compiler
+    set add_flags ""
+    set dest [target_info name]
+
+    if {$type == "object"} {
+	append add_flags " -c"
+    }
+
+    if { $type == "preprocess" } {
+	append add_flags " -E"
+    }
+    
+    if { $type == "assembly" } {
+	append add_flags " -S"
+    }
+
+    foreach i $options {
+	if { $i == "debug" } {
+	    if [board_info $dest exists debug_flags] {
+		append add_flags " [board_info $dest debug_flags]"
+	    } else {
+		append add_flags " -g"
+	    }
+	}
+	if { $i == "class" } {
+	    if [board_info $dest exists pascal_class_flags] {
+		append add_flags " [board_info $dest pascal_class_flags]"
+	    } else {
+		append add_flags " --extended-syntax"
+	    }
+	}
+    }
+
+    set result [remote_exec host $gpc_compiler "-o $destfile --automake $add_flags $source"]
+    return $result
+}
+
+proc fpc_compile {source destfile type options} {
+    global fpc_compiler
+    set add_flags ""
+    set dest [target_info name]
+
+    if {$type == "object"} {
+	append add_flags " -Cn"
+    }
+
+    if { $type == "preprocess" } {
+	return "Free Pascal can not preprocess"
+    }
+    
+    if { $type == "assembly" } {
+	append add_flags " -al"
+    }
+
+    foreach i $options {
+	if { $i == "debug" } {
+	    if [board_info $dest exists debug_flags] {
+		append add_flags " [board_info $dest debug_flags]"
+	    } else {
+		append add_flags " -g"
+	    }
+	}
+	if { $i == "class" } {
+	    if [board_info $dest exists pascal_class_flags] {
+		append add_flags " [board_info $dest pascal_class_flags]"
+	    } else {
+		append add_flags " -Mobjfpc"
+	    }
+	}
+    }
+
+    set result [remote_exec host $fpc_compiler "-o$destfile $add_flags $source"]
+    return $result
+}
+
+proc gdb_compile_pascal {source destfile type options} {
+    global pascal_init_done
+    global pascal_compiler_is_gpc
+    global pascal_compiler_is_fpc
+
+    if { $pascal_init_done == 0 } { 
+	pascal_init
+    }
+
+    file delete $destfile
+
+    if { $pascal_compiler_is_fpc == 1 } {
+        set result [fpc_compile $source $destfile $type $options]
+    } elseif { $pascal_compiler_is_gpc == 1 } {
+        set result [gpc_compile $source $destfile $type $options]
+    } else {
+	unsupported "no pascal compiler found"
+	return "No pascal compiler. Compilation failed."
+    }
+
+    if ![file exists $destfile] {
+        unsupported "Pascal compilation failed: $result"
+        return "Pascal compilation failed."
+    }
+}
+
+# Auxiliary function to set the language to pascal.
+# The result is 1 (true) for success, 0 (false) for failure.
+
+proc set_lang_pascal {} {
+    if [gdb_test_no_output "set language pascal"] {
+	return 0
+    }
+    if [gdb_test "show language" ".* source language is \"pascal\"." \
+	   "set language to \"pascal\""] {
+	return 0
+    }
+    return 1
+}

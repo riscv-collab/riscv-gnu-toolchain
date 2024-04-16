@@ -1,0 +1,131 @@
+# Copyright 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+
+# In gdb inferior function calls, if a C++ exception is raised in the
+# dummy-frame, and the exception handler is (normally, and expected to
+# be) out-of-frame, the default C++ handler will (wrongly) be called
+# in an inferior function call.
+# This is incorrect as an exception can normally and legally be handled
+# out-of-frame.  The confines of the dummy frame prevent the unwinder
+# from finding the correct handler (or any handler, unless it is
+# in-frame).  The default handler calls std::terminate.  This will kill
+# the inferior.  Assert that terminate should never be called in an
+# inferior function call.  These tests test the functionality around
+# unwinding that sequence and also tests the flag behaviour gating this
+# functionality.
+#
+# PR c++/9600.
+
+# This test is largely based of gdb.base/callfuncs.exp.
+
+require allow_cplus_tests
+
+require {!target_info exists gdb,nosignals}
+
+standard_testfile .cc
+
+# Some targets can't do function calls, so don't even bother with this
+# test.
+require {!target_info exists gdb,cannot_call_functions}
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile {debug c++}]} {
+    return -1
+}
+
+if {![runto_main]} {
+    return
+}
+
+# See http://sourceware.org/gdb/bugs/2495
+
+# Test normal baseline behaviour. Call a function that
+# does not raise an exception.
+gdb_test "p exceptions.no_throw_function()" " = 1"
+# And one that does but handles it in-frame.
+gdb_test "p exceptions.throw_function_with_handler()" " = 2"
+# Both should return normally.
+
+# Test basic unwind.  Call a function that raises an exception but
+# does not handle it.  It should be rewound.
+gdb_test "p exceptions.throw_function()" \
+    "The program being debugged entered a std::terminate call, .*" \
+    "call a function that raises an exception without a handler."
+
+# Make sure that after rewinding we are back at the call parent.
+gdb_test "bt" \
+    "#0  main.*" \
+    "bt after returning from a popped frame"
+
+# Make sure the only breakpoint is the one set via the runto_main
+# call and that the std::terminate breakpoint has evaporated and
+# cleaned-up.
+gdb_test "info breakpoints" \
+    "gdb2495\.cc.*"
+
+# Turn off this new behaviour.
+gdb_test_no_output "set unwind-on-terminating-exception off"
+
+# Check that it is turned off.
+gdb_test "show unwind-on-terminating-exception" \
+    "exception is unhandled while in a call dummy is off.*" \
+    "turn off unwind on terminating exception flag"
+
+# Check that the old behaviour is restored.
+gdb_test "p exceptions.throw_function()" \
+    "The program being debugged was signaled while in a function called .*" \
+    "call a function that raises an exception with unwinding off.."
+
+# Restart the inferior back at main.
+if {![runto_main]} {
+    return
+}
+
+
+# Check to see if the new behaviour alters the unwind signal
+# behaviour; it should not.  Test both on and off states.
+
+# Turn on unwind on signal behaviour.
+gdb_test_no_output "set unwindonsignal on"
+
+# Check that it is turned on.
+gdb_test "show unwindonsignal" \
+    "signal is received while in a call dummy is on.*" \
+    "turn on unwind on signal"
+
+# Check to see if new behaviour interferes with
+# normal signal handling in inferior function calls.
+gdb_test "p exceptions.raise_signal(1)" \
+    [multi_line \
+	 "The program being debugged received signal SIGABRT, Aborted" \
+	 "while in a function called from GDB\\.  GDB has restored the context" \
+	 "to what it was before the call\\.  To change this behavior use" \
+	 "\"set unwindonsignal off\"\\.  Evaluation of the expression containing" \
+	 "the function \\(SimpleException::raise_signal\\(int\\)\\) will be abandoned\\."]\
+    "check for unwindonsignal off message"
+
+# And reverse - turn off again.
+gdb_test_no_output "set unwindonsignal off"
+
+# Check that it is actually turned off.
+gdb_test "show unwindonsignal" \
+    "signal is received while in a call dummy is off.*" \
+    "turn off unwind on signal"
+
+# Check to see if new behaviour interferes with
+# normal signal handling in inferior function calls.
+gdb_test "p exceptions.raise_signal(1)" \
+    "To change this behavior use \"set unwindonsignal on\".*" \
+    "check for unwindonsignal on message"

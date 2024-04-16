@@ -1,0 +1,136 @@
+# Copyright 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+
+require allow_cplus_tests
+
+standard_testfile .cc
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile {debug c++}]} {
+    return -1
+}
+
+if {![runto_main]} {
+    return
+} 
+
+if {![skip_unwinder_tests]} {
+    unsupported "nextoverthrow.exp could not find _Unwind_DebugHook"
+    return -1
+}
+
+# Set a temporary breakpoint and then continue to it.
+# The breakpoint is set according to a marker in the file.
+proc tbreak_and_cont {text} {
+    global testfile
+
+    set line [gdb_get_line_number $text $testfile.cc]
+    gdb_breakpoint "$testfile.cc:$line" temporary
+    gdb_test "continue" "Temporary breakpoint.*" "continuing to $text"
+}
+
+# Verify the value of testval.
+proc verify_testval {name value} {
+    gdb_test "print testval == $value" " = true" $name
+}
+
+# See http://sourceware.org/bugzilla/show_bug.cgi?id=9593
+# Our general approach here is to do some operation, verify
+# that testval has not changed, continue to the location at
+# which the next test starts, and verify testval again.
+# This works around platform differences in debuginfo that
+# make looking at the source line unreliable.
+
+# A simple test of next over a throw.
+tbreak_and_cont "Start: first test"
+gdb_test "next" ".*" "next over a throw 1"
+tbreak_and_cont "End: first test"
+verify_testval "pre-check - next over a throw 1" -1
+
+tbreak_and_cont "Start: nested throw"
+verify_testval "post-check - next over a throw 1" 0
+gdb_test "next" ".*" "next over a throw 2"
+tbreak_and_cont "End: nested throw"
+verify_testval "pre-check - next over a throw 2" 0
+
+tbreak_and_cont "Start: step in test"
+verify_testval "post-check - next over a throw 2" 1
+gdb_test "step" "function1().*" "step into function2 1"
+gdb_test "next" ".*" "next over a throw 3"
+tbreak_and_cont "End: step in test"
+verify_testval "pre-check - next over a throw 3" 1
+
+tbreak_and_cont "Start: next past catch"
+verify_testval "post-check - next over a throw 3" 2
+gdb_test "next" ".*" "next past catch"
+tbreak_and_cont "End: next past catch"
+verify_testval "pre-check - next past catch" 2
+
+tbreak_and_cont "Start: rethrow"
+verify_testval "post-check - next past catch" 3
+gdb_test "next" ".*" "next over a throw 4"
+tbreak_and_cont "End: rethrow"
+verify_testval "pre-check - next over a throw 4" 3
+
+tbreak_and_cont "Start: first finish"
+verify_testval "post-check - next over a throw 4" 4
+gdb_test "step" "function1().*" "step into function2 2"
+gdb_test "finish" ".*" "finish 1"
+tbreak_and_cont "End: first finish"
+verify_testval "pre-check - finish 1" 4
+
+tbreak_and_cont "Start: second finish"
+verify_testval "post-check - finish 1" 5
+gdb_test "step" "function1 ().*" "step into finish method"
+gdb_test "finish" ".*" "finish 2"
+tbreak_and_cont "End: second finish"
+verify_testval "pre-check - finish 2" 5
+
+tbreak_and_cont "Start: first until"
+verify_testval "post-check - finish 2" 6
+gdb_test "step" ".*" "step into finish, for until"
+gdb_test "until" ".*" "until with no argument 1"
+set line [gdb_get_line_number "marker for until" $testfile.cc]
+gdb_test "until $line" "function1 ().*" "next past catch 6"
+gdb_test "until" ".*" "until with no argument 2"
+tbreak_and_cont "End: first until"
+verify_testval "pre-check - until 1" 6
+
+tbreak_and_cont "Start: second until"
+verify_testval "post-check - until 1" 7
+set line [gdb_get_line_number "until here" $testfile.cc]
+gdb_test "step" "function1 ().*" "step into until"
+gdb_test "until $line" ".*" "until-over-throw"
+tbreak_and_cont "End: second until"
+verify_testval "pre-check - until 2" 7
+
+tbreak_and_cont "Start: advance"
+verify_testval "post-check - until 2" 8
+gdb_test "step" "function1 ().*" "step into until, for advance"
+gdb_test "advance $line" ".*" "advance-over-throw"
+tbreak_and_cont "End: advance"
+verify_testval "pre-check - advance" 8
+
+tbreak_and_cont "Start: resumebpt"
+gdb_test "tbreak _Unwind_RaiseException"
+gdb_test "continue" "Temporary breakpoint.*" "continuing to _Unwind_RaiseException"
+gdb_test "finish" "Run till exit .*"
+gdb_test {set $retpc=$pc}
+gdb_test {break *$retpc if dummy ()}
+tbreak_and_cont "Second: resumebpt"
+gdb_test "next"
+
+tbreak_and_cont "done"
+verify_testval "post-check - advance" 10

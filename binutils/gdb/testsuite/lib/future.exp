@@ -1,0 +1,753 @@
+# Copyright 2004-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib libgloss.exp
+
+# FIXME:brobecker/2004-03-31:
+# The following functions should eventually be part of dejagnu. Even after
+# these functions becomes available in dejagnu, we will keep for a while
+# a copy here in order to avoid increasing the dejagnu version
+# requirement.
+
+proc gdb_find_gnatmake {} {
+    global tool_root_dir
+
+    set root "$tool_root_dir/gcc"
+    set GM ""
+
+    if ![is_remote host] {
+        set file [lookfor_file $root gnatmake]
+        if { $file != "" } {
+            set GM "$file -I$root/ada/rts --GCC=$root/xgcc --GNATBIND=$root/gnatbind --GNATLINK=$root/gnatlink -cargs -B$root -largs --GCC=$root/xgcc -margs";
+        }   
+    }
+
+    if {$GM == ""} {
+        set GM [transform gnatmake]
+    }
+
+    return $GM
+}   
+
+proc gdb_find_gdc {} {
+    global tool_root_dir
+
+    if {![is_remote host]} {
+	set file [lookfor_file $tool_root_dir gdc]
+	if { $file == "" } {
+	    set file [lookfor_file $tool_root_dir gcc/gdc]
+	}
+	if { $file != "" } {
+	    set CC "$file -B[file dirname $file]/"
+	} else {
+	    set CC [transform gdc]
+	}
+    } else {
+	set CC [transform gdc]
+    }
+
+    return $CC
+}
+
+proc gdb_find_gfortran {} {
+    global tool_root_dir
+
+    if {![is_remote host]} {
+	set file [lookfor_file $tool_root_dir gfortran]
+	if { $file == "" } {
+	    set file [lookfor_file $tool_root_dir gcc/gfortran]
+	}
+	if { $file != "" } {
+	    set CC "$file -B[file dirname $file]/"
+	} else {
+	    set CC [transform gfortran]
+	}
+    } else {
+	set CC [transform gfortran]
+    }
+    return $CC
+}
+
+proc gdb_find_go {} {
+    global tool_root_dir
+
+    set GO ""
+
+    if {![is_remote host]} {
+	set file [lookfor_file $tool_root_dir gccgo]
+	if { $file != "" } {
+	    set root [file dirname $file]
+	    set GO "$file -B$root/gcc/"
+	}
+    }
+
+    if { $GO == "" } {
+	set GO [transform gccgo]
+    }
+
+    return $GO
+}
+
+proc gdb_find_go_linker {} {
+    return [find_go]
+}
+
+proc gdb_find_rustc {} {
+    global tool_root_dir
+    if {![is_remote host]} {
+	set rustc [lookfor_file $tool_root_dir rustc]
+	if {$rustc == ""} {
+	    set rustc rustc
+	}
+    } else {
+	set rustc ""
+    }
+    if {$rustc != ""} {
+	append rustc " --color never"
+    }
+    return $rustc
+}
+
+proc gdb_find_hipcc {} {
+    global tool_root_dir
+    if {![is_remote host]} {
+	set hipcc [lookfor_file $tool_root_dir hipcc]
+	if {$hipcc eq "" && [info exists ::env(ROCM_PATH)]} {
+	    set hipcc [lookfor_file $::env(ROCM_PATH)/bin hipcc]
+	}
+	if {$hipcc eq ""} {
+	    set hipcc hipcc
+	}
+    } else {
+	set hipcc ""
+    }
+    return $hipcc
+}
+
+proc gdb_find_ldd {} {
+    global LDD_FOR_TARGET
+    if [info exists LDD_FOR_TARGET] {
+	set ldd $LDD_FOR_TARGET
+    } else {
+	set ldd "ldd"
+    }
+    return $ldd
+}
+
+proc gdb_find_objcopy {} {
+    global OBJCOPY_FOR_TARGET
+    if [info exists OBJCOPY_FOR_TARGET] {
+	set objcopy $OBJCOPY_FOR_TARGET
+    } else {
+	set objcopy [transform objcopy]
+    }
+    return $objcopy
+}
+
+# find target objdump
+proc gdb_find_objdump {} {
+    global OBJDUMP_FOR_TARGET
+    if [info exists OBJDUMP_FOR_TARGET] {
+	set objdump $OBJDUMP_FOR_TARGET
+    } else {
+	set objdump [transform objdump]
+    }
+    return $objdump
+}
+
+proc gdb_find_readelf {} {
+    global READELF_FOR_TARGET
+    if [info exists READELF_FOR_TARGET] {
+	set readelf $READELF_FOR_TARGET
+    } else {
+	set readelf [transform readelf]
+    }
+    return $readelf
+}
+
+proc gdb_find_eu-unstrip {} {
+    global EU_UNSTRIP_FOR_TARGET
+    if [info exists EU_UNSTRIP_FOR_TARGET] {
+	set eu_unstrip $EU_UNSTRIP_FOR_TARGET
+    } else {
+	set eu_unstrip [transform eu-unstrip]
+    }
+    return $eu_unstrip
+}
+
+# Local version of default_target_compile, to be used for languages that
+# dejagnu's default_target_compile doesn't support.
+proc gdb_default_target_compile_1 {source destfile type options} {
+    global target_triplet
+    global tool_root_dir
+    global CFLAGS_FOR_TARGET
+    global compiler_flags
+
+    if { $destfile == "" && $type != "preprocess" && $type != "none" } {
+	error "Must supply an output filename for the compile to default_target_compile"
+    }
+
+    set early_flags ""
+    set add_flags ""
+    set libs ""
+    set compiler_type "c"
+    set compiler ""
+    set linker ""
+    # linker_opts_order is one of "sources-then-flags", "flags-then-sources".
+    # The order matters for things like -Wl,--as-needed.  The default is to
+    # preserve existing behavior.
+    set linker_opts_order "sources-then-flags"
+    set ldflags ""
+    set dest [target_info name]
+
+    if {[info exists CFLAGS_FOR_TARGET]} {
+	append add_flags " $CFLAGS_FOR_TARGET"
+    }
+
+    if {[info exists target_info(host,name)]} {
+	set host [host_info name]
+    } else {
+	set host "unix"
+    }
+
+    foreach i $options {
+
+	if { $i == "ada" } {
+	    set compiler_type "ada"
+	    if {[board_info $dest exists adaflags]} {
+		append add_flags " [target_info adaflags]"
+	    }
+	    if {[board_info $dest exists gnatmake]} {
+		set compiler [target_info gnatmake]
+	    } else {
+		set compiler [find_gnatmake]
+	    }
+	}
+
+	if { $i == "c++" } {
+	    set compiler_type "c++"
+	    if {[board_info $dest exists cxxflags]} {
+		append add_flags " [target_info cxxflags]"
+	    }
+	    append add_flags " [g++_include_flags]"
+	    if {[board_info $dest exists c++compiler]} {
+		set compiler [target_info c++compiler]
+	    } else {
+		set compiler [find_g++]
+	    }
+	}
+
+	if { $i == "d" } {
+	    set compiler_type "d"
+	    if {[board_info $dest exists dflags]} {
+		append add_flags " [target_info dflags]"
+	    }
+	    if {[board_info $dest exists dcompiler]} {
+		set compiler [target_info dcompiler]
+	    } else {
+		set compiler [find_gdc]
+	    }
+	}
+
+	if { $i == "f90" } {
+	    set compiler_type "f90"
+	    if {[board_info $dest exists f90flags]} {
+		append add_flags " [target_info f90flags]"
+	    }
+	    if {[board_info $dest exists f90compiler]} {
+		set compiler [target_info f90compiler]
+	    } else {
+		set compiler [find_gfortran]
+	    }
+	}
+
+	if { $i == "go" } {
+	    set compiler_type "go"
+	    if {[board_info $dest exists goflags]} {
+		append add_flags " [target_info goflags]"
+	    }
+	    if {[board_info $dest exists gocompiler]} {
+		set compiler [target_info gocompiler]
+	    } else {
+		set compiler [find_go]
+	    }
+	    if {[board_info $dest exists golinker]} {
+		set linker [target_info golinker]
+	    } else {
+		set linker [find_go_linker]
+	    }
+	    if {[board_info $dest exists golinker_opts_order]} {
+		set linker_opts_order [target_info golinker_opts_order]
+	    }
+	}
+
+	if { $i == "rust" } {
+	    set compiler_type "rust"
+	    if {[board_info $dest exists rustflags]} {
+		append add_flags " [target_info rustflags]"
+	    }
+	    if {[board_info $dest exists rustflags]} {
+		set compiler [target_info rustflags]
+	    } else {
+		set compiler [find_rustc]
+	    }
+	}
+
+	if { $i == "hip" } {
+	    set compiler_type "hip"
+	    if {[board_info $dest exists hipflags]} {
+		append add_flags " [target_info hipflags]"
+	    }
+	    if {[board_info $dest exists hipcompiler]} {
+		set compiler [target_info hipcompiler]
+	    } else {
+		set compiler [find_hipcc]
+	    }
+	}
+
+	if {[regexp "^dest=" $i]} {
+	    regsub "^dest=" $i "" tmp
+	    if {[board_info $tmp exists name]} {
+		set dest [board_info $tmp name]
+	    } else {
+		set dest $tmp
+	    }
+	}
+	if {[regexp "^compiler=" $i]} {
+	    regsub "^compiler=" $i "" tmp
+	    set compiler $tmp
+	}
+	if {[regexp "^early_flags=" $i]} {
+	    regsub "^early_flags=" $i "" tmp
+	    append early_flags " $tmp"
+	}
+	if {[regexp "^additional_flags=" $i]} {
+	    regsub "^additional_flags=" $i "" tmp
+	    append add_flags " $tmp"
+	}
+	if {[regexp "^ldflags=" $i]} {
+	    regsub "^ldflags=" $i "" tmp
+	    append ldflags " $tmp"
+	}
+	if {[regexp "^libs=" $i]} {
+	    regsub "^libs=" $i "" tmp
+	    append libs " $tmp"
+	}
+	if {[regexp "^incdir=" $i]} {
+	    regsub "^incdir=" $i "-I" tmp
+	    append add_flags " $tmp"
+	}
+	if {[regexp "^libdir=" $i]} {
+	    regsub "^libdir=" $i "-L" tmp
+	    append add_flags " $tmp"
+	}
+	if {[regexp "^ldscript=" $i]} {
+	    regsub "^ldscript=" $i "" ldscript
+	}
+	if {[regexp "^redirect=" $i]} {
+	    regsub "^redirect=" $i "" redirect
+	}
+	if {[regexp "^optimize=" $i]} {
+	    regsub "^optimize=" $i "" optimize
+	}
+	if {[regexp "^timeout=" $i]} {
+	    regsub "^timeout=" $i "" timeout
+	}
+    }
+
+    if {[board_info $host exists cflags_for_target]} {
+	append add_flags " [board_info $host cflags_for_target]"
+    }
+
+    global CC_FOR_TARGET
+    global CXX_FOR_TARGET
+    global D_FOR_TARGET
+    global F90_FOR_TARGET
+    global GNATMAKE_FOR_TARGET
+    global GO_FOR_TARGET
+    global GO_LD_FOR_TARGET
+    global RUSTC_FOR_TARGET
+    global HIPCC_FOR_TARGET
+
+    if {[info exists GNATMAKE_FOR_TARGET]} {
+	if { $compiler_type == "ada" } {
+	    set compiler $GNATMAKE_FOR_TARGET
+	}
+    }
+
+    if {[info exists CC_FOR_TARGET]} {
+	if { $compiler == "" } {
+	    set compiler $CC_FOR_TARGET
+	}
+    }
+
+    if {[info exists CXX_FOR_TARGET]} {
+	if { $compiler_type == "c++" } {
+	    set compiler $CXX_FOR_TARGET
+	}
+    }
+
+    if {[info exists D_FOR_TARGET]} {
+	if { $compiler_type == "d" } {
+	    set compiler $D_FOR_TARGET
+	}
+    }
+
+    if {[info exists F90_FOR_TARGET]} {
+	if { $compiler_type == "f90" } {
+	    set compiler $F90_FOR_TARGET
+	}
+    }
+
+    if { $compiler_type == "go" } {
+	if {[info exists GO_FOR_TARGET]} {
+	    set compiler $GO_FOR_TARGET
+	}
+	if {[info exists GO_LD_FOR_TARGET]} {
+	    set linker $GO_LD_FOR_TARGET
+	}
+    }
+
+    if {[info exists RUSTC_FOR_TARGET]} {
+	if {$compiler_type == "rust"} {
+	    set compiler $RUSTC_FOR_TARGET
+	}
+    }
+
+    if {[info exists HIPCC_FOR_TARGET]} {
+	if {$compiler_type == "hip"} {
+	    set compiler $HIPCC_FOR_TARGET
+	}
+    }
+
+    if { $type == "executable" && $linker != "" } {
+	set compiler $linker
+    }
+
+    if { $compiler == "" } {
+	if { [board_info $dest exists compiler] } {
+	    set compiler [board_info $dest compiler]
+	} elseif { $compiler_type eq "c" } {
+	    set compiler [find_gcc]
+	}
+	if { $compiler == "" } {
+	    return "default_target_compile: No compiler to compile with"
+	}
+    }
+
+    if {![is_remote host]} {
+	if { [which $compiler] == 0 } {
+	    return "default_target_compile: Can't find $compiler."
+	}
+    }
+
+    if {$type == "object"} {
+	if {$compiler_type == "rust"} {
+	    append add_flags "--emit obj"
+	} else {
+	    append add_flags " -c"
+	}
+    }
+
+    if { $type == "preprocess" } {
+	append add_flags " -E"
+    }
+
+    if { $type == "assembly" } {
+	append add_flags " -S"
+    }
+
+    if {[board_info $dest exists cflags]} {
+	append add_flags " [board_info $dest cflags]"
+    }
+
+    if { $type == "executable" } {
+	if {[board_info $dest exists ldflags]} {
+	    append add_flags " [board_info $dest ldflags]"
+	}
+	if { $compiler_type == "c++" } {
+	    append add_flags " [g++_link_flags]"
+	}
+	if {[isnative]} {
+	    # This is a lose.
+	    catch "glob -nocomplain $tool_root_dir/libstdc++/libstdc++.so* $tool_root_dir/libstdc++/libstdc++.sl" tmp
+	    if { ${tmp} != "" } {
+		if {[regexp ".*solaris2.*" $target_triplet]} {
+		    # Solaris 2
+		    append add_flags " -R$tool_root_dir/libstdc++"
+		} elseif {[regexp ".*(osf|irix5|linux).*" $target_triplet]} {
+		    # OSF/1 or IRIX 5
+		    append add_flags " -Wl,-rpath,$tool_root_dir/libstdc++"
+		}
+	    }
+	}
+    }
+
+    if {![info exists ldscript]} {
+	set ldscript [board_info $dest ldscript]
+    }
+
+    foreach i $options {
+	if { $i == "debug" } {
+	    if {[board_info $dest exists debug_flags]} {
+		append add_flags " [board_info $dest debug_flags]"
+	    } else {
+		append add_flags " -g"
+	    }
+	}
+    }
+
+    if {[info exists optimize]} {
+	append add_flags " $optimize"
+    }
+
+    if { $type == "executable" } {
+	append add_flags " $ldflags"
+	foreach x $libs {
+	    if {[file exists $x]} {
+		append source " $x"
+	    } else {
+		append add_flags " $x"
+	    }
+	}
+
+	if {[board_info $dest exists libs]} {
+	    append add_flags " [board_info $dest libs]"
+	}
+
+	# This probably isn't such a good idea, but it avoids nasty
+	# hackiness in the testsuites.
+	# The math library must be linked in before the C library.  The C
+	# library is linked in by the linker script, so this must be before
+	# the linker script.
+	if {[board_info $dest exists mathlib]} {
+	    append add_flags " [board_info $dest mathlib]"
+	} else {
+	    append add_flags " -lm"
+	}
+
+	# This must be added here.
+	append add_flags " $ldscript"
+
+	if {[board_info $dest exists remote_link]} {
+	    # Relink option.
+	    append add_flags " -Wl,-r"
+	}
+	if {[board_info $dest exists output_format]} {
+	    append add_flags " -Wl,-oformat,[board_info $dest output_format]"
+	}
+    }
+
+    if {[board_info $dest exists multilib_flags]} {
+	append add_flags " [board_info $dest multilib_flags]"
+    }
+
+    verbose "doing compile"
+
+    set sources ""
+    if {[is_remote host]} {
+	foreach x $source {
+	    set file [remote_download host $x]
+	    if { $file == "" } {
+		warning "Unable to download $x to host."
+		return "Unable to download $x to host."
+	    } else {
+		append sources " $file"
+	    }
+	}
+    } else {
+	set sources $source
+    }
+
+    if {[is_remote host]} {
+	append add_flags " -o " [file tail $destfile]
+	remote_file host delete [file tail $destfile]
+    } else {
+	if { $destfile != "" } {
+	    append add_flags " -o $destfile"
+	}
+    }
+
+    # This is obscure: we put SOURCES at the end when building an
+    # object, because otherwise, in some situations, libtool will
+    # become confused about the name of the actual source file.
+    switch $type {
+	"object" {
+	    set opts "$early_flags $add_flags $sources"
+	}
+	"executable" {
+	    switch $linker_opts_order {
+		"flags-then-sources" {
+		    set opts "$early_flags $add_flags $sources"
+		}
+		"sources-then-flags" {
+		    set opts "$early_flags $sources $add_flags"
+		}
+		default {
+		    error "Invalid value for board_info linker_opts_order"
+		}
+	    }
+	}
+	default {
+	    set opts "$early_flags $sources $add_flags"
+	}
+    }
+
+    if {[is_remote host]} {
+	if {[host_info exists use_at]} {
+	    set fid [open "atfile" "w"]
+	    puts $fid "$opts"
+	    close $fid
+	    set opts "@[remote_download host atfile]"
+	    remote_file build delete atfile
+	}
+    }
+
+    verbose "Invoking the compiler as $compiler $opts" 2
+
+    if {[info exists redirect]} {
+	verbose "Redirecting output to $redirect" 2
+	set status [remote_exec host "$compiler $opts" "" "" $redirect]
+    } else {
+	if {[info exists timeout]} {
+	    verbose "Setting timeout to $timeout" 2
+	    set status [remote_exec host "$compiler $opts" "" "" "" $timeout]
+	} else {
+	    set status [remote_exec host "$compiler $opts"]
+	}
+    }
+
+    set compiler_flags $opts
+    if {[is_remote host]} {
+	remote_upload host [file tail $destfile] $destfile
+	remote_file host delete [file tail $destfile]
+    }
+    set comp_output [prune_warnings [lindex $status 1]]
+    regsub "^\[\r\n\]+" $comp_output "" comp_output
+    if { [lindex $status 0] != 0 } {
+	verbose -log "compiler exited with status [lindex $status 0]"
+    }
+    if { [lindex $status 1] != "" } {
+	verbose -log "output is:\n[lindex $status 1]" 2
+    }
+    if { [lindex $status 0] != 0 && "${comp_output}" == "" } {
+	set comp_output "exit status is [lindex $status 0]"
+    }
+    return ${comp_output}
+}
+
+# If dejagnu's default_target_compile supports the language specified in
+# OPTIONS, use it.  Otherwise, use gdb_default_target_compile_1.
+proc gdb_default_target_compile {source destfile type options} {
+    global use_gdb_compile
+
+    set need_local_lang 0
+    set need_local_early_flags 0
+    foreach i $options {
+
+	if { $i == "ada" || $i == "d" || $i == "go" || $i == "rust" } {
+	    set need_local_lang [info exists use_gdb_compile($i)]
+	}
+
+	if { $i == "c++" } {
+	    set need_local_lang 0
+	}
+
+	if { $i == "f90" } {
+	    set need_local_lang [info exists use_gdb_compile(fortran)]
+	}
+
+	if { [regexp "^early_flags=" $i] } {
+	    set need_local_early_flags 1
+	}
+    }
+
+    if { $need_local_lang || $need_local_early_flags } {
+	return [gdb_default_target_compile_1 $source $destfile $type $options]
+    }
+
+    return [dejagnu_default_target_compile $source $destfile $type $options]
+}
+
+# Array of languages for which dejagnu's default_target_compile is missing
+# support.
+array set use_gdb_compile [list]
+
+# Note missing support in dejagnu's default_target_compile.  This
+# needs to be fixed by porting the missing support to Dejagnu.
+set note_prefix "Dejagnu's default_target_compile is missing support for "
+set note_suffix ", using local override"
+
+if {[info procs find_gnatmake] == ""} {
+    rename gdb_find_gnatmake find_gnatmake
+    set use_gdb_compile(ada) 1
+    gdb_note [join [list $note_prefix "Ada" $note_suffix] ""]
+}
+
+if {[info procs find_gfortran] == ""} {
+    rename gdb_find_gfortran find_gfortran
+    set use_gdb_compile(fortran) 1
+    gdb_note [join [list $note_prefix "Fortran" $note_suffix] ""]
+}
+
+if {[info procs find_go_linker] == ""} {
+    rename gdb_find_go find_go
+    rename gdb_find_go_linker find_go_linker
+    set use_gdb_compile(go) 1
+    gdb_note [join [list $note_prefix "Go" $note_suffix] ""]
+}
+
+if {[info procs find_gdc] == ""} {
+    rename gdb_find_gdc find_gdc
+    set use_gdb_compile(d) 1
+    gdb_note [join [list $note_prefix "D" $note_suffix] ""]
+}
+
+if {[info procs find_rustc] == ""} {
+    rename gdb_find_rustc find_rustc
+    set use_gdb_compile(rust) 1
+    gdb_note [join [list $note_prefix "Rust" $note_suffix] ""]
+}
+
+if {[info procs find_hipcc] == ""} {
+    rename gdb_find_hipcc find_hipcc
+    set use_gdb_compile(hip) 1
+    gdb_note [join [list $note_prefix "HIP" $note_suffix] ""]
+}
+
+# If dejagnu's default_target_compile is missing support for any language,
+# override it.
+if { [array size use_gdb_compile] != 0 } {
+    catch {rename default_target_compile dejagnu_default_target_compile}
+    rename gdb_default_target_compile default_target_compile
+}
+
+
+# Provide 'lreverse' missing in Tcl before 7.5.
+
+if {[info procs lreverse] == ""} {
+    proc lreverse { arg } {
+	set retval {}
+	while { [llength $retval] < [llength $arg] } {
+	    lappend retval [lindex $arg end-[llength $retval]]
+	}
+	return $retval
+    }
+}
+
+# Various ccache versions provide incorrect debug info such as ignoring
+# different current directory, breaking GDB testsuite.
+set env(CCACHE_DISABLE) 1
+unset -nocomplain env(CCACHE_NODISABLE)

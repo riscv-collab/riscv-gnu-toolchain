@@ -1,0 +1,217 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test shows the importance of not corrupting the order of line
+# table information.  When multiple lines are given for the same
+# address the compiler usually lists these in the order in which we
+# would expect to encounter them.  When stepping through nested inline
+# frames the last line given for an address is assumed by GDB to be
+# the most inner frame, and this is what GDB displays.
+#
+# If we corrupt the order of the line table entries then GDB will
+# display the wrong line as being the inner most frame.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+# The .c files use __attribute__.
+require is_c_compiler_gcc
+
+standard_testfile .c .S
+
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    global srcdir subdir srcfile
+    declare_labels lines_label
+
+    get_func_info main
+
+    cu {} {
+	compile_unit {
+	    {language @DW_LANG_C}
+	    {name dw2-is-stmt.c}
+	    {low_pc 0 addr}
+	    {stmt_list ${lines_label} DW_FORM_sec_offset}
+	} {
+	    subprogram {
+		{external 1 flag}
+		{name main}
+		{low_pc $main_start addr}
+		{high_pc "$main_start + $main_len" addr}
+	    } {}
+	}
+    }
+
+    lines {version 2 default_is_stmt 1} lines_label {
+	include_dir "${srcdir}/${subdir}"
+	file_name "$srcfile" 1
+
+	program {
+	    DW_LNE_set_address main
+	    line [gdb_get_line_number "main prologue"]
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_0
+	    line [gdb_get_line_number "main start"]
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_1
+	    line [gdb_get_line_number "Line 1"]
+	    DW_LNS_negate_stmt
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_2
+	    DW_LNS_negate_stmt
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_3
+	    line [gdb_get_line_number "Line 2"]
+	    DW_LNS_negate_stmt
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_4
+	    line [gdb_get_line_number "Line 1"]
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_5
+	    line [gdb_get_line_number "Line 3"]
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_6
+	    line [gdb_get_line_number "Line 4"]
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_7
+	    DW_LNS_negate_stmt
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_8
+	    line [gdb_get_line_number "Line 2"]
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_9
+	    DW_LNS_negate_stmt
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_10
+	    line [gdb_get_line_number "Line 3"]
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_11
+	    line [gdb_get_line_number "Line 5"]
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_12
+	    DW_LNS_negate_stmt
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_13
+	    line [gdb_get_line_number "Line 3"]
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_14
+	    line [gdb_get_line_number "Line 4"]
+	    DW_LNS_negate_stmt
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_15
+	    line [gdb_get_line_number "Line 5"]
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_16
+	    line [gdb_get_line_number "main end"]
+	    DW_LNS_negate_stmt
+	    DW_LNS_copy
+
+	    DW_LNE_set_address ${main_end}
+	    DW_LNE_end_sequence
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	  [list $srcfile $asm_file] {nodebug}] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+# Check stepping through the out of order lines gives the experience
+# we expect; lines in the correct order, and stop at the correct
+# labels.Q
+set locs { { "Line 1." "line_label_2" } \
+	       { "Line 4." "line_label_7" } \
+	       { "Line 2." "line_label_8" } \
+	       { "Line 5." "line_label_12" } \
+	       { "Line 3." "line_label_13" } }
+foreach entry $locs {
+    set pattern [lindex $entry 0]
+    set label  [lindex $entry 1]
+
+    set linum [gdb_get_line_number "$pattern"]
+    gdb_test "step" "\r\n$linum\[ \t\]+/\\* $pattern  \\*/" \
+	"step to $pattern"
+
+    set pc [get_hexadecimal_valueof "\$pc" "NO-PC" \
+	       "read \$pc at $pattern"]
+    set val [get_hexadecimal_valueof "&${label}" "INVALID"]
+    gdb_assert { $pc == $val } \
+	"check pc at $pattern"
+}
+
+# Now restart the test, and this time, single instruction step
+# through.  This is checking that the is-stmt marked lines are
+# displayed differently (without addresses) to addresses that are
+# mid-way through a line, or not marked as is-stmt.
+clean_restart $binfile
+runto_main
+
+foreach entry $locs {
+    set pattern [lindex $entry 0]
+    set label  [lindex $entry 1]
+
+    with_test_prefix "stepi to $label" {
+	# If can take many instruction steps to get to the next label.
+	set i 0
+	set pc [get_hexadecimal_valueof "\$pc" "NO-PC" ]
+	set val [get_hexadecimal_valueof "&${label}" "INVALID"]
+	while { $pc < $val } {
+	    incr i
+	    set line_changed -1
+	    gdb_test_multiple "stepi" "stepi $i" {
+		-re "\r\n$hex\[ \t\]+$decimal\[^\r\n\]+\r\n$gdb_prompt" {
+		    set line_changed 0
+		}
+		-re "\r\n$decimal\[ \t\]+/\\* $pattern  \\*/\r\n$gdb_prompt" {
+		    set line_changed 1
+		}
+	    }
+	    gdb_assert { $line_changed != -1 } \
+		"ensure we saw a valid pattern, $i"
+	    set pc [get_hexadecimal_valueof "\$pc" "NO-PC" \
+			"get pc inside stepi loop, $i"]
+	    if { $pc == $val } {
+		gdb_assert { $line_changed } \
+		    "line must change at $label"
+	    } else {
+		gdb_assert { !$line_changed } "same line $i"
+	    }
+	}
+    }
+}

@@ -1,0 +1,173 @@
+# Copyright (C) 2002-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+# Tests for Powerpc AltiVec ABI
+
+
+#
+# This file uses altivec-abi.c for input.
+#
+
+require allow_altivec_tests
+
+standard_testfile
+
+proc altivec_abi_tests { extra_flags force_abi } {
+    global testfile binfile srcfile srcdir subdir
+    global gdb_prompt
+
+    set compile_flags "debug nowarnings $extra_flags"
+
+    if  { [gdb_compile ${srcdir}/${subdir}/${srcfile} ${binfile} executable $compile_flags] != "" } {
+	untested "failed to compile"
+	return -1
+    }
+
+    if { "$force_abi" == "auto" } {
+	# If the toolchain does not record attributes, skip auto-ABI tests.
+	set readelf_program [gdb_find_readelf]
+	set result [catch "exec $readelf_program -A $binfile" output]
+
+	if {$result == 0 && ![regexp Tag_GNU_Power_ABI_Vector $output]} {
+	    untested "ABI not marked"
+	    return
+	}
+    }
+
+    clean_restart $binfile
+
+    # Run to `main' where we begin our tests.
+    if {![runto_main]} {
+	return -1
+    }
+
+    gdb_test "set print frame-arguments all"
+    gdb_test "set powerpc vector-abi $force_abi"
+
+    gdb_test "b marker" "Breakpoint 2 at.*file.*altivec-abi.c, line \[0-9\]+." "break marker"
+    gdb_test "continue" "Breakpoint 2.*marker.*altivec-abi.c.*" "continue to marker"
+    gdb_test "finish" "Run till exit from .0.*marker.*at.*altivec-abi.c.*main \\(\\) at.*altivec-abi.c.*result = vec_func \\(vshort,.*goes in v2.*" "back to main (1)"
+
+    # now all the arguments of vec_fun are initialized
+
+    set pattern "vec_func .vshort_f=.111, 222, 333, 444, 555, 666, 777, 888., vushort_f=.100, 200, 300, 400, 500, 600, 700, 800., vint_f=.-10, -20, -30, -40., vuint_f=.1111, 2222, 3333, 4444., vchar_f=.97, 98, 99, 100, 101, 102, 103, 104, 105, 108, 109, 110, 111, 112, 113, 114., vuchar_f=.65, 66, 67, 68, 69, 70, 71, 72, 73, 76, 77, 78, 79, 80, 81, 82., vfloat_f=.1.25, 3.75, 5.5, 1.25., x_f=.1, 2, 3, 4, 5, 6, 7, 8., y_f=.12, 22, 32, 42., a_f=.118, 101, 99, 116, 111, 114, 32, 111, 102, 32, 99, 104, 97, 114, 115, 46., b_f=.5.5, 4.5, 3.75, 2.25., c_f=.1.25, 3.5, 5.5, 7.75., intv_on_stack_f=.12, 34, 56, 78.."
+
+    set pattern1 $pattern
+    append pattern1 " at.*altivec-abi.c.*vint_res  = vec_add.*vint_f, intv_on_stack_f.;"
+
+    # Now let's call the function.  This function has > 12 args,
+    # the last one will go on the stack.
+    set msg "call inferior function with vectors (1)"
+    gdb_test "p vec_func(vshort,vushort,vint,vuint,vchar,vuchar,vfloat,x,y,a,b,c,intv_on_stack)" \
+	".\[0-9\]+ = .14, 36, 58, 80." "call inferior function with vectors (1)"
+
+
+    # Let's call the function again with dummy arguments.  This is to clean
+    # up the contents of the vector registers before the next call.
+    gdb_test "p vec_func(vshort_d,vushort_d,vint_d,vuint_d,vchar_d,vuchar_d,vfloat_d,x_d,y_d,a_d,b_d,c_d,intv_on_stack_d)" \
+	".\[0-9\]+ = .0, 0, 0, 0." "call inferior function with vectors (2)"
+
+    # Attempt to take address of the return value of vec_func.
+    gdb_test "p &vec_func(vshort,vushort,vint,vuint,vchar,vuchar,vfloat,x,y,a,b,c,intv_on_stack)" \
+	"Attempt to take address of value not located in memory." \
+	"Attempt to take address of the return value of vec_func"
+
+    # Attempt to assign a value to the return value of vec_func.
+    gdb_test "set variable vec_func(vshort,vushort,vint,vuint,vchar,vuchar,vfloat,x,y,a,b,c,intv_on_stack) = {0,1,2,3}" \
+	"Left operand of assignment is not an lvalue." \
+	"Attempt to assign a value to the return value of vec_func"
+
+    # Let's step into the function, to see if the args are printed correctly.
+    gdb_test "step" \
+	$pattern1 \
+	"step into vec_fun"
+
+    set pattern2 $pattern
+    append pattern2 " at.*altivec-abi.c.*main.*result = vec_func .vshort,.*goes in v2.*Value returned is.*= .14, 36, 58, 80."
+
+    # Let's see if the result is returned correctly.
+    set message "vector value returned correctly"
+    gdb_test_multiple "finish" $message {
+	-re "Run till exit from .0.*$pattern2.*$gdb_prompt $" {
+	    pass $message
+	}
+	-re "Run till exit from .0.*Cannot determine contents.*$gdb_prompt $" {
+	    # This happens in those cases where the vector is returned by
+	    # reference (generic vectors on 64-bit GNU/Linux).
+	    pass $message
+	}
+    }
+
+    # can we print the args correctly for this function?
+    gdb_test "break struct_of_vector_func" "" ""
+
+    set pattern "struct_of_vector_func .vector_struct=.vshort1 = .1, 2, 3, 4, 5, 6, 7, 8., vshort2 = .11, 12, 13, 14, 15, 16, 17, 18., vshort3 = .21, 22, 23, 24, 25, 26, 27, 28., vshort4 = .31, 32, 33, 34, 35, 36, 37, 38... at.*altivec-abi.c.*"
+
+    gdb_test "continue" \
+	"Breakpoint 3, $pattern.*vector_struct.vshort1 = vec_add .vector_struct.vshort1, vector_struct.vshort2.;" \
+	"continue to struct_of_vector_func"
+
+    gdb_test "finish" \
+	"Run till exit from .0  $pattern\[ \r\n\]+main.*altivec-abi.c.*array_of_vector_func.*" \
+	"back to main (2)"
+
+    gdb_test "step" "" "step into array_of_vector_func"
+    gdb_test "p matrix\[0\]" ".*= .1, 2, 3, 4, 5, 6, 7, 8." "print first vector"
+    gdb_test "p matrix\[1\]" ".*= .11, 12, 13, 14, 15, 16, 17, 18." "print second vector"
+    gdb_test "p matrix\[2\]" ".*= .21, 22, 23, 24, 25, 26, 27, 28." "print third vector"
+    gdb_test "p matrix\[3\]" ".*= .31, 32, 33, 34, 35, 36, 37, 38." "print fourth vector"
+}
+
+if [test_compiler_info gcc*] {
+    set binprefix ${binfile}
+
+    with_test_prefix "default ABI, auto" {
+	altivec_abi_tests  "additional_flags=-maltivec" "auto"
+    }
+
+    # On GNU/Linux, we can mix -mabi=no-altivec and -mabi=altivec.
+    # So test some combinations.
+    if { [istarget "powerpc*-linux*"] } {
+	# On 64-bit GNU/Linux with GCC 4.1 and 4.2, -mabi=no-altivec
+	# was broken, so skip those tests there.
+	if { ![is_lp64_target] || ![test_compiler_info "gcc-4-\[12\]-*"] } {
+	    set binfile ${binprefix}-ge-ge
+	    with_test_prefix "generic ABI, forced" {
+		altivec_abi_tests "additional_flags=-maltivec additional_flags=-mabi=no-altivec" "generic"
+	    }
+
+	    set binfile ${binprefix}-ge-auto
+	    with_test_prefix "generic ABI, auto" {
+		altivec_abi_tests "additional_flags=-maltivec additional_flags=-mabi=no-altivec" "auto"
+	    }
+	}
+
+	set binfile ${binprefix}-av-av
+	with_test_prefix "AltiVec ABI, forced" {
+	    altivec_abi_tests "additional_flags=-maltivec additional_flags=-mabi=altivec" "altivec"
+	}
+
+	set binfile ${binprefix}-av-auto
+	with_test_prefix "AltiVec ABI, auto" {
+	    altivec_abi_tests "additional_flags=-maltivec additional_flags=-mabi=altivec" "auto"
+	}
+    }
+} elseif [test_compiler_info xlc*] {
+    altivec_abi_tests "additional_flags=-qaltivec" "auto"
+} else {
+    warning "unknown compiler"
+    return -1
+}

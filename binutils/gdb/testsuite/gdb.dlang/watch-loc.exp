@@ -1,0 +1,86 @@
+# Copyright (C) 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test symbol lookup when there are multiple circular imports.
+
+load_lib "d-support.exp"
+load_lib "dwarf.exp"
+
+require allow_d_tests dwarf2_support
+
+standard_testfile watch-loc.c watch-loc-dw.S
+
+lassign [function_range _Dmain ${srcdir}/${subdir}/${srcfile}] \
+    dmain_start dmain_length
+
+
+# Make some DWARF for the test.
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    global dmain_start dmain_length
+
+    cu { label cu_start } {
+	compile_unit {
+	    {language @DW_LANG_D}
+	} {
+	    declare_labels watch_module_label watch_struct_label
+
+	    watch_module_label: module {
+		{name watch}
+	    } {
+		watch_struct_label: structure_type {
+		    {name tstruct}
+		    {byte_size 1 data1}
+		}
+
+		tag_variable {
+		    {name my_data}
+		    {type :$watch_struct_label}
+		    {location {
+			addr [gdb_target_symbol my_data]
+		    } SPECIAL_expr}
+		    {external 1 flag}
+		}
+
+		subprogram {
+		    {MACRO_AT_func { "_Dmain" }}
+		    {external 1 flag_present}
+		}
+	    }
+	}
+    }
+
+    aranges {} cu_start {
+	arange {} $dmain_start $dmain_length
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+          [list $srcfile $asm_file] {nodebug}] } {
+    return -1
+}
+
+gdb_test_no_output "set language d"
+
+if {![runto "_Dmain"]} {
+    return -1
+}
+
+# watch -l will rewrite the expression to "*(watch.tstruct *) 0x12345",
+# this should not cause syntax error in the cast expression.
+gdb_test "watch -l my_data" ".*atchpoint \[0-9\]+: -location my_data"
+
+# Same test as above, but done explicitly.
+gdb_test "print *(watch.tstruct *) &my_data" "{<No data fields>}"

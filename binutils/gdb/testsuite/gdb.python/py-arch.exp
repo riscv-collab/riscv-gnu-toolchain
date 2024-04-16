@@ -1,0 +1,146 @@
+# Copyright 2013-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+load_lib gdb-python.exp
+require allow_python_tests
+standard_testfile
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+    return -1
+}
+
+if ![runto_main] {
+   return -1
+}
+
+# Test python/15461.  Invalid architectures should not trigger an
+# internal GDB assert.
+gdb_py_test_silent_cmd "python empty = gdb.Architecture()" "get empty arch" 0
+gdb_test "python print(repr (empty))" "<gdb\\.Architecture \\(invalid\\)>" \
+    "Test empty achitecture __repr__ does not trigger an assert"
+gdb_test "python print(empty.name())" ".*Architecture is invalid.*" \
+    "Test empty architecture.name does not trigger an assert"
+gdb_test "python print(empty.disassemble())" ".*Architecture is invalid.*" \
+    "Test empty architecture.disassemble does not trigger an assert"
+
+gdb_py_test_silent_cmd "python frame = gdb.selected_frame()" "get frame" 0
+gdb_py_test_silent_cmd "python arch = frame.architecture()" "get arch" 0
+gdb_py_test_silent_cmd "python pc = frame.pc()" "get pc" 0
+gdb_py_test_silent_cmd "python insn_list1 = arch.disassemble(pc, pc, 1)" \
+  "disassemble" 0
+gdb_py_test_silent_cmd "python insn_list2 = arch.disassemble(pc, pc)" \
+  "disassemble no count" 0
+gdb_py_test_silent_cmd "python insn_list3 = arch.disassemble(pc, count=1)" \
+  "disassemble no end" 0
+gdb_py_test_silent_cmd "python insn_list4 = arch.disassemble(gdb.Value(pc))" \
+  "disassemble no end no count" 0
+
+gdb_test "python print (repr (arch))" \
+    "<gdb.Architecture arch_name=.* printable_name=.*>" \
+    "test __repr__ for architecture"
+
+gdb_test "python print (len(insn_list1))" "1" "test number of instructions 1"
+gdb_test "python print (len(insn_list2))" "1" "test number of instructions 2"
+gdb_test "python print (len(insn_list3))" "1" "test number of instructions 3"
+gdb_test "python print (len(insn_list4))" "1" "test number of instructions 4"
+
+gdb_py_test_silent_cmd "python insn = insn_list1\[0\]" "get instruction" 0
+
+gdb_test "python print (\"addr\" in insn)" "True" "test key addr"
+gdb_test "python print (\"asm\" in insn)" "True" "test key asm"
+gdb_test "python print (\"length\" in insn)" "True" "test key length"
+
+if { ![is_address_zero_readable] } {
+    # Negative test
+    gdb_test "python arch.disassemble(0, 0)" ".*gdb\.MemoryError.*" \
+	"test bad memory access"
+}
+
+foreach size {0 1 2 3 4 8 16} {
+    foreach sign_data {{"" True} \
+			   {", True" True} \
+			   {", False" False} \
+			   {", None" False} \
+			   {", \"blah\"" True}} {
+	set sign [lindex $sign_data 0]
+	# GDB's 0 bit type is always signed.
+	if { $size == 0 } {
+	    set sign_result True
+	} else {
+	    set sign_result [lindex $sign_data 1]
+	}
+	set fullsize [expr 8 * $size]
+	gdb_test_no_output "python t = arch.integer_type($fullsize$sign)" \
+	    "get integer type for $size$sign"
+	gdb_test "python print(t.sizeof)" "$size" \
+	    "print size of integer type for $size$sign"
+	gdb_test "python print(t.is_signed == ${sign_result})" "True" \
+	    "check signedness of type for $size$sign"
+    }
+}
+
+gdb_test "python arch.integer_type(95)" \
+    ".*ValueError: no integer type of that size is available.*" \
+    "call integer_type with invalid size"
+
+# Test for gdb.architecture_names().  First we're going to grab the
+# complete list of architecture names using the 'complete' command.
+set arch_names []
+gdb_test_no_output "set max-completions unlimited"
+gdb_test_multiple "complete set architecture " "" {
+    -re "complete set architecture\[^\r\n\]+\r\n" {
+	exp_continue
+    }
+    -re "^set architecture \(\[^\r\n\]+\)\r\n" {
+	set arch $expect_out(1,string)
+	if { "$arch" != "auto" } {
+	    set arch_names [lappend arch_names $arch]
+	}
+	exp_continue
+    }
+    -re "^$gdb_prompt $" {
+	gdb_assert { [llength $arch_names] > 0 }
+    }
+}
+
+# Now find all of the architecture names using Python.
+set py_arch_names []
+gdb_test_no_output "python all_arch = gdb.architecture_names()"
+gdb_test_no_output "python all_arch.sort()"
+gdb_test_multiple "python print(\"\\n\".join((\"Arch: %s\" % a) for a in all_arch))" "" {
+    -re "python \[^\r\n\]+\r\n" {
+	exp_continue
+    }
+    -re "^Arch: \(\[^\r\n\]+\)\r\n" {
+	set arch $expect_out(1,string)
+	set py_arch_names [lappend py_arch_names $arch]
+	exp_continue
+    }
+    -re "$gdb_prompt $" {
+	gdb_assert { [llength $py_arch_names] > 0 }
+    }
+}
+
+# Check the two lists of architecture names are the same length, and
+# that the list contents all match.
+gdb_assert { [llength $arch_names] == [llength $py_arch_names] }
+set lists_match true
+foreach a $arch_names b $py_arch_names {
+    if { $a != $b } {
+	set lists_match false
+	verbose -log "Mismatch is architecture list '$a' != '$b'"
+	break
+    }
+}
+gdb_assert { $lists_match }

@@ -1,0 +1,104 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that when setting a breakpoint at "foo", GDB creates a location
+# for an unresolved <foo@plt> PLT in the main binary, even when a
+# static function named "foo" exists in the shared library.  Tests
+# both with and without debug info.
+
+require allow_shlib_tests
+
+standard_testfile msym-bp-shl-main.c msym-bp-shl-main-2.c msym-bp-shl-lib.c
+set srcfile ${srcdir}/${subdir}/${srcfile}
+set srcfile2 ${srcdir}/${subdir}/${srcfile2}
+set libsrc ${srcdir}/${subdir}/${srcfile3}
+
+# Run "info breakpoints", and check that we find the two locations,
+# LOC_A and LOC_B, in either order.
+proc test_info_break_2 {loc_a loc_b} {
+    set re1 ".*\.1.*${loc_a}\r\n.*\.2.*${loc_b}"
+    set re2 ".*\.1.*${loc_b}\r\n.*\.2.*${loc_a}"
+    gdb_test "info breakpoint" "$re1|$re2"
+}
+
+proc test {debug} {
+    global testfile binfile srcfile srcfile2 libsrc
+    global decimal
+
+    if {$debug} {
+	set options "debug"
+    } else {
+	set options ""
+    }
+
+    set bin ${binfile}-$debug
+    set lib [standard_output_file msym-bp-shl-lib-$debug.sl]
+
+    set exec_opts [list $options shlib=${lib}]
+
+    if { [gdb_compile_shlib $libsrc $lib $options] != ""
+	 || [gdb_compile [list $srcfile $srcfile2] $bin \
+		 executable $exec_opts] != ""} {
+	untested "failed to compile"
+	return
+    }
+
+    clean_restart $bin
+    gdb_load_shlib $lib
+
+    # Should find two locations: the static foo in the
+    # msym-bp-shl-main-2 file, and <foo@plt>, both in the main binary.
+    with_test_prefix "before run" {
+	gdb_test "break foo" "\\(2 locations\\)"
+
+	if {$debug} {
+	    test_info_break_2 \
+		"<foo@plt.*>" \
+		"in foo at .*msym-bp-shl-main-2.c:$decimal"
+	} else {
+	    test_info_break_2 \
+		"<foo@plt.*>" \
+		"<foo(\\+$decimal)?>"
+	}
+    }
+
+    if ![runto_main] {
+	return
+    }
+
+    delete_breakpoints
+
+    # Should still find two locations, but the <foo@plt> PLT location
+    # should not be present anymore.  I.e., we should find the static
+    # foo in the msym-bp-shl-main-2 file, and the extern foo in the
+    # shared library.
+    with_test_prefix "at main" {
+	gdb_test "break foo" "\\(2 locations\\)"
+
+	if {$debug} {
+	    test_info_break_2 \
+		"in foo at .*msym-bp-shl-main-2.c:$decimal" \
+		"in foo at .*msym-bp-shl-lib.c:$decimal"
+	} else {
+	    test_info_break_2 \
+		"<foo(\\+$decimal)?>" \
+		"<foo(\\+$decimal)?>"
+	}
+    }
+}
+
+foreach_with_prefix debug {0 1} {
+    test $debug
+}

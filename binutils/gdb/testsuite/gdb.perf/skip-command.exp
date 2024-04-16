@@ -1,0 +1,138 @@
+# Copyright (C) 2016-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test case is to test the speed of GDB when it is single-stepping
+# with skip directives active. There's no need to test skip directives that
+# match functions we're stepping through. That's not the interesting case.
+# The interesting case is where there are 100s or more classes or libraries,
+# each providing their own set of skip directives.
+#
+# Parameters:
+# SKIP_STEP_COUNT: the number of single steps GDB performs
+# SKIP_DIRECTIVE_COUNT: the number of skip directives to create
+
+load_lib perftest.exp
+
+require allow_perf_tests
+
+standard_testfile .cc skip-funcs.cc
+set executable $testfile
+set skip_func_file [standard_output_file $srcfile2]
+set expfile $testfile.exp
+
+# make check-perf RUNTESTFLAGS='skip-command.exp SKIP_STEP_COUNT=1000 ...'
+if ![info exists SKIP_STEP_COUNT] {
+    set SKIP_STEP_COUNT 1000
+}
+if ![info exists SKIP_DIRECTIVE_COUNT] {
+    set SKIP_DIRECTIVE_COUNT 1000
+}
+
+proc delete_all_skips { } {
+    # FIXME: skip currently doesn't ask for confirmation
+    # FIXME: "skip delete" with no skips ->
+    #   "No skiplist entries found with number (null)."
+    gdb_test_no_output "set confirm off"
+    gdb_test "skip delete" ""
+    gdb_test_no_output "set confirm on"
+}
+
+proc install_skips { kind text nr_skips } {
+    global gdb_prompt
+    set test "install_skips"
+    delete_all_skips
+    switch $kind {
+	"function" { set skip_arg "-function" }
+	"regexp" { set skip_arg "-rfunction" }
+	default {
+	    perror "bad skip kind: $kind"
+	    return
+	}
+    }
+    for { set i 0 } { $i < $nr_skips } { incr i } {
+	gdb_test "skip $skip_arg [format $text $i]" ""
+    }
+    # There could be 1000's of these, which can overflow the buffer.
+    # However, it's good to have this in the log, so we go to the effort
+    # to read it all in.
+    gdb_test_multiple "info skip" $test {
+	-re "\[^\r\n\]*\r\n" { exp_continue }
+	-re "\[\r\n\]*$gdb_prompt $" {
+	    pass $test
+	}
+	timeout {
+	    fail "$test (timeout)"
+	}
+    }
+}
+
+proc write_skip_func_source { file_name func_name_prefix nr_funcs } {
+    set f [open $file_name "w"]
+    puts $f "// DO NOT EDIT, machine generated file.  See skip-command.exp."
+    for { set i 0 } { $i < $nr_funcs } { incr i } {
+	set func_name [format "${func_name_prefix}_%02d" $i]
+	puts $f "int $func_name () { return 0; }"
+    }
+    close $f
+}
+
+proc run_skip_bench { kind text } {
+    global SKIP_STEP_COUNT SKIP_DIRECTIVE_COUNT
+
+    if ![runto_main] {
+	return -1
+    }
+
+    gdb_test_no_output "set variable flag = 1"
+
+    for { set i 0 } { $i < 5 } { incr i } {
+	with_test_prefix "iter $i" {
+	    set nr_skips [expr $i * $SKIP_DIRECTIVE_COUNT]
+	    install_skips $kind $text $nr_skips
+	    gdb_test_python_run \
+		"SkipCommand\(\"skip-$kind-$nr_skips\", ${SKIP_STEP_COUNT}\)"
+	}
+    }
+
+    gdb_test "set variable flag = 0"
+}
+
+PerfTest::assemble {
+    global srcdir subdir srcfile binfile skip_func_file
+    global SKIP_DIRECTIVE_COUNT
+
+    write_skip_func_source $skip_func_file "skip_func" [expr 4 * $SKIP_DIRECTIVE_COUNT]
+    if { [gdb_compile [list "$srcdir/$subdir/$srcfile" $skip_func_file] ${binfile} executable {c++ debug}] != "" } {
+	return -1
+    }
+    return 0
+} {
+    global binfile
+    clean_restart $binfile
+    return 0
+} {
+    global SKIP_STEP_COUNT SKIP_DIRECTIVE_COUNT
+
+    with_test_prefix "time_skip_func" {
+	# N.B. The function name must match the ones in skip-command.cc.
+	run_skip_bench "function" "skip_func_%02d"
+    }
+
+    with_test_prefix "time_skip_constructor" {
+	run_skip_bench "regexp" "^(skip_class_%02d)::\\1 *\\("
+    }
+
+    return 0
+}

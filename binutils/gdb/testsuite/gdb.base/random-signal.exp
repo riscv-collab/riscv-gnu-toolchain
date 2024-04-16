@@ -1,0 +1,76 @@
+# Copyright 2013-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require {!target_info exists gdb,nosignals}
+
+# This test requires sending ^C to interrupt the running target.
+require {!target_info exists gdb,nointerrupts}
+
+standard_testfile
+
+if {[build_executable "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+# Set a software watchpoint, continue, wait a bit and stop the target
+# with ctrl-c.  A software watchpoint forces the target to
+# single-step.
+proc do_test {} {
+    global binfile
+
+    gdb_test_no_output "set can-use-hw-watchpoints 0"
+    gdb_test "watch v" "Watchpoint .*"
+    gdb_test_multiple "continue" "continue" {
+	-re "Continuing" {
+	    pass "continue"
+	}
+    }
+
+    # For this to work we must be sure to consume the "Continuing."
+    # message first, or GDB's signal handler may not be in place.
+    after 500 {send_gdb "\003"}
+    gdb_test "" "Program received signal SIGINT.*" "stop with control-c"
+}
+
+# With native debugging and "run" (with job control), the ctrl-c
+# always reaches the inferior, not gdb, even if ctrl-c is pressed
+# while gdb is processing the internal software watchtpoint
+# single-step.  With remote debugging, the ctrl-c reaches GDB first.
+with_test_prefix "run" {
+    clean_restart $binfile
+
+    if {![runto_main]} {
+	return -1
+    }
+
+    do_test
+}
+
+# With "attach" however, even with native debugging, the ctrl-c always
+# reaches GDB first.  Test that as well.
+with_test_prefix "attach" {
+    if {[can_spawn_for_attach]} {
+	clean_restart $binfile
+
+	set test_spawn_id [spawn_wait_for_attach $binfile]
+	set testpid [spawn_id_get_pid $test_spawn_id]
+
+	gdb_test "attach $testpid" "Attaching to.*process $testpid.*libc.*" "attach"
+
+	do_test
+
+	kill_wait_spawned_process $test_spawn_id
+    }
+}

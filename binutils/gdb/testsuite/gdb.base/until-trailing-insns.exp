@@ -1,0 +1,170 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test sets up debug information for a loop as we see in some cases
+# from clang-13.  In this situation, instructions at both the start and end
+# of the loop are associated (in the line table), with the header line of
+# the loop (line 10 in the example below).
+#
+# At the end of the loop we see some instructions marked as not a statement,
+# but still associated with the same loop header line.  For example,
+# consider the following C code:
+#
+# 10:	for (i = 0; i < 10; ++i)
+# 11:     loop_body ();
+# 12:   other_stuff ();
+#
+# Transformed into the following pseudo-assembler, with associated line table:
+#
+# Address | Pseudo-Assembler | Line | Is-Statement?
+#
+# 0x100   | i = 0            | 10   | Yes
+# 0x104   | loop_body ()     | 11   | Yes
+# 0x108   | i = i + 1        | 10   | Yes
+# 0x10c   | if (i < 10):     | 10   | No
+# 0x110   |     goto 0x104   | 10   | No
+# 0x114   | other_stuff ()   | 12   | Yes
+#
+# Notice the two non-statement instructions at the end of the loop.
+#
+# The problem here is that when we reach address 0x108 and use 'until',
+# hoping to leave the loop, GDB sets up a stepping range that runs from the
+# start of the function (0x100 in our example) to the end of the current
+# line table entry, that is 0x10c in our example.  GDB then starts stepping
+# forward.
+#
+# When 0x10c is reached GDB spots that we have left the stepping range, that
+# the new location is not a statement, and that the new location is
+# associated with the same source line number as the previous stepping
+# range.  GDB then sets up a new stepping range that runs from 0x10c to
+# 0x114, and continues stepping forward.
+#
+# Within that stepping range the inferior hits the goto and loops back to
+# address 0x104.
+#
+# At 0x104 GDB spots that we have left the previous stepping range, that the
+# new address is marked as a statement, and that the new address is for a
+# different source line.  As a result, GDB stops and returns control to the
+# user.  This is not what the user was expecting, they expected GDB not to
+# stop until they were outside of the loop.
+#
+# The fix is that, when the user issues the 'until' command, and GDB sets up
+# the initial stepping range, GDB will check subsequent SALs to see if they
+# are non-statements associated with the same line number.  If they are then
+# the end of the initial stepping range is pushed out to the end of the
+# non-statement SALs.
+#
+# In our example above, the user is at 0x108 and uses 'until'.  GDB now sets
+# up a stepping range from the start of the function 0x100 to 0x114, the
+# first address associated with a different line.
+#
+# Now as GDB steps around the loop it never leaves the initial stepping
+# range.  It is only when GDB exits the loop that we leave the stepping
+# range, and the stepping finishes at address 0x114.
+#
+# This test checks this behaviour using the DWARF assembler.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+standard_testfile .c .S
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+    return -1
+}
+
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    global srcdir subdir srcfile
+    declare_labels integer_label L
+    set int_size [get_sizeof "int" 4]
+
+    # Find start address and length for our functions.
+    lassign [function_range main [list ${srcdir}/${subdir}/$srcfile]] \
+	main_start main_len
+    set main_end "$main_start + $main_len"
+
+    cu {} {
+	compile_unit {
+	    {language @DW_LANG_C}
+	    {name until-trailing-isns.c}
+	    {stmt_list $L DW_FORM_sec_offset}
+	    {low_pc 0 addr}
+	} {
+	    subprogram {
+		{external 1 flag}
+		{name main}
+		{low_pc $main_start addr}
+		{high_pc $main_len DW_FORM_data4}
+	    }
+	}
+    }
+
+    lines {version 2 default_is_stmt 1} L {
+	include_dir "${srcdir}/${subdir}"
+	file_name "$srcfile" 1
+
+	# Generate a line table program.  This mimicks clang-13's behavior
+	# of adding some !is_stmt at the end of a loop line, making until
+	# not work properly.
+	program {
+	    DW_LNE_set_address $main_start
+	    line [gdb_get_line_number "TAG: main prologue"]
+	    DW_LNS_copy
+	    DW_LNE_set_address loop_start
+	    line [gdb_get_line_number "TAG: loop line"]
+	    DW_LNS_copy
+	    DW_LNE_set_address loop_condition
+	    line [gdb_get_line_number "TAG: loop line"]
+	    DW_LNS_negate_stmt
+	    DW_LNS_copy
+	    DW_LNE_set_address loop_code
+	    line [gdb_get_line_number "TAG: loop code"]
+	    DW_LNS_negate_stmt
+	    DW_LNS_copy
+	    DW_LNE_set_address loop_increment
+	    line [gdb_get_line_number "TAG: loop line"]
+	    DW_LNS_copy
+	    DW_LNE_set_address loop_jump
+	    line [gdb_get_line_number "TAG: loop line"]
+	    DW_LNS_negate_stmt
+	    DW_LNS_copy
+	    DW_LNE_set_address main_return
+	    line [gdb_get_line_number "TAG: main return"]
+	    DW_LNS_negate_stmt
+	    DW_LNS_copy
+	    DW_LNE_set_address $main_end
+	    line [expr [gdb_get_line_number "TAG: main return"] + 1]
+	    DW_LNS_copy
+	    DW_LNE_end_sequence
+	}
+    }
+
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	[list $srcfile $asm_file] {nodebug} ] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+gdb_test "next" ".* TAG: loop code .*" "inside the loop"
+gdb_test "next" ".* TAG: loop line .*" "ending of loop"
+gdb_test "until" ".* TAG: main return .*" "left loop"

@@ -1,0 +1,75 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+# Check that we can attach to processes that are not process group
+# leaders.  We test that by attaching to a fork child that doesn't
+# call any of setpgrp/setpgid/setsid to move itself to a new process
+# group.
+
+require can_spawn_for_attach
+
+standard_testfile
+
+if { [build_executable ${testfile}.exp ${testfile} $srcfile {debug}] == -1 } {
+    return -1
+}
+
+proc do_test {} {
+    global binfile
+    global decimal
+
+    set test_spawn_id [spawn_wait_for_attach $binfile]
+    set parent_pid [spawn_id_get_pid $test_spawn_id]
+
+    # Attach to the parent, run it to a known point, extract the
+    # child's PID, and detach.
+    with_test_prefix "parent" {
+	clean_restart ${binfile}
+
+	gdb_test "attach $parent_pid" \
+	    "Attaching to program.*, process $parent_pid.*" \
+	    "attach"
+
+	gdb_breakpoint "marker"
+	gdb_continue_to_breakpoint "marker"
+
+	set child_pid [get_integer_valueof "child_pid" -1]
+	if {$child_pid == -1} {
+	    return
+	}
+
+	gdb_test "detach" \
+	    "Detaching from program: .*process $parent_pid\r\n\\\[Inferior $decimal \\(.*\\) detached\\\]"
+    }
+
+    # Start over, and attach to the child this time.
+    with_test_prefix "child" {
+	clean_restart $binfile
+
+	gdb_test "attach $child_pid" \
+	    "Attaching to program.*, process $child_pid.*" \
+	    "attach"
+
+	gdb_breakpoint "marker"
+	gdb_continue_to_breakpoint "marker"
+
+	gdb_test "detach" \
+	    "Detaching from program: .*process $child_pid\r\n\\\[Inferior $decimal \\(.*\\) detached\\\]"
+    }
+
+    kill_wait_spawned_process $test_spawn_id
+}
+
+do_test

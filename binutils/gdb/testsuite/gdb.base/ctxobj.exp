@@ -1,0 +1,126 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+require allow_shlib_tests
+
+set executable ctxobj-m
+
+# The sources used to build two shared libraries (SO).  We use the exact
+# same sources to build both SOs, but differentiate them through the use
+# of macros defined when calling the compiler.
+#
+# We need two source files per SO, because we need to test the situation
+# where we are trying to print the value of a global variable defined
+# in that SO while the variable's associated symtab has not been created
+# yet.
+set libsrc [list "${srcdir}/${subdir}/ctxobj-v.c" \
+                 "${srcdir}/${subdir}/ctxobj-f.c"]
+
+set libobj1 [standard_output_file libctxobj1.so]
+set libobj2 [standard_output_file libctxobj2.so]
+
+set libobj1_opts { debug
+                   additional_flags=-DVERSION=104
+                   additional_flags=-DGET_VERSION=get_version_1 }
+set libobj2_opts { debug
+                   additional_flags=-DVERSION=203
+                   additional_flags=-DGET_VERSION=get_version_2 }
+
+if { [gdb_compile_shlib $libsrc $libobj1 $libobj1_opts ] != "" } {
+    return -1
+}
+if { [gdb_compile_shlib $libsrc $libobj2 $libobj2_opts ] != "" } {
+    return -1
+}
+if { [gdb_compile "${srcdir}/${subdir}/${executable}.c" \
+                  [standard_output_file ${executable}] \
+                  executable \
+                  [list debug shlib=${libobj1} shlib=${libobj2}]]
+     != ""} {
+    return -1
+}
+
+clean_restart $executable
+gdb_load_shlib $libobj1
+gdb_load_shlib $libobj2
+
+if ![runto_main] {
+    return -1
+}
+
+set bp_location [gdb_get_line_number "STOP" "ctxobj-f.c"]
+gdb_test "break ctxobj-f.c:$bp_location" \
+         "Breakpoint \[0-9\]+ at 0x\[0-9a-fA-F\]+: .*" \
+         "break in get_version functions"
+
+global expect_out
+set test "continue to get_version_1"
+gdb_test_multiple "continue" $test {
+    -re "Breakpoint ($bkptno_num_re), get_version_1 \\(\\).*\r\n.*$gdb_prompt $" {
+	set bpno $expect_out(1,string)
+	pass $test
+    }
+}
+# Verify $_hit_bpnum.$_hit_locno convenience variables are set to the hit bpno.
+gdb_test "printf \"%d.%d\\n\", \$_hit_bpnum, \$_hit_locno" "$bpno" \
+    "$test \$_hit_bpnum.\$_hit_locno is $bpno"
+
+# Try printing "this_version_num".  There are two global variables
+# with that name, and some systems such as GNU/Linux merge them
+# into one single entity, while some other systems such as Windows
+# keep them separate.  In the first situation, we have to verify
+# that GDB does not randomly select the wrong instance.  And in
+# the second case, we have to verify that GDB prints the value
+# of the instance from the current debugging context (the shared
+# library currently being debugged).
+#
+# We perform two tests: The first print test verifies that we are
+# doing things right when the partial symtab hasn't been expanded.
+# And the second print test will do the same, but after the partial
+# symtab has been expanded.
+#
+# To avoid adding target-specific code in this testcase, the program
+# sets a local variable named 'v' with the value of the global
+# variable 'this_version_number'.  This allows us to compare the value
+# that GDB thinks 'this_version_num' has, against the actual value
+# seen by the program itself.
+
+gdb_test "print this_version_num == v" \
+         " = 1" \
+        "print libctxobj1's this_version_num from partial symtab"
+
+gdb_test "print this_version_num == v" \
+         " = 1" \
+        "print libctxobj1's this_version_num from symtab"
+
+# Do the same, but from get_version_2.
+set test "continue to get_version_2"
+gdb_test_multiple "continue" $test {
+    -re "Breakpoint ($bkptno_num_re), get_version_2 \\(\\).*\r\n.*$gdb_prompt $" {
+	set bpno $expect_out(1,string)
+	pass $test
+    }
+}
+# Verify the $_hit_bpnum.$_hit_locno convenience variables are set to the hit bpno.
+gdb_test "printf \"%d.%d\\n\", \$_hit_bpnum, \$_hit_locno" "$bpno" \
+    "$test \$_hit_bpnum.\$_hit_locno is $bpno"
+
+gdb_test "print this_version_num == v" \
+         " = 1" \
+        "print libctxobj2's this_version_num from partial symtab"
+
+gdb_test "print this_version_num == v" \
+         " = 1" \
+        "print libctxobj2's this_version_num from symtab"

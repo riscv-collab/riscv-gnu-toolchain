@@ -1,0 +1,204 @@
+#   Copyright (C) 2013-2024 Free Software Foundation, Inc.
+#   Contributed by Hui Zhu  <hui@codesourcery.com>
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+standard_testfile
+
+set flags {}
+lappend flags debug
+lappend_include_file flags $srcdir/lib/unbuffer_output.c
+
+if {[build_executable $testfile.exp $testfile $srcfile $flags] == -1} {
+    untested "failed to compile"
+    return -1
+}
+
+set bp_location1 [gdb_get_line_number "set breakpoint 1 here"]
+set dp_location1 [gdb_get_line_number "set dprintf 1 here"]
+
+mi_clean_restart $binfile
+mi_runto_main
+
+set i 0
+mi_gdb_test "[incr i]-dprintf-insert" \
+    "$i\\^error,msg=\"-dprintf-insert: Missing <location>\"" "mi insert without location"
+
+mi_gdb_test "[incr i]-dprintf-insert foo" \
+    "$i\\^error,msg=\"-dprintf-insert: Missing <format>\"" "mi insert breakpoint without format string"
+
+mi_gdb_test "[incr i]-dprintf-insert 29" \
+    "$i\\^error,msg=\"-dprintf-insert: Missing <format>\"" "mi insert second breakpoint without format string"
+
+mi_gdb_test "-break-insert main" ".*" "mi insert breakpoint main"
+
+mi_gdb_test "-dprintf-insert --function main \"hello\"" \
+    "\\^done,bkpt={.*}" "explicit dprintf at main"
+
+mi_gdb_test "-dprintf-insert --source $srcfile --line $dp_location1 \"hello\"" \
+    "\\^done,bkpt={.*}" "explicit breakpoint at $srcfile:$dp_location1"
+
+mi_gdb_test "-dprintf-insert --source $srcfile \"hello\"" \
+    "\\^error,msg=\"-dprintf-insert: --source option requires --function, --label, or --line\"" "invalid explicit dprintf"
+
+mi_delete_breakpoints
+
+set bps [mi_make_breakpoint -type dprintf -func foo -file ".*mi-dprintf.c" \
+	     -fullname ".*mi-dprintf.c"]
+mi_gdb_test "[incr i]-dprintf-insert foo \"\\\"foobarbazqux\\\" At foo entry\\n\"" \
+    "$i\\^done,$bps" "mi insert dprintf foo"
+
+set bps [mi_make_breakpoint -type dprintf -func foo \
+		   -file ".*mi-dprintf.c" -fullname ".*mi-dprintf.c" \
+		   -line $dp_location1]
+mi_gdb_test "[incr i]-dprintf-insert $dp_location1 \"arg=%d, g=%d\\n\" arg g" \
+		   "$i\\^done,$bps" "mi insert dprintf dp_location1"
+
+set bps {}
+lappend bps [mi_make_breakpoint -type dprintf -func foo \
+		 -file ".*mi-dprintf.c" -fullname ".*mi-dprintf.c"]
+lappend bps [mi_make_breakpoint -type dprintf -func foo \
+		 -file ".*mi-dprintf.c" -fullname ".*mi-dprintf.c" \
+		 -line $dp_location1]
+mi_gdb_test "[incr i]-break-info" \
+    "$i\\^done,[mi_make_breakpoint_table $bps]" \
+    "mi info dprintf"
+
+mi_gdb_test "-break-insert $bp_location1" ".*" "mi insert breakpoint bp_location1"
+
+# Helper for mi_continue_dprintf.
+
+proc mi_expect_dprintf {args where msg} {
+    global mi_gdb_prompt
+    global inferior_spawn_id gdb_spawn_id
+
+    if { $args == "call" || $args == "fprintf" } {
+	set foobarbazqux "\"foobarbazqux\""
+	set sid $inferior_spawn_id
+    } else {
+	set foobarbazqux "\\\\\"foobarbazqux\\\\\""
+	set sid $gdb_spawn_id
+    }
+
+    # Don't expect the prompt here to avoid a race with mi_expect_stop
+    # in case $inferior_spawn_id != $gdb_spawn_id.  Otherwise, in that
+    # case, we could see the gdb prompt before the inferior output.
+    gdb_expect {
+	-i $sid
+	-re ".*$foobarbazqux $where" {
+	    pass $msg
+	}
+	eof {
+	    fail "$msg (eof)"
+	}
+	timeout {
+	    fail "$msg (timeout)"
+	}
+    }
+    mi_expect_stop ".*" ".*" ".*" ".*" ".*" "" "$msg stop"
+}
+
+proc mi_continue_dprintf {args} {
+    with_test_prefix $args {
+	set msg "mi 1st dprintf"
+	mi_run_cmd
+	mi_expect_dprintf $args "At foo entry.*arg=1234, g=1234" $msg
+
+	set msg "mi 2nd dprintf"
+	mi_send_resuming_command "exec-continue" "$msg continue"
+	mi_expect_dprintf $args "At foo entry.*arg=1235, g=2222" $msg
+    }
+}
+
+mi_continue_dprintf "gdb"
+
+# The "call" style depends on having I/O functions available, so test.
+set has_stderr_symbol [mi_gdb_is_stderr_available]
+
+if ![target_info exists gdb,noinferiorio] {
+
+    # Now switch styles and rerun; in the absence of redirection the
+    # output should be the same.
+
+    mi_gdb_test "set dprintf-style call" ".*" "mi set dprintf style to call"
+    mi_continue_dprintf "call"
+
+    # Some compilers don't add information about stderr,
+    # so skip these tests if needed.
+    if {$::has_stderr_symbol} {
+	mi_gdb_test "set dprintf-function fprintf" ".*" "mi set dprintf function"
+	mi_gdb_test "set dprintf-channel stderr" ".*" "mi set dprintf channel"
+	mi_continue_dprintf "fprintf"
+    }
+}
+
+set target_can_dprintf 0
+set msg "set dprintf style to agent"
+send_gdb "set dprintf-style agent\n"
+gdb_expect {
+    -re "warning: Target cannot run dprintf commands, falling back to GDB printf.*$mi_gdb_prompt$" {
+	unsupported "$msg"
+    }
+    -re ".*done.*$mi_gdb_prompt$" {
+	set target_can_dprintf 1
+	pass "$msg"
+    }
+    -re ".*$mi_gdb_prompt$" {
+	fail "$msg"
+    }
+    timeout {
+	fail "$msg"
+    }
+}
+
+if $target_can_dprintf {
+    if {[mi_run_cmd] < 0} {
+	# This likely means we failed to use target side commands in
+	# combination with software breakpoints.  IOW, the target
+	# likely doesn't support target-side software breakpoints.
+	set target_can_dprintf 0
+	unsupported "send dprintf to target"
+    }
+
+    if $target_can_dprintf {
+	mi_expect_stop ".*" ".*" ".*" ".*" ".*" "" "mi expect stop"
+
+	mi_send_resuming_command "exec-continue" "mi 1st dprintf continue, agent"
+	mi_expect_stop ".*" "foo" ".*" ".*" ".*" "" "mi 1st dprintf, agent"
+
+	mi_send_resuming_command "exec-continue" "mi 2nd dprintf continue, agent"
+
+	# The =breakpoint-modified text is a part of the
+	# "-exec-continue" output.
+	set msg "mi info dprintf second time"
+	gdb_expect {
+	    -re "=breakpoint-modified," {
+		pass $msg
+	    }
+	    -re ".*$mi_gdb_prompt$" {
+		fail "$msg"
+	    }
+	    timeout {
+		fail "$msg"
+	    }
+	}
+
+	mi_expect_stop ".*" "foo" ".*" ".*" ".*" "" "mi 2nd dprintf, agent"
+    }
+}
+
+mi_gdb_test "set dprintf-style foobar" ".*error.*" "mi set dprintf style to an unrecognized type"

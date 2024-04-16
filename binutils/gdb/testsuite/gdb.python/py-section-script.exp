@@ -1,0 +1,158 @@
+# Copyright (C) 2010-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It tests automagic loading of
+# scripts specified in the .debug_gdb_scripts section.
+
+# This test can only be run on targets which support ELF and use gas.
+# For now pick a sampling of likely targets.
+if {![istarget *-*-linux*]
+    && ![istarget *-*-gnu*]
+    && ![istarget *-*-elf*]
+    && ![istarget *-*-openbsd*]
+    && ![istarget arm*-*-eabi*]
+    && ![istarget powerpc-*-eabi*]} {
+    verbose "Skipping py-section-script.exp because of lack of support."
+    return
+}
+
+require allow_python_tests
+
+standard_testfile
+
+# Make this available to gdb before the program starts, it is
+# automagically loaded by gdb.
+set remote_python_file [gdb_remote_download host \
+			    ${srcdir}/${subdir}/${testfile}.py]
+
+set quoted_name "\"$remote_python_file\""
+
+if {[build_executable $testfile.exp $testfile $srcfile \
+	 [list debug \
+	      additional_flags=-I${srcdir}/../../include \
+	      additional_flags=-DSCRIPT_FILE=$quoted_name]] == -1} {
+    return -1
+}
+
+clean_restart
+
+# Try first with a restrictive safe-path.
+
+gdb_test_no_output "set auto-load safe-path /restricted" \
+    "set restricted auto-load safe-path"
+gdb_load ${binfile}
+
+# Verify gdb did not load the scripts.
+set test_name "verify scripts not loaded"
+gdb_test_multiple "info auto-load python-scripts" "$test_name" {
+    -re "Yes.*${testfile}.py.*Yes.*inlined-script.*$gdb_prompt $" {
+	fail "$test_name"
+    }
+    -re "No.*${testfile}.py.*No.*inlined-script.*$gdb_prompt $" {
+	pass "$test_name"
+    }
+}
+
+# Try again with a working safe-path.
+
+clean_restart
+
+# Get the name of the binfile on the host; on a remote host this means
+# stripping off any directory prefix.
+if [is_remote host] {
+    set remote_binfile [file tail ${binfile}]
+} else {
+    set remote_binfile ${binfile}
+}
+
+if [ishost *-*-mingw*] {
+    set remote_pathsep ";"
+} else {
+    set remote_pathsep ":"
+}
+gdb_test_no_output "set auto-load safe-path ${remote_python_file}${remote_pathsep}${remote_binfile}" \
+    "set auto-load safe-path"
+gdb_load ${binfile}
+
+# Verify gdb loaded each script and they appear once in the list.
+set test_name "verify scripts loaded"
+gdb_test_multiple "info auto-load python-scripts" "$test_name" {
+    -re "Yes.*${testfile}.py.*Yes.*inlined-script.*$gdb_prompt $" {
+	pass "$test_name"
+    }
+    -re "${testfile}.py.*${testfile}.py.*$gdb_prompt $" {
+	fail "$test_name"
+    }
+    -re "inlined-script.*inlined-script.*$gdb_prompt $" {
+	fail "$test_name"
+    }
+}
+
+# Again, with a regexp this time.
+gdb_test "info auto-load python-scripts ${testfile}" "Yes.*${testfile}.py.*"
+
+# Again, with a regexp that matches no scripts.
+gdb_test "info auto-load python-scripts no-script-matches-this" \
+  "No auto-load scripts matching no-script-matches-this."
+
+if ![runto_main] {
+    return
+}
+
+gdb_test "b [gdb_get_line_number {break to inspect} ${testfile}.c ]" \
+    ".*Breakpoint.*"
+gdb_test "continue" ".*Breakpoint.*"
+
+gdb_test "print ss" " = a=<1> b=<2>"
+
+gdb_test "test-cmd 1 2 3" "test-cmd output, arg = 1 2 3"
+
+
+# eu-strip creates NOBITS .debug_gdb_scripts sections in the debug files.
+# Make sure those are ignored silently.
+
+with_test_prefix "sepdebug" {
+    gdb_exit
+
+    set result [catch "exec eu-strip -g -f ${binfile}.debug ${binfile}" output]
+    verbose "result is $result"
+    verbose "output is $output"
+    if {$result != 0 || $output != ""} {
+	unsupported "cannot produce separate debug info files"
+	return
+    }
+
+    gdb_start
+    gdb_reinitialize_dir $srcdir/$subdir
+
+    gdb_test_no_output "set auto-load safe-path ${remote_python_file}:${binfile}" \
+	"set auto-load safe-path"
+    set test "load sepdebug"
+    gdb_test_multiple "file $binfile" $test {
+	-re "\r\nwarning: Invalid entry in \\.debug_gdb_scripts section.*\r\n$gdb_prompt $" {
+	    fail $test
+	}
+	-re "\r\n$gdb_prompt $" {
+	    pass $test
+	}
+    }
+
+    # Again, with a regexp this time.
+    gdb_test "info auto-load python-scripts ${testfile}" "Yes.*${testfile}.py.*"
+
+    # Again, with a regexp that matches no scripts.
+    gdb_test "info auto-load python-scripts no-script-matches-this" \
+      "No auto-load scripts matching no-script-matches-this."
+}

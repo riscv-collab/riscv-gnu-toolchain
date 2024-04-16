@@ -1,0 +1,141 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test the 'maint set backtrace-on-fatal-signal' behaviour.  Start up
+# GDB, turn on backtrace-on-fatal-signal, then send fatal signals to
+# GDB and ensure we see the backtrace.
+
+standard_testfile
+
+# The logic for sending signals to GDB might now work when using a
+# remote host (will the signal go to GDB, or the program that
+# established the connection to the remote host?), so just skip this
+# test for remote host setups.
+require {!is_remote host}
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile]} {
+    return -1
+}
+
+# Check we can run to main.  If this works this time then we just
+# assume that it will work later on (when we repeatedly restart GDB).
+if {![runto_main]} {
+    return -1
+}
+
+# Check that the backtrace-on-fatal-signal feature is supported.  If
+# this target doesn't have the backtrace function available then
+# trying to turn this on will give an error, in which case we just
+# skip this test.
+gdb_test_multiple "maint set backtrace-on-fatal-signal on" "" {
+    -re "support for this feature is not compiled into GDB" {
+	untested $testfile
+	return -1
+    }
+    -re "$gdb_prompt $" {
+	pass $gdb_test_name
+    }
+}
+
+# Now the actual test loop.
+foreach test_data {{SEGV "Segmentation fault"} \
+		       {FPE "Floating point exception"} \
+		       {BUS "Bus error"} \
+		       {ABRT "Aborted"}} {
+    set sig [lindex ${test_data} 0]
+    set msg [lindex ${test_data} 1]
+    with_test_prefix ${sig} {
+
+	# Restart GDB.
+	save_vars { GDB } {
+	    set GDB [gdb_no_core]
+	    clean_restart $binfile
+	}
+
+	# Capture the pid of GDB.
+	set testpid [spawn_id_get_pid $gdb_spawn_id]
+
+	# Start the inferior.
+	runto_main
+
+	# Turn on the backtrace-on-fatal-signal feature.
+	gdb_test_no_output "maint set backtrace-on-fatal-signal on"
+
+	# Flags for various bits of the output we expect to see, we
+	# check for these in the gdb_test_multiple below.
+	set saw_fatal_msg false
+	set saw_bt_start false
+	set saw_bt_end false
+	set internal_error_msg_count 0
+
+	# Get the GDB core into the output directory, so that it
+	# doesn't count as unexpected core in gdb.sum.
+	gdb_test "cd [file dirname $binfile]" "Working directory .*" \
+	    "cd to test directory"
+
+	# Send the fatal signal to GDB.
+	remote_exec host "kill -${sig} ${testpid}"
+
+	# Scan GDB's output for the backtrace.  As the output we get
+	# here includes the standard "internal error" message, which
+	# gdb_test_multiple will usually handle, we are forced to make
+	# extensive use of the "-early" flag here so that all our
+	# patterns are applied before gdb_test_multiple can check for
+	# the internal error pattern.
+	gdb_test_multiple "" "scan for backtrace" {
+	    -early -re "^\r\n" {
+		exp_continue
+	    }
+	    -early -re "^Fatal signal: ${msg}\r\n" {
+		set saw_fatal_msg true
+		exp_continue
+	    }
+	    -early -re "^----- Backtrace -----\r\n" {
+		set saw_bt_start true
+		exp_continue
+	    }
+	    -early -re ".+\r\n---------------------\r\n" {
+		set saw_bt_end true
+		exp_continue
+	    }
+	    -early -re "^A fatal error internal to GDB has been detected, further\r\n" {
+		incr internal_error_msg_count
+		exp_continue
+	    }
+	    -early -re "^debugging is not possible.  GDB will now terminate\\.\r\n" {
+		incr internal_error_msg_count
+		exp_continue
+	    }
+	    eof {
+		# Catch the eof case as this indicates that GDB has
+		# gone away, which in this case, is what we expect to
+		# happen.
+		gdb_assert { $saw_fatal_msg }
+		gdb_assert { $saw_bt_start }
+		gdb_assert { $saw_bt_end }
+		gdb_assert { [expr $internal_error_msg_count == 2] }
+	    }
+	    -re "$gdb_prompt $" {
+		# GDB should terminate, we should never get back to
+		# the prompt.
+		fail $gdb_test_name
+	    }
+	}
+
+	# GDB should be dead and gone by this point, but just to be
+	# sure, force an exit.
+	gdb_exit
+    }
+}

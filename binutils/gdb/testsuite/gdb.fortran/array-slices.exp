@@ -1,0 +1,290 @@
+# Copyright 2019-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/> .
+
+# Print a 2 dimensional assumed shape array.  We pass different slices
+# of the array to a subroutine and print the array as received within
+# the subroutine.  This should exercise GDB's ability to handle
+# different strides for the different dimensions.
+
+# Testing GDB's ability to print array (and string) slices, including
+# slices that make use of array strides.
+#
+# In the Fortran code various arrays of different ranks are filled
+# with data, and slices are passed to a series of show functions.
+#
+# In this test script we break in each of the show functions, print
+# the array slice that was passed in, and then move up the stack to
+# the parent frame and check GDB can manually extract the same slice.
+#
+# This test also checks that the size of the array slice passed to the
+# function (so as extracted and described by the compiler and the
+# debug information) matches the size of the slice manually extracted
+# by GDB.
+
+require allow_fortran_tests
+
+# This test relies on output from the inferior.
+require {!target_info exists gdb,noinferiorio}
+
+standard_testfile ".f90"
+load_lib fortran.exp
+
+if {[build_executable ${testfile}.exp ${testfile} ${srcfile} \
+	 {debug f90}]} {
+    return -1
+}
+
+# Takes the name of an array slice as used in the test source, and extracts
+# the base array name.  For example: 'array (1,2)' becomes 'array'.
+proc array_slice_to_var { slice_str } {
+    regexp "^(?:\\s*\\()*(\[^( \t\]+)" $slice_str matchvar varname
+    return $varname
+}
+
+proc run_test { repack } {
+    global binfile gdb_prompt
+
+    clean_restart ${binfile}
+
+    # Avoid shared lib symbols.
+    gdb_test_no_output "set auto-solib-add off"
+
+    if ![fortran_runto_main] {
+	return -1
+    }
+
+    # Avoid libc symbols, in particular the 'array' type.
+    gdb_test_no_output "nosharedlibrary"
+
+    gdb_test_no_output "set fortran repack-array-slices $repack"
+
+    # gdb_breakpoint [gdb_get_line_number "Display Message Breakpoint"]
+    gdb_breakpoint [gdb_get_line_number "Display Element"]
+    gdb_breakpoint [gdb_get_line_number "Display String"]
+    gdb_breakpoint [gdb_get_line_number "Display Array Slice 1D"]
+    gdb_breakpoint [gdb_get_line_number "Display Array Slice 2D"]
+    gdb_breakpoint [gdb_get_line_number "Display Array Slice 3D"]
+    gdb_breakpoint [gdb_get_line_number "Display Array Slice 4D"]
+    gdb_breakpoint [gdb_get_line_number "Final Breakpoint"]
+
+    # We're going to print some reasonably large arrays.
+    gdb_test_no_output "set print elements unlimited"
+
+    set found_final_breakpoint false
+
+    # We place a limit on the number of tests that can be run, just in
+    # case something goes wrong, and GDB gets stuck in an loop here.
+    set test_count 0
+    while { $test_count < 500 } {
+	with_test_prefix "test $test_count" {
+	    incr test_count
+
+	    set found_final_breakpoint false
+	    set expected_result ""
+	    set func_name ""
+	    set found_prompt false
+	    gdb_test_multiple "continue" "continue" {
+		-i $::inferior_spawn_id
+
+		-re ".*GDB = (\[^\r\n\]+)\r\n" {
+		    set expected_result $expect_out(1,string)
+		    if {!$found_prompt} {
+			exp_continue
+		    }
+		}
+
+		-i $::gdb_spawn_id
+
+		-re "! Display Element" {
+		    set func_name "show_elem"
+		    exp_continue
+		}
+		-re "! Display String" {
+		    set func_name "show_str"
+		    exp_continue
+		}
+		-re "! Display Array Slice (.)D" {
+		    set func_name "show_$expect_out(1,string)d"
+		    exp_continue
+		}
+		-re "! Final Breakpoint" {
+		    set found_final_breakpoint true
+		    exp_continue
+		}
+		-re "$gdb_prompt $" {
+		    set found_prompt true
+
+		    if {$found_final_breakpoint
+			|| ($expected_result != "" && $func_name != "")} {
+			# We're done.
+		    } else {
+			exp_continue
+		    }
+		}
+	    }
+
+	    if ($found_final_breakpoint) {
+		break
+	    }
+
+	    # We want to take a look at the line in the previous frame that
+	    # called the current function.  I couldn't find a better way of
+	    # doing this than 'up', which will print the line, then 'down'
+	    # again.
+	    #
+	    # I don't want to fill the log with passes for these up/down
+	    # commands, so we don't report any.  If something goes wrong then we
+	    # should get a fail from gdb_test_multiple.
+	    set array_slice_name ""
+	    set unique_id ""
+	    array unset replacement_vars
+	    array set replacement_vars {}
+	    gdb_test_multiple "up" "up" {
+		-re "\r\n\[0-9\]+\[ \t\]+call ${func_name} \\((\[^\r\n\]+)\\)\r\n$gdb_prompt $" {
+		    set array_slice_name $expect_out(1,string)
+		}
+		-re "\r\n\[0-9\]+\[ \t\]+call ${func_name} \\((\[^\r\n\]+)\\)\[ \t\]+! VARS=(\[^ \t\r\n\]+)\r\n$gdb_prompt $" {
+		    set array_slice_name $expect_out(1,string)
+		    set unique_id $expect_out(2,string)
+		}
+	    }
+	    if {$unique_id != ""} {
+		set str ""
+		foreach v [split $unique_id ,] {
+		    set val [get_integer_valueof "${v}" "??"\
+				 "get variable '$v' for '$array_slice_name'"]
+		    set replacement_vars($v) $val
+		    if {$str != ""} {
+			set str "Str,"
+		    }
+		    set str "$str$v=$val"
+		}
+		set unique_id " $str"
+	    }
+	    gdb_test_multiple "down" "down" {
+		-re "\r\n$gdb_prompt $" {
+		    # Don't issue a pass here.
+		}
+	    }
+
+	    # Check we have all the information we need to successfully run one
+	    # of these tests.
+	    if { $expected_result == "" } {
+		perror "failed to extract expected results"
+		return 0
+	    }
+	    if { $array_slice_name == "" } {
+		perror "failed to extract array slice name"
+		return 0
+	    }
+
+	    # Check GDB can correctly print the array slice that was passed into
+	    # the current frame.
+	    set pattern [string_to_regexp " = $expected_result"]
+	    gdb_test "p array" "$pattern" \
+		"check value of '$array_slice_name'$unique_id"
+
+	    # Get the size of the slice.
+	    set size_in_show \
+		[get_integer_valueof "sizeof (array)" "show_unknown" \
+		     "get sizeof '$array_slice_name'$unique_id in show"]
+	    set addr_in_show \
+		[get_hexadecimal_valueof "&array" "show_unknown" \
+		     "get address '$array_slice_name'$unique_id in show"]
+
+	    # Now move into the previous frame, and see if GDB can extract the
+	    # array slice from the original parent object.  Again, use of
+	    # gdb_test_multiple to avoid filling the logs with unnecessary
+	    # passes.
+	    gdb_test_multiple "up" "up" {
+		-re "\r\n$gdb_prompt $" {
+		    # Do nothing.
+		}
+	    }
+
+	    # Print the array slice, this will force GDB to manually extract the
+	    # slice from the parent array.
+	    gdb_test "p $array_slice_name" "$pattern" \
+		"check array slice '$array_slice_name'$unique_id can be extracted"
+
+	    # Get the size of the slice in the calling frame.
+	    set size_in_parent \
+		[get_integer_valueof "sizeof ($array_slice_name)" \
+		     "parent_unknown" \
+		     "get sizeof '$array_slice_name'$unique_id in parent"]
+
+	    # Figure out the start and end addresses of the full array in the
+	    # parent frame.
+	    set full_var_name [array_slice_to_var $array_slice_name]
+	    set start_addr [get_hexadecimal_valueof "&${full_var_name}" \
+				"start unknown"]
+	    set end_addr [get_hexadecimal_valueof \
+			      "$start_addr + sizeof (${full_var_name})" \
+			      "end unknown" \
+			      "get end address of ${full_var_name}"]
+
+	    # The Fortran compiler can choose to either send a descriptor that
+	    # describes the array slice to the subroutine, or it can repack the
+	    # slice into an array section and send that.
+	    #
+	    # We find the address range of the original array in the parent,
+	    # and the address of the slice in the show function, if the
+	    # address of the slice (from show) is in the range of the original
+	    # array then repacking has not occurred, otherwise, the slice is
+	    # outside of the parent, and repacking must have occurred.
+	    #
+	    # The goal here is to compare the sizes of the slice in show with
+	    # the size of the slice extracted by GDB.  So we can only compare
+	    # sizes when GDB's repacking setting matches the repacking
+	    # behaviour we got from the compiler.
+	    if { ($addr_in_show < $start_addr || $addr_in_show >= $end_addr) \
+		 == ($repack == "on") } {
+		gdb_assert {$size_in_show == $size_in_parent} \
+		    "check sizes match"
+	    } elseif { $repack == "off" } {
+		# GDB's repacking is off (so slices are left unpacked), but
+		# the compiler did pack this one.  As a result we can't
+		# compare the sizes between the compiler's slice and GDB's
+		# slice.
+		verbose -log "slice '$array_slice_name' was repacked, sizes can't be compared"
+	    } else {
+		# Like the above, but the reverse, GDB's repacking is on, but
+		# the compiler didn't repack this slice.
+		verbose -log "slice '$array_slice_name' was not repacked, sizes can't be compared"
+	    }
+
+	    # If the array name we just tested included variable names, then
+	    # test again with all the variables expanded.
+	    if {$unique_id != ""} {
+		foreach v [array names replacement_vars] {
+		    set val $replacement_vars($v)
+		    set array_slice_name \
+			[regsub "\\y${v}\\y" $array_slice_name $val]
+		}
+		gdb_test "p $array_slice_name" "$pattern" \
+		    "check array slice '$array_slice_name'$unique_id can be extracted, with variables expanded"
+	    }
+	}
+    }
+
+    # Ensure we reached the final breakpoint.  If more tests have been added
+    # to the test script, and this starts failing, then the safety 'while'
+    # loop above might need to be increased.
+    gdb_assert {$found_final_breakpoint} "ran all tests"
+}
+
+foreach_with_prefix repack { on off } {
+    run_test $repack
+}

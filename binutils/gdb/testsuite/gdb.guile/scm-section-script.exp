@@ -1,0 +1,107 @@
+# Copyright (C) 2010-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It tests automagic loading of
+# scripts specified in the .debug_gdb_scripts section.
+
+# This test can only be run on targets which support ELF and use gas.
+# For now pick a sampling of likely targets.
+if {![istarget *-*-linux*]
+    && ![istarget *-*-gnu*]
+    && ![istarget *-*-elf*]
+    && ![istarget *-*-openbsd*]
+    && ![istarget arm*-*-eabi*]
+    && ![istarget powerpc-*-eabi*]} {
+    verbose "Skipping scm-section-script.exp because of lack of support."
+    return
+}
+
+load_lib gdb-guile.exp
+
+require allow_guile_tests
+
+standard_testfile
+
+# Make this available to gdb before the program starts, it is
+# automagically loaded by gdb.
+# We also need to do this before compiling the program because the name
+# of the script file is encoded in the binary.
+set remote_guile_file [gdb_remote_download host \
+			   ${srcdir}/${subdir}/${testfile}.scm]
+
+if {[build_executable $testfile.exp $testfile $srcfile \
+	[list debug "additional_flags=-I${srcdir}/../../include -DSCRIPT_FILE=\"$remote_guile_file\""]] == -1} {
+    return
+}
+
+clean_restart
+
+# Try first with a restrictive safe-path.
+
+gdb_test_no_output "set auto-load safe-path /restricted" \
+    "set restricted auto-load safe-path"
+gdb_load ${binfile}
+
+# Verify gdb did not load the scripts.
+set test_name "verify scripts not loaded"
+gdb_test_multiple "info auto-load guile-scripts" "$test_name" {
+    -re "Yes.*${testfile}.scm.*Yes.*inlined-script.*$gdb_prompt $" {
+	fail "$test_name"
+    }
+    -re "No.*${testfile}.scm.*No.*inlined-script.*$gdb_prompt $" {
+	pass "$test_name"
+    }
+}
+
+# Try again with a working safe-path.
+
+clean_restart
+
+gdb_test_no_output "set auto-load safe-path ${remote_guile_file}:${binfile}" \
+    "set auto-load safe-path"
+gdb_load ${binfile}
+
+# Verify gdb loaded each script and they appear once in the list.
+set test_name "verify scripts loaded"
+gdb_test_multiple "info auto-load guile-scripts" "$test_name" {
+    -re "${testfile}.scm.*${testfile}.scm.*$gdb_prompt $" {
+	fail "$test_name"
+    }
+    -re "inlined-script.*inlined-script.*$gdb_prompt $" {
+	fail "$test_name"
+    }
+    -re "Yes.*${testfile}.scm.*Yes.*inlined-script.*$gdb_prompt $" {
+	pass "$test_name"
+    }
+}
+
+# Again, with a regexp this time.
+gdb_test "info auto-load guile-scripts ${testfile}" "Yes.*${testfile}.scm.*"
+
+# Again, with a regexp that matches no scripts.
+gdb_test "info auto-load guile-scripts no-script-matches-this" \
+  "No auto-load scripts matching no-script-matches-this."
+
+if ![gdb_guile_runto_main] {
+    return
+}
+
+gdb_test "b [gdb_get_line_number {break to inspect} ${testfile}.c ]" \
+    ".*Breakpoint.*"
+gdb_test "continue" ".*Breakpoint.*"
+
+gdb_test "print ss" " = a=<1> b=<2>"
+
+gdb_test "test-cmd 1 2 3" "test-cmd output, arg = 1 2 3"

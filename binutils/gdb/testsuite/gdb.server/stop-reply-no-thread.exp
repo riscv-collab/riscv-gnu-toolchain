@@ -1,0 +1,128 @@
+# This testcase is part of GDB, the GNU debugger.
+#
+# Copyright 2018-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test backward compatibility with older GDBservers which did not
+# include ";thread:NNN" in T stop replies when debugging
+# single-threaded programs, even though they'd list the main thread in
+# response to qfThreadInfo/qsThreadInfo.  See PR remote/22597.
+
+load_lib gdbserver-support.exp
+
+require allow_gdbserver_tests
+
+standard_testfile
+if { [build_executable "failed to prepare" $testfile $srcfile] == -1 } {
+    return -1
+}
+
+set target_binfile [gdb_remote_download target $binfile]
+
+# Run the tests with different features of GDBserver disabled.
+proc run_test { disable_feature target_nonstop } {
+    global binfile gdb_prompt decimal GDBFLAGS
+
+    save_vars { GDBFLAGS } {
+	# If GDB and GDBserver are both running locally, set the sysroot to avoid
+	# reading files via the remote protocol.
+	if { ![is_remote host] && ![is_remote target] } {
+	    set GDBFLAGS "$GDBFLAGS -ex \"set sysroot\""
+	}
+
+	clean_restart ${binfile}
+    }
+
+    # Make sure we're disconnected, in case we're testing with an
+    # extended-remote board, therefore already connected.
+    gdb_test "disconnect" ".*"
+
+    set packet_arg ""
+    if { $disable_feature != "" } {
+	set packet_arg "--disable-packet=${disable_feature}"
+    }
+    set res [gdbserver_start $packet_arg $::target_binfile]
+    set gdbserver_protocol [lindex $res 0]
+    set gdbserver_gdbport [lindex $res 1]
+
+    # Disable XML-based thread listing, and multi-process extensions.
+    gdb_test \
+	"set remote threads-packet off" \
+	"Support for the 'qXfer:threads:read' packet on future remote targets is set to \"off\"."
+
+    gdb_test \
+	"set remote multiprocess-feature-packet off" \
+	"Support for the 'multiprocess-feature' packet on future remote targets is set to \"off\"."
+
+    # Set target-nonstop mode.
+    gdb_test_no_output "maint set target-non-stop ${target_nonstop}"
+
+    set res [gdb_target_cmd $gdbserver_protocol $gdbserver_gdbport]
+    if ![gdb_assert {$res == 0} "connect"] {
+	return
+    }
+
+    # There should be only one thread listed.
+    set test "info threads"
+    gdb_test_multiple $test $test {
+	-re "2 Thread.*$gdb_prompt $" {
+	    fail $test
+	}
+	-re "has terminated.*$gdb_prompt $" {
+	    fail $test
+	}
+	-re "\\\* 1\[\t \]*Thread\[^\r\n\]*\r\n$gdb_prompt $" {
+	    pass $test
+	}
+    }
+
+    gdb_breakpoint "main"
+
+    # Bad GDB behaved like this:
+    #  (gdb) c
+    #  Cannot execute this command without a live selected thread.
+    #  (gdb)
+    gdb_test "c" "Breakpoint $decimal, main.*" "continue to main"
+
+    # Continue until exit.  The server sends a 'W' with no PID.
+    # Bad GDB gave an error like below when target is nonstop:
+    #  (gdb) c
+    #  Continuing.
+    #  No process or thread specified in stop reply: W00
+    gdb_continue_to_end "" continue 1
+}
+
+# Disable different features within gdbserver:
+#
+# Tthread: Start GDBserver, with ";thread:NNN" in T stop replies disabled,
+#          emulating old gdbservers when debugging single-threaded programs.
+#
+# T: Start GDBserver with the entire 'T' stop reply packet disabled,
+#    GDBserver will instead send the 'S' stop reply.
+foreach_with_prefix to_disable { "" Tthread T } {
+    foreach_with_prefix t_nonstop { off on } {
+	run_test $to_disable $t_nonstop
+    }
+}
+
+# Regression for PR gdb/26819: Cover the case when GDBserver does not report
+# any threads (i.e. the remote target has no concept of threads).
+#
+# Scenario 1: Disable 'T' and 'qfThreadInfo' packets
+# Scenario 2: Disable all threading packets
+foreach_with_prefix to_disable { "T,qfThreadInfo" "threads" } {
+    # Non-stop mode not applicable - off.
+    run_test $to_disable off
+}

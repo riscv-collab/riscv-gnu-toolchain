@@ -1,0 +1,91 @@
+# Copyright 2016-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This testcase is supposed to test DWARF static link which is usually
+# used together with nested functions.  
+
+require allow_fortran_tests
+
+standard_testfile .f90
+load_lib "fortran.exp"
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile {debug f90}]} {
+    return -1
+}
+
+if {![fortran_runto_main]} {
+    continue
+}
+
+# Test if we can set a breakpoint in a nested function
+gdb_breakpoint "testnestedfuncs::sub_nested_outer"
+gdb_continue_to_breakpoint "testnestedfuncs::sub_nested_outer" \
+    ".*local_int = 19"
+
+# Test if we can access local and
+# non-local variables defined one level up.
+gdb_breakpoint [gdb_get_line_number "! BP_outer"]
+gdb_continue_to_breakpoint "! BP_outer" ".*! BP_outer"
+gdb_test "print index" "= 13" "print index at BP_outer"
+gdb_test_no_output "set variable index = 42"
+gdb_test "print index" "= 42" "print index at BP_outer, manipulated"
+gdb_test "print local_int" "= 19" "print local_int in outer function"
+
+# Non-local variable should be affected in one frame up as well.
+gdb_test "up"
+gdb_test "print index" "= 42" "print index at BP1, one frame up"
+
+# Test if we can set a breakpoint in a nested function
+gdb_breakpoint "testnestedfuncs::sub_nested_inner"
+gdb_continue_to_breakpoint "testnestedfuncs::sub_nested_inner" \
+    ".*local_int = 17"
+
+# Test if we can access local and
+# non-local variables defined two level up.
+gdb_breakpoint [gdb_get_line_number "! BP_inner"]
+gdb_continue_to_breakpoint "! BP_inner" ".*! BP_inner"
+gdb_test "print index" "= 42" "print index at BP_inner"
+gdb_test "print v_state%code" "= 61" "print v_state%code at BP_inner"
+gdb_test "print local_int" "= 17" "print local_int in inner function"
+
+# Test if local variable is still correct.
+gdb_breakpoint [gdb_get_line_number "! BP_outer_2"]
+gdb_continue_to_breakpoint "! BP_outer_2" ".*! BP_outer_2"
+gdb_test "print local_int" "= 19" \
+  "print local_int in outer function, after sub_nested_inner"
+
+# Test if we can set a breakpoint in public routine with the same name
+# as the internal
+gdb_breakpoint "sub_nested_outer"
+gdb_continue_to_breakpoint "sub_nested_outer" \
+    ".*name = 'sub_nested_outer external'"
+
+# Test if we can set a breakpoint in public routine with the same name
+# as the internal
+gdb_breakpoint "sub_with_sub_nested_outer::sub_nested_outer"
+gdb_continue_to_breakpoint \
+    "sub_with_sub_nested_outer::sub_nested_outer" ".*local_int = 11"
+
+# Test if we can set a breakpoint in public routine with the same name
+# as the internal
+gdb_breakpoint "mod1::sub_nested_outer"
+gdb_continue_to_breakpoint "mod1::sub_nested_outer" \
+    ".*name = 'sub_nested_outer_mod1'"
+
+# Sanity check in main.
+gdb_breakpoint [gdb_get_line_number "! BP_main"]
+gdb_continue_to_breakpoint "! BP_main" ".*! BP_main"
+gdb_test "print index" "= 42" "print index at BP_main"
+gdb_test "print v_state%code" "= 59" "print v_state%code at BP_main"

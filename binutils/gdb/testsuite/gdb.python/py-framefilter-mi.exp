@@ -1,0 +1,175 @@
+# Copyright (C) 2013-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It tests Python-based
+# frame-filters.
+load_lib mi-support.exp
+load_lib gdb-python.exp
+
+set MIFLAGS "-i=mi2"
+
+standard_testfile py-framefilter-mi.c
+set pyfile py-framefilter.py
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug additional_flags=-DMI}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+if {[mi_clean_restart $binfile]} {
+    return
+}
+
+if {[lsearch -exact [mi_get_features] python] < 0} {
+    unsupported "python support is disabled"
+    return -1
+}
+
+mi_runto_main
+
+set remote_python_file [gdb_remote_download host ${srcdir}/${subdir}/${pyfile}]
+
+mi_gdb_test "source ${remote_python_file}" ".*\\^done." "load python file"
+
+# Multiple blocks test
+mi_continue_to_line [gdb_get_line_number {Inner test breakpoint} ${srcfile}] \
+  "step to first breakpoint"
+
+mi_gdb_test "-stack-list-locals --all-values" \
+    "\\^done,locals=\\\[{name=\"h\",value=\"9\"},{name=\"f\",value=\"42\"},{name=\"g\",value=\"19\"},{name=\"bar\",value=\"$hex \\\\\"Inside block x2\\\\\"\"},{name=\"d\",value=\"15\"},{name=\"e\",value=\"14\"},{name=\"foo\",value=\"$hex \\\\\"Inside block\\\\\"\"},{name=\"str\",value=\"$hex \\\\\"The End\\\\\"\"},{name=\"st2\",value=\"$hex \\\\\"Is Near\\\\\"\"},{name=\"b\",value=\"12\"},{name=\"c\",value=\"5\"}\\\]" \
+    "stack-list-locals --all-values"
+
+mi_gdb_test "-enable-frame-filters" ".*\\^done." "enable frame filters"
+mi_gdb_test "-stack-list-locals --all-values" \
+    "\\^done,locals=\\\[{name=\"h\",value=\"9\"},{name=\"f\",value=\"42\"},{name=\"g\",value=\"19\"},{name=\"bar\",value=\"$hex \\\\\"Inside block x2\\\\\"\"},{name=\"d\",value=\"15\"},{name=\"e\",value=\"14\"},{name=\"foo\",value=\"$hex \\\\\"Inside block\\\\\"\"},{name=\"str\",value=\"$hex \\\\\"The End\\\\\"\"},{name=\"st2\",value=\"$hex \\\\\"Is Near\\\\\"\"},{name=\"b\",value=\"12\"},{name=\"c\",value=\"5\"}\\\]" \
+    "stack-list-locals --all-values frame filters enabled"
+
+mi_continue_to_line [gdb_get_line_number {Backtrace end breakpoint} ${srcfile}] \
+  "step to second breakpoint"
+
+set any "\[^\"\]+"
+
+mi_gdb_test "-stack-list-frames" \
+    "\\^done,stack=\\\[frame={level=\"0\",addr=\"$hex\",func=\"cnuf_dne.*\".*,arch=\"$any\"},frame={level=\"1\",addr=\"$hex\",func=\"acnuf\".*,arch=\"$any\"},frame={level=\"2\",addr=\"$hex\",func=\"bcnuf\".*,arch=\"$any\"},frame={level=\"3\",addr=\"$hex\",func=\"acnuf\".*,arch=\"$any\"},frame={level=\"22\",addr=\"$hex\",func=\"1cnuf\".*,arch=\"$any\",children=\\\[frame={level=\"23\",addr=\"$hex\",func=\"func2\".*,arch=\"$any\"}\\\]},frame={level=\"24\",addr=\"$hex\",func=\"3cnuf\".*,arch=\"$any\"},frame={level=\"27\",addr=\"$hex\",func=\"niam\".*,arch=\"$any\"}\\\].*" \
+    "filtered stack listing"
+mi_gdb_test "-stack-list-frames 0 3" \
+    "\\^done,stack=\\\[frame={level=\"0\",addr=\"$hex\",func=\"cnuf_dne.*\".*,arch=\"$any\"},frame={level=\"1\",addr=\"$hex\",func=\"acnuf\".*,arch=\"$any\"},frame={level=\"2\",addr=\"$hex\",func=\"bcnuf\".*,arch=\"$any\"},frame={level=\"3\",addr=\"$hex\",func=\"acnuf\".*,arch=\"$any\"}\\\]" \
+    "filtered stack list 0 3"
+mi_gdb_test "-stack-list-frames 22 24" \
+    "\\^done,stack=\\\[frame={level=\"22\",addr=\"$hex\",func=\"1cnuf\".*,arch=\"$any\",children=\\\[frame={level=\"23\",addr=\"$hex\",func=\"func2\".*,arch=\"$any\"}\\\]},frame={level=\"24\",addr=\"$hex\",func=\"3cnuf\".*,arch=\"$any\"}\\\]" \
+    "filtered stack list 22 24"
+
+#stack list arguments
+
+
+mi_gdb_test "-stack-list-arguments 0" \
+    "\\^done,stack-args=\\\[frame={level=\"0\",args=\\\[name=\"foo\",name=\"bar\",name=\"fb\",name=\"bf\"\\\]},frame={level=\"1\",args=\\\[\\\]},frame={level=\"2\",args=\\\[name=\"j\"\\\]},.*frame={level=\"22\",args=\\\[\\\],children=\\\[frame={level=\"23\",args=\\\[\\\]}\\\]},.*frame={level=\"26\",args=\\\[name=\"f\",name=\"d\"\\\]},frame={level=\"27\",args=\\\[\\\]}\\\]" \
+    "stack-list-arguments 0"
+
+mi_gdb_test "-stack-list-arguments --no-frame-filters 0" \
+    "\\^done,stack-args=\\\[frame={level=\"0\",args=\\\[name=\"foo\",name=\"bar\",name=\"fb\",name=\"bf\"\\\]},frame={level=\"1\",args=\\\[\\\]},frame={level=\"2\",args=\\\[name=\"j\"\\\]},.*frame={level=\"22\",args=\\\[\\\]},frame={level=\"23\",args=\\\[\\\]},.*frame={level=\"26\",args=\\\[name=\"f\",name=\"d\"\\\]},frame={level=\"27\",args=\\\[\\\]}\\\]" \
+    "stack-list-arguments --no-frame-filters 0"
+
+mi_gdb_test "-stack-list-arguments 0 0 3" \
+    "\\^done,stack-args=\\\[frame={level=\"0\",args=\\\[name=\"foo\",name=\"bar\",name=\"fb\",name=\"bf\"\\\]},frame={level=\"1\",args=\\\[\\\]},frame={level=\"2\",args=\\\[name=\"j\"\\\]},frame={level=\"3\",args=\\\[\\\]}\\\]" \
+    "stack-list-arguments 0 0 3"
+
+mi_gdb_test "-stack-list-arguments 0 22 27" \
+    "\\^done,stack-args=\\\[frame={level=\"22\",args=\\\[\\\],children=\\\[frame={level=\"23\",args=\\\[\\\]}\\\]},.*frame={level=\"26\",args=\\\[name=\"f\",name=\"d\"\\\]},frame={level=\"27\",args=\\\[\\\]}\\\]" \
+    "stack-list-arguments 0 22 27"
+
+mi_gdb_test "-stack-list-arguments 1" \
+    "\\^done,stack-args=\\\[frame={level=\"0\",args=\\\[{name=\"foo\",value=\"21\"},{name=\"bar\",value=\"$hex \\\\\"Param\\\\\"\"},{name=\"fb\",value=\"$hex\"},{name=\"bf\",value=\"{nothing = $hex \\\\\"Foo Bar\\\\\", f = 42, s = 19}\"}\\\]},frame={level=\"1\",args=\\\[\\\]},frame={level=\"2\",args=\\\[{name=\"j\",value=\"10\"}\\\]},.*frame={level=\"22\",args=\\\[\\\],children=\\\[frame={level=\"23\",args=\\\[\\\]}\\\]},.*frame={level=\"26\",args=\\\[{name=\"f\",value=\"3\"},{name=\"d\",value=\"5\"}\\\]},frame={level=\"27\",args=\\\[\\\]}\\\]" \
+    "stack-list-arguments 1"
+
+mi_gdb_test "-stack-list-arguments --no-frame-filters 1" \
+    "\\^done,stack-args=\\\[frame={level=\"0\",args=\\\[{name=\"foo\",value=\"21\"},{name=\"bar\",value=\"$hex \\\\\"Param\\\\\"\"},{name=\"fb\",value=\"$hex\"},{name=\"bf\",value=\"{nothing = $hex \\\\\"Foo Bar\\\\\", f = 42, s = 19}\"}\\\]},frame={level=\"1\",args=\\\[\\\]},frame={level=\"2\",args=\\\[{name=\"j\",value=\"10\"}\\\]},.*frame={level=\"22\",args=\\\[\\\]},frame={level=\"23\",args=\\\[\\\]},.*frame={level=\"26\",args=\\\[{name=\"f\",value=\"3\"},{name=\"d\",value=\"5\"}\\\]},frame={level=\"27\",args=\\\[\\\]}\\\]" \
+    "stack-list-arguments --no-frame-filters 1"
+
+
+mi_gdb_test "-stack-list-arguments 1 0 3" \
+    "\\^done,stack-args=\\\[frame={level=\"0\",args=\\\[{name=\"foo\",value=\"21\"},{name=\"bar\",value=\"$hex \\\\\"Param\\\\\"\"},{name=\"fb\",value=\"$hex\"},{name=\"bf\",value=\"{nothing = $hex \\\\\"Foo Bar\\\\\", f = 42, s = 19}\"}\\\]},frame={level=\"1\",args=\\\[\\\]},frame={level=\"2\",args=\\\[{name=\"j\",value=\"10\"}\\\]},frame={level=\"3\",args=\\\[\\\]}\\\]" \
+    "stack-list-arguments 1 0 3"
+
+mi_gdb_test "-stack-list-arguments 1 22 27" \
+    "\\^done,stack-args=\\\[frame={level=\"22\",args=\\\[\\\],children=\\\[frame={level=\"23\",args=\\\[\\\]}\\\]},.*frame={level=\"26\",args=\\\[{name=\"f\",value=\"3\"},{name=\"d\",value=\"5\"}\\\]},frame={level=\"27\",args=\\\[\\\]}\\\]" \
+    "stack-list-arguments 1 22 27"
+
+mi_gdb_test "-stack-list-arguments 2" \
+    "\\^done,stack-args=\\\[frame={level=\"0\",args=\\\[{name=\"foo\",type=\"int\",value=\"21\"},{name=\"bar\",type=\"char \\\*\",value=\"$hex \\\\\"Param\\\\\"\"},{name=\"fb\",type=\"foobar \\\*\",value=\"$hex\"},{name=\"bf\",type=\"foobar\"\}\\\]},frame={level=\"1\",args=\\\[\\\]},frame={level=\"2\",args=\\\[{name=\"j\",type=\"int\",value=\"10\"}\\\]},.*frame={level=\"22\",args=\\\[\\\],children=\\\[frame={level=\"23\",args=\\\[\\\]}\\\]},.*frame={level=\"26\",args=\\\[{name=\"f\",type=\"int\",value=\"3\"},{name=\"d\",type=\"int\",value=\"5\"}\\\]},frame={level=\"27\",args=\\\[\\\]}\\\]" \
+    "stack-list-arguments 2"
+
+mi_gdb_test "-stack-list-arguments --no-frame-filters 2" \
+    "\\^done,stack-args=\\\[frame={level=\"0\",args=\\\[{name=\"foo\",type=\"int\",value=\"21\"},{name=\"bar\",type=\"char \\\*\",value=\"$hex \\\\\"Param\\\\\"\"},{name=\"fb\",type=\"foobar \\\*\",value=\"$hex\"},{name=\"bf\",type=\"foobar\"}\\\]},frame={level=\"1\",args=\\\[\\\]},frame={level=\"2\",args=\\\[{name=\"j\",type=\"int\",value=\"10\"}\\\]},.*frame={level=\"22\",args=\\\[\\\]},.*frame={level=\"26\",args=\\\[{name=\"f\",type=\"int\",value=\"3\"},{name=\"d\",type=\"int\",value=\"5\"}\\\]},frame={level=\"27\",args=\\\[\\\]}\\\]" \
+    "stack-list-arguments --no-frame-filters 2"
+
+
+mi_gdb_test "-stack-list-arguments 2 0 3" \
+    "\\^done,stack-args=\\\[frame={level=\"0\",args=\\\[{name=\"foo\",type=\"int\",value=\"21\"},{name=\"bar\",type=\"char \\\*\",value=\"$hex \\\\\"Param\\\\\"\"},{name=\"fb\",type=\"foobar \\\*\",value=\"$hex\"},{name=\"bf\",type=\"foobar\"}\\\]},frame={level=\"1\",args=\\\[\\\]},frame={level=\"2\",args=\\\[{name=\"j\",type=\"int\",value=\"10\"}\\\]},frame={level=\"3\",args=\\\[\\\]}\\\]" \
+    "stack-list-arguments 2 0 3"
+
+mi_gdb_test "-stack-list-arguments 2 22 27" \
+    "\\^done,stack-args=\\\[frame={level=\"22\",args=\\\[\\\],children=\\\[frame={level=\"23\",args=\\\[\\\]}\\\]},.*frame={level=\"26\",args=\\\[{name=\"f\",type=\"int\",value=\"3\"},{name=\"d\",type=\"int\",value=\"5\"}\\\]},frame={level=\"27\",args=\\\[\\\]}\\\]" \
+    "stack-list-arguments 2 22 27"
+
+mi_gdb_test "-stack-list-arguments --no-frame-filters 2 22 27" \
+    "\\^done,stack-args=\\\[frame={level=\"22\",args=\\\[\\\]},frame={level=\"23\",args=\\\[\\\]},.*frame={level=\"26\",args=\\\[{name=\"f\",type=\"int\",value=\"3\"},{name=\"d\",type=\"int\",value=\"5\"}\\\]},frame={level=\"27\",args=\\\[\\\]}\\\]" \
+    "stack-list-arguments --no-frame-filters 2 22 27"
+
+#stack-list-locals
+mi_gdb_test "-stack-list-locals --no-frame-filters 0" \
+    "\\^done,locals=\\\[name=\"str\",name=\"st2\",name=\"b\",name=\"c\"\\\]" \
+    "stack-list-locals --no-frame-filters 0"
+
+mi_gdb_test "-stack-list-locals --no-frame-filters 1" \
+    "\\^done,locals=\\\[{name=\"str\",value=\"$hex \\\\\"The End\\\\\"\"},{name=\"st2\",value=\"$hex \\\\\"Is Near\\\\\"\"},{name=\"b\",value=\"12\"},{name=\"c\",value=\"5\"}\\\]" \
+    "stack-list-locals --no-frame-filters 1"
+
+mi_gdb_test "-stack-list-locals --no-frame-filters 2" \
+    "\\^done,locals=\\\[{name=\"str\",type=\"const char \\\*\",value=\"$hex \\\\\"The End\\\\\"\"},{name=\"st2\",type=\"const char \\\*\",value=\"$hex \\\\\"Is Near\\\\\"\"},{name=\"b\",type=\"int\",value=\"12\"},{name=\"c\",type=\"short\",value=\"5\"}\\\]" \
+    "stack-list-locals --no-frame-filters 2"
+
+mi_gdb_test "-stack-list-locals --no-frame-filters --no-values" \
+    "\\^done,locals=\\\[name=\"str\",name=\"st2\",name=\"b\",name=\"c\"\\\]" \
+    "stack-list-locals --no-frame-filters --no-values"
+
+mi_gdb_test "-stack-list-locals --no-frame-filters --all-values" \
+    "\\^done,locals=\\\[{name=\"str\",value=\"$hex \\\\\"The End\\\\\"\"},{name=\"st2\",value=\"$hex \\\\\"Is Near\\\\\"\"},{name=\"b\",value=\"12\"},{name=\"c\",value=\"5\"}\\\]" \
+    "stack-list-locals --no-frame-filters --all-values"
+
+mi_gdb_test "-stack-list-locals --no-frame-filters --simple-values" \
+    "\\^done,locals=\\\[{name=\"str\",type=\"const char \\\*\",value=\"$hex \\\\\"The End\\\\\"\"},{name=\"st2\",type=\"const char \\\*\",value=\"$hex \\\\\"Is Near\\\\\"\"},{name=\"b\",type=\"int\",value=\"12\"},{name=\"c\",type=\"short\",value=\"5\"}\\\]" \
+    "stack-list-locals --no-frame-filters --simple-values"
+
+mi_gdb_test "-stack-list-locals 0" \
+    "\\^done,locals=\\\[name=\"str\",name=\"st2\",name=\"b\",name=\"c\"\\\]" \
+    "stack-list-locals 0"
+
+mi_gdb_test "-stack-list-locals 1" \
+    "\\^done,locals=\\\[{name=\"str\",value=\"$hex \\\\\"The End\\\\\"\"},{name=\"st2\",value=\"$hex \\\\\"Is Near\\\\\"\"},{name=\"b\",value=\"12\"},{name=\"c\",value=\"5\"}\\\]" \
+    "stack-list-locals 1"
+
+mi_gdb_test "-stack-list-locals 2" \
+    "\\^done,locals=\\\[{name=\"str\",type=\"const char \\\*\",value=\"$hex \\\\\"The End\\\\\"\"},{name=\"st2\",type=\"const char \\\*\",value=\"$hex \\\\\"Is Near\\\\\"\"},{name=\"b\",type=\"int\",value=\"12\"},{name=\"c\",type=\"short\",value=\"5\"}\\\]" \
+    "stack-list-locals 2"
+
+# stack-list-variables
+mi_gdb_test "-stack-list-variables --no-frame-filters 0" \
+    "\\^done,variables=\\\[{name=\"foo\",arg=\"1\"},{name=\"bar\",arg=\"1\"},{name=\"fb\",arg=\"1\"},{name=\"bf\",arg=\"1\"},{name=\"str\"},{name=\"st2\"},{name=\"b\"},{name=\"c\"}\\\]" \
+    "stack-list-variables --no-frame-filters 0"
+
+mi_gdb_test "-stack-list-variables 0" \
+    "\\^done,variables=\\\[{name=\"foo\",arg=\"1\"},{name=\"bar\",arg=\"1\"},{name=\"fb\",arg=\"1\"},{name=\"bf\",arg=\"1\"},{name=\"str\"},{name=\"st2\"},{name=\"b\"},{name=\"c\"}\\\]" \
+    "stack-list-variables 0"

@@ -1,0 +1,101 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test checks if gdb can handle missing source files gracefully.
+# Testing steps are:
+# 1. Have a main() in main.c that calls an external function f2().
+# 2. Have f2() implemented in f2.c.
+# 3. Build the two files into one executable.
+# 4. Remove main.c.
+# 5. Open the executable inside gdb while having gdb in source layout.
+#    No source is found for the moment.
+# 6. After a little bit of playing, we enter f2() and now the source
+#    layout must show the contents of f2.c.
+# 7. Going back to main() shall result in no contents again.
+
+# Check if start command is supported.
+require !use_gdb_stub
+
+tuiterm_env
+
+standard_testfile
+
+set mainfile [standard_output_file main.c]
+set f2file   [standard_output_file f2.c]
+set srcfiles [list $mainfile $f2file]
+
+# Step 1: Write the main.c file into the output directory.
+# This file will be removed after compilation.
+set fd [open "$mainfile" w]
+puts $fd {
+extern int f2(int);
+int
+main ()
+{
+  int a = 4;
+  a = f2(a);
+  return a - a;
+}
+}
+close $fd
+
+# Step 2: Write the f2.c file into the output directory.
+set fd [open "$f2file" w]
+puts $fd {
+int
+f2 (int x)
+{
+  x <<= 1;
+  return x+5;
+}
+}
+close $fd
+
+# Step 3: Compile the source files.
+if  { [gdb_compile "${srcfiles}" "${binfile}" \
+	   executable {debug additional_flags=-O0}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+# Step 4: Remove the main.c file.
+file delete $mainfile
+
+# Step 5: Load the executable into GDB.
+# There shall be no source content.
+Term::clean_restart 24 80 $testfile
+if {![Term::enter_tui]} {
+    unsupported "TUI not supported"
+    return
+}
+# There must exist a source layout with the size 80x15 and
+# there should be nothing in it.
+Term::check_box_contents "check source box is empty" \
+    0 0 80 15 "No Source Available"
+
+# Step 6: Go to main and after one next, enter f2().
+Term::command "set pagination off"
+Term::command "start"
+Term::command "next"
+Term::command "step"
+Term::check_contents "checking if inside f2 ()" "f2 \\(x=4\\)"
+Term::check_box_contents "f2.c must be displayed in source window" \
+    0 0 80 15 "return x\\+5"
+
+# Step 7: Back in main
+Term::command "finish"
+Term::check_box_contents "check source box is empty after return" \
+    0 0 80 15 "No Source Available"
+Term::check_contents "Back in main" "Value returned is .* 13"

@@ -1,0 +1,212 @@
+//Original:/testcases/core/c_dsp32mult_dr_m_iutsh/c_dsp32mult_dr_m_iutsh.dsp
+// Spec Reference: dsp32mult single dr munop iu tu is ih
+# mach: bfin
+
+.include "testutils.inc"
+	start
+
+imm32 r0, 0xfb235625;
+imm32 r1, 0x9fba5127;
+imm32 r2, 0xa3ff6725;
+imm32 r3, 0x0006f027;
+imm32 r4, 0xb0abcd29;
+imm32 r5, 0x1facef2b;
+imm32 r6, 0xc0fc002d;
+imm32 r7, 0xd24f702f;
+R4.L = R0.H * R0.L (TFU);
+R5.H = R0.L * R1.L (IU);
+R6.L = R1.L * R0.H (TFU);
+R7.L = R1.L * R1.L (TFU);
+R0.H = R0.L * R0.L (IU);
+R1.L = R0.L * R1.L (TFU);
+R2.L = R1.H * R0.L (IU);
+R3.H = R1.L * R1.L (TFU);
+CHECKREG r0, 0xFFFF5625;
+CHECKREG r1, 0x9FBA1B4E;
+CHECKREG r2, 0xA3FFFFFF;
+CHECKREG r3, 0x02E9F027;
+CHECKREG r4, 0xB0AB5482;
+CHECKREG r5, 0xFFFFEF2B;
+CHECKREG r6, 0xC0FC4F9C;
+CHECKREG r7, 0xD24F19B9;
+
+imm32 r0, 0xeb23a635;
+imm32 r1, 0x6fba5137;
+imm32 r2, 0x1324b7e5;
+imm32 r3, 0x9e060037;
+imm32 r4, 0x80ebcd39;
+imm32 r5, 0xb0aeef3b;
+imm32 r6, 0xa00ce03d;
+imm32 r7, 0x12467e03;
+R4.H = R2.L * R2.L (ISS2);
+R5.L = R2.L * R3.H (IH);
+R6.L = R3.H * R2.L (ISS2);
+R7.H = R3.L * R3.L (ISS2);
+R2.H = R2.L * R2.H (IH);
+R3.L = R2.H * R3.H (ISS2);
+R0.H = R3.L * R2.L (IH);
+R1.L = R3.L * R3.L (ISS2);
+CHECKREG r0, 0xDBF3A635;
+CHECKREG r1, 0x6FBA7FFF;
+CHECKREG r2, 0xFA9CB7E5;
+CHECKREG r3, 0x9E067FFF;
+CHECKREG r4, 0x7FFFCD39;
+CHECKREG r5, 0xB0AE1B99;
+CHECKREG r6, 0xA00C7FFF;
+CHECKREG r7, 0x17A27E03;
+
+imm32 r0, 0xdd235655;
+imm32 r1, 0xc4dd5157;
+imm32 r2, 0x6324d755;
+imm32 r3, 0x00060055;
+imm32 r4, 0x90dbc509;
+imm32 r5, 0x10adef5b;
+imm32 r6, 0xb00cd05d;
+imm32 r7, 0x12467d5f;
+R0.L = R4.L * R4.H (IU);
+R1.H = R4.H * R5.L (TFU);
+R2.L = R5.H * R4.L (ISS2);
+R3.L = R5.L * R5.L (IH);
+R4.H = R4.L * R4.H (ISS2);
+R5.L = R4.L * R5.H (TFU);
+R6.H = R5.H * R4.H (IU);
+R7.L = R5.H * R5.H (ISS2);
+CHECKREG r0, 0xDD23FFFF;
+CHECKREG r1, 0x876F5157;
+CHECKREG r2, 0x63248000;
+CHECKREG r3, 0x00060115;
+CHECKREG r4, 0x7FFFC509;
+CHECKREG r5, 0x10AD0CD5;
+CHECKREG r6, 0xFFFFD05D;
+CHECKREG r7, 0x12467FFF;
+
+imm32 r0, 0xcb235666;
+imm32 r1, 0xefba5166;
+imm32 r2, 0x1c248766;
+imm32 r3, 0xf0060066;
+imm32 r4, 0x90cb9d69;
+imm32 r5, 0x10acef6b;
+imm32 r6, 0x800cc06d;
+imm32 r7, 0x12467c6f;
+// test the unsigned U=1
+R0.L = R6.L * R6.L (TFU);
+R1.H = R6.H * R7.L (IH);
+R2.L = R7.L * R6.L (ISS2);
+R3.L = R7.L * R7.L (IH);
+R6.L = R6.L * R6.L (TFU);
+R7.L = R6.L * R7.L (IH);
+R4.L = R7.L * R6.L (TFU);
+R5.L = R7.L * R7.L (ISS2);
+CHECKREG r0, 0xCB2390A3;
+CHECKREG r1, 0xC1CE5166;
+CHECKREG r2, 0x1C248000;
+CHECKREG r3, 0xF0063C7C;
+CHECKREG r4, 0x90CB720D;
+CHECKREG r5, 0x10AC7FFF;
+CHECKREG r6, 0x800C90A3;
+CHECKREG r7, 0x1246C9DF;
+
+// mix order
+imm32 r0, 0xab23a675;
+imm32 r1, 0xcfba5127;
+imm32 r2, 0x13246705;
+imm32 r3, 0xe0060007;
+imm32 r4, 0x9eabcd09;
+imm32 r5, 0x10ecdfdb;
+imm32 r6, 0x000e000d;
+imm32 r7, 0x1246e00f;
+R0.H = R0.L * R7.H (IU);
+R1.L = R1.H * R6.H (ISS2);
+R2.L = R2.L * R5.L (IU);
+R3.H = R3.H * R4.H (ISS2);
+R4.L = R4.L * R3.H (IU);
+R5.L = R5.H * R2.H (ISS2);
+R6.H = R6.H * R1.L (IH);
+R7.L = R7.L * R0.H (IU);
+CHECKREG r0, 0xFFFFA675;
+CHECKREG r1, 0xCFBA8000;
+CHECKREG r2, 0x1324FFFF;
+CHECKREG r3, 0x7FFF0007;
+CHECKREG r4, 0x9EABFFFF;
+CHECKREG r5, 0x10EC7FFF;
+CHECKREG r6, 0xFFF9000D;
+CHECKREG r7, 0x1246FFFF;
+
+imm32 r0, 0x9b235a75;
+imm32 r1, 0xcfba5127;
+imm32 r2, 0x93246905;
+imm32 r3, 0x09060007;
+imm32 r4, 0x909bcd09;
+imm32 r5, 0x10a9e9db;
+imm32 r6, 0x000c9d0d;
+imm32 r7, 0x1246790f;
+R0.L = R7.L * R0.H (TFU);
+R1.L = R6.L * R1.L (TFU);
+R2.H = R5.L * R2.L (TFU);
+R3.L = R4.H * R3.L (TFU);
+R4.L = R3.H * R4.H (TFU);
+R5.H = R2.H * R5.L (TFU);
+R6.L = R1.H * R6.L (TFU);
+R7.L = R0.L * R7.L (TFU);
+CHECKREG r0, 0x9B23495C;
+CHECKREG r1, 0xCFBA31C9;
+CHECKREG r2, 0x5FEF6905;
+CHECKREG r3, 0x09060003;
+CHECKREG r4, 0x909B0518;
+CHECKREG r5, 0x57A2E9DB;
+CHECKREG r6, 0x000C7F6F;
+CHECKREG r7, 0x124622B0;
+
+imm32 r0, 0xa9235675;
+imm32 r1, 0xc8ba5127;
+imm32 r2, 0x13246705;
+imm32 r3, 0x08060007;
+imm32 r4, 0x908bcd09;
+imm32 r5, 0x10a88fdb;
+imm32 r6, 0x000c080d;
+imm32 r7, 0x1246708f;
+R2.L = R0.L * R6.L (IU);
+R3.L = R1.H * R7.L (IH);
+R0.H = R2.L * R0.L, R0.L = R2.H * R0.H (IU);
+R1.H = R3.L * R1.L (IH);
+R4.L = R4.H * R2.L (IU);
+R5.L = R5.L * R3.L (ISS2);
+R6.L = R6.L * R4.L (IH);
+R7.H = R7.H * R5.L (IU);
+CHECKREG r0, 0xFFFFFFFF;
+CHECKREG r1, 0xF84C5127;
+CHECKREG r2, 0x1324FFFF;
+CHECKREG r3, 0x0806E7B2;
+CHECKREG r4, 0x908BFFFF;
+CHECKREG r5, 0x10A87FFF;
+CHECKREG r6, 0x000C0000;
+CHECKREG r7, 0xFFFF708F;
+
+imm32 r0, 0x7b235675;
+imm32 r1, 0xcfba5127;
+imm32 r2, 0x17246705;
+imm32 r3, 0x00760007;
+imm32 r4, 0x907bcd09;
+imm32 r5, 0x10a7efdb;
+imm32 r6, 0x000c700d;
+imm32 r7, 0x1246770f;
+R4.L = R5.L * R2.L (TFU);
+R6.L = R6.L * R3.H (ISS2);
+R0.H = R7.L * R4.H (ISS2);
+R1.L = R0.H * R5.L (ISS2);
+R2.L = R1.L * R6.L (IH);
+R5.L = R2.L * R7.H (TFU);
+R3.H = R3.H * R0.L (IH);
+R7.L = R4.H * R1.H (IU);
+CHECKREG r0, 0x80005675;
+CHECKREG r1, 0xCFBA7FFF;
+CHECKREG r2, 0x17243FFF;
+CHECKREG r3, 0x00280007;
+CHECKREG r4, 0x907B6085;
+CHECKREG r5, 0x10A70491;
+CHECKREG r6, 0x000C7FFF;
+CHECKREG r7, 0x1246FFFF;
+
+
+
+pass

@@ -1,0 +1,343 @@
+# Copyright 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# Test instruction record for PowerPC, ISA 3.1.
+#
+
+# The basic flow of the record tests are:
+#    1) Stop before executing the instructions of interest.  Record
+#       the initial value of the registers that the instruction will
+#       change, i.e. the destination register.
+#    2) Execute the instructions.  Record the new value of the
+#       registers that changed.
+#    3) Reverse the direction of the execution and execute back to
+#       just before the instructions of interest.  Record the final
+#       value of the registers of interest.
+#    4) Check that the initial and new values of the registers are
+#       different, i.e. the instruction changed the registers as expected.
+#    5) Check that the initial and final values of the registers are
+#       the same, i.e. gdb record restored the registers to their
+#       original values.
+
+
+standard_testfile
+
+set gen_src record_test_isa_3_1.c
+set executable record_test_isa_3_1
+
+require {istarget "powerpc*"} allow_power_isa_3_1_tests
+
+set options [list additional_flags=-mcpu=power10 debug]
+if {[build_executable "failed to prepare" $executable $srcfile $options] == -1} {
+    return -1
+}
+
+clean_restart $executable
+
+if {![runto_main]} {
+    untested "could not run to main"
+    return
+}
+
+gdb_test_no_output "record"
+
+######  Test 1:  Test an ISA 3.1 byte reverse word instruction (brd) and a
+######  prefixed load double (pld) instruction.
+set stop1 [gdb_get_line_number "stop 1"]
+set stop2 [gdb_get_line_number "stop 2"]
+
+gdb_test "break $stop1" ".*Breakpoint .*" "about to execute test 1"
+gdb_test "continue"  ".*Breakpoint .*" "at stop 1"
+
+# Record the initial values in r0, r1
+# Load the argument into r1, result of byte reverse is put into r0.
+set r0_initial [capture_command_output "info register r0" ""]
+set r1_initial [capture_command_output "info register r1" ""]
+
+gdb_test "break $stop2" ".*Breakpoint .*" "executed test 1"
+gdb_test "continue"  ".*Breakpoint .*" "at stop 2"
+
+# Record the new values of r0 and r1
+set r0_new [capture_command_output "info register r0" ""]
+set r1_new [capture_command_output "info register r1" ""]
+
+# Execute in reverse to before test 1
+gdb_test_no_output "set exec-direction reverse"
+
+gdb_test "break $stop1" ".*Breakpoint .*" "reverse stop at test 1 start"
+gdb_test "continue"  ".*Breakpoint.*" "at stop 1 in reverse"
+
+# Record the final values of r0, r1
+set r0_final [capture_command_output "info register r0" ""]
+set r1_final [capture_command_output "info register r1" ""]
+
+# Check initial and new of r0 are different.
+gdb_assert [string compare $r0_initial $r0_new] \
+    "check r0 initial versus r0 new"
+
+# Check initial and new of r1 are different.
+gdb_assert [string compare $r1_initial $r1_new] \
+    "check r0 initial versus r1 new"
+
+# Check initial and final are the same.
+gdb_assert ![string compare $r0_initial $r0_final] \
+    "check r0 initial versus r0 final"
+
+# Check initial and final are the same.
+gdb_assert ![string compare $r1_initial $r1_final] \
+    "check r1 initial versus r1 final"
+
+
+# Change execution direction to forward for next test.
+gdb_test_no_output "set exec-direction forward" "start forward test3"
+gdb_test "record stop" ".*Process record is stopped.*" "stopped recording 2"
+set test_del_bkpts "delete breakpoints, answer prompt 2"
+
+# Delete all breakpoints and catchpoints.
+delete_breakpoints
+
+gdb_test_no_output "record" "start recording test2"
+
+
+######  Test 2:  Test the ISA 3.1 MMA instructions xxsetaccz, xvi4ger8,
+######  xvf16ger2pn, pmxvi8ger4, and pmxvf32gerpp.  Goal here is to hit all
+######  the places where ppc_record_ACC_fpscr() gets called.
+##
+##       xxsetaccz    - ACC[3], vs[12] to vs[15]
+##       xvi4ger8     - ACC[4], vs[16] to vs[19]
+##       xvf16ger2pn  - ACC[5], vs[20] to vs[23]
+##       pmxvi8ger4   - ACC[6], vs[21] to vs[27]
+##       pmxvf32gerpp - ACC[7], vs[28] to vs[31] and fpscr
+
+## Note the names for pmxvi8ger4 and pmxvf32gerpp have been officially
+## changed to pmdmxvi8ger4 and pmdmxvf32gerpp respectively.  The older
+## names are still supported by the assembler as extended mnemonics.  The
+## older names are used in this test for backward compatibility.
+
+set stop3 [gdb_get_line_number "stop 3"]
+set stop4 [gdb_get_line_number "stop 4"]
+
+gdb_test "break $stop3" ".*Breakpoint .*" "about to execute test 2"
+gdb_test "continue"  ".*Breakpoint .*" "at stop 3"
+
+# Record the initial values of vs's that correspond to the ACC entries,
+# and fpscr.
+set acc_3_0_initial [capture_command_output "info register vs12" ""]
+set acc_3_1_initial [capture_command_output "info register vs13" ""]
+set acc_3_2_initial [capture_command_output "info register vs14" ""]
+set acc_3_3_initial [capture_command_output "info register vs15" ""]
+set acc_4_0_initial [capture_command_output "info register vs16" ""]
+set acc_4_1_initial [capture_command_output "info register vs17" ""]
+set acc_4_2_initial [capture_command_output "info register vs18" ""]
+set acc_4_3_initial [capture_command_output "info register vs19" ""]
+set acc_5_0_initial [capture_command_output "info register vs20" ""]
+set acc_5_1_initial [capture_command_output "info register vs21" ""]
+set acc_5_2_initial [capture_command_output "info register vs22" ""]
+set acc_5_3_initial [capture_command_output "info register vs23" ""]
+set acc_6_0_initial [capture_command_output "info register vs24" ""]
+set acc_6_1_initial [capture_command_output "info register vs25" ""]
+set acc_6_2_initial [capture_command_output "info register vs26" ""]
+set acc_6_3_initial [capture_command_output "info register vs27" ""]
+set acc_7_0_initial [capture_command_output "info register vs28" ""]
+set acc_7_1_initial [capture_command_output "info register vs29" ""]
+set acc_7_2_initial [capture_command_output "info register vs30" ""]
+set acc_7_3_initial [capture_command_output "info register vs31" ""]
+set fpscr_initial [capture_command_output "info register fpscr" ""]
+
+gdb_test "break $stop4" ".*Breakpoint .*" "executed test 2"
+gdb_test "continue"  ".*Breakpoint .*" "at stop 4"
+
+# Record the new values of the ACC entries and fpscr.
+set acc_3_0_new [capture_command_output "info register vs12" ""]
+set acc_3_1_new [capture_command_output "info register vs13" ""]
+set acc_3_2_new [capture_command_output "info register vs14" ""]
+set acc_3_3_new [capture_command_output "info register vs15" ""]
+set acc_4_0_new [capture_command_output "info register vs16" ""]
+set acc_4_1_new [capture_command_output "info register vs17" ""]
+set acc_4_2_new [capture_command_output "info register vs18" ""]
+set acc_4_3_new [capture_command_output "info register vs19" ""]
+set acc_5_0_new [capture_command_output "info register vs20" ""]
+set acc_5_1_new [capture_command_output "info register vs21" ""]
+set acc_5_2_new [capture_command_output "info register vs22" ""]
+set acc_5_3_new [capture_command_output "info register vs23" ""]
+set acc_6_0_new [capture_command_output "info register vs24" ""]
+set acc_6_1_new [capture_command_output "info register vs25" ""]
+set acc_6_2_new [capture_command_output "info register vs26" ""]
+set acc_6_3_new [capture_command_output "info register vs27" ""]
+set acc_7_0_new [capture_command_output "info register vs28" ""]
+set acc_7_1_new [capture_command_output "info register vs29" ""]
+set acc_7_2_new [capture_command_output "info register vs30" ""]
+set acc_7_3_new [capture_command_output "info register vs31" ""]
+set fpscr_new [capture_command_output "info register fpscr" ""]
+
+# Execute in reverse to before test 2.
+gdb_test_no_output "set exec-direction reverse" "reverse to start of test 2"
+
+gdb_test "break $stop3" ".*Breakpoint .*" "reverse stop at test 2 start"
+gdb_test "continue"  ".*Breakpoint.*" "at stop 3 in reverse"
+
+# Record the final values of the ACC entries and fpscr.
+set acc_3_0_final [capture_command_output "info register vs12" ""]
+set acc_3_1_final [capture_command_output "info register vs13" ""]
+set acc_3_2_final [capture_command_output "info register vs14" ""]
+set acc_3_3_final [capture_command_output "info register vs15" ""]
+set acc_4_0_final [capture_command_output "info register vs16" ""]
+set acc_4_1_final [capture_command_output "info register vs17" ""]
+set acc_4_2_final [capture_command_output "info register vs18" ""]
+set acc_4_3_final [capture_command_output "info register vs19" ""]
+set acc_5_0_final [capture_command_output "info register vs20" ""]
+set acc_5_1_final [capture_command_output "info register vs21" ""]
+set acc_5_2_final [capture_command_output "info register vs22" ""]
+set acc_5_3_final [capture_command_output "info register vs23" ""]
+set acc_6_0_final [capture_command_output "info register vs24" ""]
+set acc_6_1_final [capture_command_output "info register vs25" ""]
+set acc_6_2_final [capture_command_output "info register vs26" ""]
+set acc_6_3_final [capture_command_output "info register vs27" ""]
+set acc_7_0_final [capture_command_output "info register vs28" ""]
+set acc_7_1_final [capture_command_output "info register vs29" ""]
+set acc_7_2_final [capture_command_output "info register vs30" ""]
+set acc_7_3_final [capture_command_output "info register vs31" ""]
+set fpscr_final [capture_command_output "info register fpscr" ""]
+
+# check initial and new ACC entries are different.
+gdb_assert [string compare $acc_3_0_initial $acc_3_0_new] \
+    "check vs12 initial versus new"
+
+gdb_assert [string compare $acc_3_1_initial $acc_3_1_new] \
+    "check vs13 initial versus new"
+
+gdb_assert [string compare $acc_3_2_initial $acc_3_2_new] \
+    "check vs14 initial versus new"
+
+gdb_assert [string compare $acc_3_3_initial $acc_3_3_new] \
+    "check vs15 initial versus new"
+
+gdb_assert [string compare $acc_4_0_initial $acc_4_0_new] \
+    "check vs16 initial versus new"
+
+gdb_assert [string compare $acc_4_1_initial $acc_4_1_new] \
+    "check vs17 initial versus new"
+
+gdb_assert [string compare $acc_4_2_initial $acc_4_2_new] \
+    "check vs18 initial versus new"
+
+gdb_assert [string compare $acc_4_3_initial $acc_4_3_new] \
+    "check vs19 initial versus new"
+
+gdb_assert [string compare $acc_5_0_initial $acc_5_0_new] \
+    "check vs20 initial versus new"
+
+gdb_assert [string compare $acc_5_1_initial $acc_5_1_new] \
+    "check vs21 initial versus new"
+
+gdb_assert [string compare $acc_5_2_initial $acc_5_2_new] \
+    "check vs22 initial versus new"
+
+gdb_assert [string compare $acc_5_3_initial $acc_5_3_new] \
+    "check vs23 initial versus new"
+
+gdb_assert [string compare $acc_6_0_initial $acc_6_0_new] \
+    "check vs24 initial versus new"
+
+gdb_assert [string compare $acc_6_1_initial $acc_6_1_new] \
+    "check vs25 initial versus new"
+
+gdb_assert [string compare $acc_6_2_initial $acc_6_2_new] \
+    "check vs26 initial versus new"
+
+gdb_assert [string compare $acc_6_3_initial $acc_6_3_new] \
+    "check vs27 initial versus new"
+
+gdb_assert [string compare $acc_7_0_initial $acc_7_0_new] \
+    "check vs28 initial versus new"
+
+gdb_assert [string compare $acc_7_1_initial $acc_7_1_new] \
+    "check vs29 initial versus new"
+
+gdb_assert [string compare $acc_7_2_initial $acc_7_2_new] \
+    "check vs30 initial versus new"
+
+gdb_assert [string compare $acc_7_3_initial $acc_7_3_new] \
+    "check vs31 initial versus new"
+
+gdb_assert [string compare $fpscr_initial $fpscr_new] \
+    "check fpscr initial versus new"
+
+
+# Check initial and final ACC entries are the same.
+gdb_assert ![string compare $acc_3_0_initial $acc_3_0_final] \
+    "check vs12 initial versus final"
+
+gdb_assert ![string compare $acc_3_1_initial $acc_3_1_final] \
+    "check vs13 initial versus final"
+
+gdb_assert ![string compare $acc_3_2_initial $acc_3_2_final] \
+    "check vs14 initial versus final"
+
+gdb_assert ![string compare $acc_3_3_initial $acc_3_3_final] \
+    "check vs15 initial versus final"
+
+gdb_assert ![string compare $acc_4_0_initial $acc_4_0_final] \
+    "check vs16 initial versus final"
+
+gdb_assert ![string compare $acc_4_1_initial $acc_4_1_final] \
+    "check vs17 initial versus final"
+
+gdb_assert ![string compare $acc_4_2_initial $acc_4_2_final] \
+    "check vs18 initial versus final"
+
+gdb_assert ![string compare $acc_4_3_initial $acc_4_3_final] \
+    "check vs19 initial versus final"
+
+gdb_assert ![string compare $acc_5_0_initial $acc_5_0_final] \
+    "check vs20 initial versus final"
+
+gdb_assert ![string compare $acc_5_1_initial $acc_5_1_final] \
+    "check vs21 initial versus final"
+
+gdb_assert ![string compare $acc_5_2_initial $acc_5_2_final] \
+    "check vs22 initial versus final"
+
+gdb_assert ![string compare $acc_5_3_initial $acc_5_3_final] \
+    "check vs23 initial versus final"
+
+gdb_assert ![string compare $acc_6_0_initial $acc_6_0_final] \
+    "check vs24 initial versus final"
+
+gdb_assert ![string compare $acc_6_1_initial $acc_6_1_final] \
+    "check vs25 initial versus final"
+
+gdb_assert ![string compare $acc_6_2_initial $acc_6_2_final] \
+    "check vs26 initial versus final"
+
+gdb_assert ![string compare $acc_6_3_initial $acc_6_3_final] \
+    "check vs27 initial versus final"
+
+gdb_assert ![string compare $acc_7_0_initial $acc_7_0_final] \
+    "check vs28 initial versus final"
+
+gdb_assert ![string compare $acc_7_1_initial $acc_7_1_final] \
+    "check vs29 initial versus final"
+
+gdb_assert ![string compare $acc_7_2_initial $acc_7_2_final] \
+    "check !vs30 initial versus final"
+
+gdb_assert ![string compare $acc_7_3_initial $acc_7_3_final] \
+    "check !vs31 initial versus final"
+
+gdb_assert ![string compare $fpscr_initial $fpscr_final] \
+    "check fpscr initial versus final"
+
+

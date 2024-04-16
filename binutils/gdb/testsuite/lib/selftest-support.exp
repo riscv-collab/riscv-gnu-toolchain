@@ -1,0 +1,167 @@
+# Copyright 2003-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Find a pathname to a file that we would execute if the shell was asked
+# to run $arg using the current PATH.
+
+proc find_gdb { arg } {
+
+    # If the arg directly specifies an existing executable file, then
+    # simply use it.
+
+    if {[file executable $arg]} {
+	return $arg
+    }
+
+    set result [which $arg]
+    if {[string match "/" [ string range $result 0 0 ]]} {
+	return $result
+    }
+
+    # If everything fails, just return the unqualified pathname as default
+    # and hope for best.
+
+    return $arg
+}
+
+# A helper proc that sets up for self-testing.
+# EXECUTABLE is the gdb to use.
+# FUNCTION is the function to break in, either captured_main
+# or captured_command_loop.
+# Return 0 in case of success, -1 in case of failure, and -2 in case of
+# skipping the test-case.
+
+proc selftest_setup { executable function } {
+    global gdb_prompt
+    global INTERNAL_GDBFLAGS
+
+    # load yourself into the debugger
+
+    global gdb_file_cmd_debug_info
+    set gdb_file_cmd_debug_info "unset"
+
+    set result [gdb_load $executable]
+
+    if {$result != 0} {
+	return -1
+    }
+
+    if {$gdb_file_cmd_debug_info != "debug"} {
+	untested "no debug information, skipping testcase."
+	return -2
+    }
+
+    # Set a breakpoint at $function.
+    if { [gdb_breakpoint $function "no-message"] != 1 } {
+	untested "Cannot set breakpoint at $function, skipping testcase."
+	return -2
+    }
+
+    # run yourself
+
+    set description "run until breakpoint at $function"
+    gdb_test_multiple "run $INTERNAL_GDBFLAGS" "$description" {
+        -re "Starting program.*Breakpoint \[0-9\]+,.*$function \\(.*\\).* at .*main.c:.*$gdb_prompt $" {
+            pass "$description"
+        }
+        -re "Starting program.*Breakpoint \[0-9\]+,.*$function \\(.*\\).*$gdb_prompt $" {
+            xfail "$description (line numbers scrambled?)"
+        }
+        -re "vfork: No more processes.*$gdb_prompt $" {
+            fail "$description (out of virtual memory)"
+            return -1
+        }
+        -re ".*$gdb_prompt $" {
+            fail "$description"
+            return -1
+        }
+    }
+
+    return 0
+}
+
+# Prepare for running a self-test by moving the GDB executable to a
+# location where we can use it as the inferior.  Return the filename
+# of the new location.
+#
+# If the current testing setup is not suitable for running a
+# self-test, then return an empty string.
+proc selftest_prepare {} {
+    # Are we testing with a remote board?  In that case, the target
+    # won't have access to the GDB's auxilliary data files
+    # (data-directory, etc.).  It's simpler to just skip.
+    if { [is_remote target]  || [is_remote host] } {
+	return
+    }
+
+    # ... or seemingly testing with a cross debugger?  Likely GDB
+    # wouldn't be able to debug itself then...
+    if ![isnative] {
+	return
+    }
+
+    # ... or with a stub-like server?  I.e., gdbserver + "target
+    # remote"?  In that case we won't be able to pass command line
+    # arguments to GDB, and selftest_setup wants to do exactly that.
+    if [use_gdb_stub] {
+	return
+    }
+
+    # Run the test with self.  Copy the file executable file in case
+    # this OS doesn't like to edit its own text space.
+
+    set gdb_fullpath [find_gdb $::GDB]
+
+    if {[is_remote host]} {
+	set xgdb x$::tool
+    } else {
+	set xgdb [standard_output_file x$::tool]
+    }
+
+    # Remove any old copy lying around.
+    remote_file host delete $xgdb
+
+    set filename [remote_download host $gdb_fullpath $xgdb]
+
+    return $filename
+}
+
+# A simple way to run some self-tests.
+
+proc do_self_tests {function body} {
+    set file [selftest_prepare]
+    if { $file eq "" } {
+	return
+    }
+
+    gdb_start
+
+    # When debugging GDB with GDB, some operations can take a relatively long
+    # time, especially if the build is non-optimized.  Bump the timeout for the
+    # duration of the test.
+    with_timeout_factor 10 {
+	set result [selftest_setup $file $function]
+	if {$result == 0} {
+	    set result [uplevel $body]
+	}
+    }
+
+    gdb_exit
+    catch "remote_file host delete $file"
+
+    if {$result == -1} {
+	warning "Couldn't test self"
+    }
+}

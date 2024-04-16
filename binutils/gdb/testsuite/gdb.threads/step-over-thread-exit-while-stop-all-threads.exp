@@ -1,0 +1,69 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test stepping over a breakpoint installed on an instruction that
+# exits the thread, while another thread is repeatedly hitting a
+# breakpoint, causing GDB to stop all threads.
+
+standard_testfile .c
+
+set syscalls_src $srcdir/lib/my-syscalls.S
+
+if { [build_executable "failed to prepare" $testfile \
+	  [list $srcfile $syscalls_src] {debug pthreads}] == -1 } {
+    return
+}
+
+proc test {displaced-stepping target-non-stop} {
+    save_vars ::GDBFLAGS {
+	append ::GDBFLAGS " -ex \"maintenance set target-non-stop ${target-non-stop}\""
+	clean_restart $::binfile
+    }
+
+    gdb_test_no_output "set displaced-stepping ${displaced-stepping}"
+
+    if { ![runto_main] } {
+	return
+    }
+
+    # The "stepper over exit" threads will step over an instruction
+    # that causes them to exit.
+    gdb_test "break my_exit_syscall if 0"
+
+    # The "breakpoint hitter" thread will repeatedly hit this
+    # breakpoint, causing GDB to stop all threads.
+    gdb_test "break break_here"
+
+    # To avoid flooding the log with thread created/exited messages.
+    gdb_test_no_output "set print thread-events off"
+
+    # Make sure the target reports the breakpoint stops.
+    gdb_test_no_output "set breakpoint condition-evaluation host"
+
+    for { set i 0 } { $i < 30 } { incr i } {
+	with_test_prefix "iter $i" {
+	    if { [gdb_test "continue" "hit Breakpoint $::decimal, break_here .*"] != 0 } {
+		# Exit if there's a failure to avoid lengthy timeouts.
+		break
+	    }
+	}
+    }
+}
+
+foreach_with_prefix displaced-stepping {off auto} {
+    foreach_with_prefix target-non-stop {off on} {
+	test ${displaced-stepping} ${target-non-stop}
+    }
+}

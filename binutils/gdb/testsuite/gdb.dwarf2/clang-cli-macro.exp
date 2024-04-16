@@ -1,0 +1,93 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Clang has this bug where it puts the macros defined on the command-line
+# after the main file portion (see PR 29034 and
+# https://github.com/llvm/llvm-project/issues/54506 )
+# Test that GDB is still able to print macros in clang versions that
+# have this bug.
+
+load_lib dwarf.exp
+
+require dwarf2_support
+
+standard_testfile .c .S
+
+lassign [function_range main $srcdir/$subdir/$srcfile] \
+    main_start main_len
+
+set asm_file [standard_output_file $srcfile2]
+
+Dwarf::assemble $asm_file {
+    declare_labels L cu_macros
+
+    cu {} {
+	DW_TAG_compile_unit {
+	    {DW_AT_producer "clang version 15.0.0"}
+	    {DW_AT_language @DW_LANG_C11}
+	    {DW_AT_name $::srcfile}
+	    {DW_AT_macros $cu_macros DW_FORM_sec_offset}
+	    {DW_AT_stmt_list $L DW_FORM_sec_offset}
+	} {
+	    declare_labels int_type
+
+	    int_type: DW_TAG_base_type {
+		{DW_AT_byte_size 4 DW_FORM_sdata}
+		{DW_AT_encoding  @DW_ATE_signed}
+		{DW_AT_name int}
+	    }
+	    DW_TAG_subprogram {
+		{MACRO_AT_func {main}}
+		{type :$int_type}
+	    }
+	}
+    }
+    lines {version 2} L {
+	file_name $::srcfile 1
+	program {
+	    DW_LNE_set_address $::main_start
+	    line 10
+	    DW_LNS_copy
+	    DW_LNE_set_address "$::main_start + $::main_len"
+	    DW_LNE_end_sequence
+	}
+    }
+
+    # Define the .debug_macro section.
+    macro {
+	cu_macros: unit {
+	    "debug-line-offset-label" $L
+	} {
+	    start_file 0 1
+		# A macro defined at line 1 of the main file.
+		define 1 "TWO 2"
+	    end_file
+	    define 0 "ONE 1"
+	}
+    }
+}
+
+if {[prepare_for_testing "failed to prepare" $testfile [list $srcfile $asm_file] {nodebug}]} {
+    return
+}
+
+if {![runto_main]} {
+    return
+}
+
+gdb_test "print TWO" "= 2" "print simple macro"
+gdb_test "print ONE" "= 1" "print defined from CLI"

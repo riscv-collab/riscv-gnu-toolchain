@@ -1,0 +1,247 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test shows the importance of not corrupting the order of line
+# table information.  When multiple lines are given for the same
+# address the compiler usually lists these in the order in which we
+# would expect to encounter them.  When stepping through nested inline
+# frames the last line given for an address is assumed by GDB to be
+# the most inner frame, and this is what GDB displays.
+#
+# If we corrupt the order of the line table entries then GDB will
+# display the wrong line as being the inner most frame.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+# The .c files use __attribute__.
+require is_c_compiler_gcc
+
+standard_testfile .c .S
+
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    global srcdir subdir srcfile
+    declare_labels lines_label
+
+    get_func_info main
+
+    cu {} {
+	compile_unit {
+	    {language @DW_LANG_C}
+	    {name dw2-is-stmt.c}
+	    {low_pc 0 addr}
+	    {stmt_list ${lines_label} DW_FORM_sec_offset}
+	} {
+	    subprogram {
+		{external 1 flag}
+		{name main}
+		{low_pc $main_start addr}
+		{high_pc "$main_start + $main_len" addr}
+	    } {}
+	}
+    }
+
+    lines {version 2 default_is_stmt 0} lines_label {
+	include_dir "${srcdir}/${subdir}"
+	file_name "$srcfile" 1
+
+	program {
+	    DW_LNE_set_address main
+	    line [gdb_get_line_number "main prologue"]
+	    DW_LNS_negate_stmt
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_1
+	    line [gdb_get_line_number "main, set var to 99"]
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_2
+	    line [gdb_get_line_number "main, set var to 0"]
+	    DW_LNS_negate_stmt
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_3
+	    DW_LNS_negate_stmt
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_4
+	    DW_LNS_negate_stmt
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_5
+	    line [gdb_get_line_number "main end"]
+	    DW_LNS_negate_stmt
+	    DW_LNS_copy
+
+	    DW_LNE_set_address ${main_end}
+	    DW_LNE_end_sequence
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	  [list $srcfile $asm_file] {nodebug}] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+# First, break by address at a location we know is marked as not a
+# statement.  GDB should still correctly report the file and line
+# number.
+gdb_breakpoint "*line_label_2"
+gdb_continue_to_breakpoint "*line_label_2"
+
+# Now step by instruction.  We should skip over the is-stmt location
+# for this line, and land on the next source line.
+gdb_test "step" "/\\* main end \\*/" \
+    "step to end from line_label_2"
+
+# Restart the test.  This time, stop at a location we know is marked
+# as a statement.
+clean_restart ${binfile}
+runto_main
+
+gdb_breakpoint "*line_label_3"
+gdb_continue_to_breakpoint "*line_label_3"
+
+# Now step by instruction.  As you would expect we should leave this
+# line and stop at the next source line.
+gdb_test "step" "/\\* main end \\*/" \
+    "step to end from line_label_3"
+
+# Restart the test, this time, step through line by line, ensure we
+# only stop at the places where is-stmt is true.
+clean_restart ${binfile}
+runto_main
+
+# Get the values of the labels where we expect to stop.
+set ll1 [get_hexadecimal_valueof "&line_label_1" "INVALID"]
+set ll2 [get_hexadecimal_valueof "&line_label_2" "INVALID"]
+set ll3 [get_hexadecimal_valueof "&line_label_3" "INVALID"]
+set ll5 [get_hexadecimal_valueof "&line_label_5" "INVALID"]
+
+# The first stop should be at line_label_1
+with_test_prefix "check we're at line_label_1" {
+    set pc [get_hexadecimal_valueof "\$pc" "NO-PC"]
+    gdb_assert { $ll1 == $pc } "check initial \$pc is line_label_1"
+}
+
+# Now step, this should take us to line_label_3 which is the next
+# location marked as is-stmt.
+with_test_prefix "step to line_label_3" {
+    gdb_test "step" "/\\* main, set var to 0 \\*/"
+    set pc [get_hexadecimal_valueof "\$pc" "NO-PC"]
+    gdb_assert { $ll3 == $pc } "check initial \$pc is line_label_3"
+}
+
+# A final step should take us to line_label_5.
+with_test_prefix "step to line_label_5" {
+    gdb_test "step" "/\\* main end \\*/"
+    set pc [get_hexadecimal_valueof "\$pc" "NO-PC"]
+    gdb_assert { $ll5 == $pc } "check initial \$pc"
+}
+
+# Now restart the test, and place a breakpoint by line number.  GDB
+# should select the location that is marked as is-stmt.
+clean_restart ${binfile}
+runto_main
+set linum [gdb_get_line_number "main, set var to 0"]
+gdb_breakpoint "$srcfile:$linum"
+gdb_continue_to_breakpoint "Breakpoint on line, set var to 0"
+set pc [get_hexadecimal_valueof "\$pc" "NO-PC"]
+gdb_assert { $ll3 == $pc } "check initial \$pc"
+
+# Restart the test again, this time we will test stepping by
+# instruction.
+clean_restart ${binfile}
+runto_main
+
+# We will be at line_label_1 at this point - we already tested this
+# above.  Now single instruction step forward until we get to
+# line_label_2.  Every instruction before line_label_2 should be
+# attributed to the 'var = 99' line.  For most targets there will only
+# be a single instruction between line_label_1 and line_label_2, but
+# we allow for up to 25 (just a random number).
+
+with_test_prefix "stepi until line_label_2" {
+    set i 0
+    set pc [get_hexadecimal_valueof "\$pc" "NO-PC" \
+		"get pc before stepi loop at line_label_1"]
+    while { $pc < $ll2 } {
+	incr i
+	with_test_prefix $i {
+	    set line_changed -1
+	    gdb_test_multiple "stepi" "stepi until line_label_2" {
+		-re "main, set var to 99.*$gdb_prompt" {
+		    set line_changed 0
+		}
+		-re "main, set var to 0.*$gdb_prompt " {
+		    set line_changed 1
+		}
+	    }
+	    gdb_assert { $line_changed != -1 } \
+		"ensure we saw a valid line pattern"
+	    set pc [get_hexadecimal_valueof "\$pc" "NO-PC" \
+			"get pc inside stepi loop from line_label_1"]
+	    if { $ll2 == $pc } {
+		gdb_assert { $line_changed } \
+		    "line must change at line_label_2"
+	    } else {
+		gdb_assert { !$line_changed } \
+		    "line should not change until line_label_2"
+	    }
+	}
+    }
+}
+
+# Now single instruction step forward until GDB reports a new source
+# line, at which point we should be at line_label_5.
+
+with_test_prefix "stepi until line_label_5" {
+    set i 0
+    set pc [get_hexadecimal_valueof "\$pc" "NO-PC" \
+		"get pc before stepi loop at line_label_2"]
+    while { $pc < $ll5 } {
+	incr i
+	with_test_prefix $i {
+	    set line_changed -1
+	    gdb_test_multiple "stepi" "stepi until line_label_5" {
+		-re "main, set var to 0.*$gdb_prompt" {
+		    set line_changed 0
+		}
+		-re "main end.*$gdb_prompt " {
+		    set line_changed 1
+		}
+	    }
+	    gdb_assert { $line_changed != -1 } \
+		"ensure we saw a valid line pattern"
+	    set pc [get_hexadecimal_valueof "\$pc" "NO-PC" \
+			"get pc inside stepi loop from line_label_2"]
+	    if { $ll5 == $pc } {
+		gdb_assert { $line_changed } \
+		    "line must change at line_label_5"
+	    } else {
+		gdb_assert { !$line_changed } \
+		    "line should not change until line_label_5"
+	    }
+	}
+    }
+}

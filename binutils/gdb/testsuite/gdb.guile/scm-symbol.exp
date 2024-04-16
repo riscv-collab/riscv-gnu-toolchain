@@ -1,0 +1,189 @@
+# Copyright (C) 2010-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.
+# It tests the mechanism exposing symbols to Guile.
+
+load_lib gdb-guile.exp
+
+require allow_guile_tests
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+# These tests are done before we call gdb_guile_runto_main so we have to
+# import the gdb module ourselves.
+gdb_install_guile_utils
+gdb_install_guile_module
+
+# Test looking up a global symbol before we runto_main as this is the
+# point where we don't have a current frame, and we don't want to
+# require one.
+gdb_scm_test_silent_cmd "guile (define main-func (lookup-global-symbol \"main\"))" \
+    "lookup main"
+gdb_test "guile (print (symbol-function? main-func))" \
+    "= #t" "test (symbol-function? main)"
+gdb_test "guile (print (lookup-global-symbol \"junk\"))" \
+    "= #f" "test (lookup-global-symbol junk)"
+
+gdb_test "guile (print (symbol-value main-func))" \
+    "= {int \\(int, char \[*\]\[*\]\\)} $hex \\<main\\>" "print value of main"
+
+set qq_line [gdb_get_line_number "line of qq"]
+gdb_scm_test_silent_cmd "guile (define qq-var (lookup-global-symbol \"qq\"))" \
+    "lookup qq"
+gdb_test "guile (print (symbol-line qq-var))" \
+    "= $qq_line" "print line number of qq"
+gdb_test "guile (print (symbol-value qq-var))" \
+    "= 72" "print value of qq"
+gdb_test "guile (print (symbol-needs-frame? qq-var))" \
+    "= #f" "print whether qq needs a frame"
+
+if ![gdb_guile_runto_main] {
+    return
+}
+
+# Test symbol eq? and equal?.
+gdb_test "guile (print (eq? (lookup-global-symbol \"main\") (lookup-global-symbol \"main\")))" \
+    "= #t"
+gdb_test "guile (print (equal? (lookup-global-symbol \"main\") (lookup-global-symbol \"main\")))" \
+    "= #t"
+
+gdb_breakpoint [gdb_get_line_number "Block break here."]
+gdb_continue_to_breakpoint "Block break here."
+gdb_scm_test_silent_cmd "guile (define frame (selected-frame))" \
+    "get frame at block break"
+gdb_scm_test_silent_cmd "guile (define block (frame-block frame))" \
+    "get block at block break"
+
+# Test symbol-argument?.
+gdb_scm_test_silent_cmd "guile (define arg (car (lookup-symbol \"arg\")))" \
+    "get variable arg"
+gdb_test "guile (print (symbol-variable? arg))" "= #f"
+gdb_test "guile (print (symbol-constant? arg))" "= #f"
+gdb_test "guile (print (symbol-argument? arg))" "= #t"
+gdb_test "guile (print (symbol-function? arg))" "= #f"
+
+# Test symbol-function?.
+gdb_scm_test_silent_cmd "guile (define func (block-function block))" \
+    "get block function"
+gdb_test "guile (print (symbol-variable? func))" "= #f"
+gdb_test "guile (print (symbol-constant? func))" "= #f"
+gdb_test "guile (print (symbol-argument? func))" "= #f"
+gdb_test "guile (print (symbol-function? func))" "= #t"
+
+# Test attributes of func.
+gdb_test "guile (print (symbol-name func))" "func"
+gdb_test "guile (print (symbol-print-name func))" "func"
+gdb_test "guile (print (symbol-linkage-name func))" "func"
+gdb_test "guile (print (= (symbol-addr-class func) SYMBOL_LOC_BLOCK))" "= #t"
+
+gdb_breakpoint [gdb_get_line_number "Break at end."]
+gdb_continue_to_breakpoint "Break at end."
+gdb_scm_test_silent_cmd "guile (define frame (selected-frame))" \
+    "get frame at end"
+
+# Test symbol-variable?.
+gdb_scm_test_silent_cmd "guile (define a (car (lookup-symbol \"a\")))" \
+    "get variable a"
+gdb_test "guile (print (symbol-variable? a))" "= #t"
+gdb_test "guile (print (symbol-constant? a))" "= #f"
+gdb_test "guile (print (symbol-argument? a))" "= #f"
+gdb_test "guile (print (symbol-function? a))" "= #f"
+
+# Test attributes of a.
+gdb_test "guile (print (= (symbol-addr-class a) SYMBOL_LOC_COMPUTED))" "= #t"
+
+gdb_test "guile (print (symbol-value a))" \
+    "ERROR: Symbol requires a frame to compute its value.*"\
+    "try to print value of a without a frame"
+gdb_test "guile (print (symbol-value a #:frame frame))" \
+    "= 0" "print value of a"
+gdb_test "guile (print (symbol-needs-frame? a))" \
+    "= #t" "print whether a needs a frame"
+
+# Test symbol-constant?.
+gdb_scm_test_silent_cmd "guile (define t (car (lookup-symbol \"one\")))" \
+    "get constant t"
+gdb_test "guile (print (symbol-variable? t))" "= #f"
+gdb_test "guile (print (symbol-constant? t))" "= #t"
+gdb_test "guile (print (symbol-argument? t))" "= #f"
+gdb_test "guile (print (symbol-function? t))" "= #f"
+
+# Test attributes of t.
+gdb_test "guile (print (= (symbol-addr-class t) SYMBOL_LOC_CONST))" "= #t"
+
+# Test type attribute.
+gdb_test "guile (print (symbol-type t))" "= enum tag"
+
+# Test symtab attribute.
+gdb_test "guile (print (symbol-symtab t))" "= #<gdb:symtab (.*/)?scm-symbol.c>"
+
+# C++ tests
+# Recompile binary.
+if { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}-cxx" executable "debug c++"] != "" } {
+    untested "failed to compile in C++ mode"
+    return -1
+}
+
+clean_restart ${binfile}-cxx
+
+if ![gdb_guile_runto_main] {
+    return
+}
+
+gdb_breakpoint [gdb_get_line_number "Break in class."]
+gdb_continue_to_breakpoint "Break in class."
+
+gdb_scm_test_silent_cmd "guile (define cplusframe (selected-frame))" \
+    "get frame at class"
+gdb_scm_test_silent_cmd "guile (define cplusfunc (block-function (frame-block cplusframe)))" \
+    "get function at class"
+
+gdb_test "guile (print (symbol-variable? cplusfunc))" "= #f"
+gdb_test "guile (print (symbol-constant? cplusfunc))" "= #f"
+gdb_test "guile (print (symbol-argument? cplusfunc))" "= #f"
+gdb_test "guile (print (symbol-function? cplusfunc))" "= #t"
+
+gdb_test "guile (print (symbol-name cplusfunc))" \
+    "= SimpleClass::valueofi().*" "test method.name"
+gdb_test "guile (print (symbol-print-name cplusfunc))" \
+    "= SimpleClass::valueofi().*" "test method.print_name"
+gdb_test "guile (print (symbol-linkage-name cplusfunc))" \
+    "_ZN11SimpleClass8valueofiEv.*" "test method.linkage_name"
+gdb_test "guile (print (= (symbol-addr-class cplusfunc) SYMBOL_LOC_BLOCK))" "= #t"
+
+# Test is_valid when the objfile is unloaded.  This must be the last
+# test as it unloads the object file in GDB.
+# Start with a fresh gdb.
+clean_restart ${testfile}
+if ![gdb_guile_runto_main] {
+    return
+}
+
+gdb_breakpoint [gdb_get_line_number "Break at end."]
+gdb_continue_to_breakpoint "Break at end again"
+gdb_scm_test_silent_cmd "guile (define a (car (lookup-symbol \"a\")))" \
+    "get variable a for unload"
+gdb_test "guile (print (symbol-valid? a))" \
+    "= #t" "test symbol validity pre-unload"
+delete_breakpoints
+gdb_unload
+gdb_test "guile (print (symbol-valid? a))" \
+    "= #f" "test symbol validity post-unload"
+gdb_test_no_output "guile (set! a #f) (gc)" "test symbol destructor"

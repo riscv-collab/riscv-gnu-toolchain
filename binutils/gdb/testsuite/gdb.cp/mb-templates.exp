@@ -1,0 +1,122 @@
+# Copyright 2007-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test verifies that setting breakpoint on line in template
+# function will fire in all instantiations of that template.
+
+require allow_stl_tests
+
+
+standard_testfile .cc
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile {debug c++}]} {
+    return -1
+}
+
+set bp_location [gdb_get_line_number "set breakpoint here"]
+
+# Set a breakpoint with multiple locations
+# and a condition.
+
+gdb_test "break $srcfile:$bp_location if i==1" \
+    "Breakpoint.*at.*: $srcfile:$bp_location. \\(2 locations\\).*" \
+    "initial condition: set breakpoint"
+
+gdb_run_cmd
+
+set test "initial condition: run to breakpoint"
+gdb_test_multiple "" $test {
+    -re "Breakpoint $bkptno_num_re,.*foo<int> \\(i=1\\).*$gdb_prompt $" {
+	pass $test
+	break
+    }
+}
+
+gdb_test "continue" \
+    ".*Breakpoint.*foo<double> \\(i=1\\).*" \
+    "initial condition: run to breakpoint 2"
+
+# Set breakpoint with multiple locations.
+# Separately set the condition.
+
+delete_breakpoints
+gdb_test "kill" "" "kill" \
+         {Kill the program being debugged\? \(y or n\) } "y"
+
+gdb_test "break $srcfile:$bp_location" \
+    "Breakpoint.*at.*: $srcfile:$bp_location. \\(2 locations\\).*" \
+    "separate condition: set breakpoint"
+
+gdb_test_no_output {condition $bpnum i==1} \
+    "separate condition: set condition"
+    
+gdb_run_cmd
+gdb_test "" "Breakpoint $bkptno_num_re,.*foo<int> \\(i=1\\).*" "separate condition: run to breakpoint"
+
+gdb_test "continue" \
+    ".*Breakpoint.*foo<double> \\(i=1\\).*" \
+    "separate condition: run to breakpoint 2"
+
+# Try disabling a single location. We also test
+# that at least in simple cases, the enable/disable
+# state of locations surive "run".
+gdb_test_no_output {disable $bpnum.1} "disabling location: disable"
+
+gdb_run_cmd
+gdb_test "" "Breakpoint $bkptno_num_re,.*foo<double> \\(i=1\\).*" "disabling location: run to breakpoint"
+
+# Try disabling entire breakpoint
+gdb_test_no_output {enable $bpnum.1} "disabling location: enable"
+
+
+gdb_test_no_output {disable $bpnum} "disable breakpoint: disable"
+
+gdb_run_cmd
+gdb_test "" "$inferior_exited_re normally.*" "disable breakpoint: run to breakpoint"
+
+# Make sure breakpoint can be set on a specific instantion.
+delete_breakpoints
+gdb_test "break 'void foo<int>(int)'" ".*" \
+    "instantiation: set breakpoint"
+
+
+gdb_run_cmd
+gdb_test "" "Breakpoint \[0-9\]+,.*foo<int> \\(i=0\\).*" "instantiation: run to breakpoint"
+
+gdb_test "continue" \
+    ".*Breakpoint.*foo<int> \\(i=1\\).*" \
+    "instantiation: run to breakpoint 2"
+
+
+# Make sure we can set a breakpoint on a source statement that spans
+# multiple lines.
+
+delete_breakpoints
+
+set bp_location [gdb_get_line_number "set multi-line breakpoint here"]
+
+if { ![runto_main] } {
+    return 0
+}
+
+gdb_test "break $srcfile:$bp_location" \
+    "Breakpoint.*at.*: $srcfile:$bp_location. \\(2 locations\\).*" \
+    "set multi_line_foo breakpoint"
+gdb_test "continue" \
+    ".*Breakpoint.*multi_line_foo<int> \\(i=0\\).*" \
+    "run to multi_line_foo breakpoint 2 <int>"
+gdb_test "continue" \
+    ".*Breakpoint.*multi_line_foo<double> \\(i=0\\).*" \
+    "run to multi_line_foo breakpoint 2 <double>"

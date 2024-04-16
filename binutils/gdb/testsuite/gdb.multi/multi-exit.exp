@@ -1,0 +1,132 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test receiving TARGET_WAITKIND_EXITED events from multiple
+# inferiors.  In all stop-mode, upon receiving the exit event from one
+# of the inferiors, GDB will try to stop the other inferior, too.  So,
+# a stop request will be sent.  Receiving a TARGET_WAITKIND_EXITED
+# status kind as a response to that stop request instead of a
+# TARGET_WAITKIND_STOPPED should be handled by GDB without problems.
+
+standard_testfile
+
+require !use_gdb_stub
+
+if {[build_executable "failed to prepare" $testfile $srcfile]} {
+    return -1
+}
+
+# We are testing GDB's ability to stop all threads.
+# Hence, go with the all-stop-on-top-of-non-stop mode.
+save_vars { GDBFLAGS } {
+    append GDBFLAGS " -ex \"maint set target-non-stop on\""
+    clean_restart ${binfile}
+}
+
+# Start inferior NUM.
+
+proc start_inferior {num} {
+    with_test_prefix "start_inferior $num" {
+	global srcfile binfile
+
+	if {$num != 1} {
+	    gdb_test "add-inferior" "Added inferior $num.*" \
+		"add empty inferior"
+	    gdb_test "inferior $num" "Switching to inferior $num.*" \
+		"switch to inferior"
+	}
+
+	gdb_load $binfile
+
+	if {[gdb_start_cmd] < 0} {
+	    fail "could not start"
+	    return -1
+	}
+	gdb_test "" ".*reakpoint .*, main .*${srcfile}.*" "start"
+    }
+
+    return 0
+}
+
+# Sufficient inferiors to make sure that at least some other inferior
+# exits while we're handling a process exit event.
+set NUM_INFS 10
+
+for {set i 1} {$i <= $NUM_INFS} {incr i} {
+    if {[start_inferior $i] < 0} {
+	return -1
+    }
+}
+
+# We want to continue all processes.
+gdb_test_no_output "set schedule-multiple on"
+
+# Check that "continue" continues to the end of an inferior, as many
+# times as we have inferiors.
+
+for {set i 1} {$i <= $NUM_INFS} {incr i} {
+    with_test_prefix "inf $i" {
+	set live_inferior ""
+
+	# Pick any live inferior.
+	gdb_test_multiple "info inferiors" "" {
+	    -re "($decimal) *process.*$gdb_prompt $" {
+		set live_inferior $expect_out(1,string)
+	    }
+	}
+
+	if {$live_inferior == ""} {
+	    return -1
+	}
+
+	gdb_test "inferior $live_inferior" \
+	    ".*Switching to inferior $live_inferior.*" \
+	    "switch to another inferior"
+
+	set exited_inferior ""
+
+	# We want GDB to complete the command and return the prompt
+	# instead of going into an infinite loop.
+	gdb_test_multiple "continue" "continue" {
+	    -re "Inferior ($decimal) \[^\n\r\]+ exited normally.*$gdb_prompt $" {
+		set exited_inferior $expect_out(1,string)
+		pass $gdb_test_name
+	    }
+	}
+
+	if {$exited_inferior == ""} {
+	    return -1
+	}
+    }
+}
+
+# Finally, check that we can re-run all inferiors.  Note that if any
+# inferior was still alive this would catch it, as "run" would query
+# "Start it from the beginning?".
+
+delete_breakpoints
+
+for {set i 1} {$i <= $NUM_INFS} {incr i} {
+    with_test_prefix "inf $i" {
+	gdb_test "inferior $i" \
+	    ".*Switching to inferior $i.*" \
+	    "switch to inferior for re-run"
+
+	gdb_test "run" "$inferior_exited_re normally\]" \
+	    "re-run inferior"
+    }
+}

@@ -1,0 +1,68 @@
+# Copyright 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that dcache behaves correctly when reading a cache line fails.
+
+standard_testfile
+
+if { [prepare_for_testing "failed to prepare" ${testfile}] } {
+    return -1
+}
+
+if ![runto breakpt] {
+    return -1
+}
+
+# Issue the "delete mem" command.  This makes GDB ignore the
+# target-provided list, if any.
+
+proc delete_mem {} {
+    global gdb_prompt
+
+    set test "delete mem"
+    gdb_test_multiple $test $test {
+	-re "Delete all memory regions.*y or n.*$" {
+	    send_gdb "y\n"
+	    exp_continue
+	}
+	-re "$gdb_prompt $" {
+	    pass $test
+	}
+    }
+}
+
+# Make the dcache line size bigger than the pagesize.
+set pagesize [get_integer_valueof "pg_size" -1]
+set linesize [expr $pagesize * 2]
+
+gdb_test_no_output "set dcache line-size $linesize" \
+    "set dcache line size to twice the pagesize"
+
+gdb_test "info dcache" \
+    "Dcache 4096 lines of $linesize bytes each.\r\nNo data cache available."
+
+# Make sure dcache doesn't automatically skip unmapped regions.
+delete_mem
+
+gdb_test "info mem" \
+    "Using user-defined memory regions.\r\nThere are no memory regions defined\."
+
+# Given the line size is bigger than the page size, we have
+# alternating mapped and unmapped pages, these make dcache fail to
+# fill in the cache line.  GDB used to have a bug where that failure
+# would end up as user-visible error.  The range being disassembled is
+# wholly available, so GDB should succeed.
+gdb_test "disassemble first_mapped_page, +10" "End of assembler dump\."
+gdb_test "disassemble last_mapped_page, +10" "End of assembler dump\."

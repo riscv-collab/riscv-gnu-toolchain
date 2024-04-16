@@ -1,0 +1,118 @@
+# Copyright 2016-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test a C++ reference marked with DW_OP_GNU_implicit_pointer.
+# The referenced value is a global variable whose location is a DW_OP_addr.
+
+require allow_cplus_tests
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+# We'll place the output of Dwarf::assemble in implref-global.S.
+standard_testfile .c .S
+
+# ${testfile} is now "implref-global".  srcfile2 is "implref-global.S".
+set executable ${testfile}
+set asm_file [standard_output_file ${srcfile2}]
+
+# We need to know the size of integer and address types in order
+# to write some of the debugging info we'd like to generate.
+#
+# For that, we ask GDB by debugging our implref-global program.
+# Any program would do, but since we already have implref-global
+# specifically for this testcase, might as well use that.
+if [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] {
+    return -1
+}
+
+# Create the DWARF.  We need a regular variable and a reference to it that'll
+# be marked with DW_OP_GNU_implicit_pointer.  The variable must be global so
+# that its name is an exported symbol that we can reference from the DWARF
+# using gdb_target_symbol.
+Dwarf::assemble ${asm_file} {
+    cu {} {
+	DW_TAG_compile_unit {
+	    {DW_AT_language @DW_LANG_C_plus_plus}
+	} {
+	    declare_labels int_label variable_label ref_label
+	    set int_size [get_sizeof "int" -1]
+
+	    # gdb always assumes references are implemented as pointers.
+	    set addr_size [get_sizeof "void *" -1]
+
+	    int_label: DW_TAG_base_type {
+		{DW_AT_byte_size ${int_size} DW_FORM_udata}
+		{DW_AT_encoding @DW_ATE_signed}
+		{DW_AT_name "int"}
+	    }
+
+	    ref_label: DW_TAG_reference_type {
+		{DW_AT_byte_size ${addr_size} DW_FORM_udata}
+		{DW_AT_type :${int_label}}
+	    }
+
+	    variable_label: DW_TAG_variable {
+		{DW_AT_name "global_var"}
+		{DW_AT_type :${int_label}}
+		{DW_AT_external 1 DW_FORM_flag}
+		{DW_AT_location {DW_OP_addr [gdb_target_symbol "global_var"]} SPECIAL_expr}
+	    }
+
+	    DW_TAG_subprogram {
+		{MACRO_AT_func { "main" }}
+		{DW_AT_type :${int_label}}
+		{DW_AT_external 1 DW_FORM_flag}
+	    } {
+		DW_TAG_variable {
+		    {DW_AT_name "ref"}
+		    {DW_AT_type :${ref_label}}
+		    {DW_AT_location {DW_OP_GNU_implicit_pointer ${variable_label} 0} SPECIAL_expr}
+		}
+	    }
+	}
+    }
+}
+
+if [prepare_for_testing "failed to prepare" ${executable} [list ${asm_file} ${srcfile}] {}] {
+    return -1
+}
+
+# DW_OP_GNU_implicit_pointer implementation requires a valid frame.
+if ![runto_main] {
+    return -1
+}
+
+# Address of the referenced value.
+set address [get_hexadecimal_valueof "&global_var" ""]
+
+# Doing 'print ref' should show us e.g. '(int &) @0xdeadbeef: 42'.
+gdb_test "print ref" " = \\(int &\\) @${address}: \\\d+"
+
+# Doing 'print &ref' should show us e.g. '(int *) 0xdeadbeef <global_var>'.
+gdb_test "print &ref" " = \\(int \\*\\) ${address} <global_var>"
+
+# gdb assumes C++ references are implemented as pointers, and print &(&ref)
+# shows us the underlying pointer's address.  Since in this case there's no
+# physical pointer, gdb should tell us so.
+gdb_test "print &(&ref)" "Attempt to take address of value not located in memory."
+
+# Test assignment through the synthetic reference.
+set new_value 10
+gdb_test_no_output "set (ref = ${new_value})"
+gdb_test "print ref" " = \\(int &\\) @${address}: ${new_value}" "print ref after assignment"
+gdb_test "print global_var" " = ${new_value}" "print global_var after assignment"

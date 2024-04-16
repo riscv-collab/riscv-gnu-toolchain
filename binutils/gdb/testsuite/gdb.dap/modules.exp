@@ -1,0 +1,92 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test DAP modules functionality.
+
+require allow_shlib_tests allow_dap_tests
+
+load_lib dap-support.exp
+
+standard_testfile
+
+set libname $testfile-solib
+set srcfile_lib $srcdir/$subdir/$libname.c
+set binfile_lib [standard_output_file $libname.so]
+
+if { [gdb_compile_shlib $srcfile_lib $binfile_lib {}] != "" } {
+    untested "failed to compile shared library"
+    return
+}
+
+set binfile_lib_target [gdb_download_shlib $binfile_lib]
+set define -DSHLIB_NAME=\"$binfile_lib_target\"
+
+if {[build_executable ${testfile}.exp $testfile $srcfile \
+	 [list additional_flags=$define debug shlib_load]] == -1} {
+    return
+}
+
+if {[dap_launch $testfile] == ""} {
+    return
+}
+
+set obj [dap_check_request_and_response "set breakpoint on stop function" \
+	     setFunctionBreakpoints \
+	     {o breakpoints [a [o name [s stop]]]}]
+set fn_bpno [dap_get_breakpoint_number $obj]
+
+dap_check_request_and_response "start inferior" configurationDone
+
+dap_wait_for_event_and_check "stopped at function breakpoint" stopped \
+    "body reason" breakpoint \
+    "body hitBreakpointIds" $fn_bpno
+
+dap_check_request_and_response "continue to second stop" continue \
+    {o threadId [i 1]}
+
+
+lassign [dap_wait_for_event_and_check "module event" module \
+	     "body reason" new] module_event ignore
+
+gdb_assert {[string match *$libname* [dict get $module_event body module id]]} \
+    "module.id"
+gdb_assert {[string match *$libname* [dict get $module_event body module name]]} \
+    "module.name"
+gdb_assert {[string match *$libname* [dict get $module_event body module path]]} \
+    "module.path"
+
+dap_wait_for_event_and_check "second stop at function breakpoint" stopped \
+    "body reason" breakpoint \
+    "body hitBreakpointIds" $fn_bpno
+
+set bt [lindex [dap_check_request_and_response "backtrace" stackTrace \
+		    {o threadId [i 1]}] \
+	    0]
+set frame_id [dict get [lindex [dict get $bt body stackFrames] 1] moduleId]
+
+gdb_assert {[string match *$libname* $frame_id]} "module.id in stack trace"
+
+
+dap_check_request_and_response "continue to third stop" continue \
+    {o threadId [i 1]}
+
+dap_wait_for_event_and_check "module removed event" module \
+    "body reason" removed
+
+dap_wait_for_event_and_check "third stop at function breakpoint" stopped \
+    "body reason" breakpoint \
+    "body hitBreakpointIds" $fn_bpno
+
+dap_shutdown

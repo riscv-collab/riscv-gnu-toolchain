@@ -1,0 +1,211 @@
+The GDB Performance Testsuite
+=============================
+
+This README contains notes on hacking on GDB's performance testsuite.
+For notes on GDB's regular testsuite or how to run the performance testsuite,
+see ../README.
+
+Generated tests
+***************
+
+The testcase generator lets us easily test GDB on large programs.
+The "monster" tests are mocks of real programs where GDB's
+performance has been a problem.  Often it is difficult to build
+these monster programs, but when measuring performance one doesn't
+need the "real" program, all one needs is something that looks like
+the real program along the axis one is measuring; for example, the
+number of CUs (compilation units).
+
+Structure of generated tests
+****************************
+
+Generated tests consist of a binary and potentially any number of
+shared libraries.  One of these shared libraries, called "tail", is
+special.  It is used to provide mocks of system provided code, and
+contains no generated code.  Typically system-provided libraries
+are searched last which can have significant performance consequences,
+so we provide a means to exercise that.
+
+The binary and the generated shared libraries can have a mix of
+manually written and generated code.  Manually written code is
+specified with the {binary,gen_shlib}_extra_sources config parameters,
+which are lists of source files in testsuite/gdb.perf.  Generated
+files are controlled with various configuration knobs.
+
+Once a large test program is built, it makes sense to use it as much
+as possible (i.e., with multiple tests).  Therefore perf data collection
+for generated tests is split into two passes: the first pass builds
+all the generated tests, and the second pass runs all the performance
+tests.  The first pass is called "build-perf" and the second pass is
+called "check-perf".  See ../README for instructions on running the tests.
+
+Generated test directory layout
+*******************************
+
+All output lives under testsuite/gdb.perf in the build directory.
+
+Because some of the tests can get really large (and take potentially
+minutes to compile), parallelism is built into their compilation.
+Note however that we don't run the tests in parallel as it can skew
+the results.
+
+To keep things simple and stay consistent, we use the same
+mechanism used by "make check-parallel".  There is one catch: we need
+one .exp for each "worker" but the .exp file must come from the source
+tree.  To avoid generating .exp files for each worker we invoke
+lib/build-piece.exp for each worker with different arguments.
+The file build.piece.exp lives in "lib" to prevent dejagnu from finding
+it when it goes to look for .exp scripts to run.
+
+Another catch is that each parallel build worker needs its own directory
+so that their gdb.{log,sum} files don't collide.  On the other hand
+its easier if their output (all the object files and shared libraries)
+are in the same directory.
+
+The above considerations yield the resulting layout:
+
+$objdir/testsuite/gdb.perf/
+
+	gdb.log, gdb.sum: result of doing final link and running tests
+
+	workers/
+
+		gdb.log, gdb.sum: result of gen-workers step
+
+		$program_name/
+
+			${program_name}-0.worker
+			...
+			${program_name}-N.worker: input to build-pieces step
+
+	outputs/
+
+		${program_name}/
+
+			${program_name}-0/
+			...
+			${program_name}-N/
+
+				gdb.log, gdb.sum: for each build-piece worker
+
+			pieces/
+
+				generated sources, object files, shlibs
+
+			${run_name_1}: binary for test config #1
+			...
+			${run_name_N}: binary for test config #N
+
+Generated test configuration knobs
+**********************************
+
+The monster program generator provides various knobs for building various
+kinds of monster programs.  For a list of the knobs see function
+GenPerfTest::init_testcase in testsuite/lib/perftest.exp.
+Most knobs are self-explanatory.
+Here is a description of the less obvious ones.
+
+binary_extra_sources
+
+	This is the list of non-machine generated sources that go
+	into the test binary.  There must be at least one: the one
+	with main.
+
+class_specs
+
+	List of pairs of keys and values.
+	Supported keys are:
+	count: number of classes
+	  Default: 1
+	name: list of namespaces and class name prefix
+	  E.g., { ns0 ns1 foo } -> ns0::ns1::foo_<cu#>_{0,1,...}
+	  There is no default, this value must be specified.
+	nr_members: number of members
+	  Default: 0
+	nr_static_members: number of static members
+	  Default: 0
+	nr_methods: number of methods
+	  Default: 0
+	nr_inline_methods: number of inline methods
+	  Default: 0
+	nr_static_methods: number of static methods
+	  Default: 0
+	nr_static_inline_methods: number of static inline methods
+	  Default: 0
+
+	E.g.,
+	class foo {};
+	namespace ns1 { class bar {}; }
+	would be represented as:
+	{
+	  { count 1 name { foo } }
+	  { count 1 name { ns1 bar } }
+	}
+
+	The naming of each class is "class_<cu_nr>_<class_nr>",
+	where <cu_nr> is the number of the compilation unit the
+	class is defined in.
+
+	There's currently no support for nesting classes in classes,
+	or for specifying baseclasses or templates.
+
+Misc. configuration knobs
+*************************
+
+These knobs control building or running of the test and are specified
+like any global Tcl variable.
+
+CAT_PROGRAM
+
+	Default is /bin/cat, you shouldn't need to change this.
+
+SHA1SUM_PROGRAM
+
+	Default is /usr/bin/sha1sum.
+
+PERF_TEST_COMPILE_PARALLELISM
+
+	An integer, specifies the amount of parallelism in the builds.
+	Akin to make's -j flag.  The default is 10.
+
+Writing a generated test program
+********************************
+
+The best way to write a generated test program is to take an existing
+one as boilerplate.  Two good examples are gmonster1.exp and gmonster2.exp.
+gmonster1.exp builds a big binary with various custom manually written
+code, and gmonster2 is (essentially) the equivalent binary split up over
+several shared libraries.
+
+Writing a performance test that uses a generated program
+********************************************************
+
+The best way to write a test is to take an existing one as boilerplate.
+Good examples are gmonster1-*.exp and gmonster2-*.exp.
+
+The naming used thus far is that "foo.exp" builds the test program
+and there is one "foo-bar.exp" file for each performance test
+that uses test program "foo".
+
+In addition to writing the test driver .exp script, one must also
+write a python script that is used to run the test.
+This contents of this script is defined by the performance testsuite
+harness.  It defines a class, which is a subclass of one of the
+classes in gdb.perf/lib/perftest/perftest.py.
+See gmonster-null-lookup.py for an example.
+
+Note: Since gmonster1 and gmonster2 are treated as being variations of
+the same program, each test shares the same python script.
+E.g., gmonster1-null-lookup.exp and gmonster2-null-lookup.exp
+both use gmonster-null-lookup.py.
+
+Running performance tests for generated programs
+************************************************
+
+There are two steps: build and run.
+
+Example:
+
+bash$ make -j10 build-perf RUNTESTFLAGS="gmonster1.exp"
+bash$ make -j10 check-perf RUNTESTFLAGS="gmonster1-null-lookup.exp" \
+    GDB_PERFTEST_MODE=run

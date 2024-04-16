@@ -1,0 +1,165 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# This test triggers the "separate debug info file has no debug info" warning by replacing
+# the build-id based .debug file with the stripped binary and then loading it to gdb.
+# It then also sets up local debuginfod server with the correct debug file to download
+# to make sure no warnings are emmitted.
+
+
+standard_testfile
+
+load_lib debuginfod-support.exp
+
+require allow_debuginfod_tests
+
+if {[build_executable "build executable" ${testfile} ${srcfile} \
+	 {debug build-id}] == -1} {
+    return -1
+}
+
+# Split BINFILE into BINFILE.stripped and BINFILE.debug, the first is
+# the executable with the debug information removed, and the second is
+# the debug information.
+#
+# However, by passing the "no-debuglink" flag we prevent this proc
+# from adding a .gnu_debuglink section to the executable.  Any lookup
+# of the debug information by GDB will need to be done based on the
+# build-id.
+if {[gdb_gnu_strip_debug $binfile no-debuglink]} {
+    unsupported "cannot produce separate debug info files"
+    return -1
+}
+
+# Get the .build-id/PREFIX/SUFFIX.debug file name, and convert it to
+# an absolute path, this is where we will place the debug information.
+set build_id_debug_file \
+    [standard_output_file [build_id_debug_filename_get $binfile]]
+
+# Get the BINFILE.debug filename.  This is the file we should be
+# moving to the BUILD_ID_DEBUG_FILE location, but we wont, we're going
+# to move something else there instead.
+set debugfile [standard_output_file "${binfile}.debug"]
+
+# Move debugfile to the directory to be used by the debuginfod
+# server.
+set debuginfod_debugdir [standard_output_file "debug"]
+remote_exec build "mkdir $debuginfod_debugdir"
+remote_exec build "mv $debugfile $debuginfod_debugdir"
+
+# This is BINFILE with the debug information removed.  We are going to
+# place this in the BUILD_ID_DEBUG_FILE location, this would usually
+# represent a mistake by the user, and will trigger a warning from
+# GDB, this is the warning we are checking for.
+set stripped_binfile [standard_output_file "${binfile}.stripped"]
+
+# Create the .build-id/PREFIX directory name from
+# .build-id/PREFIX/SUFFIX.debug filename.
+set debugdir [file dirname ${build_id_debug_file}]
+remote_exec build "mkdir -p $debugdir"
+
+# Now move the stripped executable into the .build-id directory
+# instead of the debug information.  Later on we're going to try and
+# load this into GDB.  GDB will then try to find the separate debug
+# information, which will point back at this file, which also doesn't
+# have debug information, which could cause a loop.  But GDB will spot
+# this and give a warning.
+remote_exec build "mv ${stripped_binfile} ${build_id_debug_file}"
+
+# Now start GDB.
+clean_restart
+
+# Tell GDB where to look for the .build-id directory.
+set debug_file_directory [standard_output_file ""]
+gdb_test_no_output "set debug-file-directory ${debug_file_directory}" \
+    "set debug-file-directory"
+
+# Now load the file into GDB, and look for the warning.
+set debug_file_re [string_to_regexp $build_id_debug_file]
+gdb_test "file ${build_id_debug_file}" \
+    [multi_line \
+	 "Reading symbols from $debug_file_re\\.\\.\\." \
+	 "warning: \"$debug_file_re\": separate debug info file has no debug info" \
+	 "\\(No debugging symbols found in \[^\r\n\]+\\)"] \
+    "load test file, expect a warning"
+
+# Do the same thing again, but this time check that the styling is
+# correct.
+with_test_prefix "check styling" {
+    with_ansi_styling_terminal {
+	clean_restart
+
+	gdb_test_no_output "set debug-file-directory ${debug_file_directory}" \
+	    "set debug-file-directory"
+
+	# Now load the file into GDB, and look for the warning.
+	set debug_file_re [style [string_to_regexp $build_id_debug_file] file]
+
+	gdb_test "file ${build_id_debug_file}" \
+	    [multi_line \
+		 "Reading symbols from $debug_file_re\\.\\.\\." \
+		 "warning: \"$debug_file_re\": separate debug info file has no debug info" \
+		 "\\(No debugging symbols found in \[^\r\n\]+\\)"] \
+	    "load test file, expect a warning"
+    }
+}
+
+# Now we should close GDB.
+gdb_exit
+
+# Create CACHE and DB directories ready for debuginfod to use.
+prepare_for_debuginfod cache db
+
+# Start debuginfod server and test debuginfo is downloaded from
+# it and we can se no warnings anymore.
+proc_with_prefix local_debuginfod { } {
+    global db debuginfod_debugdir cache build_id_debug_file
+
+    set url [start_debuginfod $db $debuginfod_debugdir]
+    if {$url eq ""} {
+	unresolved "failed to start debuginfod server"
+	return
+    }
+
+    # Point the client to the server.
+    setenv DEBUGINFOD_URLS $url
+
+    # GDB should now find the symbol and source files.
+    clean_restart
+
+    # Enable debuginfod and fetch the debuginfo.
+    gdb_test_no_output "set debuginfod enabled on"
+
+    # "separate debug info file has no debug info" warning should not be
+    # reported now because the correct debuginfo should be fetched from
+    # debuginfod.
+    gdb_test "file ${build_id_debug_file}" \
+	[multi_line \
+	     "Reading symbols from ${build_id_debug_file}\\.\\.\\." \
+	     "Downloading separate debug info for ${build_id_debug_file}\\.\\.\\." \
+	     "Reading symbols from ${cache}/\[^\r\n\]+\\.\\.\\.(?:\r\nExpanding full symbols from \[^\r\n\]+)*"] \
+	"debuginfod running, info downloaded, no warnings"
+}
+
+# Restart GDB, and load the file, this time we should correctly get
+# the debug symbols from the server, and should not see the warning.
+with_debuginfod_env $cache {
+    local_debuginfod
+}
+
+stop_debuginfod
+# Spare debug files may confuse testsuite runs in the future.
+remote_exec build "rm -f $debugfile"
+

@@ -1,0 +1,74 @@
+# Copyright 2010-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# Contributed by Ken Werner <ken.werner@de.ibm.com>.
+#
+# Support library for testing OpenCL GDB features
+
+# Compile OpenCL programs using a generic host app.
+proc gdb_compile_opencl_hostapp {clsource executable options} {
+    global srcdir objdir subdir
+    set src "${srcdir}/lib/cl_util.c ${srcdir}/lib/opencl_hostapp.c"
+    set binfile [standard_output_file ${executable}]
+    set compile_flags [concat additional_flags=-I${srcdir}/lib/ additional_flags=-DCL_SOURCE=$clsource]
+    set options_opencl [concat {debug} $compile_flags $options [list libs=-lOpenCL]]
+    return [gdb_compile ${src} ${binfile} "executable" ${options_opencl}]
+}
+
+# Run a test on the target to check if it supports OpenCL. Return 1 if so, 0 if
+# it does not.
+gdb_caching_proc allow_opencl_tests {} {
+    global srcdir objdir subdir gdb_prompt
+    global inferior_exited_re
+
+    set me "allow_opencl_tests"
+
+    # Set up, compile, and execute an OpenCL program.  Include the current
+    # process ID in the file name of the executable to prevent conflicts with
+    # invocations for multiple testsuites.
+    set clprogram [gdb_remote_download target ${srcdir}/lib/opencl_kernel.cl]
+    set executable opencltest[pid].x
+
+    verbose "$me:  compiling OpenCL test app" 2
+    set compile_flags {debug nowarnings quiet}
+
+    if { [gdb_compile_opencl_hostapp "${clprogram}" "${executable}" "${compile_flags}" ] != "" } {
+	verbose "$me:  compiling OpenCL binary failed, returning 0" 2
+	return 0
+    }
+
+    # Compilation succeeded so now run it via gdb.
+    clean_restart "$executable"
+    gdb_run_cmd
+    gdb_expect 30 {
+        -re ".*$inferior_exited_re normally.*${gdb_prompt} $" {
+            verbose -log "\n$me: OpenCL support detected"
+	    set result 1
+        }
+        -re ".*$inferior_exited_re with code.*${gdb_prompt} $" {
+            verbose -log "\n$me: OpenCL support not detected"
+	    set result 0
+        }
+        default {
+            verbose -log "\n$me OpenCL support not detected (default case)"
+	    set result 0
+        }
+    }
+    gdb_exit
+    remote_file build delete $executable
+
+    verbose "$me:  returning $result" 2
+    return $result
+}

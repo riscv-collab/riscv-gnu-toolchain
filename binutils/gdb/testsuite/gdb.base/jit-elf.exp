@@ -1,0 +1,164 @@
+# Copyright 2011-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require allow_shlib_tests
+
+load_lib jit-elf-helpers.exp
+
+# Increase this to see more detail.
+set test_verbose 0
+
+# The main code that loads and registers JIT objects.
+set main_basename "jit-elf-main"
+set main_srcfile ${srcdir}/${subdir}/${main_basename}.c
+set main_binfile [standard_output_file ${main_basename}]
+
+# The shared library that gets loaded as JIT objects.
+set jit_solib_basename jit-elf-solib
+set jit_solib_srcfile ${srcdir}/${subdir}/${jit_solib_basename}.c
+
+# Detach, restart GDB, and re-attach to the program.
+# Return 0 if attach failed, otherwise return 1.
+proc clean_reattach {} {
+    global decimal gdb_prompt
+    global main_binfile main_srcfile
+
+    # Get PID of test program.
+    set testpid -1
+    set test "get inferior process ID"
+    gdb_test_multiple "p mypid" $test {
+	-re ".* = ($decimal).*$gdb_prompt $" {
+	    set testpid $expect_out(1,string)
+	    pass $test
+	}
+    }
+
+    gdb_test_no_output "set var wait_for_gdb = 1"
+    gdb_test "detach" "Detaching from .*"
+
+    clean_restart ${main_binfile}
+
+    if { ![gdb_attach $testpid \
+	      -pattern "main.*at .*$::main_basename.c:.*"] } {
+	return 0
+    }
+
+    gdb_test_no_output "set var wait_for_gdb = 0"
+    return 1
+}
+
+# Continue to LOCATION in the program.  If REATTACH, detach and
+# re-attach to the program from scratch.
+# Return 0 if clean_reattach failed, otherwise return 1.
+proc continue_to_test_location {location reattach} {
+    global main_srcfile
+
+    gdb_breakpoint [gdb_get_line_number $location $main_srcfile]
+    gdb_continue_to_breakpoint $location
+    if {$reattach} {
+	with_test_prefix "$location" {
+	    if { ![clean_reattach] } {
+		return 0
+	    }
+	}
+    }
+    return 1
+}
+
+proc one_jit_test {jit_solibs_target match_str reattach} {
+    set count [llength $jit_solibs_target]
+
+    with_test_prefix "one_jit_test-$count" {
+	global test_verbose
+	global main_binfile main_srcfile
+
+	clean_restart ${main_binfile}
+
+	# This is just to help debugging when things fail
+	if {$test_verbose > 0} {
+	    gdb_test "set debug jit 1"
+	}
+
+	if { ![runto_main] } {
+	    return
+	}
+
+	# Poke desired values directly into inferior instead of using "set args"
+	# because "set args" does not work under gdbserver.
+	incr count
+	gdb_test_no_output "set var argc=$count" "forging argc"
+	gdb_test_no_output "set var argv=fake_argv" "forging argv"
+	for {set i 1} {$i < $count} {incr i} {
+	    set jit_solib_target [lindex $jit_solibs_target [expr $i-1]]
+	    gdb_test_no_output "set var argv\[$i\]=\"${jit_solib_target}\"" \
+		"forging argv\[$i\]"
+	}
+
+	gdb_breakpoint [gdb_get_line_number "break here 0" $main_srcfile]
+	gdb_continue_to_breakpoint "break here 0"
+
+
+	if { ![continue_to_test_location "break here 1" $reattach] } {
+	    return
+	}
+
+	gdb_test "info function ^jit_function" "$match_str"
+
+	# This is just to help debugging when things fail
+	if {$test_verbose > 0} {
+	    gdb_test "maintenance print objfiles"
+	    gdb_test "maintenance info break"
+	}
+
+	if { ![continue_to_test_location "break here 2" $reattach] } {
+	    return
+	}
+
+	# All jit librares must have been unregistered
+	gdb_test "info function jit_function" \
+	    "All functions matching regular expression \"jit_function\":"
+    }
+}
+
+# Compile two shared libraries to use as JIT objects.
+set jit_solibs_target [compile_and_download_n_jit_so \
+		      $jit_solib_basename $jit_solib_srcfile 2]
+if { $jit_solibs_target == -1 } {
+    return
+}
+
+# Compile the main code (which loads the JIT objects).
+if { [compile_jit_main ${main_srcfile} ${main_binfile} {}] == 0 } {
+    one_jit_test [lindex $jit_solibs_target 0] "${hex}  jit_function_0001" 0
+    one_jit_test $jit_solibs_target "${hex}  jit_function_0001\[\r\n\]+${hex}  jit_function_0002" 0
+}
+
+# Test attaching to an inferior with some JIT libraries already
+# registered.  We reuse the normal test, and detach/reattach at
+# specific interesting points.
+if {[can_spawn_for_attach]} {
+    if { [compile_jit_main ${main_srcfile} "${main_binfile}-attach" \
+	    {additional_flags=-DATTACH=1}] == 0 } {
+	with_test_prefix attach {
+	    one_jit_test $jit_solibs_target "${hex}  jit_function_0001\[\r\n\]+${hex}  jit_function_0002" 1
+	}
+    }
+}
+
+if { [compile_jit_main ${main_srcfile} "${main_binfile}-pie" pie] == 0 } {
+    with_test_prefix PIE {
+	one_jit_test [lindex $jit_solibs_target 0] "${hex}  jit_function_0001" 0
+    }
+}

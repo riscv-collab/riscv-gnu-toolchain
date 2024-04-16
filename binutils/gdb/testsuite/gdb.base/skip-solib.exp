@@ -1,0 +1,117 @@
+#   Copyright 2011-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file was written by Justin Lebar. (justin.lebar@gmail.com)
+
+#
+# Tests skipping shared libraries.
+#
+
+# This only works on GNU/Linux.
+require isnative allow_shlib_tests
+require {!is_remote host}
+require {istarget *-linux*}
+
+set test "skip-solib"
+set srcfile_main "${test}-main.c"
+set executable_main ${test}-test
+set binfile_main [standard_output_file ${executable_main}]
+set srcfile_lib "${test}-lib.c"
+set libname "lib${test}"
+set binfile_lib [standard_output_file ${libname}.so]
+
+#
+# Compile our program under test.  The main program references a shared library
+# libskip-solib.so, which contains two functions, square(), which is
+# referenced by the main program, and multiply(), which is not referenced by
+# the main program.
+#
+
+if {[gdb_compile_shlib ${srcdir}/${subdir}/${srcfile_lib} ${binfile_lib} \
+	 [list debug]] != ""} {
+    return -1
+}
+
+if {[gdb_compile "${srcdir}/${subdir}/${srcfile_main}" "${binfile_main}.o" \
+	 object debug] != ""} {
+    return -1
+}
+
+set testobjdir [standard_output_file {}]
+if {[gdb_compile "${binfile_main}.o" "${binfile_main}" executable \
+	 [list debug shlib=$binfile_lib]] != ""} {
+    return -1
+}
+
+#
+# Test ignoring of a file inside a solib.
+#
+with_test_prefix "ignoring solib file" {
+
+    clean_restart ${executable_main}
+    gdb_load_shlib $binfile_lib
+
+    gdb_test "skip file ${srcfile_lib}" \
+	"File ${srcfile_lib} will be skipped when stepping." \
+	"skip file"
+
+    gdb_test "info skip" \
+	[multi_line \
+	     "Num\\s+Enb\\s+Glob\\s+File\\s+RE\\s+Function\\s*" \
+	     "1\\s+y\\s+n\\s+${srcfile_lib}\\s+n\\s+<none>\\s*"]
+
+    if ![runto_main] {
+	return
+    }
+
+    #
+    # We shouldn't step into square(), since we skipped skip-solib-lib.c.
+    #
+    gdb_test "step" ""
+    gdb_test "bt" "#0\\s+main.*"
+}
+
+#
+# Now test ignoring of a function inside a solib.
+#
+with_test_prefix "ignoring solib function" {
+    clean_restart ${executable_main}
+    gdb_load_shlib $binfile_lib
+
+    gdb_test "skip function multiply" \
+	"Function multiply will be skipped when stepping\\." \
+	"skip function"
+
+    if ![runto_main] {
+	return
+    }
+
+    #
+    # Our first step should take us into square.
+    #
+    gdb_test "step" "square.*" "step into other function"
+
+    gdb_test "info skip" \
+	[multi_line \
+	     "Num\\s+Enb\\s+Glob\\s+File\\s+RE\\s+Function\\s*" \
+	     "1\\s+y\\s+n\\s+<none>\\s+n\\s+multiply\\s*"]
+
+    #
+    # This step shouldn't go into multiply -- we should skip it and go on to
+    # the last line of square.
+    #
+    gdb_test "step" ""
+    gdb_test "bt" "#0\\s+square.*"
+}

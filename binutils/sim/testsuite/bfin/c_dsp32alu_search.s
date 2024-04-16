@@ -1,0 +1,74 @@
+//Original:/testcases/core/c_dsp32alu_search/c_dsp32alu_search.dsp
+// Spec Reference: dsp32alu search
+# mach: bfin
+
+.include "testutils.inc"
+	start
+
+imm32 p0, 0x11234556;
+
+imm32 r0, 0x15678911;
+imm32 r1, 0x2789ab1d;
+imm32 r2, 0x34445515;
+imm32 r3, 0x46667717;
+imm32 r4, 0x5567891b;
+imm32 r5, 0x6789ab1d;
+imm32 r6, 0x74445515;
+imm32 r7, 0x86667777;
+( R0 , R1 ) = SEARCH R2 (GE);
+( R2 , R3 ) = SEARCH R4 (GT);
+( R4 , R5 ) = SEARCH R0 (LE);
+( R7 , R6 ) = SEARCH R1 (LT);
+CHECKREG r0, 0x11234556;
+CHECKREG r1, 0x11234556;
+CHECKREG r2, 0x11234556;
+CHECKREG r3, 0x46667717;
+CHECKREG r4, 0x11234556;
+CHECKREG r5, 0x11234556;
+CHECKREG r6, 0x74445515;
+CHECKREG r7, 0x86667777;
+
+imm32 r0, 0x416789ab;
+imm32 r1, 0x6289abcd;
+imm32 r2, 0x43445555;
+imm32 r3, 0x64667777;
+imm32 r0, 0x456789ab;
+imm32 r1, 0x6689abcd;
+imm32 r2, 0x47445555;
+imm32 r3, 0x68667777;
+( R2 , R1 ) = SEARCH R3 (LE);
+( R6 , R3 ) = SEARCH R5 (GT);
+( R4 , R7 ) = SEARCH R2 (GE);
+( R0 , R5 ) = SEARCH R4 (LT);
+CHECKREG r0, 0x11234556;
+CHECKREG r1, 0x6689ABCD;
+CHECKREG r2, 0x47445555;
+CHECKREG r3, 0x68667777;
+CHECKREG r4, 0x11234556;
+CHECKREG r5, 0x11234556;
+CHECKREG r6, 0x74445515;
+CHECKREG r7, 0x11234556;
+
+imm32 r0, 0x516789ab;
+imm32 r1, 0x6289abcd;
+imm32 r2, 0x73445555;
+imm32 r3, 0x84667777;
+imm32 r0, 0x956789ab;
+imm32 r1, 0xa689abcd;
+imm32 r2, 0xb7445555;
+imm32 r3, 0xc86def77;
+( R3 , R4 ) = SEARCH R5 (GT);
+( R0 , R7 ) = SEARCH R6 (GE);
+( R6 , R1 ) = SEARCH R2 (LT);
+( R2 , R5 ) = SEARCH R4 (LE);
+CHECKREG r0, 0x11234556;
+CHECKREG r1, 0xA689ABCD;
+CHECKREG r2, 0xB7445555;
+CHECKREG r3, 0xC86DEF77;
+CHECKREG r4, 0x11234556;
+CHECKREG r5, 0x11234556;
+CHECKREG r6, 0x11234556;
+CHECKREG r7, 0x11234556;
+
+
+pass

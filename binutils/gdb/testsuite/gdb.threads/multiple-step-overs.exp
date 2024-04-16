@@ -1,0 +1,122 @@
+# Copyright (C) 2011-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that GDB steps over all breakpoints of threads not the stepping
+# thread, before actually proceeding with the stepped thread.
+
+standard_testfile
+set executable ${testfile}
+
+require {!target_info exists gdb,nosignals}
+
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" \
+	 executable [list debug "incdir=${objdir}"]] != "" } {
+    return -1
+}
+
+# Prepare environment for test.
+
+proc setup {} {
+    global executable
+    global displaced
+
+    with_test_prefix "setup" {
+	clean_restart $executable
+
+	if ![runto_main] {
+	    return -1
+	}
+
+	gdb_test_no_output "set displaced-stepping $displaced"
+
+	gdb_breakpoint [gdb_get_line_number "set wait-threads breakpoint here"]
+	gdb_continue_to_breakpoint "run to breakpoint"
+	gdb_test "info threads" "\\\* 1 .* 2 .* 3 .*" "info threads shows all threads"
+
+	gdb_test_no_output "set scheduler-locking on"
+
+	gdb_breakpoint [gdb_get_line_number "set breakpoint thread 3 here"]
+	gdb_breakpoint [gdb_get_line_number "set breakpoint thread 2 here"]
+
+	gdb_test "thread 3" "Switching.*"
+	gdb_continue_to_breakpoint "run to breakpoint in thread 3"
+	gdb_test "p *myp = 0" " = 0" "unbreak loop in thread 3"
+
+	gdb_test "thread 2" "Switching.*"
+	gdb_continue_to_breakpoint "run to breakpoint in thread 2"
+	gdb_test "p *myp = 0" " = 0" "unbreak loop in thread 2"
+
+	# Disable scheduler locking.
+	gdb_test_no_output "set scheduler-locking off"
+
+	# Now all 3 threads are stopped for a breakpoint that needs to
+	# be stepped over before thread 1 is resumed.
+    }
+}
+
+foreach displaced { "off" "on" } {
+    with_test_prefix "displaced=$displaced" {
+	with_test_prefix "step" {
+	    setup
+	    gdb_test "thread 1" "Switching.*"
+	    gdb_test "step" "in wait_threads .*"
+	}
+
+	with_test_prefix "next" {
+	    setup
+	    gdb_test "thread 1" "Switching.*"
+	    gdb_test "next" "pthread_join.*"
+	}
+
+	with_test_prefix "continue" {
+	    setup
+	    gdb_breakpoint [gdb_get_line_number "EXIT_SUCCESS"]
+	    gdb_test "thread 1" "Switching.*"
+	    gdb_test "continue" "EXIT_SUCCESS.*"
+	}
+
+	# Try continuing with a queued signal in each of the threads
+	# (one at a time).  Should stop at the signal handler, instead
+	# of re-trapping the breakpoint the threads were already
+	# stopped at.
+	foreach thread {1 2 3} {
+	    with_test_prefix "signal thr$thread" {
+		setup
+
+		# Queue a signal in THREAD.
+		gdb_test "thread $thread" "Switching.*"
+		gdb_test_no_output "queue-signal SIGUSR1"
+
+		# Switch back to thread 1, and continue.
+		gdb_test "thread 1" "Switching.*" "switch back to thread 1"
+		gdb_breakpoint "sigusr1_handler" "set break at sigusr1_handler"
+
+		set msg "continue to sigusr1_handler"
+		gdb_test_multiple "continue" $msg {
+		    -re "Breakpoint .* sigusr1_handler .*$gdb_prompt $" {
+			pass $msg
+		    }
+		    -re "Breakpoint .*$gdb_prompt $" {
+			if {![can_single_step_to_signal_handler]
+			    && $thread != 1 && $displaced == "off"} {
+			    setup_kfail "gdb/18214" "*-*-*"
+			}
+			fail $msg
+		    }
+		}
+	    }
+	}
+    }
+}

@@ -1,0 +1,299 @@
+# Copyright 1997-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that things still (sort of) work when compiled without -g.
+
+
+standard_testfile .c
+
+if [test_compiler_info "xlc-*"] {
+    # By default, IBM'x xlc compiler doesn't add static variables into the symtab.
+    # Use "-qstatsym" to do so. 
+    set exec_opts additional_flags=-qstatsym
+} else {
+    set exec_opts ""
+}
+
+if  { [gdb_compile $srcdir/$subdir/$srcfile $binfile executable $exec_opts] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+# Start with a fresh gdb.
+
+clean_restart $binfile
+
+# Run to FUNC and unload symbols from system shared libraries, to
+# avoid conflicts with the minsyms in the program.  E.g.,
+# intl/plural-exp.h has 'enum expression_operator {..., mult, ...}'.
+
+proc nodebug_runto {func} {
+    with_test_prefix $func {
+	if ![runto $func] {
+	    return false
+	}
+	gdb_test_no_output "nosharedlibrary" \
+	    "unload symbols from system libraries"
+	return true
+    }
+}
+
+# Test calling no-debug functions involving argument types that may
+# require coercion/promotion, both prototyped and unprototyped, both
+# return-type-cast style, and function-pointer-cast styles.
+proc test_call_promotion {} {
+    if [target_info exists gdb,cannot_call_functions] {
+	return
+    }
+
+    # Call prototyped function with float parameters via both
+    # return-type cast and function-pointer cast.  This checks that
+    # GDB doesn't do float->double coercion.
+    gdb_test "p (float) multf(2.0f, 3.0f)" " = 6"
+    gdb_test "p ((float (*) (float, float)) multf)(2, 3)" " = 6"
+    gdb_test "p ((float (*) (float, float)) multf)(2.0f, 3.0f)" " = 6"
+
+    # Call unprototyped function with float parameters via
+    # function-pointer cast, only.  return-type cast assumes
+    # protototyped.  Check that GDB does float->double coercion.
+    gdb_test "p ((float (*) ()) multf_noproto)(2.0f, 3.0f)" " = 6"
+    gdb_test "p ((float (*) ()) multf_noproto)(2.0, 3.0)" " = 6"
+
+    # Same, but for double.
+    gdb_test "p (double) mult (2.0, 3.0)" " = 6"
+    gdb_test "p ((double (*) (double, double)) mult)(2.0f, 3.0f)" " = 6"
+    gdb_test "p ((double (*) (double, double)) mult)(2, 3)" " = 6"
+    gdb_test "p ((double (*) ()) mult_noproto)(2.0f, 3.0f)" " = 6"
+    gdb_test "p ((double (*) ()) mult_noproto)(2.0, 3.0)" " = 6"
+
+    # Check that GDB promotes char->int correctly.
+    gdb_test "p /d (uint8) add8((uint8) 2, (uint8) 3)" " = 5"
+    gdb_test "p /d ((uint8 (*) (uint8, uint8)) add8)((uint8) 2, (uint8) 3)" " = 5"
+    gdb_test "p /d ((uint8 (*) ()) add8_noproto)((uint8) 2, (uint8) 3)" " = 5"
+}
+
+if {[nodebug_runto inner]} {
+    
+    # Expect to find global/local symbols in each of text/data/bss.
+    
+    # The exact format for some of this output is not necessarily
+    # ideal, particularly interpreting "p top" requires a fair bit of
+    # savvy about gdb's workings and the meaning of the "{}"
+    # construct.  So the details maybe could be tweaked.  But the
+    # basic purpose should be maintained, which is (a) users should be
+    # able to interact with these variables with some care (they have
+    # to know how to interpret them according to their real type,
+    # since gdb doesn't know the type), but (b) users should be able
+    # to detect that gdb does not know the type, rather than just
+    # being told they are ints or functions returning int like old
+    # versions of gdb used to do.
+    
+    # On alpha (and other ecoff systems) the native compilers put
+    # out debugging info for non-aggregate return values of functions
+    # even without -g, which should be accepted.
+
+    with_test_prefix "func" {
+	# Most languages default to printing like C.
+	set c_print_re " = \\{<text variable, no debug info>\\} $hex <top>"
+	set c_whatis_re " = <text variable, no debug info>"
+	set c_ptype_re "= <unknown return type> \\(\\)"
+
+	set cxx_ptype_re "= <unknown return type> \\(void\\)"
+
+	set ada_ptype_re " = function return <unknown return type>"
+
+	set m2_print_re " = \\{PROCEDURE <text variable, no debug info> \\(\\) : <unknown return type>\\} $hex <top>"
+	set m2_whatis_re "PROCEDURE <text variable, no debug info> \\(\\) : <unknown return type>"
+	set m2_ptype_re $m2_whatis_re
+
+	# Rust can't access minsyms?
+	set rust_nosym "No symbol 'top' in current context"
+
+	set pascal_ptype_re "type = procedure  : <unknown return type>"
+
+	#LANG		#PRINT		#WHATIS		#PTYPE
+	foreach lang_line {
+	    {"ada"		$c_print_re	$c_whatis_re	$ada_ptype_re}
+	    {"asm"		$c_print_re	$c_whatis_re	$c_ptype_re}
+	    {"c"		$c_print_re	$c_whatis_re	$c_ptype_re}
+	    {"c++"		$c_print_re	$c_whatis_re	$cxx_ptype_re}
+	    {"d"		$c_print_re	$c_whatis_re	$c_ptype_re}
+	    {"fortran"	$c_print_re	$c_whatis_re	$c_ptype_re}
+	    {"go"		$c_print_re	$c_whatis_re	$c_ptype_re}
+	    {"minimal"	$c_print_re	$c_whatis_re	$c_ptype_re}
+	    {"modula-2"	$m2_print_re	$m2_whatis_re	$m2_ptype_re}
+	    {"objective-c"	$c_print_re	$c_whatis_re	$c_ptype_re}
+	    {"opencl"	$c_print_re	$c_whatis_re	$c_ptype_re}
+	    {"pascal"	$c_print_re	$c_whatis_re	$pascal_ptype_re}
+	    {"rust"		$rust_nosym	$rust_nosym	$rust_nosym}
+	} {
+	    set lang [lindex $lang_line 0]
+	    set print_re [lindex $lang_line 1]
+	    set whatis_re [lindex $lang_line 2]
+	    set ptype_re [lindex $lang_line 3]
+
+	    set print_re [subst "$print_re"]
+	    set whatis_re [subst "$whatis_re"]
+	    set ptype_re [subst "$ptype_re"]
+
+	    with_test_prefix "$lang" {
+		gdb_test_no_output "set language $lang"
+		gdb_test "p top" $print_re
+		gdb_test "whatis top" $whatis_re
+		gdb_test "ptype top" $ptype_re
+	    }
+	}
+    }
+
+    gdb_test_no_output "set language auto"
+
+    # We can't rely on uintXX_t being available/known to GDB because
+    # we may or may not have debug info for those (depending on
+    # whether we have debug info for the C runtime, for example).
+    gdb_test_no_output "macro define uint8 unsigned char"
+    gdb_test_no_output "macro define uint32 unsigned int"
+    gdb_test_no_output "macro define uint64 unsigned long long"
+
+    set data_var_type "<data variable, no debug info>"
+    set unk_type_re "has unknown type.*to its declared type"
+    set ptr_math_re "Cannot perform pointer math on incomplete type \"$data_var_type\", try casting to a known type, or void \\*\\."
+    set not_mem_re "Attempt to take address of value not located in memory\\."
+    set any_label_regexp "<\[^>\]+>"
+
+    set dataglobal_unk_re "dataglobal.*$unk_type_re"
+
+	 #exp				#fmt #print						#ptype/whatis
+    foreach line {
+	{"dataglobal"			""   $dataglobal_unk_re					" = $data_var_type"}
+	{"(int) dataglobal"		""   "= 3"						" = int"}
+	{"sizeof(dataglobal)"		""   $dataglobal_unk_re					$dataglobal_unk_re}
+	{"sizeof(dataglobal + 1)"	""   $dataglobal_unk_re					$dataglobal_unk_re}
+	{"sizeof((int) dataglobal)"	""   " = $decimal"					" = int"}
+	{"dataglobal + 1"		""   $dataglobal_unk_re					$dataglobal_unk_re}
+	{"&dataglobal"			""   "\\($data_var_type \\*\\) $hex <dataglobal>"	" = $data_var_type \\*"}
+	{"&dataglobal + 1"		""   $ptr_math_re					$ptr_math_re}
+	{"(int *) &dataglobal + 1"	""   " = \\(int \\*\\) $hex $any_label_regexp"		"int \\*"}
+	{"&(int) dataglobal + 1"	""   $not_mem_re					$not_mem_re}
+	{"&dataglobal, &dataglobal"	""   "\\($data_var_type \\*\\) $hex <dataglobal>"	" = $data_var_type \\*"}
+	{"*dataglobal"			""   $dataglobal_unk_re					$dataglobal_unk_re}
+
+	{"dataglobal8"			"/x" $dataglobal_unk_re					" = $data_var_type"}
+	{"(uint8) dataglobal8"		"/x" " = 0xff"						"unsigned char"}
+
+	{"dataglobal32_1"		"/x" $dataglobal_unk_re					" = $data_var_type"}
+	{"(uint32) dataglobal32_1"	"/x" " = 0x7fffffff"					"unsigned int"}
+	{"dataglobal32_2"		"/x" $dataglobal_unk_re					" = $data_var_type"}
+	{"(uint32) dataglobal32_2"	"/x" " = 0xff"						"unsigned int"}
+
+	{"dataglobal64_1"		"/x" $dataglobal_unk_re					" = $data_var_type"}
+	{"(uint64) dataglobal64_1"	"/x" " = 0x7fffffffffffffff"				"unsigned long long"}
+	{"dataglobal64_2"		"/x" $dataglobal_unk_re					" = $data_var_type"}
+	{"(uint64) dataglobal64_2"	"/x" " = 0xff"						"unsigned long long"}
+    } {
+	set exp [lindex $line 0]
+	# Expand variables.
+	set fmt [subst -nobackslashes [lindex $line 1]]
+	set print [subst  -nobackslashes [lindex $line 2]]
+	set whatis [subst -nobackslashes [lindex $line 3]]
+	if {$fmt == ""} {
+	    gdb_test "p $exp" $print
+	} else {
+	    gdb_test "p $fmt $exp" $print
+	}
+	gdb_test "whatis $exp" $whatis
+	gdb_test "ptype $exp" $whatis
+    }
+
+    # Check that pointer arithmetic works as expected.
+    set addr1 [get_hexadecimal_valueof "&dataglobal" "*UNKNOWN*"]
+    set addr2 [get_hexadecimal_valueof "(int *) &dataglobal + 1" "*UNKNOWN*"]
+    set offset [expr $addr2 - $addr1]
+    set int_size [get_integer_valueof "sizeof (int)" "*UNKNOWN*"]
+    gdb_assert { $offset == $int_size }
+
+    # The only symbol xcoff puts out for statics is for the TOC entry.
+    # Possible, but hairy, for gdb to deal.  Right now it doesn't, it
+    # doesn't know the variables exist at all.
+    setup_xfail "rs6000*-*-aix*"
+    setup_xfail "powerpc*-*-aix*"
+
+    gdb_test "p datalocal" "datalocal.*$unk_type_re"
+    gdb_test "p (int) datalocal" "= 4"
+
+    setup_xfail "rs6000*-*-aix*"
+    setup_xfail "powerpc*-*-aix*"
+
+    gdb_test "whatis datalocal" "datalocal.*$data_var_type"
+
+    setup_xfail "rs6000*-*-aix*"
+    setup_xfail "powerpc*-*-aix*"
+
+    gdb_test "ptype datalocal" "datalocal.*$data_var_type"
+
+    gdb_test "p bssglobal" "bssglobal.*$unk_type_re"
+    gdb_test "p (int) bssglobal" "= 0"
+    gdb_test "whatis bssglobal" $data_var_type
+    gdb_test "ptype bssglobal" $data_var_type
+
+    setup_xfail "rs6000*-*-aix*"
+    setup_xfail "powerpc*-*-aix*"
+
+    gdb_test "p bsslocal" "bsslocal.*$unk_type_re"
+    gdb_test "p (int) bsslocal" "= 0"
+
+    setup_xfail "rs6000*-*-aix*"
+    setup_xfail "powerpc*-*-aix*"
+
+    gdb_test "whatis bsslocal" $data_var_type
+
+    setup_xfail "rs6000*-*-aix*"
+    setup_xfail "powerpc*-*-aix*"
+
+    gdb_test "ptype bsslocal" $data_var_type
+
+    gdb_test "backtrace 10" "#0.*inner.*#1.*middle.*#2.*top.*#3.*main.*" \
+	"backtrace from inner"
+    # Or if that doesn't work, at least hope for the external symbols
+    # Commented out because if we aren't going to xfail the above test
+    # ever, why bother with a weaker test?
+    #gdb_test "backtrace 10" "#0.*inner.*#1.*#2.*top.*#3.*main.*" \
+	#    "backtrace from inner for externals"
+    
+    # This test is not as obscure as it might look.  `p getenv ("TERM")'
+    # is a real-world example, at least on many systems.
+    foreach cmd {"p/c" "ptype" "whatis"} {
+	gdb_test "$cmd array_index(\"abcdef\",2)" \
+	    "'array_index' has unknown return type; cast the call to its declared return type"
+    }
+    if [target_info exists gdb,cannot_call_functions] {
+	unsupported "p/c (int) array_index(\"abcdef\",2)"
+    } else {
+	# We need to up this because this can be really slow on some boards.
+	# (malloc() is called as part of the test).
+	set prev_timeout $timeout
+	set timeout 60
+	gdb_test {p/c (int) array_index("abcdef",2)} " = 99 'c'"
+	set timeout $prev_timeout
+    }
+
+    test_call_promotion
+
+    # Now, try that we can give names of file-local symbols which happen
+    # to be unique, and have it still work
+    if {[nodebug_runto middle]} {
+	gdb_test "backtrace 10" "#0.*middle.*#1.*top.*#2.*main.*" \
+	    "backtrace from middle"
+    }
+}

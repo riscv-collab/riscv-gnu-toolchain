@@ -1,0 +1,97 @@
+# This testcase is part of GDB, the GNU debugger.
+#
+# Copyright 2013-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test relies on checking gdb debug output. Do not run if gdb debug is
+# enabled as any debug will be redirected to the log.
+require !gdb_debug_enabled
+
+standard_testfile
+
+# The test program exits after a while, in case GDB crashes.  Make it
+# wait at least as long as we may wait before declaring a time out
+# failure.
+set options { "additional_flags=-DTIMEOUT=$timeout" debug }
+if { [build_executable ${testfile}.exp ${testfile} $srcfile $options] == -1 } {
+    return -1
+}
+
+# Return 0 on success, non-zero otherwise.
+
+proc do_test { pass } {
+    global testfile gdb_prompt binfile pf_prefix
+
+    if ![runto_main] {
+	return -1
+    }
+
+    gdb_breakpoint "${testfile}.c:[gdb_get_line_number "loop-line" ${testfile}.c]" \
+		   temporary
+
+    gdb_test "continue" "Temporary breakpoint .* loop-line .*"
+
+    gdb_test_no_output "set range-stepping off"
+    gdb_test_no_output "set debug infrun 1"
+
+    set abort 1
+    gdb_test_multiple "step" "run a bit" {
+	-re {\[infrun\] process_event_stop_test: stepping inside range} {
+	    pass $gdb_test_name
+	    set abort 0
+	}
+    }
+    if $abort {
+	verbose -log "$pf_prefix $test: did not run"
+	return $abort
+    }
+
+    set gdb_pid [exp_pid -i [board_info host fileid]]
+    remote_exec host "kill -TERM ${gdb_pid}"
+
+    set test "expect eof"
+    set abort 1
+    set stepping 0
+    # If GDB mishandles the SIGTERM and doesn't exit, this should FAIL
+    # with timeout.  We don't expect a GDB prompt, so we see one,
+    # we'll FAIL too.
+    gdb_test_multiple "" "expect eof" {
+	eof {
+	    pass "$gdb_test_name (got eof)"
+	    set abort 0
+	}
+	-re {\[infrun\] process_event_stop_test: stepping inside range} {
+	    incr stepping
+	    exp_continue
+	}
+    }
+    verbose -log "$pf_prefix $test: stepped $stepping times"
+    return $abort
+}
+
+# Testcase was FAILing approx. on 10th pass with unpatched GDB.
+# 50 runs should be approx. a safe number to be sure it is fixed now.
+set passes 50
+
+for {set pass 0} {$pass < $passes} {incr pass} {
+    with_test_prefix "pass=$pass" {
+	clean_restart ${testfile}
+	if { [do_test $pass] != 0 } {
+	    break
+	}
+    }
+}
+
+gdb_assert {$pass == $passes} "$passes SIGTERM passes"

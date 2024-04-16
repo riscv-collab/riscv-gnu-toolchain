@@ -1,0 +1,111 @@
+# Copyright 2016-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that on a separate MI UI (new-ui mi <tty>), the printing of an
+# asynchronous event (e.g. =library-loaded) during the synchronous
+# execution of a command (e.g.  -exec-run or -exec-continue) does not
+# prematurely re-enable MI input.  After executing synchronous
+# commands, MI should not process further commands until the inferior
+# stops again.  See PR gdb/20418.
+
+# Do not run if gdb debug is enabled as it doesn't work for separate-mi-tty.
+require !gdb_debug_enabled
+
+load_lib mi-support.exp
+
+standard_testfile
+
+if {[build_executable $testfile.exp $testfile ${srcfile} "debug"] == -1} {
+    untested "failed to compile"
+    return -1
+}
+
+# The test driver.  SYNC_COMMAND specifies which command is used to
+# synchronously start the program running.
+
+proc do_test {sync_command} {
+    global srcdir subdir binfile srcfile
+    global gdb_spawn_id gdb_main_spawn_id mi_spawn_id inferior_spawn_id
+    global gdb_prompt mi_gdb_prompt
+
+    if {[mi_clean_restart $binfile "separate-mi-tty"] != 0} {
+	fail "could not start gdb"
+	return
+    }
+
+    # Start a synchronous run/continue on the MI UI.
+    set test "send synchronous execution command"
+    if {$sync_command == "run"} {
+	if {[mi_run_cmd] >= 0} {
+	    pass $test
+	} else {
+	    return
+	}
+    } else {
+	if {[mi_runto_main] < 0} {
+	    return
+	}
+	if {[mi_send_resuming_command_raw "123-exec-continue" $test] >= 0} {
+	    pass $test
+	} else {
+	    return
+	}
+    }
+
+    # Send -thread-info immediately after.  If everything works
+    # correctly, this is only serviced by GDB when the execution
+    # stops.
+    send_gdb "456-thread-info\n"
+    pass "send -thread-info"
+
+    # Make sure we trigger an asynchronous event (=thread-group-added)
+    # in the separate MI UI.  Note the "run" variant usually triggers
+    # =thread-group-started/=thread-created/=library-loaded as well.
+    with_spawn_id $gdb_main_spawn_id {
+	gdb_test "add-inferior" "Added inferior 2 on connection .*"
+    }
+
+    # Interrupt the program.
+    with_spawn_id $gdb_main_spawn_id {
+	set message "interrupt on the CLI"
+	gdb_test_multiple "interrupt" "$message" {
+	    -re "$gdb_prompt " {
+		gdb_test_multiple "" "$message" {
+		    -re "received signal SIGINT" {
+			pass $message
+		    }
+		}
+	    }
+	}
+    }
+
+    # On the MI channel, we should see the interrupt output _before_
+    # the -thread-info output.
+    with_spawn_id $mi_spawn_id {
+	mi_expect_interrupt "got MI interrupt output"
+    }
+
+    # Look for the result of our -thread-info.  If input were
+    # re-enabled too soon, the thread would incorrectly show up with
+    # state="running".
+    with_spawn_id $mi_spawn_id {
+	mi_gdb_test "" "456\\^.*state=\"stopped\".*" \
+	    "got -thread-info output and thread is stopped"
+    }
+}
+
+foreach_with_prefix sync-command {"run" "continue"} {
+    do_test ${sync-command}
+}

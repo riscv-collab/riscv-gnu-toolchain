@@ -1,0 +1,138 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test the flags within GDB that can be used to control how Python is
+# initialized.
+
+require allow_python_tests
+
+# Return a list containing two directory paths for newly created home
+# directories.
+#
+# The first directory is a HOME style home directory, it contains a
+# .gdbearlyinit file containing CONTENT.
+#
+# The second directory is an XDG_CONFIG_HOME style home directory, it
+# contains a sub-directory gdb/, inside which is a file gdbearlyinit
+# that also contains CONTENT.
+#
+# The PREFIX is used in both directory names and should be unique for
+# each call to this function.
+proc setup_home_directories { prefix content } {
+    set home_dir [standard_output_file "${prefix}-home"]
+    set xdg_home_dir [standard_output_file "${prefix}-xdg"]
+
+    file mkdir $home_dir
+    file mkdir "$xdg_home_dir/gdb"
+
+    # Write the content into the HOME directory.
+    set fd [open "$home_dir/.gdbearlyinit" w]
+    puts $fd $content
+    close $fd
+
+    # Copy this from the HOME directory into the XDG_CONFIG_HOME
+    # directory.
+    file copy -force "$home_dir/.gdbearlyinit" "$xdg_home_dir/gdb/gdbearlyinit"
+
+    return [list $home_dir $xdg_home_dir]
+}
+
+# Start GDB and check the status of the Python system flags that we
+# can control from within GDB.
+proc test_python_settings { exp_state } {
+    gdb_start
+
+    gdb_test_no_output "python import sys"
+
+    foreach_with_prefix attr {ignore_environment dont_write_bytecode} {
+
+	# If we are checking 'dont_write_bytecode', and we are
+	# expecting this attribute to be 'off', then, if the user has
+	# PYTHONDONTWRITEBYTECODE set in their environment, the result
+	# will be 'on' instead of 'off', so override the expected
+	# result here.
+	#
+	# The reason for this is, 'set python dont-write-bytecode' by
+	# default is set to 'auto', which means, so long as 'set
+	# python ignore-environment' is 'off', GDB will check for the
+	# above environment variable.
+	#
+	# We could unset the environment variable, but until Python
+	# 3.8 there was no way to control where .pyc files are placed,
+	# and it feels bad to cause .pyc files to be created within
+	# the users filesystem when they clearly don't want them.
+	#
+	# And so, we adjust the expected results.  Hopefully, between
+	# all GDB developers some will test GDB with this environment
+	# variable unset.
+	if { $attr == "dont_write_bytecode" \
+		 && $exp_state == "off"
+		 && [info exists ::env(PYTHONDONTWRITEBYTECODE)] } {
+	    set answer "on"
+	} else {
+	    set answer $exp_state
+	}
+
+	gdb_test_multiline "testname" \
+	    "python" "" \
+	    "if hasattr(sys, 'flags') and getattr(sys.flags, '${attr}', False):" "" \
+	    "  print (\"${attr} is on\")" "" \
+	    "else:" "" \
+	    "  print (\"${attr} is off\")" "" \
+	    "end" "${attr} is ${answer}"
+    }
+
+    gdb_exit
+}
+
+with_ansi_styling_terminal {
+    # Check the features are off by default.
+    test_python_settings "off"
+
+    # Create an empty directory we can use as HOME for some of the
+    # tests below.  When we set XDG_CONFIG_HOME we still need to point
+    # HOME at something otherwise GDB complains that it doesn't know
+    # where to create the index cache.
+    set empty_home_dir [standard_output_file fake-empty-home]
+
+    # Create two directories to use for the style setting test.
+    set dirs [setup_home_directories "style" \
+		  [multi_line_input \
+		       "set python dont-write-bytecode on" \
+		       "set python ignore-environment on"]]
+    set home_dir [lindex $dirs 0]
+    set xdg_home_dir [lindex $dirs 1]
+
+    # Now arrange to use the fake home directory early init file.
+    save_vars { INTERNAL_GDBFLAGS env(HOME) env(XDG_CONFIG_HOME) } {
+	set INTERNAL_GDBFLAGS [string map {"-nx" ""} $INTERNAL_GDBFLAGS]
+
+	with_test_prefix "using HOME config" {
+	    # Now test GDB when using the HOME directory.
+	    set env(HOME) $home_dir
+	    unset -nocomplain env(XDG_CONFIG_HOME)
+	    test_python_settings "on"
+	}
+
+	with_test_prefix "using XDG_CONFIG_HOME config" {
+	    # Now test using the XDG_CONFIG_HOME folder.  We still need to
+	    # have a HOME directory set otherwise GDB will issue an error
+	    # about not knowing where to place the index cache.
+	    set env(XDG_CONFIG_HOME) $xdg_home_dir
+	    set env(HOME) $empty_home_dir
+	    test_python_settings "on"
+	}
+    }
+}

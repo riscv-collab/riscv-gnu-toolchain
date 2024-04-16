@@ -1,0 +1,79 @@
+# Copyright 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile
+set using_clang [test_compiler_info clang*]
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+set sizeof_int [get_sizeof "int" 4]
+
+# Check that VLA passed to function (pointer) points to the first element.
+gdb_breakpoint [gdb_get_line_number "foo_bp"]
+gdb_continue_to_breakpoint "foo_bp"
+gdb_test "print vla_ptr" "\\\(int \\\*\\\) $hex" "print vla_ptr (foo)"
+gdb_test "print *vla_ptr" " = 2" "print *vla_ptr (foo)"
+
+gdb_breakpoint [gdb_get_line_number "bar_bp"]
+gdb_continue_to_breakpoint "bar_bp"
+gdb_test "print vla_ptr" "\\\(int \\\*\\\) $hex" "print vla_ptr (bar)"
+gdb_test "print *vla_ptr" " = 2" "print *vla_ptr (bar)"
+
+gdb_breakpoint [gdb_get_line_number "vla_func_bp"]
+gdb_continue_to_breakpoint "vla_func_bp"
+
+gdb_test_multiple "print td_vla" "" {
+    -re -wrap " = \\\{4, 5, 6, 7, 8\\\}" {
+	pass $gdb_test_name
+    }
+    -re -wrap " = $hex" {
+	if { $using_clang } {
+	    # Clang 10.0.1 fails to generate complete type info, filed as
+	    # llvm PR48247 - "vla var with typedef'd type has incomplete
+	    # debug info".  See note below.
+	    xfail $gdb_test_name
+	    # Verify that despite the incomplete type info, the variable is
+	    # there and has the right value.
+	    gdb_test "p *td_vla@5" " = \\\{4, 5, 6, 7, 8\\\}"
+	} else {
+	    fail $gdb_test_name
+	}
+    }
+}
+
+# Clang 10.0.1 generates this DWARF for td_vla:
+#
+# A variable DIE:
+# <2><19f>: Abbrev Number: 6 (DW_TAG_variable)
+#    <1a0>   DW_AT_location    : 0x39 (location list)
+#    <1a4>   DW_AT_name        : td_vla
+#    <1aa>   DW_AT_type        : <0x1ae>
+# with type:
+# <2><1ae>: Abbrev Number: 7 (DW_TAG_typedef)
+#    <1af>   DW_AT_type        : <0x1fc>
+#    <1b3>   DW_AT_name        : typedef_vla
+# pointing to:
+# <1><1fc>: Abbrev Number: 11 (DW_TAG_array_type)
+#    <1fd>   DW_AT_type        : <0x1d3>
+# <2><201>: Abbrev Number: 14 (DW_TAG_subrange_type)
+#    <202>   DW_AT_type        : <0x1f5>
+#
+# The subrange type is missing the count attribute.

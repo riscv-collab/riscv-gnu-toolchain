@@ -1,0 +1,66 @@
+# Copyright 2013-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "ada.exp"
+
+require allow_ada_tests
+
+standard_ada_testfile foo
+
+set have_xfail 0
+if {[is_aarch64_target]} {
+    if { [gcc_major_version] <= 8 } {
+       set have_xfail 1
+    }
+}
+
+foreach_with_prefix scenario {all minimal} {
+    set flags [list debug \
+		   optimize=-O2 \
+		   additional_flags=-fgnat-encodings=$scenario]
+
+    if {[gdb_compile_ada "${srcfile}" "${binfile}-${scenario}" executable $flags] != ""} {
+	return -1
+    }
+
+    clean_restart ${testfile}-${scenario}
+
+    runto "increment"
+
+    # If sal.is_stmt is false for the frame, function frame_show_address will
+    # return true and function print_frame in gdb/stack.c will print the
+    # address.  In this case, the output will look something like:
+    # #0  0x0000000010010a88 in callee.increment (val=val@entry=99.0, msg=...)
+    # This situation currently occurs on PowerPC but not on X86-64.
+    # The re string needs to account for the possibility that the address
+    # will be printed.
+    set re \
+	"#0.*callee\\.increment \\(val(=val@entry)?=99\\.0, msg=\\.\\.\\.\\).*"
+    set re_different_entry_val \
+       "#0\\s+callee\\.increment \\(val=99.0, val@entry=.*, msg=\\.\\.\\.\\).*"
+    gdb_test_multiple "frame" "" {
+       -re -wrap $re {
+	   pass $gdb_test_name
+       }
+       -re -wrap $re_different_entry_val {
+	   if { $have_xfail } {
+	      # GCC PR98148
+	      xfail $gdb_test_name
+	   } else {
+	      fail $gdb_test_name
+	   }
+       }
+    }
+}

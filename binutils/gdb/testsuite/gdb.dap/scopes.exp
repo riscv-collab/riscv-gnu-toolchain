@@ -1,0 +1,151 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test "scopes" and "variables".
+
+require allow_dap_tests
+
+load_lib dap-support.exp
+
+standard_testfile
+
+if {[build_executable ${testfile}.exp $testfile] == -1} {
+    return
+}
+
+if {[dap_launch $testfile] == ""} {
+    return
+}
+
+set line [gdb_get_line_number "BREAK"]
+set obj [dap_check_request_and_response "set breakpoint by line number" \
+	     setBreakpoints \
+	     [format {o source [o path [%s]] breakpoints [a [o line [i %d]]]} \
+		  [list s $srcfile] $line]]
+set line_bpno [dap_get_breakpoint_number $obj]
+
+dap_check_request_and_response "start inferior" configurationDone
+dap_wait_for_event_and_check "inferior started" thread "body reason" started
+
+dap_wait_for_event_and_check "stopped at line breakpoint" stopped \
+    "body reason" breakpoint \
+    "body hitBreakpointIds" $line_bpno
+
+set bt [lindex [dap_check_request_and_response "backtrace" stackTrace \
+		    {o threadId [i 1]}] \
+	    0]
+set frame_id [dict get [lindex [dict get $bt body stackFrames] 0] id]
+
+set scopes [dap_check_request_and_response "get scopes" scopes \
+		[format {o frameId [i %d]} $frame_id]]
+set scopes [dict get [lindex $scopes 0] body scopes]
+
+# Request the scopes twice, and verify that the results are identical.
+# GDB previously had a bug where it would return new scopes each time.
+set scopes2 [dap_check_request_and_response "get scopes again" scopes \
+		 [format {o frameId [i %d]} $frame_id]]
+set scopes2 [dict get [lindex $scopes2 0] body scopes]
+gdb_assert {$scopes2 == $scopes} "identical scopes requests yield same body"
+
+gdb_assert {[llength $scopes] == 2} "two scopes"
+
+lassign $scopes scope reg_scope
+gdb_assert {[dict get $scope name] == "Locals"} "scope is locals"
+gdb_assert {[dict get $scope presentationHint] == "locals"} \
+    "locals presentation hint"
+gdb_assert {[dict get $scope namedVariables] == 3} "three vars in scope"
+
+gdb_assert {[dict get $reg_scope name] == "Registers"} \
+    "second scope is registers"
+gdb_assert {[dict get $reg_scope presentationHint] == "registers"} \
+    "registers presentation hint"
+gdb_assert {[dict get $reg_scope namedVariables] > 0} "at least one register"
+
+set num [dict get $scope variablesReference]
+# Send two requests and combine them, to verify that using a range
+# works.
+set refs1 [lindex [dap_check_request_and_response "fetch variables 0,1" \
+		       "variables" \
+		       [format {o variablesReference [i %d] count [i 2]} \
+			    $num]] \
+	       0]
+set refs2 [lindex [dap_check_request_and_response "fetch variables 2" \
+		       "variables" \
+		       [format {o variablesReference [i %d] \
+				    start [i 2] count [i 1]} \
+			    $num]] \
+	       0]
+
+set vars [concat [dict get $refs1 body variables] \
+	      [dict get $refs2 body variables]]
+foreach var $vars {
+    set name [dict get $var name]
+
+    if {$name != "dei"} {
+	gdb_assert {[dict get $var variablesReference] == 0} \
+	    "$name has no structure"
+    }
+
+    switch $name {
+	"inner" {
+	    gdb_assert {[string match "*inner block*" [dict get $var value]]} \
+		"check value of inner"
+	}
+	"dei" {
+	    gdb_assert {[dict get $var value] == ""} "check value of dei"
+	    set dei_ref [dict get $var variablesReference]
+	}
+	"scalar" {
+	    gdb_assert {[dict get $var value] == 23} "check value of scalar"
+	}
+	default {
+	    fail "unknown variable $name"
+	}
+    }
+}
+
+set refs [lindex [dap_check_request_and_response "fetch contents of dei" \
+		      "variables" \
+		      [format {o variablesReference [i %d]} $dei_ref]] \
+	      0]
+set deivals [dict get $refs body variables]
+gdb_assert {[llength $deivals] == 2} "dei has two members"
+
+set num [dict get $reg_scope variablesReference]
+# The request succeeding is sufficient.
+set val [dap_check_request_and_response "fetch first register" \
+	     "variables" \
+	     [format {o variablesReference [i %d] count [i 1]} $num]]
+
+# Try setting the value to something else.
+set val [dict get [lindex $val 0] body variables]
+set name [dict get [lindex $val 0] name]
+set val [dict get [lindex $val 0] value]
+# Just make sure it is different from the original value.
+set val [expr {$val ^ 7}]
+
+# setVariable isn't implemented yet, so use the register name.  Note
+# that we sneak the "$" into the name, written in a slightly funny way
+# to work around apparent TON limitations.
+set response [dap_check_request_and_response "set first register" \
+		  setExpression \
+		  [format {o expression [s \$%s] value [s %d] frameId [i %d]} \
+		       $name $val $frame_id]]
+set response [lindex $response 0]
+
+gdb_assert {[dict get $response body value] == $val} \
+    "setting register yields updated value"
+
+dap_shutdown

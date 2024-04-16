@@ -1,0 +1,110 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check whether .debug_ranges is correctly read in during symtab expansion.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+standard_testfile main.c .S
+
+set executable ${testfile}
+set asm_file [standard_output_file ${srcfile2}]
+
+# Create the DWARF.
+Dwarf::assemble $asm_file {
+    global srcdir subdir srcfile
+
+    declare_labels int_label
+    declare_labels ranges_label
+
+    set main_func \
+	[function_range main [list ${srcdir}/${subdir}/$srcfile]]
+
+    cu {} {
+	compile_unit {
+	    {language @DW_LANG_C_plus_plus}
+	    {name "cu1"}
+	} {
+	    DW_TAG_variable {
+		{name foo}
+		{type %$int_label}
+		{const_value 1 DW_FORM_sdata}
+	    }
+	}
+    }
+
+    cu {} {
+	compile_unit {
+	    {language @DW_LANG_C_plus_plus}
+	    {name "cu2"}
+	    {ranges ${ranges_label} sec_offset}
+	    {low_pc {[lindex $main_func 0]}}
+	} {
+	    int_label: base_type {
+		{byte_size 4 udata}
+		{encoding @DW_ATE_signed}
+		{name int}
+	    }
+	}
+    }
+
+    ranges {is_64 [is_64_target]} {
+	ranges_label: sequence {
+	    range 0 [lindex $main_func 1]
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	  [list $srcfile $asm_file] {nodebug}] } {
+    return -1
+}
+
+# Expand cu1.  This will enqueue cu2.
+set cu1_expanded 0
+gdb_test_multiple "ptype foo" "" {
+    -re -wrap "type = int" {
+	set cu1_expanded 1
+	pass $gdb_test_name
+    }
+}
+
+require {expr $cu1_expanded == 1}
+
+# Now check that cu2 has an address range starting at main.
+set cu2_blockvector_re \
+    [multi_line \
+	 "Symtab for file cu2 at $hex" \
+	 "Read from object file \[^\r\n\]*" \
+	 "Language: c\\+\\+" \
+	 "" \
+	 "Blockvector:" \
+	 "" \
+	 "block #000, \[^\r\n\]* in ($hex)..$hex" \
+	 ".*"]
+gdb_test_multiple "maint print symbols -source cu2" "CU addr found" {
+    -re -wrap $cu2_blockvector_re {
+	set addr $expect_out(1,string)
+	if { $addr eq "0x0" } {
+	    fail "$gdb_test_name (Found 0x0)"
+	} else {
+	    gdb_test "info symbol $addr" "main in section .*" \
+		$gdb_test_name
+	}
+    }
+}

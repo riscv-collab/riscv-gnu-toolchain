@@ -1,0 +1,390 @@
+# Copyright 2003-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file was written by Elena Zannoni (ezannoni@cygnus.com)
+
+
+# This testcase cannot use runto_main because of the different prompt
+# we get when using annotation level 2.
+#
+require target_can_use_run_cmd
+
+
+#
+# test running programs
+#
+
+standard_testfile .c
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug nowarnings}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+
+clean_restart ${binfile}
+
+# The commands we test here produce many lines of output; disable "press 
+# <return> to continue" prompts.
+gdb_test_no_output "set height 0"
+
+#
+# break in main
+#
+
+set main_line [gdb_get_line_number "break main"]
+
+gdb_test "break ${srcfile}:${main_line}" \
+    "Breakpoint.*at.* file .*$srcfile, line $main_line\\." \
+    "breakpoint main"
+
+
+# NOTE: this prompt is OK only when the annotation level is > 1
+
+# NOTE: When this prompt is in use the gdb_test procedure cannot be
+# used because it assumes that the last char after the gdb_prompt is a
+# white space. This is not true with this annotated prompt. So we must
+# use send_gdb and gdb_expect or gdb_expect_list.
+
+set old_gdb_prompt $gdb_prompt
+set gdb_prompt "\r\n\032\032pre-prompt\r\n$gdb_prompt \r\n\032\032prompt\r\n"
+
+
+
+#
+# set the annotation level to 3
+#
+# of course, this will test:
+# annotate-pre-prompt
+# annotate-prompt
+# annotate-post-prompt (in the next block)
+#
+send_gdb "set annotate 3\n" 
+gdb_expect_list "annotation set at level 3" "\r\n$gdb_prompt$" {
+    "set annotate 3"
+}
+
+#
+# if construct:
+#
+gdb_test_multiple "if 1" "start if construct" {
+    -re "^if 1\r\n\r\n\032\032post-prompt\r\n\r\n\032\032pre-commands\r\n >\r\n\032\032commands\r\n$" {
+	pass "start if construct"
+    }
+}
+
+gdb_test_multiple "end" "end if construct" {
+    -re "^end\r\n\r\n\032\032post-commands\r\n$gdb_prompt$" {
+ 	pass "end if construct"
+    }
+}
+
+#
+# info break:
+#
+send_gdb "info break\n" 
+gdb_expect_list "breakpoint info" "$gdb_prompt$" [concat {
+    "\r\n\032\032post-prompt\r\n"
+    "Num     Type           Disp Enb Address    +What\r\n" } [list \
+    "1       breakpoint     keep y   0x\[0-9a-zA-Z\]+ +in main at .*annota3.c:$main_line\r\n"]]
+
+
+#
+# run to a break point will test:
+#
+#exp_internal 1
+send_gdb "run\n"
+gdb_expect_list "run until main breakpoint" "$gdb_prompt$" [concat {
+    "\r\n\032\032post-prompt\r\n"
+    "Starting program: .*annota3(|\.exe) \r\n"
+    "\r\n\032\032starting\r\n"
+    "\r\n\032\032breakpoint 1\r\n"
+    "\r\n"
+    "Breakpoint 1, "
+    "\r\n\032\032frame-begin 0 0x\[0-9a-z\]+\r\n" } [list \
+    "main \\(\\) at .*annota3.c:$main_line\r\n"] [list \
+    "\r\n\032\032source.*annota3.c:$main_line:.*:beg:0x\[0-9a-z\]+\r\n"] {
+    "\r\n\032\032stopped\r\n"
+}]
+#exp_internal 0
+#exit 0
+
+#
+# Let's do a next, to get to a point where the array is initialized
+# We don't care about the annotated output for this operation, it is the same as
+# the one produced by run above
+#
+send_gdb "next\n" 
+gdb_expect_list "go after array init line" "$gdb_prompt$" {
+    "\r\n\032\032post-prompt\r\n"
+    "\r\n\032\032starting\r\n"
+    "\r\n\032\032source .*annota3.c:\[0-9\]+:\[0-9\]+:beg:0x\[0-9a-z\]+\r\n"
+    "\r\n\032\032stopped\r\n"
+}
+
+
+#
+# printing the array:
+#
+send_gdb "print my_array\n"
+gdb_expect_list "print array" "$gdb_prompt$" {
+    "\r\n\032\032post-prompt\r\n"
+    ".*= .1, 2, 3.\r\n"
+}
+
+
+#
+# this should generate an error message, so to test:
+# annotate-error-begin
+# FIXME: annotate-error not tested
+#
+
+#exp_internal 1
+send_gdb "print non_existent_value\n"
+gdb_expect_list "print non_existent_value" "$gdb_prompt$" {
+    "\r\n\032\032post-prompt\r\n"
+    "\r\n\032\032error-begin\r\n"
+    "No symbol \"non_existent_value\" in current context.\r\n"
+    "\r\n\032\032error\r\n"
+}
+
+
+#
+# break at signal handler
+#
+send_gdb "break handle_USR1\n"
+gdb_expect_list "breakpoint handle_USR1" "$gdb_prompt$" {
+    "\r\n\032\032post-prompt\r\n"
+    "Breakpoint.*at 0x\[0-9a-z\]+: file.*annota3.c, line.*\r\n"
+}
+
+#
+# break at printf. When we are stopped at printf, we can test 
+#
+send_gdb "break printf\n"
+gdb_expect_list "breakpoint printf" "$gdb_prompt$" {
+    "\r\n\032\032post-prompt\r\n"
+    "Breakpoint.*at 0x\[0-9a-z\]+.*"
+}
+
+#
+# get to printf
+#
+send_gdb "continue\n"
+gdb_expect_list "continue to printf" "$gdb_prompt$" {
+    "\r\n\032\032post-prompt\r\n"
+    "Continuing.\r\n"
+    "\r\n\032\032starting\r\n"
+    "\r\n\032\032breakpoint 3\r\n"
+    "\r\n"
+    "Breakpoint 3, \[^\r\n\]*\r\n"
+    "\r\n\032\032stopped\r\n"
+}
+
+send_gdb "backtrace\n"
+gdb_expect_list "backtrace from shlibrary" "$gdb_prompt$" {
+    "\r\n\032\032post-prompt\r\n"
+    "#0 .* .*printf(@\[^ ]*)? \[^\r\n\]*\r\n"
+    "#1 .* main \[^\r\n\]*\r\n"
+}
+
+
+#
+# test printing a frame with some arguments: 
+#
+
+if [target_info exists gdb,nosignals] {
+    unsupported "send SIGUSR1"
+    unsupported "backtrace @ signal handler"
+} else {
+    send_gdb "signal SIGUSR1\n"
+    gdb_expect_list "send SIGUSR1" "$gdb_prompt$" {
+	"\r\n\032\032post-prompt\r\n"
+	"Continuing with signal SIGUSR1.\r\n"
+	"\r\n\032\032starting\r\n"
+	"\r\n\032\032breakpoint 2\r\n"
+	"\r\n"
+	"Breakpoint 2, "
+	"\r\n\032\032frame-begin 0 0x\[0-9a-z\]+\r\n"
+	"handle_USR1 \\(sig=\[0-9\]+\\) at .*annota3.c:\[0-9\]+\r\n"
+	"\r\n\032\032source .*annota3.c:\[0-9\]+:\[0-9\]+:beg:0x\[0-9a-z\]+\r\n"
+	"\r\n\032\032stopped\r\n"
+    }
+
+    #
+    # test:
+    #
+    send_gdb "backtrace\n"
+    gdb_expect_list "backtrace @ signal handler" "$gdb_prompt$" {
+	"#0 +handle_USR1 \[^\r\n\]+\r\n"
+	"#1 +.signal handler called.\r\n"
+	"#2 .* .*printf(@\[^ \]*)? \[^\r\n\]+\r\n"
+	"#3 .* main \[^\r\n\]+\r\n"
+    }
+}
+
+#
+# delete all the breakpoints
+#
+send_gdb "delete 1\n"
+gdb_expect_list "delete bp 1" "$gdb_prompt$" {
+    "\r\n\032\032post-prompt\r\n"
+}
+
+send_gdb "delete 2\n"
+gdb_expect_list "delete bp 2" "$gdb_prompt$" {
+    "\r\n\032\032post-prompt\r\n"
+}
+
+send_gdb "delete 3\n"
+gdb_expect_list "delete bp 3" "$gdb_prompt$" {
+    "\r\n\032\032post-prompt\r\n"
+}
+
+#
+# break in main, after value is initialized. This is in preparation
+# to test the annotate output for the display command.
+#
+send_gdb "break ${srcfile}:${main_line}\n"
+gdb_expect_list "break in main" "$gdb_prompt$" [concat {
+    "\r\n\032\032post-prompt\r\n" } [list \
+    "Breakpoint 4 at 0x\[0-9a-z\]+: file .*annota3.c, line $main_line.\r\n"]]
+
+#
+# display the value
+#
+send_gdb "display value\n"
+gdb_expect_list "set up display" "$gdb_prompt$" {
+    "\r\n\032\032post-prompt\r\n"
+    "1: value = 7\r\n"
+}
+
+# Get the core into the output directory.
+if {![is_remote host]} {
+    gdb_test -prompt "$gdb_prompt$" \
+	"set cwd [file dirname $binfile]" "" \
+	"set inferior cwd to test directory"
+}
+
+# should ask query. Test annotate-query.
+# we don't care about anything else here, only the query.
+
+send_gdb "run\n"
+gdb_expect {
+  -re "pre-query.*already.*\\(y or n\\).*query\r\n" {
+         send_gdb "y\n"
+         gdb_expect {
+	     -re ".*post-query.*$gdb_prompt$" \
+		     { pass "re-run" }
+	     -re ".*$gdb_prompt$"  { fail "re-run" }
+	     timeout { fail "re-run (timeout)" }
+	 }
+     }
+  -re ".*$gdb_prompt$"  { fail "re-run" }
+  timeout { fail "re-run (timeout)" }
+}
+
+#
+# Test that breakpoints-invalid is issued once and only once for
+# breakpoint ignore count changes, after annotation stopped.
+# NOTE: breakpoints-invalid annotations have been removed from
+# level 3 but keep these tests for continuity and comparison
+# with annota1.exp.
+
+set value_inc_line [gdb_get_line_number "increment value"]
+
+send_gdb "break $value_inc_line\n"
+gdb_expect_list  "break at value++" "$gdb_prompt$" [concat {
+    "\r\n\032\032post-prompt\r\n" } [list \
+    "Breakpoint 5 at 0x\[0-9a-z\]+: file .*annota3.c, line $value_inc_line.\r\n"]]
+
+send_gdb "ignore 5 4\n"
+gdb_expect_list "ignore 5 4" "$gdb_prompt$" {
+    "\r\n\032\032post-prompt\r\n"
+    "Will ignore next 4 crossings of breakpoint 5"
+    "\r\n"
+}
+
+send_gdb "continue\n"
+gdb_expect_list "annotate ignore count change" "$gdb_prompt$" [concat {
+    "\r\n\032\032post-prompt\r\n"
+    "\r\n\032\032breakpoint 5\r\n"
+    "\r\n"
+    "Breakpoint 5, "
+    "\r\n\032\032frame-begin 0 0x\[0-9a-z\]+\r\n" } [list \
+    "main \\(\\) at .*annota3.c:$value_inc_line\r\n"] [list \
+    "\r\n\032\032source .*annota3.c:$value_inc_line:\[0-9\]+:beg:0x\[0-9a-z\]+\r\n"] {
+    "1: value = 11\r\n"
+    "\r\n\032\032stopped\r\n"
+}]
+
+# check that ignore command is working, or the above can provide
+# misleading assurance ...
+
+send_gdb "next\n"
+gdb_expect_list "next to exit loop" "$gdb_prompt$"  {
+    "\r\n\032\032post-prompt\r\n"
+    "\r\n\032\032starting\r\n"
+    "\r\n\032\032source.*annota3.c:\[0-9\]+:\[0-9\]+:beg:0x\[0-9a-z\]+\r\n"
+    "1: value = 12\r\n"
+    "\r\n\032\032stopped\r\n"
+}
+
+set after_loop_line [gdb_get_line_number "after loop"]
+
+send_gdb "next\n"
+gdb_expect_list "breakpoint ignore count" "$gdb_prompt$" [concat {
+    "\r\n\032\032post-prompt\r\n"
+    "\r\n\032\032starting\r\n" } [list \
+    "\r\n\032\032source.*annota3.c:$after_loop_line:\[0-9\]+:beg:0x\[0-9a-z\]+\r\n"] {
+    "1: value = 12\r\n"
+    "\r\n\032\032stopped\r\n"
+}]
+
+# Get the inferior's PID for later.
+
+set test "get inferior pid"
+set pid -1
+gdb_test_multiple "info inferior 1" "$test" {
+    -re "process (\[0-9\]*).*$gdb_prompt$" {
+	set pid $expect_out(1,string)
+	pass "$test"
+    }
+}
+
+# Send a signal that is not handled
+
+if [target_info exists gdb,nosignals] {
+    unsupported "signal sent"
+} else {
+    send_gdb "signal SIGTRAP\n"
+    gdb_expect_list "signal sent" "$gdb_prompt$" {
+	"\r\n\032\032post-prompt\r\n"
+	"Continuing with signal SIGTRAP.\r\n"
+	"\r\n\032\032starting\r\n"
+	"\r\n\032\032signalled\r\n"
+	"\r\nProgram terminated with signal SIGTRAP, Trace.breakpoint trap.\r\n"
+	"The program no longer exists.\r\n"
+	"\r\n\032\032stopped\r\n"
+    }
+}
+
+
+# Check for production of a core file and remove it!
+remove_core $pid
+
+# restore the original prompt for the rest of the testsuite
+
+set gdb_prompt $old_gdb_prompt

@@ -1,0 +1,153 @@
+# Copyright 2002-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file was written by Michael Snyder (msnyder@redhat.com)
+# This is a test for the gdb command "generate-core-file".
+
+# Single-threaded test case
+standard_testfile pthreads.c
+set objfile  $binfile.o
+set corefile $binfile.test
+set core0file ${binfile}0.test
+
+if {[istarget "*-*-linux"]} {
+    set target_cflags "-D_MIT_POSIX_THREADS"
+} else {
+    set target_cflags ""
+}
+
+# Attempt to prevent -Wl,-z,relro which happens by default at least on
+# Kubuntu-10.10.  Due to PR corefiles/11804 will then GDB be unable to find
+# libpthread, therefore libthread_db will not fail as expected
+# on the test `zeroed-threads cannot be listed'.
+
+set opts [list debug]
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${objfile}" object $opts] != ""
+    || ([gdb_compile_pthreads "${objfile}" "${binfile}" executable [concat $opts {ldflags=-Wl,-z,norelro}] ] != ""
+        && [gdb_compile_pthreads "${objfile}" "${binfile}" executable $opts] != "") } {
+    return -1
+}
+
+# Now we can proceed with the real testing.
+
+# Start with a fresh gdb.
+
+clean_restart ${testfile}
+
+# regexp for "horizontal" text (i.e. doesn't include newline or
+# carriage return)
+set horiz "\[^\n\r\]*"
+
+# regexp for newline
+set nl "\r\n"
+
+set timeout 30
+
+if {![runto_main]} {
+    return -1
+}
+
+gdb_test_multiple "info threads" "threads are supported" {
+    -re ".* main .*$gdb_prompt $" {
+	# OK, threads are supported.
+    }
+    -re "${nl}$gdb_prompt $" {
+	unsupported "gdb does not support threads on this target"
+	return -1
+    }
+}
+
+# Make sure thread 1 is running
+delete_breakpoints
+gdb_breakpoint "thread1"
+gdb_test "continue" "Continuing.*Breakpoint.* thread1 .*" "thread 1 is running"
+
+# Make sure thread 2 is running
+delete_breakpoints
+gdb_breakpoint "thread2"
+gdb_test "continue" "Continuing.*Breakpoint.* thread2 .*" "thread 2 is running"
+
+# Drop corefile
+set core_supported [gdb_gcore_cmd "$corefile" "save a corefile"]
+
+if {!$core_supported} {
+  return -1
+}
+
+
+# Test the uninitialized thread list.
+# Provide the case of glibc td_thr_get_info handling of:
+# /* Special case for the main thread before initialization.  */
+
+foreach symbol {__stack_user stack_used} {
+    set test "clear ${symbol}.next"
+    gdb_test_multiple "p *(void **) &${symbol} = 0" $test {
+	-re " = \\(void \\*\\) 0x0\r\n$gdb_prompt $" {
+	    pass $test
+	}
+	-re "No symbol \"${symbol}\" in current context\\.\r\n$gdb_prompt $" {
+	    xfail $test
+	    # Do not do the verification.
+	    set core0file ""
+	}
+    }
+}
+
+if {"$core0file" != ""} {
+    gdb_gcore_cmd $core0file "save a zeroed-threads corefile"
+}
+
+
+# Now restart gdb and load the corefile.
+clean_restart ${testfile}
+
+proc load_core { filename } {
+    global horiz nl
+
+    set core_loaded [gdb_core_cmd $filename "re-load generated corefile"]
+    if { $core_loaded == -1 } {
+	# No use proceeding from here.
+	return
+    }
+
+    # FIXME: now what can we test about the thread state?
+    # We do not know for certain that there should be at least 
+    # three threads, because who knows what kind of many-to-one
+    # mapping various OS's may do?  Let's assume that there must
+    # be at least two threads:
+
+    gdb_test "info threads" "\\* 1 ${horiz}${nl}  2 ${horiz}.*" \
+	    "corefile contains at least two threads"
+
+    # One thread in the corefile should be in the "thread2" function.
+
+    gdb_test "info threads" ".* thread2 .*" \
+	    "a corefile thread is executing thread2"
+
+    # The thread2 thread should be marked as the current thread.
+
+    gdb_test "info threads" "\\* ${horiz} thread2 .*" \
+	    "thread2 is current thread in corefile"
+}
+
+foreach name { corefile core0file } {
+    set filename [subst $$name]
+    if { $filename == "" } {
+	continue
+    }
+    with_test_prefix $name {
+	load_core $filename
+    }
+}

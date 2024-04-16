@@ -1,0 +1,116 @@
+# Copyright 2003-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the gdb testsuite.
+
+# This contains tests for GDB's use of RTTI information.  This stems
+# from a bug reported in PR gdb/488 and other places, which leads to
+# statements like 'warning: can't find class named 'C::D', as given by
+# C++ RTTI'.  It arises from GDB not knowing about classes that are
+# defined in namespaces.
+
+# NOTE: carlton/2003-05-16: I suspect it could arise from nested class
+# issues, too, and even once we fix that, there might be situations
+# (involving templates, in particular) where this problem triggers
+# because GDB and GCC have different ideas what a class is called.
+
+require allow_cplus_tests
+
+#
+# test running programs
+#
+
+standard_testfile rtti1.cc rtti2.cc
+
+include_file rtti.h
+
+if {[prepare_for_testing "failed to prepare" $testfile \
+	 [list $srcfile $srcfile2] {debug c++}]} {
+    return -1
+}
+
+if {![runto_main]} {
+    return
+}
+
+# First, run to after we've constructed the object:
+
+gdb_breakpoint [gdb_get_line_number "main-constructs-done" "$srcfile"]
+gdb_continue_to_breakpoint "end of constructors in main"
+
+gdb_test_multiple "print *e1" "print *e1" {
+    -re "warning: RTTI symbol not found for class 'n1::D1'.*$gdb_prompt $" {
+	# gdb HEAD 2003-12-05
+	kfail "gdb/488" "print *e1"
+    }
+    -re "warning: can't find class named `n1::D1', as given by C\\+\\+ RTTI.*$gdb_prompt $" {
+	# gdb 6.0
+	kfail "gdb/488" "print *e1"
+    }
+    -re "\\$\[0-9\]* = {<n1::Base1> = .*}\r\n$gdb_prompt $" {
+	pass "print *e1"
+    }
+    -re "\\$\[0-9\]* = {<Base1> = .*}\r\n$gdb_prompt $" {
+	# NOTE: carlton/2003-05-16: If code is compiled by GCC2, we
+	# don't print the warning (for no particular reason), but we
+	# still call the class via the wrong name; PR gdb/57 is our
+	# catch-all PR for nested type problems.
+	kfail "gdb/57" "print *e1"
+    }
+}
+
+# NOTE: carlton/2004-01-14: This test with an "<incomplete type>"
+# message because, within rtt1.cc, GDB has no way of knowing that the
+# class is called 'n2::D2' instead of just 'D2'.  This is an artifical
+# test case, though: if we were using these classes in a more
+# substantial way, G++ would emit more debug info.  As is, I don't
+# think there's anything that GDB can do about this case until G++
+# starts emitting DW_TAG_namespace info; this should arrive with GCC
+# 3.4.
+
+gdb_test_multiple "print *e2" "print *e2" {
+    -re "warning: RTTI symbol not found for class 'n2::D2'.*$gdb_prompt $" {
+	# gdb HEAD 2003-12-05
+	kfail "gdb/488" "print *e2"
+    }
+    -re "warning: can't find class named `n2::D2', as given by C\\+\\+ RTTI.*$gdb_prompt $" {
+	# gdb 6.0
+	kfail "gdb/488" "print *e2"
+    }
+    -re "\\$\[0-9\]* = <incomplete type>\r\n$gdb_prompt $" {
+	kfail "gdb/1511" "print *e2"
+    }
+    -re "\\$\[0-9\]* = {<n2::Base2> = .*}\r\n$gdb_prompt $" {
+	pass "print *e2"
+    }
+    -re "\\$\[0-9\]* = {<Base2> = .*}\r\n$gdb_prompt $" {
+	kfail "gdb/57" "print *e2"
+    }
+}
+
+# Now we test the hack that's been implemented to get around some
+# instances of PR gdb/1511.
+
+gdb_breakpoint [gdb_get_line_number "func-constructs-done" "$srcfile"]
+gdb_continue_to_breakpoint "end of constructors in func"
+
+gdb_test "print *obj" "\\$\[0-9\]* = {<n2::Base2> = .*}"
+
+gdb_breakpoint [gdb_get_line_number "func3-constructs-done" "$srcfile"]
+gdb_continue_to_breakpoint "end of constructors in func3"
+
+gdb_test "print *obj3" "\\$\[0-9\]* = {<n2::C2> = .*}"
+
+gdb_exit

@@ -1,0 +1,96 @@
+# Copyright 2010-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Utilities for Guile-scripting related tests.
+
+# Guile doesn't print the 0x prefix on hex numbers.
+set ghex {[0-9a-f]+}
+
+# Return a 1 for configurations that support Guile scripting.
+
+gdb_caching_proc allow_guile_tests {} {
+    set output [remote_exec host $::GDB "$::INTERNAL_GDBFLAGS --configuration"]
+    return [expr {[string first "--with-guile" $output] != -1}]
+}
+
+# Run a command in GDB, and report a failure if a Scheme exception is thrown.
+# If report_pass is true, report a pass if no exception is thrown.
+# This also catches the "Undefined command" error that happens if the user
+# passes, e.g., "(print foo)" instead of "guile (print foo)".
+
+proc gdb_scm_test_silent_cmd { cmd name {report_pass 1} } {
+    global gdb_prompt
+
+    gdb_test_multiple $cmd $name {
+	-re "Backtrace.*$gdb_prompt $" { fail $name }
+	-re "ERROR.*$gdb_prompt $"     { fail $name }
+	-re "Undefined command: .*$gdb_prompt $" { fail $name }
+	-re "$gdb_prompt $"            { if $report_pass { pass $name } }
+    }
+}
+
+# Load Scheme file FILE_NAME.
+# TEST_NAME can be used to specify the name of the test,
+# otherwise a standard test name is provided.
+#
+# Note: When Guile loads something and auto-compilation is enabled
+# (which is useful and the default), then the first time a file is loaded
+# Guile will compile the file and store the result somewhere
+# (e.g., $HOME/.cache/guile).  Output of the compilation process will
+# appear in gdb.log.  But since Guile only does this when necessary
+# don't be confused if you don't always see it - Guile just skipped it
+# because it thought it was unnecessary.
+
+proc gdb_scm_load_file { file_name {test_name ""} } {
+    if { $test_name == "" } {
+	set test_name "guile (load \"[file tail $file_name]\")"
+    }
+    # Note: This can produce output if Guile compiles the file.
+    gdb_scm_test_silent_cmd "guile (load \"$file_name\")" $test_name
+}
+
+# Install various utilities in Guile to simplify tests.
+#
+# print - combination of display + newline
+
+proc gdb_install_guile_utils { } {
+    # Define utilities in Guile to save needing (newline) all the time,
+    # and in the case of "print" add a prefix to help erroneous passes.
+    #
+    gdb_test_no_output -nopass \
+	"guile (define (print x) (format #t \"= ~A\" x) (newline))"
+    gdb_test_no_output -nopass \
+	"guile (define (raw-print x) (format #t \"= ~S\" x) (newline))"
+}
+
+# Install the gdb module.
+
+proc gdb_install_guile_module { } {
+    gdb_test_no_output -nopass "guile (use-modules (gdb))"
+}
+
+# Wrapper around runto_main that installs the guile utils and module.
+# The result is the same as for runto_main.
+
+proc gdb_guile_runto_main { } {
+    if ![runto_main] {
+	return 0
+    }
+
+    gdb_install_guile_utils
+    gdb_install_guile_module
+
+    return 1
+}

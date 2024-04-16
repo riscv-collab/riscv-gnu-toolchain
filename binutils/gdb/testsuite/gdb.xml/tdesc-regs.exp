@@ -1,0 +1,187 @@
+# Copyright 2007-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require allow_xml_test
+
+gdb_start
+
+# To test adding registers, we need a core set of registers for this
+# architecture, or the description will be rejected.
+
+set core-regs ""
+set regdir ""
+set architecture ""
+switch -glob -- [istarget] {
+    "aarch64*-*-*" {
+	set core-regs {aarch64-core.xml}
+    }
+    "arc*-*-*" {
+	set architecture "arc:ARCv2"
+	set regdir "arc/"
+	set core-regs {v2-core.xml v2-aux.xml}
+    }
+    "arm*-*-*" {
+	set regdir "arm/"
+        set core-regs {arm-core.xml}
+    }
+    "*m68k-*-*" {
+        set core-regs {m68k-core.xml}
+    }
+    "mips*-*-*" {
+	set core-regs {mips-cpu.xml mips-cp0.xml mips-fpu.xml mips-dsp.xml}
+    }
+    "nds32*-*-*" {
+	set core-regs {nds32-core.xml}
+    }
+    "nios2-*-*" {
+	set core-regs {nios2-cpu.xml}
+    }
+    "or1k-*-*" {
+	set core-regs {or1k-core.xml}
+    }
+    "powerpc*-*-*" {
+	set regdir "rs6000/"
+	set core-regs {power-core.xml}
+    }
+    "s390*-*-*" {
+	set core-regs {s390-core32.xml s390-acr.xml s390-fpr.xml}
+    }
+    "sparc-*-*" {
+	set regdir "sparc/"
+        set core-regs {sparc32-cpu.xml sparc32-fpu.xml sparc32-cp0.xml}
+    }
+    "sparc64-*-*" {
+	set architecture "sparc:v9"
+	set regdir "sparc/"
+        set core-regs {sparc64-cpu.xml sparc64-fpu.xml sparc64-cp0.xml}
+    }
+    "tic6x-*-*" {
+	set core-regs {tic6x-core.xml}
+    }
+    "i?86-*-*" {
+	set architecture "i386"
+	set regdir "i386/"
+        set core-regs {32bit-core.xml 32bit-sse.xml}
+    }
+    "x86_64-*-*" {
+	set architecture "i386:x86-64"
+	set regdir "i386/"
+        set core-regs {64bit-core.xml 64bit-sse.xml}
+    }
+}
+
+# If no core registers were specified, assume this target does not
+# support target-defined registers.  Verify that we get a warning if
+# we try to use them.  This not only tests the warning, but also
+# reminds maintainers to add test support when they add the feature.
+
+set single_reg_xml [gdb_remote_download host  \
+			"$srcdir/$subdir/single-reg.xml"]
+
+if {[string equal ${core-regs} ""]} {
+    gdb_test "set tdesc file $single_reg_xml" \
+	"warning: Target-supplied registers are not supported.*" \
+	"set tdesc file single-reg.xml"
+    unsupported "register tests"
+    return 0
+}
+
+# Otherwise, we support both XML and target defined registers.
+
+# Make sure we reject a description missing standard registers,
+# like the PC.
+gdb_test "set tdesc file $single_reg_xml" \
+    "warning: Architecture rejected target-supplied description" \
+    "set tdesc file single-reg.xml"
+
+# Copy the core registers into the objdir if necessary, so that they
+# will be found by <xi:include>.
+foreach src ${core-regs} {
+    set remote_filename($src) \
+	[gdb_remote_download host "$srcdir/../features/$regdir$src"]
+}
+
+# Similarly, we need to copy files under test into the objdir.
+proc load_description { file errmsg xml_file } {
+    global srcdir
+    global subdir
+    global gdb_prompt
+    global core-regs
+    global architecture
+    global remote_filename
+
+    set regs_file [standard_output_file $xml_file]
+
+    file delete $regs_file
+    set ifd [open "$srcdir/$subdir/$file" r]
+    set ofd [open $regs_file w]
+    while {[gets $ifd line] >= 0} {
+	if {[regexp {<xi:include href="core-regs.xml"/>} $line]} {
+	    if {! [string equal ${architecture} ""]} {
+		puts $ofd "  <architecture>${architecture}</architecture>"
+	    }
+	    foreach src ${core-regs} {
+		puts $ofd "  <xi:include href=\"$src\"/>"
+	    }
+	} else {
+	    puts $ofd $line
+	}
+    }
+    close $ifd
+    close $ofd
+
+    set host_regs_file [gdb_remote_download host "$regs_file"]
+
+    # Anchor the test output, so that error messages are detected.
+    set cmd "set tdesc filename $host_regs_file"
+    set msg "set tdesc filename $xml_file - from $file"
+    set cmd_regex [string_to_regexp $cmd]
+    gdb_test_multiple $cmd $msg {
+	-re "^$cmd_regex\r\n$errmsg$gdb_prompt $" {
+	    pass $msg
+	}
+    }
+}
+
+if {![is_remote host]} {
+    gdb_test "cd [standard_output_file {}]" "Working directory .*" \
+	"cd to directory holding xml"
+}
+
+load_description "extra-regs.xml" "" "test-extra-regs.xml"
+gdb_test "ptype \$extrareg" "type = (int32_t|int|long|long long)"
+gdb_test "ptype \$uintreg" "type = uint32_t"
+gdb_test "ptype \$vecreg" "type = int8_t __attribute__ \\(\\(vector_size\\(4\\)\\)\\)"
+gdb_test "ptype \$unionreg" \
+    "type = union vecint {\r\n *v4int8 v4;\r\n *v2int16 v2;\r\n}"
+gdb_test "ptype \$unionreg.v4" "type = int8_t __attribute__ \\(\\(vector_size\\(4\\)\\)\\)"
+gdb_test "ptype \$structreg" \
+    "type = struct struct1 {\r\n *v4int8 v4;\r\n *v2int16 v2;\r\n}"
+gdb_test "ptype \$structreg.v4" "type = int8_t __attribute__ \\(\\(vector_size\\(4\\)\\)\\)"
+gdb_test "ptype \$bitfields" \
+    "type = struct struct2 {\r\n *uint64_t f1 : 35;\r\n *uint64_t f2 : 1;\r\n}"
+gdb_test "ptype \$flags" \
+    "type = flag flags {\r\n *bool X @0;\r\n *uint32_t Y @2;\r\n}"
+gdb_test "ptype \$mixed_flags" \
+    "type = flag mixed_flags {\r\n *bool A @0;\r\n *uint32_t B @1-3;\r\n *bool C @4;\r\n *uint32_t D @5;\r\n *uint32_t @6-7;\r\n *enum Z_values {yes = 1, no = 0, maybe = 2, so} Z @8-9;\r\n}"
+# Reggroups should have at least general and the extra foo group
+gdb_test "maintenance print reggroups" \
+    " Group\[ \t\]+Type\[ \t\]+\r\n.* general\[ \t\]+user\[ \t\]+\r\n.* foo\[ \t\]+user\[ \t\]+"
+
+with_test_prefix "core-only.xml" {
+    load_description "core-only.xml" "" "test-regs.xml"
+    # The extra register from the previous description should be gone.
+    gdb_test "ptype \$extrareg" "type = void"
+}

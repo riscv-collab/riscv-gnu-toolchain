@@ -1,0 +1,130 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test MI '-add-inferior'.
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+standard_testfile basics.c
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" \
+	   executable {debug}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+mi_clean_restart ${binfile}
+
+# Start execution to establish a connection.
+mi_runto_main
+
+# Use 'info inferiors' to find the details of the current connection.
+set header_line ""
+set inf_line ""
+gdb_test_multiple "info inferiors" "" {
+
+    -re "^info inferiors\r\n" {
+	exp_continue
+    }
+
+    -re "^&\[^\r\n\]+\r\n" {
+	exp_continue
+    }
+
+    -re "~\"(  Num\\s+Description\\s+Connection\[^\r\n\]+)\r\n" {
+	set header_line $expect_out(1,string)
+	exp_continue
+    }
+
+    -re "^~\"(\\*\\s+1\\s+\[^\r\n\]+)\r\n" {
+	set inf_line $expect_out(1,string)
+	exp_continue
+    }
+
+    -re "^\\^done\r\n" {
+	exp_continue
+    }
+
+    -re "^$mi_gdb_prompt$" {
+	gdb_assert { [string length "$header_line"] > 0 }
+	gdb_assert { [string length "$inf_line"] > 0 }
+	pass $gdb_test_name
+    }
+}
+
+# Now extract the string that represents the connection, and convert
+# it into a regexp.
+set idx [string first "Connection" "${header_line}"]
+gdb_assert { $idx > -1 }
+set inf_line [string range "${inf_line}" $idx end]
+regexp "^(${decimal} \\(\[^)\]+\\))" $inf_line conn_info
+set conn_pattern [string_to_regexp "${conn_info}"]
+
+# Now add a new inferior, this should use the connection of the
+# current inferior.
+mi_gdb_test "-add-inferior" \
+    [multi_line "=thread-group-added,id=\"\[^\"\]+\"" \
+	 "~\"\\\[New inferior 2\\\]\\\\n\"" \
+	 "\~\"Added inferior 2 on connection ${conn_pattern}\\\\n\"" \
+	 "\\^done,inferior=\"\[^\"\]+\",connection=\{number=\"$decimal\",name=\"\[^\"\]+\"\}" ] \
+    "mi add inferior"
+
+# Now run 'info inferiors' again to check that the currently selected
+# inferior has not changed.
+set saw_current_inferior false
+set saw_new_inferior false
+gdb_test_multiple "info inferiors" \
+    "info inferiors, after new inferior was created" {
+
+	-re "^info inferiors\r\n" {
+	    exp_continue
+	}
+
+	-re "^&\[^\r\n\]+\r\n" {
+	    exp_continue
+	}
+
+	-re "~\"\\s+Num\\s+Description\\s+Connection\[^\r\n\]+\r\n" {
+	    exp_continue
+	}
+
+	-re "^~\"\\*\\s+1\\s+\[^\r\n\]+\\s+${conn_pattern}\\s+\[^\r\n\]+\r\n" {
+	    set saw_current_inferior true
+	    exp_continue
+	}
+
+	-re "^~\"\\s+2\\s+\[^\r\n\]+\\s+${conn_pattern}\\s+\[^\r\n\]+\r\n" {
+	    set saw_new_inferior true
+	    exp_continue
+	}
+
+	-re "^\\^done\r\n" {
+	    exp_continue
+	}
+
+	-re "^$mi_gdb_prompt$" {
+	    gdb_assert { $saw_current_inferior && $saw_new_inferior }
+	    pass $gdb_test_name
+	}
+    }
+
+# Add a third inferior, but this time, use --no-connection.
+mi_gdb_test "-add-inferior --no-connection" \
+    [multi_line "=thread-group-added,id=\"\[^\"\]+\"" \
+	 "~\"\\\[New inferior 3\\\]\\\\n\"" \
+	 "\~\"Added inferior 3\\\\n\"" \
+	 "\\^done,inferior=\"\[^\"\]+\"" ] \
+    "mi add inferior with no connection"

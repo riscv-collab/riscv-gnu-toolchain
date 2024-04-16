@@ -1,0 +1,76 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib ada.exp
+load_lib dap-support.exp
+
+require allow_ada_tests allow_dap_tests gnat_runtime_has_debug_info
+
+standard_ada_testfile prog
+
+if {[gdb_compile_ada "${srcfile}" "${binfile}" executable \
+	 {debug additional_flags=-gnata}] != ""} {
+    return -1
+}
+
+if {[dap_launch $binfile] == ""} {
+    return
+}
+
+set obj [dap_check_request_and_response "set exception catchpoints" \
+	     setExceptionBreakpoints \
+	     {o filters [a [s nosuchfilter] [s assert]] \
+		  filterOptions [a [o filterId [s exception] \
+					condition [s "Global_Var = 23"]]]}]
+
+set bps [dict get [lindex $obj 0] body breakpoints]
+# We should get three responses, because we requested three
+# breakpoints.  However, one of them should fail.
+gdb_assert {[llength $bps] == 3} "three breakpoints"
+
+# The "path" should never be "null".
+set i 1
+foreach spec $bps {
+    if {$i == 1} {
+	# First one should fail.
+	gdb_assert {[dict get $spec verified] == "false"} \
+	    "invalid first exception"
+	gdb_assert {[dict get $spec message] != ""} \
+	    "first exception had message"
+    } else {
+	# If "path" does not exist, then that is fine as well.
+	if {![dict exists $spec source path]} {
+	    pass "breakpoint $i path"
+	} else {
+	    gdb_assert {[dict get $spec source path] != "null"} \
+		"breakpoint $i path"
+	}
+    }
+    incr i
+}
+
+dap_check_request_and_response "start inferior" configurationDone
+
+dap_wait_for_event_and_check "stopped at first raise" stopped \
+    "body reason" breakpoint \
+    "body hitBreakpointIds" 2
+
+dap_check_request_and_response "continue to assert" continue \
+    {o threadId [i 1]}
+dap_wait_for_event_and_check "stopped at assert" stopped \
+    "body reason" breakpoint \
+    "body hitBreakpointIds" 1
+
+dap_shutdown

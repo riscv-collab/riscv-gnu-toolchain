@@ -1,0 +1,141 @@
+# Copyright (C) 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Please email any bugs, comments, and/or additions to this file to:
+# bug-gdb@gnu.org
+
+# This file verifies that methods Inferior.thread_from_handle
+# and InferiorThread.handle work as expected.
+
+load_lib gdb-python.exp
+
+require allow_python_tests
+
+standard_testfile
+
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable debug] != "" } {
+    return -1
+}
+
+clean_restart ${binfile}
+
+runto_main
+
+gdb_test "break after_mc_barrier" \
+    "Breakpoint 2 at .*: file .*${srcfile}, line .*" \
+         "breakpoint on after_mc_barrier"
+
+gdb_test "break do_something" \
+    "Breakpoint 3 at .*: file .*${srcfile}, line .*" \
+         "breakpoint on do_something"
+
+gdb_test "continue" \
+	"Breakpoint 2, after_mc_barrier .*" \
+	"run to after_mc_barrier"
+
+gdb_test_no_output "del 2" "delete after_mc_barrier breakpoint"
+
+gdb_test "continue" \
+	"Breakpoint 3, do_something .*" \
+	"run to do_something"
+
+# The test case has been constructed so that the current thread,
+# indicated by '*' in the "info threads" output, should be stopped in
+# do_something() with a value of n which is the same as the number
+# reported in the "Id" column.  If it's not, then something went wrong
+# with the start up sequence which should cause the main thread to be
+# thread 1, the first child thread to be thread 2, and the second
+# child thread to be thread 3.
+#
+# Note that \1 in the RE below is a backreference to the thread id
+# reported in the "Id" column.
+
+gdb_test "info threads"  \
+	{.*[\r\n]+\* +([0-9]+) +Thread[^\r\n]* do_something \(n=\1\) at.*}
+
+# Check for expected results when passing a valid thread handle to
+# thread_from_handle().
+
+gdb_test "python print(gdb.selected_inferior().thread_from_handle(gdb.parse_and_eval('thrs\[0\]')).num)" \
+	"1" "print thread id for thrs\[0\]"
+
+gdb_test "python print(gdb.selected_inferior().thread_from_handle(gdb.parse_and_eval('thrs\[1\]')).num)" \
+	"2" "print thread id for thrs\[1\]"
+
+gdb_test "python print(gdb.selected_inferior().thread_from_handle(gdb.parse_and_eval('thrs\[2\]')).num)" \
+	"3" "print thread id for thrs\[2\]"
+
+# Objects which are of the correct size, but which are bogus thread
+# handles should return None.  For the first test (using thrs[3]), we
+# use 0.  For the second (thrs[4]), we use an unlikely bit pattern.
+
+gdb_test "python print(gdb.selected_inferior().thread_from_handle(gdb.parse_and_eval('thrs\[3\]')))" \
+	"None" "print thread for bogus handle thrs\[3\]"
+
+gdb_test "python print(gdb.selected_inferior().thread_from_handle(gdb.parse_and_eval('thrs\[4\]')))" \
+	"None" "print thread for bogus handle thrs\[4\]"
+
+# We should see an exception when passing an object of the wrong type.
+
+gdb_test "python print(gdb.selected_inferior().thread_from_handle(gdb.lookup_symbol('main')))" \
+         ".*TypeError: Argument 'handle' must be a thread handle object.*" \
+	 "TypeError when passing a symbol object to thread_from_handle"
+
+# We should see an exception when passing too large of an object.
+
+gdb_test "python print(gdb.selected_inferior().thread_from_handle(gdb.parse_and_eval('thrs')))" \
+         ".*Thread handle size mismatch.*" \
+	 "Pass overly large object to thread_from_handle"
+
+# We should see an exception when passing too small of an object.
+
+gdb_test "python print(gdb.selected_inferior().thread_from_handle(gdb.parse_and_eval('\"S\"')))" \
+         ".*Thread handle size mismatch.*" \
+	 "Pass too small of an object to thread_from_handle"
+
+# Test the thread_handle method
+
+gdb_py_test_silent_cmd "python tp=gdb.lookup_type('pthread_t')" \
+		       "Get pthread_t type" 0
+gdb_py_test_silent_cmd "python inf=gdb.selected_inferior()" "Get inferior" 0
+
+foreach thrN {0 1 2} {
+    with_test_prefix "thread $thrN" {
+
+	gdb_py_test_silent_cmd \
+	    "python hand = gdb.parse_and_eval('thrs\[$thrN\]')" \
+	    "fetch thread handle from inferior" \
+	    1
+
+	gdb_py_test_silent_cmd \
+	    "python hand_bytes = inf.thread_from_handle(hand).handle()" \
+	    "fetch thread handle from thread" \
+	    1
+
+
+	# It'd be nice to be able to use this comparison expression:
+	#
+	#    hand == hand_bytes
+	#
+	# But this won't work because hand is a gdb.Value and hand_bytes
+	# is a Python bytes object.  Therefore, we convert the bytes
+	# object into a gdb.value by calling the two argument form of
+	# its constructor.
+
+        gdb_test "python print(gdb.Value(hand_bytes, tp) == hand)" \
+	         "True" \
+	         "verify that handles are the same"
+    }
+}

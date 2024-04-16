@@ -1,0 +1,128 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Let the user override the path to the simavr binary with the SIMAVR_PATH
+# environment variable.
+
+if { [info exists ::env(SIMAVR_PATH)] } {
+    set simavr_path $::env(SIMAVR_PATH)
+} else {
+    set simavr_path simavr
+}
+
+# Let the user override the simulated AVR chip with the SIMAVR_PATH environment
+# variable.
+#
+# The value passed here must be supported by avr-gcc (see the -mmcu flag in the
+# `AVR Options` section of the gcc(1) man page) and by simavr (see output of
+# `simavr --list-cores`).
+
+if { [info exists ::env(SIMAVR_MCU)] } {
+    set simavr_mcu $::env(SIMAVR_MCU)
+} else {
+    set simavr_mcu atmega2560
+}
+
+set simavr_last_load_file ""
+set simavr_spawn_id ""
+
+set_board_info compiler avr-gcc
+set_board_info c++compiler avr-g++
+
+set_board_info cflags "-mmcu=${simavr_mcu}"
+set_board_info ldflags "-mmcu=${simavr_mcu}"
+
+# As of version 10, GCC produces stabs by default for AVR.  Force it to use
+# DWARF.
+set_board_info debug_flags "-gdwarf-4"
+
+set_board_info use_gdb_stub 1
+set_board_info gdb_protocol "remote"
+set_board_info gdb,do_reload_on_run 1
+set_board_info noargs 1
+set_board_info gdb,noinferiorio 1
+set_board_info gdb,nofileio 1
+set_board_info gdb,noresults 1
+set_board_info gdb,nosignals 1
+
+proc gdb_load { file } {
+    global simavr_last_load_file
+    global simavr_spawn_id
+    global simavr_mcu
+    global simavr_path
+    global gdb_prompt
+
+    if { $file == "" } {
+	set file $simavr_last_load_file
+    } else {
+	set simavr_last_load_file $file
+    }
+
+    gdb_file_cmd $file
+
+    # Close any previous simavr instance.
+    if { $simavr_spawn_id != "" } {
+	verbose -log "simavr: closing previous spawn id $simavr_spawn_id"
+	if [catch { close -i $simavr_spawn_id } != 0] {
+	    warning "simavr: failed to close connection to previous simavr instance"
+	}
+
+	wait -i $simavr_spawn_id
+	set simavr_spawn_id ""
+    }
+
+    # Run simavr.
+    set cmd "spawn -noecho ${simavr_path} --mcu ${simavr_mcu} -g $file"
+    verbose -log "Spawning simavr: $cmd"
+    eval $cmd
+    set simavr_spawn_id $spawn_id
+
+    verbose -log "simavr: simavr spawned with spawn id $simavr_spawn_id, pid [exp_pid $simavr_spawn_id]"
+
+    # Wait for "listening on port" message of simavr.
+    expect {
+	-i $simavr_spawn_id -re ".*avr_gdb_init listening on port 1234" {}
+	timeout {
+	    verbose -log "simavr: timeout, closing simavr spawn id"
+	    close -i $simavr_spawn_id
+	    verbose -log "simavr: timeout, waiting for simavr process exit"
+	    wait -i $simavr_spawn_id
+	    set simavr_spawn_id ""
+	    error "unable to start simavr: timeout"
+	}
+	eof {
+	    verbose -log "simavr: eof, waiting for simavr process exit"
+	    wait -i $simavr_spawn_id
+	    set simavr_spawn_id ""
+	    error "unable to start simavr: eof"
+	}
+    }
+
+    # Connect to simavr.
+    send_gdb "target remote :1234\n"
+    gdb_expect {
+	-re ".*Remote debugging using :1234.*\[\r\n\]+$gdb_prompt $" {}
+	timeout {
+	    verbose -log "simavr: unable to connect to simavr, closing simavr spawn id"
+	    close -i $simavr_spawn_id
+	    verbose -log "simavr: unable to connect to simavr, waiting for simavr process exit"
+	    wait -i $simavr_spawn_id
+	    set simavr_spawn_id ""
+	    error "unable to connect to simavr stub"
+	}
+    }
+
+    return 0
+}

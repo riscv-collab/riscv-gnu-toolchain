@@ -1,0 +1,143 @@
+# Copyright (C) 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test checks for an edge case when unwinding inline frames which
+# occur towards the older end of the stack when the stack ends with a
+# cycle.  Consider this well formed stack:
+#
+#   main -> normal_frame -> inline_frame
+#
+# Now consider that, for whatever reason, the stack unwinding of
+# "normal_frame" becomes corrupted, such that the stack appears to be
+# this:
+#
+#   .-> normal_frame -> inline_frame
+#   |      |
+#   '------'
+#
+# When confronted with such a situation we would expect GDB to detect
+# the stack frame cycle and terminate the backtrace at the first
+# instance of "normal_frame" with a message:
+#
+#   Backtrace stopped: previous frame identical to this frame (corrupt stack?)
+#
+# However, at one point there was a bug in GDB's inline frame
+# mechanism such that the fact that "inline_frame" was inlined into
+# "normal_frame" would cause GDB to trigger an assertion.
+#
+# This text makes use of a Python unwinder which can fake the cyclic
+# stack cycle, further the test sets up multiple levels of normal and
+# inline frames.  At the point of testing the stack looks like this:
+#
+#   main -> normal_func -> inline_func -> normal_func -> inline_func -> normal_func -> inline_func
+#
+# Where "normal_func" is a normal frame, and "inline_func" is an inline frame.
+#
+# The python unwinder is then used to force a stack cycle at each
+# "normal_func" frame in turn, we then check that GDB can successfully unwind
+# the stack.
+
+standard_testfile
+
+require allow_python_tests
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}]} {
+    return -1
+}
+
+if {![runto_main]} {
+    return 0
+}
+
+set pyfile [gdb_remote_download host ${srcdir}/${subdir}/${testfile}.py]
+
+# Run to the breakpoint where we will carry out the test.
+gdb_breakpoint [gdb_get_line_number "Break here"]
+gdb_continue_to_breakpoint "stop at test breakpoint"
+
+# Load the script containing the unwinder, this must be done at the
+# testing point as the script will examine the stack as it is loaded.
+gdb_test_no_output "source ${pyfile}"\
+    "import python scripts"
+
+# Check the unbroken stack.
+gdb_test_sequence "bt" "backtrace when the unwind is left unbroken" {
+    "\\r\\n#0 \[^\r\n\]* inline_func \\(\\) at "
+    "\\r\\n#1 \[^\r\n\]* normal_func \\(\\) at "
+    "\\r\\n#2 \[^\r\n\]* inline_func \\(\\) at "
+    "\\r\\n#3 \[^\r\n\]* normal_func \\(\\) at "
+    "\\r\\n#4 \[^\r\n\]* inline_func \\(\\) at "
+    "\\r\\n#5 \[^\r\n\]* normal_func \\(\\) at "
+    "\\r\\n#6 \[^\r\n\]* main \\(\\) at "
+}
+
+with_test_prefix "cycle at level 5" {
+    # Arrange to introduce a stack cycle at frame 5.
+    gdb_test_no_output "python stop_at_level=5"
+    gdb_test "maint flush register-cache" \
+	"Register cache flushed\\."
+    gdb_test_lines "bt" "backtrace when the unwind is broken at frame 5" \
+	[multi_line \
+	     "#0 \[^\r\n\]* inline_func \\(\\) at \[^\r\n\]+" \
+	     "#1 \[^\r\n\]* normal_func \\(\\) at \[^\r\n\]+" \
+	     "#2 \[^\r\n\]* inline_func \\(\\) at \[^\r\n\]+" \
+	     "#3 \[^\r\n\]* normal_func \\(\\) at \[^\r\n\]+" \
+	     "#4 \[^\r\n\]* inline_func \\(\\) at \[^\r\n\]+" \
+	     "#5 \[^\r\n\]* normal_func \\(\\) at \[^\r\n\]+" \
+	     "Backtrace stopped: previous frame identical to this frame \\(corrupt stack\\?\\)"]
+}
+
+with_test_prefix "cycle at level 3" {
+    # Arrange to introduce a stack cycle at frame 3.
+    gdb_test_no_output "python stop_at_level=3"
+    gdb_test "maint flush register-cache" \
+	"Register cache flushed\\."
+    gdb_test_lines "bt" "backtrace when the unwind is broken at frame 3" \
+	[multi_line \
+	     "#0 \[^\r\n\]* inline_func \\(\\) at \[^\r\n\]+" \
+	     "#1 \[^\r\n\]* normal_func \\(\\) at \[^\r\n\]+" \
+	     "#2 \[^\r\n\]* inline_func \\(\\) at \[^\r\n\]+" \
+	     "#3 \[^\r\n\]* normal_func \\(\\) at \[^\r\n\]+" \
+	     "Backtrace stopped: previous frame identical to this frame \\(corrupt stack\\?\\)"]
+}
+
+with_test_prefix "cycle at level 1" {
+    # Arrange to introduce a stack cycle at frame 1.
+    gdb_test_no_output "python stop_at_level=1"
+    gdb_test "maint flush register-cache" \
+	"Register cache flushed\\."
+    gdb_test_lines "bt" "backtrace when the unwind is broken at frame 1" \
+	[multi_line \
+	     "#0 \[^\r\n\]* inline_func \\(\\) at \[^\r\n\]+" \
+	     "#1 \[^\r\n\]* normal_func \\(\\) at \[^\r\n\]+" \
+	     "Backtrace stopped: previous frame identical to this frame \\(corrupt stack\\?\\)"]
+}
+
+# Flush the register cache (which also flushes the frame cache) so we
+# get a full backtrace again, then switch on frame debugging and try
+# to back trace.  At one point this triggered an assertion.
+gdb_test "maint flush register-cache" \
+    "Register cache flushed\\." ""
+gdb_test_no_output "set debug frame 1"
+gdb_test_multiple "bt" "backtrace with debugging on" {
+    -re "^$gdb_prompt $" {
+	pass $gdb_test_name
+    }
+    -re "\[^\r\n\]+\r\n" {
+	exp_continue
+    }
+}
+gdb_test "p 1 + 2 + 3" " = 6" \
+    "ensure GDB is still alive"

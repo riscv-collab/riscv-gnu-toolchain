@@ -1,0 +1,122 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test the setVariable request.
+
+require allow_dap_tests
+
+load_lib dap-support.exp
+
+standard_testfile
+
+if {[build_executable ${testfile}.exp $testfile] == -1} {
+    return
+}
+
+set remote_python_file [gdb_remote_download host \
+			    ${srcdir}/${subdir}/${testfile}.py]
+
+save_vars GDBFLAGS {
+    append GDBFLAGS " -iex \"source $remote_python_file\""
+
+    if {[dap_launch $testfile] == ""} {
+	return
+    }
+}
+
+set line [gdb_get_line_number "STOP"]
+set obj [dap_check_request_and_response "set breakpoint by line number" \
+	     setBreakpoints \
+	     [format {o source [o path [%s]] breakpoints [a [o line [i %d]]]} \
+		  [list s $srcfile] $line]]
+set line_bpno [dap_get_breakpoint_number $obj]
+
+dap_check_request_and_response "start inferior" configurationDone
+
+dap_wait_for_event_and_check "stopped at line breakpoint" stopped \
+    "body reason" breakpoint \
+    "body hitBreakpointIds" $line_bpno
+
+set bt [lindex [dap_check_request_and_response "backtrace" stackTrace \
+		    {o threadId [i 1]}] \
+	    0]
+set frame_id [dict get [lindex [dict get $bt body stackFrames] 0] id]
+
+set scopes [dap_check_request_and_response "get scopes" scopes \
+		[format {o frameId [i %d]} $frame_id]]
+set scopes [dict get [lindex $scopes 0] body scopes]
+
+lassign $scopes scope reg_scope
+gdb_assert {[dict get $scope name] == "Locals"} "scope is locals"
+gdb_assert {[dict get $scope namedVariables] == 1} "one var in scope"
+
+set num [dict get $scope variablesReference]
+set refs [lindex [dap_check_request_and_response "fetch variable" \
+		      "variables" \
+		      [format {o variablesReference [i %d] count [i 1]} \
+			   $num]] \
+	      0]
+
+set desc [dict get $refs body variables]
+gdb_assert {[llength $desc] == 1} "only one variable fetched"
+set desc [lindex $desc 0]
+
+set saved_ref [dict get $desc variablesReference]
+
+proc check_vars {prefix var varref summary} {
+    with_test_prefix $prefix {
+	gdb_assert {[dict get $var name] == "value"} "variable name"
+	gdb_assert {[dict get $var variablesReference] == $varref} \
+	    "variable reference"
+	gdb_assert {[dict get $var value] == $summary} \
+	    "variable value"
+    }
+}
+
+check_vars initial $desc $saved_ref full
+
+set refs [lindex [dap_check_request_and_response "assign empty to variable" \
+		      "setVariable" \
+		      [format {o variablesReference [i %d] name [s value] \
+				   value [s empty]} \
+			   $num]] \
+	      0]
+check_vars "assign empty" [dict get $refs body] 0 empty
+
+set refs [lindex [dap_check_request_and_response "assign full to variable" \
+		      "setVariable" \
+		      [format {o variablesReference [i %d] name [s value] \
+				   value [s full]} \
+			   $num]] \
+	      0]
+check_vars "assign full" [dict get $refs body] $saved_ref full
+
+# Now fetch the children of the variable, to check that the shadowing
+# workaround works.
+gdb_assert {[dict get $refs body namedVariables] == 2} \
+    "two children of variable"
+
+set num [dict get $refs body variablesReference]
+set refs [lindex [dap_check_request_and_response \
+		      "fetch children of variable" "variables" \
+		      [format {o variablesReference [i %d] count [i 2]} \
+			   $num]] \
+	      0]
+
+lassign [dict get $refs body variables] one two
+gdb_assert {[dict get $one name] != [dict get $two name]} \
+    "children have different names"
+
+dap_shutdown

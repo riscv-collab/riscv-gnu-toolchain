@@ -1,0 +1,171 @@
+# Copyright 1988-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file was written by Rob Savoye. (rob@cygnus.com)
+
+load_lib selftest-support.exp
+
+proc test_with_self { } {
+    global gdb_prompt
+    global decimal
+    global timeout
+    global inferior_spawn_id
+
+    # When GDB is built as a C++ program, disassemble shows the full
+    # prototype.
+    set cxx_main_args_re [string_to_regexp "(int, char**)"]
+
+    # disassemble yourself
+    gdb_test "x/10i main" \
+	    "x/10i.*main.*main($cxx_main_args_re)?.$decimal.*main($cxx_main_args_re)?.$decimal.*" \
+	    "disassemble main"
+
+    # We'll need this when we send a ^C to GDB.  Need to do it before we
+    # run the program and gdb starts saving and restoring tty states.
+    gdb_test "shell stty intr '^C'" ".*" \
+	"set interrupt character in test_with_self"
+
+    # FIXME: If we put this after the run to main, the first list
+    # command doesn't print the same line as the current line where
+    # gdb is stopped.
+    gdb_test_no_output "set listsize 1" "set listsize to 1"
+
+    # do we have a version number ?
+    gdb_test_multiple "print version" "printed version" {
+	-re ".\[0-9\]+ = .\[0-9.\]+.*$gdb_prompt $" {
+	    pass "printed version as string"
+	}
+	-re ".\[0-9\]+ = +0x.*\[0-9.\]+.*$gdb_prompt $" {
+	    pass "printed version as pointer"
+	}
+	-re ".\[0-9\]+ = +.+ +0x.*\[0-9.\]+.*$gdb_prompt $" {
+	    pass "printed version with cast"
+	}
+    }
+
+    # start the "xgdb" process
+    if [target_info exists gdb,noinferiorio] {
+	# With no way to interact with the inferior GDB, all we can do
+	# is let it run.
+	send_gdb "continue\n"
+	# Wait a bit while the inferior gdb gets to its prompt.
+	sleep 1
+    } else {
+	set banner [multi_line \
+			"GNU gdb \[0-9\.\]*\[^\r\n\]*" \
+			"Copyright \\(C\\) \[0-9\]* Free Software Foundation, Inc\." \
+			"License GPLv3\\+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>" \
+			"This is free software: you are free to change and redistribute it\." \
+			"There is NO WARRANTY, to the extent permitted by law\." \
+			"Type \"show copying\" and \"show warranty\" for details\." \
+			"This GDB was configured as .*" \
+			"$gdb_prompt $"]
+	set test "xgdb is at prompt"
+	gdb_test_multiple "continue" $test {
+	    -re "received signal SIGSEGV.* in GC_.*$gdb_prompt" {
+		# Some versions of the GC used by Guile cause a SEGV
+		# during stack probing.  Ignore this and carry on.
+		send_gdb "continue\n"
+		exp_continue
+	    }
+	    -i "$inferior_spawn_id"
+	    -re "$banner" {
+		pass $test
+	    }
+	}
+
+	# set xgdb prompt so we can tell which is which
+	send_inferior "set prompt (xgdb) \n"
+	set msg "Set xgdb_prompt"
+	gdb_test_multiple "" $msg {
+	    -i "$inferior_spawn_id"
+	    -re "\[(\]xgdb\[)\].*\[(\]xgdb\[)\] $" {
+		pass $msg
+	    }
+	}
+    }
+
+    # kill the xgdb process
+    if ![target_info exists gdb,nointerrupts] {
+	set description "send ^C to child process"
+	send_gdb "\003"
+	# "Thread 1" is displayed iff Guile support is linked in.
+	gdb_expect {
+	    -re "(Thread .*|Program) received signal SIGINT.*$gdb_prompt $" {
+		pass "$description"
+	    }
+	    -re ".*$gdb_prompt $" {
+		fail "$description"
+	    }
+	    timeout {
+		fail "$description (timeout)"
+	    }
+	}
+    }
+
+    set description "send SIGINT signal to child process"
+    gdb_test_multiple "signal SIGINT" "$description, top GDB message" {
+	-re "^signal SIGINT\r\nContinuing with signal SIGINT.\r\n" {
+	    pass $gdb_test_name
+	}
+    }
+
+    gdb_test_multiple "" "$description, bottom GDB message" {
+	-i $inferior_spawn_id
+	-re "Quit\r\n\\(xgdb\\) $" {
+	    pass $gdb_test_name
+	}
+    }
+
+    set description "send ^C to child process again"
+    send_gdb "\003"
+    gdb_expect {
+	-re "(Thread .*|Program) received signal SIGINT.*$gdb_prompt $" {
+	    pass "$description"
+	}
+	-re ".*$gdb_prompt $" {
+	    fail "$description"
+	}
+	timeout {
+	    fail "$description (timeout)"
+	}
+    }
+
+
+    # Switch back to the GDB thread if Guile support is linked in.
+    # "signal SIGINT" could also switch the current thread.
+    gdb_test "thread 1" {\[Switching to thread 1 .*\].*}
+    
+    # get a stack trace
+    #
+    # This fails on some linux systems for unknown reasons.  On the
+    # systems where it fails, sometimes it works fine when run manually.
+    # The testsuite failures may not be limited to just aout systems.
+    setup_xfail "i*86-pc-linuxaout-gnu"
+    set description "backtrace through signal handler"
+    gdb_test_multiple "backtrace" "$description" {
+	-re "#0.*(read|poll).* main \\(.*\\) at .*gdb\\.c.*$gdb_prompt $" {
+	    pass "$description"
+	}
+    }
+
+    # Restart gdb in case next test expects it to be started already.
+    return 0
+}
+
+save_vars { INTERNAL_GDBFLAGS } {
+    set INTERNAL_GDBFLAGS [string map {"-q" ""} $INTERNAL_GDBFLAGS]
+    do_self_tests captured_main test_with_self
+}

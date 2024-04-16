@@ -1,0 +1,120 @@
+# Copyright 2009-2024 Free Software Foundation, Inc.
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# Contributed by Jan Kratochvil <jan.kratochvil@redhat.com>.
+
+# Test GDB can cope with two libraries loaded with overlapping VMA ranges.
+# Prelink libraries first so they can be loaded and their native address.
+# In such case `struct linkmap'.l_addr will be zero.  Provide different
+# unprelinked library files on the disk which have zero-based VMAs.  These
+# different files should have their .dynamic section at a different offset in
+# page size so that we get for
+#   warning: .dynamic section for "..." is not at the expected address
+# the reason
+#   (wrong library or version mismatch?)
+# and not:
+#   difference appears to be caused by prelink, adjusting expectations
+# In such case both disk libraries will be loaded at VMAs starting at zero.
+
+require allow_shlib_tests can_spawn_for_attach
+
+# Library file.
+set libname "solib-overlap-lib"
+set srcfile_lib ${srcdir}/${subdir}/${libname}.c
+# Binary file.
+set testfile "solib-overlap-main"
+set srcfile ${srcdir}/${subdir}/${testfile}.c
+
+# Base addresses for `prelink -r' which should be compatible with both -m32 and
+# -m64 targets.  If it clashes with system prelinked libraries it would give
+# false PASS.
+# Prelink first lib1 at 0x40000000 and lib2 at 0x41000000.
+# During second pass try lib1 at 0x50000000 and lib2 at 0x51000000.
+foreach prelink_lib1 {0x40000000 0x50000000} { with_test_prefix "$prelink_lib1" {
+    set prelink_lib2 [format "0x%x" [expr $prelink_lib1 + 0x01000000]]
+
+    # Library file.
+    set binfile_lib1 [standard_output_file ${libname}1-${prelink_lib1}.so]
+    set binfile_lib1_test_msg OBJDIR/${subdir}/${libname}1-${prelink_lib1}.so
+    set binfile_lib2 [standard_output_file ${libname}2-${prelink_lib1}.so]
+    set binfile_lib2_test_msg OBJDIR/${subdir}/${libname}2-${prelink_lib1}.so
+    set lib_flags {debug}
+    # Binary file.
+    set binfile_base ${testfile}-${prelink_lib1}
+    set binfile [standard_output_file ${binfile_base}]
+    set binfile_test_msg OBJDIR/${subdir}/${binfile_base}
+    set bin_flags [list debug shlib=${binfile_lib1} shlib=${binfile_lib2}]
+    set escapedbinfile  [string_to_regexp ${binfile}]
+
+    if { [gdb_compile_shlib ${srcfile_lib} ${binfile_lib1} $lib_flags] != ""
+	 || [gdb_compile_shlib ${srcfile_lib} ${binfile_lib2} $lib_flags] != ""
+	 || [gdb_compile ${srcfile} ${binfile} executable $bin_flags] != "" } {
+	untested "failed to compile"
+	return -1
+    }
+
+    if {[catch "exec prelink -N -r ${prelink_lib1} ${binfile_lib1}" output] != 0
+	|| [catch "exec prelink -N -r ${prelink_lib2} ${binfile_lib2}" output] != 0} {
+	# Maybe we don't have prelink.
+	verbose -log "prelink failed: $output"
+	untested "could not prelink ${binfile_lib1_test_msg} or ${binfile_lib2_test_msg}."
+	return -1
+    }
+
+    set test_spawn_id [spawn_wait_for_attach $binfile]
+    set testpid [spawn_id_get_pid $test_spawn_id]
+
+    remote_exec build "mv -f ${binfile_lib1} ${binfile_lib1}-running"
+    remote_exec build "mv -f ${binfile_lib2} ${binfile_lib2}-running"
+
+    # Provide another exported function name to cause different sizes of sections.
+    lappend lib_flags additional_flags=-DSYMB
+
+    if { [gdb_compile_shlib ${srcfile_lib} ${binfile_lib1} $lib_flags] != ""
+	 || [gdb_compile_shlib ${srcfile_lib} ${binfile_lib2} $lib_flags] != ""} {
+	untested "failed to compile shared library"
+	kill_wait_spawned_process $test_spawn_id
+	return -1
+    }
+
+    clean_restart ${binfile_base}
+    # This testcase currently does not support remote targets.
+    # gdb_load_shlib ${binfile_lib1}
+    # gdb_load_shlib ${binfile_lib2}
+
+    # Here we should get:
+    # warning: .dynamic section for ".../solib-overlap-lib1.so" is not at the expected address (wrong library or version mismatch?)
+    # warning: .dynamic section for ".../solib-overlap-lib2.so" is not at the expected address (wrong library or version mismatch?)
+
+    set test attach
+    gdb_test_multiple "attach $testpid" $test {
+	-re "Attaching to program.*`?$escapedbinfile'?, process $testpid.*$gdb_prompt $" {
+	    pass $test
+	}
+	-re "Attaching to program.*`?$escapedbinfile\.exe'?, process $testpid.*\[Switching to thread $testpid\..*\].*$gdb_prompt $" {
+	    # Response expected on Cygwin
+	    pass $test
+	}
+    }
+
+    # Detach the process.
+
+    gdb_test "detach" "Detaching from program: .*$escapedbinfile, process $testpid\r\n\\\[Inferior $decimal \\(.*\\) detached\\\]"
+
+    # Wait a bit for gdb to finish detaching
+
+    sleep 5
+
+    kill_wait_spawned_process $test_spawn_id
+}}

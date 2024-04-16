@@ -1,0 +1,97 @@
+# Copyright 2016-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# When we intercept a fork/vfork with a catchpoint, the child is left
+# stopped.  At that point, if we kill the parent, we should kill the
+# child as well.  This test makes sure that works.  See PR gdb/19494.
+
+# The main idea of the test is make sure that when the program stops
+# for a fork catchpoint, and the user kills the parent, gdb also kills
+# the unfollowed fork child.  Since the child hasn't been added as an
+# inferior at that point, we need some other portable way to detect
+# that the child is gone.  The test uses a pipe for that.  The program
+# forks twice, so you have grandparent, child and grandchild.  The
+# grandchild inherits the write side of the pipe.  The grandparent
+# hangs reading from the pipe, since nothing ever writes to it.  If,
+# when GDB kills the child, it also kills the grandchild, then the
+# grandparent's pipe read returns 0/EOF and the test passes.
+# Otherwise, if GDB doesn't kill the grandchild, then the pipe read
+# never returns and the test times out.
+
+standard_testfile
+
+# Build two programs -- one for fork, and another for vfork.
+set testfile_fork "${testfile}-fork"
+set testfile_vfork "${testfile}-vfork"
+
+foreach kind {"fork" "vfork"} {
+    set compile_options "debug additional_flags=-DFORK=$kind"
+    set testfile [set testfile_$kind]
+    if {[build_executable $testfile.exp $testfile ${srcfile} \
+	     ${compile_options}] == -1} {
+	untested "failed to compile"
+	return -1
+    }
+}
+
+# The test proper.  FORK_KIND is either "fork" or "vfork".  EXIT_KIND
+# is either "exit" (run the parent to exit) or "kill" (kill parent).
+
+proc do_test {fork_kind exit_kind} {
+    global testfile testfile_$fork_kind
+
+    set testfile [set testfile_$fork_kind]
+
+    with_test_prefix "$fork_kind" {
+	clean_restart $testfile
+
+	if ![runto_main] {
+	    return -1
+	}
+
+	gdb_test_no_output "set follow-fork child"
+	gdb_test_no_output "set detach-on-fork off"
+
+	gdb_test "catch $fork_kind" "Catchpoint .*($fork_kind).*"
+
+	gdb_test "continue" \
+	    "Catchpoint \[0-9\]* \\(${fork_kind}ed process \[0-9\]*\\),.*" \
+	    "continue to child ${fork_kind}"
+
+	gdb_test "continue" \
+	    "Catchpoint \[0-9\]* \\(${fork_kind}ed process \[0-9\]*\\),.*" \
+	    "continue to grandchild ${fork_kind}"
+
+	gdb_test "kill inferior 2" "" "kill child"
+
+	gdb_test "inferior 1" "Switching to inferior 1 .*" "switch to parent"
+
+	if {$exit_kind == "exit"} {
+	    gdb_test "break grandparent_done" "Breakpoint .*"
+	    gdb_test "continue" "hit Breakpoint .*, grandparent_done.*"
+	} elseif {$exit_kind == "kill"} {
+	    gdb_test "kill" "" "kill parent" \
+		"Kill the program being debugged.*y or n. $" "y"
+	} else {
+	    perror "unreachable"
+	}
+    }
+}
+
+foreach_with_prefix fork-kind {"fork" "vfork"} {
+    foreach_with_prefix exit-kind {"exit" "kill"} {
+	do_test ${fork-kind} ${exit-kind}
+    }
+}

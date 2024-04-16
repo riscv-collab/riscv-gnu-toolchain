@@ -1,0 +1,154 @@
+# Copyright 2013-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Please email any bugs, comments, and/or additions to this file to:
+# bug-gdb@gnu.org
+
+# This file is part of the gdb testsuite.
+
+
+# This test is supported on 64-bit s390 targets only, and only when
+# running native.  It should be executed on a sufficiently new Linux
+# kernel that provides the 'system_call' regset.
+
+require isnative {istarget s390x-*-*}
+
+standard_testfile
+set binprefix $binfile
+
+proc compile_and_dump {variant ccopts binfile} {
+    global srcdir subdir srcfile
+    set compile_flags {debug}
+    foreach opt $ccopts {
+	lappend compile_flags "additional_flags=$opt"
+    }
+    set test "compile ($variant)"
+    if { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "$binfile" executable $compile_flags] != "" } {
+	fail $test
+	return {}
+    }
+    pass $test
+
+    set test "create core file ($variant)"
+    set corefile [core_find $binfile]
+    if {$corefile == ""} {
+	fail $test
+	return {}
+    }
+    pass $test
+    return $corefile
+}
+
+proc test_linux_v2 {} {
+    global gdb_prompt
+
+    set test "Linux v2"
+    gdb_test_multiple "info reg system_call" "$test" {
+	-re "system_call\[ \t\]+0x\[0-9a-z\]+\[ \t\]+.*\r\n$gdb_prompt $" {
+	    pass "$test"
+	    return 1
+	}
+	-re "Invalid register `system_call'.*\r\n$gdb_prompt $" {
+	    unsupported "$test (no system_call reg)"
+	    return 0
+	}
+    }
+    return 0
+}
+
+proc test_register_valid {reg} {
+    gdb_test "info reg $reg" \
+	"$reg\[ \t\]+0x\[0-9a-z\]+\[ \t\]+.*" \
+	"'$reg' exists"
+}
+
+proc test_register_invalid {reg} {
+    gdb_test "info reg $reg" \
+	"Invalid register `$reg'.*" \
+	"'$reg' must not exist"
+}
+
+proc test_all_core64 {core type} {
+    set variant "64-bit $type"
+    with_test_prefix $variant {
+	gdb_core_cmd $core "core-file"
+	if { ! [test_linux_v2] } {
+	    return
+	}
+	test_register_valid "last_break"
+	gdb_core_cmd "${core}.2" "core-file #2"
+	test_register_invalid "system_call"
+	gdb_core_cmd "${core}.3" "core-file #3"
+	test_register_invalid "last_break"
+    }
+}
+
+proc test_all_core31 {core type} {
+    set variant "31-bit $type"
+    with_test_prefix $variant {
+	gdb_core_cmd $core "core-file"
+	if { ! [test_linux_v2] } {
+	    return
+	}
+	test_register_valid "r0h"
+	test_register_valid "last_break"
+	gdb_core_cmd "${core}.1" "core-file #1 "
+	test_register_invalid "r0h"
+	gdb_core_cmd "${core}.2" "core-file #2"
+	test_register_invalid "system_call"
+	gdb_core_cmd "${core}.3" "core-file #3"
+	test_register_invalid "last_break"
+    }
+}
+
+set binfile "${binprefix}-64"
+set core64 [compile_and_dump 64 {-m64} $binfile]
+if { $core64 != "" } {
+    # Remove 'system_call' and mask hwcap
+    remote_exec host "$binfile $core64 ${core64}.2 775 1023"
+    # Remove 'last_break'
+    remote_exec host "$binfile ${core64}.2 ${core64}.3 774"
+}
+
+set binfile "${binprefix}-31"
+set core31 [compile_and_dump 31 {-m31 -mesa} $binfile]
+if { $core31 != "" } {
+    # Create "patched" core file by removing 'high_gprs' notes
+    remote_exec host "$binfile $core31 ${core31}.1 768"
+    # Remove 'system_call' and mask off TE and any newer capabilities
+    # from hwcap
+    remote_exec host "$binfile $core31 ${core31}.2 775 1023"
+    # Remove 'last_break'
+    remote_exec host "$binfile ${core31}.2 ${core31}.3 774"
+}
+
+clean_restart
+
+if { $core64 != "" } {
+    test_all_core64 $core64 "no exec"
+    gdb_load "${binprefix}-64"
+    test_all_core64 $core64 "with exec"
+}
+
+gdb_test "file" ".*" "discard symbol table" \
+    {Discard symbol table from `.*'\? \(y or n\) } "y"
+
+if { $core31 != "" } {
+    test_all_core31 $core31 "no exec"
+    gdb_load "${binprefix}-31"
+    test_all_core31 $core31 "with exec"
+}
+
+gdb_exit

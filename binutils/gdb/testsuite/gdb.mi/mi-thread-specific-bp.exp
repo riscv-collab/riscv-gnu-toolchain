@@ -1,0 +1,91 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test is for creating thread-specific breakpoint using the MI,
+# and checking the results from GDB.
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+if {[mi_clean_restart]} {
+    return
+}
+
+standard_testfile
+
+if [build_executable ${testfile}.exp ${binfile} ${srcfile}] {
+    return -1
+}
+
+proc make_loc {num} {
+    return [mi_make_breakpoint_loc -thread "1" -number "$::decimal\\.$num"]
+}
+
+foreach_mi_ui_mode mode {
+
+    if {$mode == "separate"} {
+	set start_ops "separate-mi-tty"
+    } else {
+	set start_ops ""
+    }
+
+    if {[mi_clean_restart $binfile $start_ops]} {
+	return -1
+    }
+
+    # Ensure we get an error when placing a b/p for thread 1 at a point
+    # where thread 1 doesn't exist.
+    mi_gdb_test "-break-insert -p 1 bar" \
+	"\\^error,msg=\"Unknown thread 1\\.\""
+
+    # If we have a separate CLI UI then run the 'info breakpoints'
+    # command.  There was a time when the previous breakpoint request
+    # would succeed, and then 'info breakpoint' on the CLI would
+    # trigger an assertion.
+    if {$mode eq "separate"} {
+	with_spawn_id $gdb_main_spawn_id {
+	    gdb_test "info breakpoints" "No breakpoints or watchpoints\\." \
+		"check CLI 'info breakpoints' when there are no breakpoints"
+	}
+    }
+
+    if {[mi_runto_main] == -1} {
+	return -1
+    }
+
+    # Ensure we get an error when placing a b/p for a thread that doesn't
+    # exist (when other threads do exist).
+    mi_gdb_test "-break-insert -p 999 bar" \
+	"\\^error,msg=\"Unknown thread 999\\.\""
+
+    mi_create_breakpoint "-p 1 bar" "thread-specific b/p on bar" \
+	-thread "1"
+
+    set loc1 [make_loc 1]
+    set loc2 [make_loc 2]
+    set loc3 [make_loc 3]
+
+    mi_create_breakpoint_multi "-p 1 foo" "thread-specific b/p on foo" \
+	-thread "1" \
+	-locations "\\\[$loc1,$loc2,$loc3\\\]"
+
+    # Check that 'info breakpoints' on the CLI succeeds.
+    if {$mode eq "separate"} {
+	with_spawn_id $gdb_main_spawn_id {
+	    gdb_test "info breakpoints" ".*" \
+		"check CLI 'info breakpoints' when there are some breakpoints"
+	}
+    }
+}

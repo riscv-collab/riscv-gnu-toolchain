@@ -1,0 +1,96 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that a multi-threaded program doing a vfork doesn't miss breakpoints.
+#
+# When a program vforks, its address space is shared with the parent.  When we
+# detach a vfork child, we must keep breakpoints out of that shared address space
+# until the child either exits or execs, so that the child does not hit a
+# breakpoint while out of GDB's control.  During that time, threads from
+# the parent must be held stopped, otherwise they could miss breakpoints.
+#
+# The thread that did the vfork is suspended by the kernel, so it's not a
+# concern.  The other threads need to be manually stopped by GDB and resumed
+# once the vfork critical region is done.
+#
+# This test spawns one thread that calls vfork.  Meanwhile, the main thread
+# crosses a breakpoint.  A buggy GDB would let the main thread run while
+# breakpoints are removed, so the main thread would miss the breakpoint and run
+# until exit.
+
+standard_testfile
+
+if { [build_executable "failed to prepare" ${testfile} ${srcfile} {debug pthreads}] } {
+    return
+}
+
+set any "\[^\r\n\]*"
+
+# A bunch of util procedures to continue an inferior to an expected point.
+
+proc continue_to_parent_breakpoint {} {
+    gdb_test "continue" \
+	"hit Breakpoint .* should_break_here .*" \
+	"continue parent to breakpoint"
+}
+
+proc continue_to_parent_end {} {
+    gdb_test "continue" "Inferior 1.*exited with code 06.*" \
+	"continue parent to end"
+}
+
+# Run the test with the given GDB settings.
+
+proc do_test { target-non-stop non-stop follow-fork-mode detach-on-fork schedule-multiple } {
+    save_vars { ::GDBFLAGS } {
+	append ::GDBFLAGS " -ex \"maintenance set target-non-stop ${target-non-stop}\""
+	append ::GDBFLAGS " -ex \"set non-stop ${non-stop}\""
+	clean_restart ${::binfile}
+    }
+
+    gdb_test_no_output "set follow-fork-mode ${follow-fork-mode}"
+    gdb_test_no_output "set detach-on-fork ${detach-on-fork}"
+    gdb_test_no_output "set schedule-multiple ${schedule-multiple}"
+
+    # The message about thread 2 of inferior 1 exiting happens at a somewhat
+    # unpredictable moment, it's simpler to silence it than to try to match it.
+    gdb_test_no_output "set print thread-events off"
+
+    if { ![runto_main] } {
+	return
+    }
+
+    # The main thread is expected to hit this breakpoint.
+    gdb_test "break should_break_here" "Breakpoint $::decimal at .*"
+
+    continue_to_parent_breakpoint
+    continue_to_parent_end
+}
+
+# We only test with follow-fork-mode=parent and detach-on-fork=on at the
+# moment, but the loops below are written to make it easy to add other values
+# on these axes in the future.
+
+foreach_with_prefix target-non-stop {auto on off} {
+    foreach_with_prefix non-stop {off on} {
+	foreach_with_prefix follow-fork-mode {parent} {
+	    foreach_with_prefix detach-on-fork {on} {
+		foreach_with_prefix schedule-multiple {off on} {
+		    do_test ${target-non-stop} ${non-stop} ${follow-fork-mode} ${detach-on-fork} ${schedule-multiple}
+		}
+	    }
+	}
+    }
+}

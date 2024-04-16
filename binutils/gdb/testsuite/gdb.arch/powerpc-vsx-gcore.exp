@@ -1,0 +1,86 @@
+# Copyright (C) 2018-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the gdb testsuite.
+
+# This test checks that generating and loading a core file preserves
+# the correct VSX register state.
+
+require {istarget "powerpc*-*-linux*"} allow_vsx_tests
+
+standard_testfile .c
+
+set gen_src [standard_output_file $srcfile]
+
+gdb_produce_source $gen_src {
+	int main() {
+	    return 0;
+	}
+}
+
+if {[build_executable "compile" $binfile $gen_src] == -1} {
+    return -1
+}
+
+clean_restart $binfile
+
+if {![runto_main]} {
+    return -1
+}
+
+# Check if VSX register access through gdb is supported
+proc check_vsx_access {} {
+    global gdb_prompt
+
+    set test "vsx register access"
+    gdb_test_multiple "info reg vs0" "$test" {
+	-re "Invalid register.*\r\n$gdb_prompt $" {
+	    unsupported "$test"
+	    return 0
+	}
+	-re "\r\nvs0.*\r\n$gdb_prompt $" {
+	    pass "$test"
+	    return 1
+	}
+    }
+    return 0
+}
+
+if { ![check_vsx_access] } {
+    return -1
+}
+
+for {set i 0} {$i < 64} {incr i 1} {
+    gdb_test_no_output "set \$vs$i.uint128 = $i"
+}
+
+set core_filename [standard_output_file "$testfile.core"]
+set core_generated [gdb_gcore_cmd "$core_filename" "generate core file"]
+
+if { !$core_generated } {
+    return -1
+}
+
+clean_restart
+
+set core_loaded [gdb_core_cmd "$core_filename" "load core file"]
+
+if { $core_loaded != 1 } {
+    return -1
+}
+
+for {set i 0} {$i < 64} {incr i 1} {
+    gdb_test "print \$vs$i.uint128" ".* = $i" "print vs$i"
+}

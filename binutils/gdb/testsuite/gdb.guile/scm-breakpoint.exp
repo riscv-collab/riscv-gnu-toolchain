@@ -1,0 +1,599 @@
+# Copyright (C) 2010-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.
+# It tests the mechanism exposing breakpoints to Guile.
+
+load_lib gdb-guile.exp
+
+require allow_guile_tests
+
+standard_testfile
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+    return -1
+}
+
+proc_with_prefix test_bkpt_basic { } {
+    global srcfile testfile hex decimal
+
+    # Start with a fresh gdb.
+    clean_restart ${testfile}
+
+    if ![gdb_guile_runto_main] {
+	return
+    }
+
+    # Initially there should be one breakpoint: main.
+
+    gdb_scm_test_silent_cmd "guile (define blist (breakpoints))" \
+	"get breakpoint list 1"
+    gdb_test "guile (print (car blist))" \
+	"<gdb:breakpoint #1 BP_BREAKPOINT enabled noisy hit:1 ignore:0 @-qualified main>" \
+	"check main breakpoint"
+    gdb_test "guile (print (breakpoint-location (car blist)))" \
+	"main" "check main breakpoint location"
+
+    set mult_line [gdb_get_line_number "Break at multiply."]
+    gdb_breakpoint ${mult_line}
+    gdb_continue_to_breakpoint "Break at multiply, first time"
+
+    # Check that the Guile breakpoint code noted the addition of a
+    # breakpoint "behind the scenes".
+    gdb_scm_test_silent_cmd "guile (define blist (breakpoints))" \
+	"get breakpoint list 2"
+    gdb_scm_test_silent_cmd "guile (define mult-bkpt (cadr blist))" \
+	"get multiply breakpoint"
+    gdb_test "guile (print (length blist))" \
+	"= 2" "check for two breakpoints"
+    gdb_test "guile (print mult-bkpt)" \
+	"= #<gdb:breakpoint #2 BP_BREAKPOINT enabled noisy hit:1 ignore:0 @.*scm-breakpoint.c:$mult_line>" \
+	"check multiply breakpoint"
+    gdb_test "guile (print (breakpoint-location mult-bkpt))" \
+	"scm-breakpoint\.c:${mult_line}*" \
+	"check multiply breakpoint location"
+
+    # Check hit and ignore counts. 
+    gdb_test "guile (print (breakpoint-hit-count mult-bkpt))" \
+	"= 1" "check multiply breakpoint hit count"
+    gdb_scm_test_silent_cmd "guile (set-breakpoint-ignore-count! mult-bkpt 4)" \
+	"set multiply breakpoint ignore count"
+    gdb_continue_to_breakpoint "Break at multiply, second time"
+    gdb_test "guile (print (breakpoint-hit-count mult-bkpt))" \
+	"= 6" "check multiply breakpoint hit count 2"
+    gdb_test "print result" \
+	" = 545" "check expected variable result after 6 iterations"
+
+    # Test breakpoint is enabled and disabled correctly.
+    gdb_breakpoint [gdb_get_line_number "Break at add."]
+    gdb_continue_to_breakpoint "Break at add, first time"
+    gdb_test "guile (print (breakpoint-enabled? mult-bkpt))" \
+	"= #t" "check multiply breakpoint enabled"
+    gdb_scm_test_silent_cmd  "guile (set-breakpoint-enabled! mult-bkpt #f)" \
+	"set multiply breakpoint disabled"
+    gdb_continue_to_breakpoint "Break at add, second time"
+    gdb_scm_test_silent_cmd  "guile (set-breakpoint-enabled! mult-bkpt #t)" \
+	"set multiply breakpoint enabled"
+    gdb_continue_to_breakpoint "Break at multiply, third time"
+
+    # Test other getters and setters.
+    gdb_scm_test_silent_cmd "guile (define blist (breakpoints))" \
+	"get breakpoint list 3"
+    gdb_test "guile (print (breakpoint-thread mult-bkpt))" \
+	"= #f" "check breakpoint thread"
+    gdb_test "guile (print (= (breakpoint-type mult-bkpt) BP_BREAKPOINT))" \
+	"= #t" "check breakpoint type"
+    gdb_test "guile (print (map breakpoint-number blist))" \
+	"= \\(1 2 3\\)" "check breakpoint numbers"
+}
+
+proc_with_prefix test_bkpt_deletion { } {
+    global srcfile testfile hex decimal
+
+    # Start with a fresh gdb.
+    clean_restart ${testfile}
+
+    if ![gdb_guile_runto_main] {
+	return
+    }
+
+    # Test breakpoints are deleted correctly.
+    set deltst_location [gdb_get_line_number "Break at multiply."]
+    set end_location [gdb_get_line_number "Break at end."]
+    gdb_scm_test_silent_cmd  "guile (define dp1 (make-breakpoint \"$deltst_location\"))" \
+	"create deltst breakpoint"
+    gdb_scm_test_silent_cmd "guile (register-breakpoint! dp1)" \
+	"register dp1"
+    gdb_breakpoint [gdb_get_line_number "Break at end."]
+    gdb_scm_test_silent_cmd "guile (define del-list (breakpoints))" \
+	"get breakpoint list 4"
+    gdb_test "guile (print (length del-list))" \
+	"= 3" "number of breakpoints before delete"
+    gdb_continue_to_breakpoint "Break at multiply." \
+	".*$srcfile:$deltst_location.*"
+    gdb_scm_test_silent_cmd  "guile (delete-breakpoint! dp1)" \
+	"delete breakpoint"
+    gdb_test "guile (print (breakpoint-number dp1))" \
+	"ERROR: .*: Invalid object: <gdb:breakpoint> in position 1: #<gdb:breakpoint #-1>.*" \
+	"check breakpoint invalidated"
+    gdb_scm_test_silent_cmd "guile (set! del-list (breakpoints))" \
+	"get breakpoint list 5"
+    gdb_test "guile (print (length del-list))" \
+	"= 2" "number of breakpoints after delete"
+    gdb_continue_to_breakpoint "Break at end." ".*$srcfile:$end_location.*"
+}
+
+proc_with_prefix test_bkpt_cond_and_cmds { } {
+    global srcfile testfile hex decimal
+
+    # Start with a fresh gdb.
+    clean_restart ${testfile}
+
+    if ![gdb_guile_runto_main] {
+	return
+    }
+
+    # Test conditional setting.
+    set bp_location1 [gdb_get_line_number "Break at multiply."]
+    gdb_scm_test_silent_cmd  "guile (define bp1 (make-breakpoint \"$bp_location1\"))" \
+	"create multiply breakpoint"
+    gdb_scm_test_silent_cmd "guile (register-breakpoint! bp1)" \
+	"register bp1"
+    gdb_continue_to_breakpoint "Break at multiply, first time"
+    gdb_scm_test_silent_cmd  "guile (set-breakpoint-condition! bp1 \"i == 5\")" \
+	"set condition"
+    gdb_test "guile (print (breakpoint-condition bp1))" \
+	"= i == 5" "test condition has been set"
+    gdb_continue_to_breakpoint "Break at multiply, second time"
+    gdb_test "print i" \
+	"5" "test conditional breakpoint stopped after five iterations"
+    gdb_scm_test_silent_cmd  "guile (set-breakpoint-condition! bp1 #f)" \
+	"clear condition"
+    gdb_test "guile (print (breakpoint-condition bp1))" \
+	"= #f" "test condition has been removed"
+    gdb_continue_to_breakpoint "Break at multiply, third time"
+    gdb_test "print i" "6" "test breakpoint stopped after six iterations"
+
+    # Test commands.
+    gdb_breakpoint [gdb_get_line_number "Break at add."]
+    set test {commands $bpnum}
+    gdb_test_multiple $test $test { -re "\r\n>$" { pass $test } }
+    set test {print "Command for breakpoint has been executed."}
+    gdb_test_multiple $test $test { -re "\r\n>$" { pass $test } }
+    set test {print result}
+    gdb_test_multiple $test $test { -re "\r\n>$" { pass $test } }
+    gdb_test "end"
+
+    gdb_scm_test_silent_cmd "guile (define blist (breakpoints))" \
+	"get breakpoint list 6"
+    gdb_test "guile (print (breakpoint-commands (list-ref blist (- (length blist) 1))))" \
+	"print \"Command for breakpoint has been executed.\".*print result\r\n"
+}
+
+proc_with_prefix test_bkpt_invisible { } {
+    global srcfile testfile hex decimal
+
+    # Start with a fresh gdb.
+    clean_restart ${testfile}
+
+    if ![gdb_guile_runto_main] {
+	return
+    }
+
+    # Test invisible breakpoints.
+    delete_breakpoints
+    set ibp_location [gdb_get_line_number "Break at multiply."]
+    gdb_scm_test_silent_cmd  "guile (define vbp1 (make-breakpoint \"$ibp_location\" #:internal #f))" \
+	"create visible breakpoint"
+    gdb_scm_test_silent_cmd "guile (register-breakpoint! vbp1)" \
+	"register vbp1"
+    gdb_scm_test_silent_cmd "guile (define vbp (car (breakpoints)))" \
+	"get visible breakpoint"
+    gdb_test "guile (print vbp)" \
+	"= #<gdb:breakpoint #2 BP_BREAKPOINT enabled noisy hit:0 ignore:0 @.*scm-breakpoint.c:$ibp_location>" \
+	"check visible bp obj exists"
+    gdb_test "guile (print (breakpoint-location vbp))" \
+	"scm-breakpoint\.c:$ibp_location*" "check visible breakpoint location"
+    gdb_test "guile (print (breakpoint-visible? vbp))" \
+	"= #t" "check breakpoint visibility"
+    gdb_test "info breakpoints" \
+	"scm-breakpoint\.c:$ibp_location.*" \
+	"check info breakpoints shows visible breakpoints"
+    delete_breakpoints
+    gdb_scm_test_silent_cmd  "guile (define ibp (make-breakpoint \"$ibp_location\" #:internal #t))" \
+	"create invisible breakpoint"
+    gdb_scm_test_silent_cmd "guile (register-breakpoint! ibp)" \
+	"register ibp"
+    gdb_test "guile (print ibp)" \
+	"= #<gdb:breakpoint #-$decimal BP_BREAKPOINT enabled noisy hit:0 ignore:0 @.*scm-breakpoint.c:$ibp_location>" \
+	"check invisible bp obj exists"
+    gdb_test "guile (print (breakpoint-location ibp))" \
+	"scm-breakpoint\.c:$ibp_location*" "check invisible breakpoint location"
+    gdb_test "guile (print (breakpoint-visible? ibp))" \
+	"= #f" "check breakpoint invisibility"
+    gdb_test "info breakpoints" \
+	"No breakpoints or watchpoints.*" \
+	"check info breakpoints does not show invisible breakpoints"
+    gdb_test "maint info breakpoints" \
+	"scm-breakpoint\.c:$ibp_location.*" \
+	"check maint info breakpoints shows invisible breakpoints"
+}
+
+proc_with_prefix test_watchpoints { } {
+    global srcfile testfile hex decimal
+
+    # Start with a fresh gdb.
+    clean_restart ${testfile}
+
+    # Disable hardware watchpoints if necessary.
+    if [target_info exists gdb,no_hardware_watchpoints] {
+	gdb_test_no_output "set can-use-hw-watchpoints 0" ""
+    }
+    if ![gdb_guile_runto_main] {
+	return
+    }
+
+    gdb_scm_test_silent_cmd  "guile (define wp1 (make-breakpoint \"result\" #:type BP_WATCHPOINT #:wp-class WP_WRITE))" \
+	"create watchpoint"
+    gdb_test "guile (display wp1) (newline)" "#<gdb:breakpoint #-1>" \
+	"print watchpoint before registering"
+    gdb_scm_test_silent_cmd "guile (register-breakpoint! wp1)" \
+	"register wp1"
+    gdb_test "guile (display wp1) (newline)" \
+	"#<gdb:breakpoint #${decimal} BP_(?:HARDWARE_)?WATCHPOINT enabled noisy hit:0 ignore:0>" \
+	"print watchpoint after registering"
+    gdb_test "continue" \
+	".*\[Ww\]atchpoint.*result.*Old value = 0.*New value = 25.*main.*" \
+	"test watchpoint write"
+
+    gdb_test "guile (define wp2 (make-breakpoint \"result\" #:wp-class WP_WRITE #:type 999))" \
+	"(ERROR: )?In procedure gdbscm_make_breakpoint: Out of range: invalid breakpoint type in position 5: 999\r\n.*" \
+	"create a breakpoint with an invalid type number"
+    gdb_test "guile (define wp2 (make-breakpoint \"result\" #:wp-class WP_WRITE #:type BP_NONE))" \
+	"(ERROR: )?In procedure gdbscm_make_breakpoint: unsupported breakpoint type in position 5: \"BP_NONE\"\r\n.*" \
+	"create a breakpoint with an unsupported type"
+}
+
+proc_with_prefix test_bkpt_internal { } {
+    global srcfile testfile hex decimal
+
+    # Start with a fresh gdb.
+    clean_restart ${testfile}
+
+    # Disable hardware watchpoints if necessary.
+    if [target_info exists gdb,no_hardware_watchpoints] {
+	gdb_test_no_output "set can-use-hw-watchpoints 0" ""
+    }
+    if ![gdb_guile_runto_main] {
+	return
+    }
+
+    delete_breakpoints
+
+    gdb_scm_test_silent_cmd  "guile (define wp1 (make-breakpoint \"result\" #:type BP_WATCHPOINT #:wp-class WP_WRITE #:internal #t))" \
+	"create invisible watchpoint"
+    gdb_scm_test_silent_cmd "guile (register-breakpoint! wp1)" \
+	"register wp1"
+    gdb_test "info breakpoints" \
+	"No breakpoints or watchpoints.*" \
+	"check info breakpoints does not show invisible watchpoint"
+    gdb_test "maint info breakpoints" \
+	".*watchpoint.*result.*" \
+	"check maint info breakpoints shows invisible watchpoint"
+    gdb_test "continue" \
+	".*\[Ww\]atchpoint.*result.*Old value = 0.*New value = 25.*" \
+	"test invisible watchpoint write"
+}
+
+proc_with_prefix test_bkpt_eval_funcs { } {
+    global srcfile testfile hex decimal
+
+    # Start with a fresh gdb.
+    clean_restart ${testfile}
+
+    # Disable hardware watchpoints if necessary.
+    if [target_info exists gdb,no_hardware_watchpoints] {
+	gdb_test_no_output "set can-use-hw-watchpoints 0" ""
+    }
+    if ![gdb_guile_runto_main] {
+	return
+    }
+
+    delete_breakpoints
+
+    # Define create-breakpoint! as a convenient wrapper around
+    # make-breakpoint, register-breakpoint!
+    gdb_test_no_output "guile (define (create-breakpoint! . args) (let ((bp (apply make-breakpoint args))) (register-breakpoint! bp) bp))" \
+	"define create-breakpoint!"
+
+    gdb_test_multiline "data collection breakpoint 1" \
+	"guile" "" \
+	"(define (make-bp-data) (cons 0 0))" "" \
+	"(define bp-data-count car)" "" \
+	"(define set-bp-data-count! set-car!)" "" \
+	"(define bp-data-inf-i cdr)" "" \
+	"(define set-bp-data-inf-i! set-cdr!)" "" \
+	"(define (bp-eval-count bkpt) (bp-data-count (object-property bkpt 'bp-data)))" "" \
+	"(define (bp-eval-inf-i bkpt) (bp-data-inf-i (object-property bkpt 'bp-data)))" "" \
+	"(define (make-bp-eval location)" "" \
+	"  (let ((bp (create-breakpoint! location)))" "" \
+	"    (set-object-property! bp 'bp-data (make-bp-data))" "" \
+	"    (set-breakpoint-stop! bp" "" \
+	"       (lambda (bkpt)" "" \
+	"         (let ((data (object-property bkpt 'bp-data))" "" \
+	"               (inf-i (parse-and-eval \"i\")))" "" \
+	"           (set-bp-data-count! data (+ (bp-data-count data) 1))" "" \
+	"           (set-bp-data-inf-i! data inf-i)" "" \
+	"           (value=? inf-i 3))))" "" \
+	"    bp))" "" \
+	"end" ""
+
+    gdb_test_multiline "data collection breakpoint 2" \
+	"guile" "" \
+	"(define (make-bp-also-eval location)" "" \
+	"  (let ((bp (create-breakpoint! location)))" "" \
+	"    (set-object-property! bp 'bp-data (make-bp-data))" "" \
+	"    (set-breakpoint-stop! bp" "" \
+	"       (lambda (bkpt)" "" \
+	"         (let* ((data (object-property bkpt 'bp-data))" "" \
+	"                (count (+ (bp-data-count data) 1)))" "" \
+	"           (set-bp-data-count! data count)" "" \
+	"           (= count 9))))" "" \
+	"    bp))" "" \
+	"end" ""
+
+    gdb_test_multiline "data collection breakpoint 3" \
+	"guile" "" \
+	"(define (make-bp-basic location)" "" \
+	"  (let ((bp (create-breakpoint! location)))" "" \
+	"    (set-object-property! bp 'bp-data (make-bp-data))" "" \
+	"    bp))" "" \
+	"end" ""
+
+    set bp_location2 [gdb_get_line_number "Break at multiply."]
+    set end_location [gdb_get_line_number "Break at end."]
+    gdb_scm_test_silent_cmd  "guile (define eval-bp1 (make-bp-eval \"$bp_location2\"))" \
+	"create eval-bp1 breakpoint"
+    gdb_scm_test_silent_cmd  "guile (define also-eval-bp1 (make-bp-also-eval \"$bp_location2\"))" \
+	"create also-eval-bp1 breakpoint"
+    gdb_scm_test_silent_cmd  "guile (define never-eval-bp1 (make-bp-also-eval \"$end_location\"))" \
+	"create never-eval-bp1 breakpoint"
+    gdb_continue_to_breakpoint "Break at multiply, first time" \
+	".*$srcfile:$bp_location2.*"
+    gdb_test "print i" "3" "check inferior value matches guile accounting"
+    gdb_test "guile (print (bp-eval-inf-i eval-bp1))" \
+	"= 3" "check guile accounting matches inferior"
+    gdb_test "guile (print (bp-eval-count also-eval-bp1))" \
+	"= 4" \
+	"check non firing same-location breakpoint eval function was also called at each stop 1"
+    gdb_test "guile (print (bp-eval-count eval-bp1))" \
+	"= 4" \
+	"check non firing same-location breakpoint eval function was also called at each stop 2"
+
+    # Check we cannot assign a condition to a breakpoint with a stop-func,
+    # and cannot assign a stop-func to a breakpoint with a condition.
+
+    delete_breakpoints
+    set cond_bp [gdb_get_line_number "Break at multiply."]
+    gdb_scm_test_silent_cmd  "guile (define eval-bp1 (make-bp-eval \"$cond_bp\"))" \
+	"create eval-bp1 breakpoint 2"
+    set test_cond {cond $bpnum}
+    gdb_test "$test_cond \"foo==3\"" \
+	"Only one stop condition allowed.*"
+    gdb_scm_test_silent_cmd  "guile (define eval-bp2 (make-bp-basic \"$cond_bp\"))" \
+	"create basic breakpoint"
+    gdb_scm_test_silent_cmd  "guile (set-breakpoint-condition! eval-bp2 \"1==1\")" \
+	"set a condition"
+    gdb_test_multiline "construct an eval function" \
+	"guile" "" \
+	"(define (stop-func bkpt)" "" \
+	"   return #t)" "" \
+	"end" ""
+    gdb_test "guile (set-breakpoint-stop! eval-bp2 stop-func)"  \
+	"Only one stop condition allowed.*"
+
+    # Check that stop-func is run when location has normal bp.
+
+    delete_breakpoints
+    gdb_breakpoint [gdb_get_line_number "Break at multiply."]
+    gdb_scm_test_silent_cmd  "guile (define check-eval (make-bp-eval \"$bp_location2\"))" \
+	"create check-eval breakpoint"
+    gdb_test "guile (print (bp-eval-count check-eval))" \
+	"= 0" \
+	"test that evaluate function has not been yet executed (ie count = 0)"
+    gdb_continue_to_breakpoint "Break at multiply, second time" \
+	".*$srcfile:$bp_location2.*"
+    gdb_test "guile (print (bp-eval-count check-eval))" \
+	"= 1" \
+	"test that evaluate function is run when location also has normal bp"
+
+    # Test watchpoints with stop-func.
+
+    gdb_test_multiline "watchpoint stop func" \
+	"guile" "" \
+	"(define (make-wp-eval location)" "" \
+	"  (let ((wp (create-breakpoint! location #:type BP_WATCHPOINT #:wp-class WP_WRITE)))" "" \
+	"    (set-breakpoint-stop! wp" "" \
+	"      (lambda (bkpt)" "" \
+	"        (let ((result (parse-and-eval \"result\")))" "" \
+	"          (value=? result 788))))" "" \
+	"    wp))" "" \
+	"end" ""
+
+    delete_breakpoints
+    gdb_scm_test_silent_cmd  "guile (define wp1 (make-wp-eval \"result\"))" \
+	"create watchpoint"
+    gdb_test "continue" ".*\[Ww\]atchpoint.*result.*Old value =.*New value = 788.*" \
+	"test watchpoint write"
+
+    # Misc final tests.
+
+    gdb_test "guile (print (bp-eval-count never-eval-bp1))" \
+	"= 0" \
+	"check that this unrelated breakpoints eval function was never called"
+}
+
+proc_with_prefix test_bkpt_registration {} {
+    global srcfile testfile
+
+    # Start with a fresh gdb.
+    clean_restart ${testfile}
+
+    if ![gdb_guile_runto_main] {
+	return
+    }
+
+    # Initially there should be one breakpoint: main.
+    gdb_scm_test_silent_cmd "guile (define blist (breakpoints))" \
+	"get breakpoint list 1"
+    gdb_test "guile (register-breakpoint! (car blist))" \
+	"ERROR: .*: not a Scheme breakpoint.*" \
+	"try to register a non-guile breakpoint"
+
+    set bp_location1 [gdb_get_line_number "Break at multiply."]
+    gdb_scm_test_silent_cmd  "guile (define bp1 (make-breakpoint \"$bp_location1\"))" \
+	"create multiply breakpoint"
+    gdb_test "guile (print (breakpoint-valid? bp1))" \
+	"= #f" "breakpoint invalid after creation"
+    gdb_scm_test_silent_cmd "guile (register-breakpoint! bp1)" \
+	"register bp1"
+    gdb_test "guile (print (breakpoint-valid? bp1))" \
+	"= #t" "breakpoint valid after registration"
+    gdb_test "guile (register-breakpoint! bp1)" \
+	"ERROR: .*: breakpoint is already registered.*" \
+	"re-register already registered bp1"
+    gdb_scm_test_silent_cmd "guile (delete-breakpoint! bp1)" \
+	"delete registered breakpoint"
+    gdb_test "guile (print (breakpoint-valid? bp1))" \
+	"= #f" "breakpoint invalid after deletion"
+    gdb_scm_test_silent_cmd "guile (register-breakpoint! bp1)" \
+	"re-register bp1"
+    gdb_test "guile (print (breakpoint-valid? bp1))" \
+	"= #t" "breakpoint valid after re-registration"
+}
+
+proc_with_prefix test_bkpt_temporary { } {
+    global srcfile testfile hex decimal
+
+    # Start with a fresh gdb.
+    clean_restart ${testfile}
+
+    if ![gdb_guile_runto_main] {
+	return 0
+    }
+    delete_breakpoints
+
+    set ibp_location [gdb_get_line_number "Break at multiply."]
+    gdb_scm_test_silent_cmd "guile (define ibp (make-breakpoint \"$ibp_location\" #:temporary #t))" \
+	"create temporary breakpoint"
+    gdb_scm_test_silent_cmd "guile (register-breakpoint! ibp)" \
+	"register ibp"
+    gdb_test "info breakpoints" \
+	"2.*breakpoint.*del.*scm-breakpoint\.c:$ibp_location.*" \
+	"check info breakpoints shows breakpoint with temporary status"
+    gdb_test "guile (print (breakpoint-location ibp))" "scm-breakpoint\.c:$ibp_location*" \
+	"check temporary breakpoint location"
+    gdb_test "guile (print (breakpoint-temporary? ibp))" "#t" \
+	"check breakpoint temporary status"
+    gdb_continue_to_breakpoint "Break at multiply." \
+	".*$srcfile:$ibp_location.*"
+    gdb_test "guile (print (breakpoint-temporary? ibp))" "Invalid object: <gdb:breakpoint>.*" \
+	"check temporary breakpoint is deleted after being hit"
+    gdb_test "info breakpoints" "No breakpoints or watchpoints.*" \
+	"check info breakpoints shows temporary breakpoint is deleted"
+}
+
+proc_with_prefix test_bkpt_address {} {
+    global decimal srcfile
+
+    # Leading whitespace is intentional!
+    gdb_scm_test_silent_cmd \
+	"guile (define bp1 (make-breakpoint \"  *multiply\"))" \
+	"create address breakpoint a '  *multiply'" 1
+
+    gdb_test "guile (register-breakpoint! bp1)" \
+	".*Breakpoint ($decimal)+ at .*$srcfile, line ($decimal)+\."
+}
+
+proc_with_prefix test_bkpt_probe {} {
+    global decimal hex testfile srcfile
+
+    if { [prepare_for_testing "failed to prepare" ${testfile}-probes \
+	    ${srcfile} {additional_flags=-DUSE_PROBES}] } {
+	return -1
+    }
+
+    if {![gdb_guile_runto_main]} {
+	return
+    }
+
+    gdb_scm_test_silent_cmd \
+	"guile (define bp1 (make-breakpoint \"-probe test:result_updated\"))" \
+	"create probe breakpoint"
+
+    gdb_test \
+	"guile (register-breakpoint! bp1)" \
+	"Breakpoint $decimal at $hex" \
+	"register probe breakpoint"
+}
+
+proc_with_prefix test_catchpoints {} {
+    global srcfile testfile
+    global gdb_prompt decimal
+
+    # Start with a fresh gdb.
+    clean_restart ${testfile}
+
+    if ![gdb_guile_runto_main] {
+	return
+    }
+
+    # Try to create a catchpoint, currently this isn't supported via
+    # the guile api.
+    gdb_test "guile (define cp (make-breakpoint \"syscall\" #:type BP_CATCHPOINT))" \
+	"(ERROR: )?In procedure gdbscm_make_breakpoint: unsupported breakpoint type in position 3: \"BP_CATCHPOINT\"\r\n.*" \
+	"create a catchpoint via the api"
+
+    # Setup a catchpoint.
+    set num "XXX"
+    gdb_test_multiple "catch syscall" "" {
+	-re "The feature \'catch syscall\' is not supported.*\r\n$gdb_prompt $" {
+	    unsupported "catch syscall isn't supported"
+	    return -1
+	}
+	-re "Catchpoint ($decimal) \\(any syscall\\)\r\n$gdb_prompt $" {
+	    set num $expect_out(1,string)
+	    pass $gdb_test_name
+	}
+    }
+
+    # Look for the catchpoint in the breakpoint list.
+    gdb_test "guile (for-each (lambda (b) (if (= (breakpoint-type b) BP_CATCHPOINT) (begin (display b) (newline)))) (breakpoints))" \
+	"#<gdb:breakpoint #${num} BP_CATCHPOINT enabled noisy hit:0 ignore:0>" \
+	"look for BP_CATCHPOINT in breakpoint list"
+}
+
+test_bkpt_basic
+test_bkpt_deletion
+test_bkpt_cond_and_cmds
+test_bkpt_invisible
+test_catchpoints
+test_watchpoints
+test_bkpt_internal
+test_bkpt_eval_funcs
+test_bkpt_registration
+test_bkpt_temporary
+test_bkpt_address
+test_bkpt_probe

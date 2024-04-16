@@ -1,0 +1,121 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file tests GDB's ability to replace typedefs in C++ symbols
+# when setting breakpoints, particularly around templates in
+# namespaces.
+
+load_lib completion-support.exp
+
+standard_testfile .cc
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile \
+	 {debug c++ additional_flags=-std=c++11}]} {
+    return -1
+}
+
+# Disable the completion limit for the whole testcase.
+gdb_test_no_output "set max-completions unlimited"
+
+# Confirm that the important global namespace typedefs were indeed
+# emited in the debug info.
+gdb_test "ptype NS2" "type = int"
+gdb_test "ptype object" "type = struct NS1::NS2::object {.*"
+gdb_test "ptype Templ1" "type = struct NS1::NS2::Templ1<unsigned int> .*"
+gdb_test "ptype AliasTempl" "type = struct NS1::NS2::Templ2<int, int> .*"
+
+# Wrapper around check_bp_locations_match_list that expect a single
+# location in the set breakpoint, instead of a list of locations.  If
+# the set location isn't specified, then it is assumed to be the exact
+# same as the input location.
+proc check_bp {location_in {location_out ""}} {
+    if {$location_out == ""} {
+	set location_out $location_in
+    }
+    check_bp_locations_match_list "b $location_in" [list $location_out]
+}
+
+# These used to crash GDB with infinite recursion because GDB would
+# confuse the "Templ1" typedef in the global namespace with the "Templ1"
+# template in within NS1::NS2.
+test_gdb_complete_unique \
+    "break NS1::NS2::Templ1<int>::Tem" \
+    "break NS1::NS2::Templ1<int>::Templ1(NS1::NS2::object*)"
+check_bp "NS1::NS2::Templ1<int>::Templ1(NS1::NS2::object*)"
+
+# Similar test, but without a template.  This would not crash.
+test_gdb_complete_unique \
+    "break NS1::NS2::object::obj" \
+    "break NS1::NS2::object::object()"
+check_bp "NS1::NS2::object::object()"
+
+# Test some non-template typedef replacing within a namespace.
+test_gdb_complete_unique \
+    "break NS1::NS2::object_p_f" \
+    "break NS1::NS2::object_p_func(NS1::NS2::object*)"
+check_bp \
+    "NS1::NS2::object_p_func(NS1::NS2::object_p)" \
+    "NS1::NS2::object_p_func(NS1::NS2::object*)"
+
+# Make sure the "NS2" in the template argument list is resolved as
+# being a global typedef for int.
+foreach loc {
+    "NS1::NS2::Templ1<int>::static_method<int>(NS1::NS2::object*)"
+    "NS1::NS2::Templ1<int>::static_method<NS2>(NS1::NS2::object*)"
+    "NS1::NS2::Templ1<NS2>::static_method<int>(NS1::NS2::object*)"
+    "NS1::NS2::Templ1<NS2>::static_method<NS2>(NS1::NS2::object*)"
+} {
+    check_bp $loc "NS1::NS2::Templ1<int>::static_method<int>(NS1::NS2::object*)"
+}
+
+foreach loc {
+    "NS1::NS2::Templ2<int, int>::static_method<int>(NS1::NS2::object*)"
+    "NS1::NS2::Templ2<int, int>::static_method<int>(NS1::NS2::object_p)"
+} {
+    check_bp $loc "NS1::NS2::Templ2<int, int>::static_method<int>(NS1::NS2::object*)"
+}
+
+# Check that GDB expands the "NS1::NS2::AliasTempl<int>" as
+# "NS1::NS2::Templ2<int, int>".
+foreach loc {
+    "NS1::NS2::AliasTempl<int>::static_method<int>(NS1::NS2::object*)"
+    "NS1::NS2::AliasTempl<int>::static_method<int>(NS1::NS2::object_p)"
+} {
+    if [test_compiler_info gcc*] {
+	# While Clang emits "AliasTempl<int>" (etc.) typedefs, GCC
+	# emits "AliasTempl" typedefs with no template parameter info.
+	setup_xfail gcc/95437 *-*-*
+    }
+    check_bp $loc "NS1::NS2::Templ2<int, int>::static_method<int>(NS1::NS2::object*)"
+
+    # Check that setting the breakpoint with GCC really failed,
+    # instead of succeeding with e.g., "AliasTempl<int>" preserved in
+    # the location text.  If that ever happens, we'll need to update
+    # these tests.
+    if [test_compiler_info gcc*] {
+	check_setting_bp_fails "b $loc"
+    }
+}
+
+# Check typedef substitution in a template in a qualified name in a
+# function parameter list.  These used to crash GDB with recursion
+# around "Templ1", because there's a "Templ1" typedef in the global
+# namespace.
+foreach loc {
+    "NS1::NS2::int_Templ1_t_func(NS1::NS2::int_Templ1_t*)"
+    "NS1::NS2::int_Templ1_t_func(NS1::NS2::Templ1<int>*)"
+} {
+    check_bp $loc "NS1::NS2::int_Templ1_t_func(NS1::NS2::Templ1<int>*)"
+}

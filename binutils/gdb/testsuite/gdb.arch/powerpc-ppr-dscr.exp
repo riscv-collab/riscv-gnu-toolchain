@@ -1,0 +1,117 @@
+# Copyright (C) 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the gdb testsuite.
+
+# Test access to special purpose registers PPR and DSCR.  The test
+# inferior writes to these registers, we check that GDB reads the same
+# values, then write to the registers trough GDB, step once, and check
+# again if we read back the same values.
+
+require {istarget "powerpc*-*-linux*"}
+
+standard_testfile .c
+
+if {[build_executable "compile" $binfile $srcfile {debug}] == -1} {
+    return
+}
+
+proc check_register_access { regname } {
+    global gdb_prompt
+
+    set test "$regname register access"
+    gdb_test_multiple "info reg $regname" "$test" {
+	-re "Invalid register.*\r\n$gdb_prompt $" {
+	    unsupported "$test"
+	    return 0
+	}
+	-re "\r\n$regname.*\r\n$gdb_prompt $" {
+	    pass "$test"
+	    return 1
+	}
+    }
+    return 0
+}
+
+# Do one pass to check if the instructions in our test programs are
+# available to this processor (e.g. mtspr 3, RS for accessing DSCR).
+proc ppr_dscr_available {} {
+    global gdb_prompt
+    global inferior_exited_re
+
+    set test "PPR/DSCR available to inferior"
+    gdb_test_multiple "continue" "" {
+	-re "Illegal instruction.*\r\n$gdb_prompt $" {
+	    unsupported "$test"
+	    return 0
+	}
+	-re "$inferior_exited_re normally.*$gdb_prompt $" {
+	    pass "$test"
+	    return 1
+	}
+    }
+    return 0
+}
+
+with_test_prefix "check PPR/DSCR access" {
+    clean_restart $binfile
+
+    if ![runto_main] {
+	return
+    }
+
+    if {![check_register_access "ppr"]} {
+	return
+    }
+
+    if {![check_register_access "dscr"]} {
+	return
+    }
+
+    if {![ppr_dscr_available]} {
+	return
+    }
+}
+
+# Now do the actual test
+clean_restart $binfile
+
+if ![runto_main] {
+    return
+}
+
+gdb_breakpoint [gdb_get_line_number "marker"]
+
+gdb_continue_to_breakpoint "continue to marker"
+
+# At the breakpoint the inferior should have set the
+# registers to these expected values.
+
+with_test_prefix "before write" {
+    gdb_test "info reg dscr" "dscr.*0x0*20\[ \t\]+.*"
+    gdb_test "info reg ppr" "ppr.*0x0*8000000000000\[ \t\]+.*"
+}
+
+# Set Store Stream Enable in DSCR and set PPR to the medium-low
+# priority.
+gdb_test_no_output "set \$dscr = 0x8"
+gdb_test_no_output "set \$ppr = 0xC000000000000"
+
+gdb_test "stepi" "asm.*"
+
+with_test_prefix "after write" {
+    gdb_test "info reg dscr" "dscr.*0x0*8+\[ \t\]+.*"
+    gdb_test "info reg ppr" "ppr.*0x0*\[cC\]000000000000\[ \t\]+.*"
+}

@@ -1,0 +1,123 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test checks that GDB can find the dwo file when the path to the
+# dwo embedded in the executable is relative.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+standard_testfile .c -dw.S
+
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    global srcfile gdb_test_file_name
+
+    set debug_addr_base -1
+
+    # The information that will be split out into the .dwo file.
+    cu {fission 1} {
+
+	# Capture the current index into .debug_addr so we can fill in
+	# DW_AT_GNU_addr_base later.
+	set debug_addr_base [debug_addr_label]
+
+	compile_unit {
+            {language @DW_LANG_C}
+            {name ${srcfile}}
+	    {DW_AT_comp_dir .}
+	    {DW_AT_GNU_dwo_id 0x1234 DW_FORM_data8}
+        } {
+	    declare_labels int4_type struct_type
+
+	    int4_type: DW_TAG_base_type {
+		{DW_AT_byte_size 4 DW_FORM_sdata}
+		{DW_AT_encoding  @DW_ATE_signed}
+		{DW_AT_name      integer}
+	    }
+
+	    struct_type: DW_TAG_structure_type {
+		{DW_AT_name "foo_t"}
+		{DW_AT_byte_size 12 DW_FORM_sdata}
+	    } {
+		member {
+		    {name "aa"}
+		    {type :$int4_type}
+		    {data_member_location 0 data1}
+		}
+		member {
+		    {name "bb"}
+		    {type :$int4_type}
+		    {data_member_location 4 data1}
+		}
+		member {
+		    {name "cc"}
+		    {type :$int4_type}
+		    {data_member_location 8 data1}
+		}
+	    }
+
+	    DW_TAG_variable {
+		{DW_AT_name global_var}
+		{DW_AT_type :$struct_type}
+		{DW_AT_location {
+		    DW_OP_GNU_addr_index [gdb_target_symbol global_var]
+		} SPECIAL_expr}
+		{external 1 flag}
+	    }
+
+	    subprogram {
+		{external 1 flag}
+		{DW_AT_name main DW_FORM_string}
+		{MACRO_AT_func {main}}
+	    }
+	}
+    }
+
+    # The information that will remain in the .o file.
+    cu {} {
+	compile_unit {
+            {DW_AT_GNU_dwo_name ${gdb_test_file_name}.dwo DW_FORM_strp}
+	    {DW_AT_comp_dir .}
+	    {DW_AT_GNU_dwo_id 0x1234 DW_FORM_data8}
+	    {DW_AT_GNU_addr_base $debug_addr_base}
+        } {
+	    # Nothing.
+	}
+    }
+}
+
+# Compile both source files to create the executable.  As we compile
+# ASM_FILE we split out the debug information into the dwo file.
+set object_file [standard_output_file ${testfile}.o]
+if { [build_executable_and_dwo_files "${testfile}.exp" ${testfile} {nodebug} \
+	  [list $asm_file {nodebug split-dwo} ${object_file}] \
+	  [list $srcfile {nodebug}]] } {
+    return -1
+}
+
+# Now we can start GDB.
+clean_restart ${testfile}
+
+if ![runto_main] {
+    return -1
+}
+
+# Print the type of global_var.  This type information is entirely
+# fictional, it only exists in the DWARF.  If we don't have the DWARF
+# information then there's no way we can print this.
+gdb_test "p global_var" " = \\{aa = 0, bb = 0, cc = 0\\}"

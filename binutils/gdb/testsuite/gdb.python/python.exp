@@ -1,0 +1,563 @@
+# Copyright (C) 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It tests the mechanism
+# exposing values to Python.
+
+load_lib gdb-python.exp
+
+standard_testfile python.c python-1.c
+
+if {[build_executable $testfile.exp $testfile \
+	 [list $srcfile $srcfile2] debug] == -1} {
+    return -1
+}
+
+clean_restart
+
+set remote_source2_py [gdb_remote_download host \
+			   ${srcdir}/${subdir}/source2.py]
+
+# Do this instead of the skip_python_check.
+# We want to do some tests when Python is not present.
+gdb_test_multiple "python print (23)" "verify python support" {
+    -re "not supported.*$gdb_prompt $"	{
+      unsupported "python support is disabled"
+
+      # If Python is not supported, verify that sourcing a python script
+      # causes an error.
+      gdb_test "source $remote_source2_py" \
+	  "Error in sourced command file:.*" \
+	  "source source2.py when python disabled"
+
+      # Verify multi-line python commands cause an error.
+      gdb_test_multiline "multi-line python command" \
+	  "python" "" \
+	  "print (23)" "" \
+	  "end" "not supported.*"
+
+      return -1
+    }
+    -re "$gdb_prompt $"	{}
+}
+
+gdb_test_multiline "multi-line python command" \
+  "python" "" \
+  "print (23)" "" \
+  "end" "23"
+
+# Spawn interactive Python help from a multi-line command, thus, after
+# a secondary prompt.
+
+with_test_prefix "python interactive help" {
+    set test "python; help(); end"
+    gdb_test_multiple "python\nhelp()\nend" $test {
+	-re ".*help utility.*help> $" {
+	    pass $test
+
+	    # The "quit" must be seen on the output.  A buggy GDB
+	    # would not display it.
+	    gdb_test "quit" "^\r\nYou are now leaving help.*" "quit help"
+	}
+    }
+}
+
+gdb_test_multiline "show python command" \
+  "define zzq" "Type commands for definition of .* just \"end\"\\.*" \
+  "python" "" \
+  "print (23)" "" \
+  "end" "" \
+  "end" "" \
+  "show user zzq" "User command \"zzq\":.*  python.*print \\(23\\).*  end\r\n"
+
+gdb_test_multiline "indented multi-line python command" \
+  "python" "" \
+  "def foo ():" "" \
+  "  print ('hello, world!')" "" \
+  "foo ()" "" \
+  "end" "hello, world!"
+
+gdb_test "source $remote_source2_py" "yes" "source source2.py"
+
+gdb_test "source -s source2.py" "yes"
+
+set remote_source2_symlink_notpy \
+    [gdb_remote_download host ${srcdir}/${subdir}/source2.py \
+	 [standard_output_file "source2-symlink.notpy"]]
+set remote_source2_symlink_py [standard_output_file "source2-symlink.py"]
+remote_file host delete $remote_source2_symlink_py
+set status [remote_exec host "ln -sf $remote_source2_symlink_notpy $remote_source2_symlink_py"]
+set test "source -s source2-symlink.py"
+if {[lindex $status 0] == 0} {
+    gdb_test "source -s $remote_source2_symlink_py" "yes" $test
+} else {
+    unsupported "$test (host does not support symbolic links)"
+}
+
+gdb_test "python print (gdb.current_objfile())" "None"
+gdb_test "python print (gdb.objfiles())" "\\\[\\\]"
+
+# Test http://bugs.python.org/issue4434 workaround in configure.ac
+gdb_test "python import itertools; print ('IMPOR'+'TED')" "IMPORTED" "pythonX.Y/lib-dynload/*.so"
+
+gdb_test_no_output \
+    "python x = gdb.execute('printf \"%d\", 23', to_string = True)"
+gdb_test "python print (x)" "23"
+
+gdb_test "python gdb.execute('echo 2\\necho 3\\\\n\\n')" "23" \
+    "multi-line execute"
+gdb_test " " "23" "gdb.execute does not affect repeat history"
+
+# Test post_event.
+gdb_test_multiline "post event insertion" \
+  "python" "" \
+  "someVal = 0" "" \
+  "class Foo(object):" "" \
+  "  def __call__(self):" "" \
+  "    global someVal" "" \
+  "    someVal += 1" "" \
+  "gdb.post_event(Foo())" "" \
+  "end" ""
+
+gdb_test "python print (someVal)" "1" "test post event execution"
+gdb_test "python gdb.post_event(str(1))" "RuntimeError: Posted event is not callable.*" \
+    "test non callable class"
+
+send_gdb "python gdb.post_event(lambda: invalid())\n"
+gdb_expect {
+    -re "name 'invalid' is not defined" {
+	pass "test post_event error on receipt"
+    }
+    default {
+	fail "test post_event error on receipt"
+    }
+}
+
+# Test (no) pagination of the executed command.
+gdb_test "show height" {Number of lines gdb thinks are in a page is unlimited\.}
+set lines 10
+gdb_test_no_output "set height $lines"
+
+set test "verify pagination beforehand"
+gdb_test_multiple "python print (\"\\n\" * $lines)" $test {
+    -re "--Type <RET>" {
+	exp_continue
+    }
+    -re " for more, q to quit" {
+	exp_continue
+    }
+    -re ", c to continue without paging--$" {
+	pass $test
+    }
+}
+gdb_test "q" "Quit.*Error while executing Python.*" "verify pagination beforehand: q"
+
+gdb_test "python if gdb.execute('python print (\"\\\\n\" * $lines)', to_string=True) == \"\\n\" * [expr $lines + 1]: print (\"yes\")" "yes" "gdb.execute does not page"
+
+set test "verify pagination afterwards"
+gdb_test_multiple "python print (\"\\n\" * $lines)" $test {
+    -re "--Type <RET>" {
+	exp_continue
+    }
+    -re " for more, q to quit" {
+	exp_continue
+    }
+    -re ", c to continue without paging--$" {
+	pass $test
+    }
+}
+gdb_test "q" "Quit.*Error while executing Python.*" "verify pagination afterwards: q"
+
+gdb_test_no_output "set height 0"
+
+gdb_test_no_output "python a = gdb.execute('help', to_string=True)" "collect help from uiout"
+
+gdb_test "python print (a)" ".*aliases -- User-defined aliases of other commands.*" "verify help to uiout"
+
+# Test PR 12212, using InfThread.selected_thread() when no inferior is
+# loaded.
+gdb_py_test_silent_cmd "python nothread = gdb.selected_thread()" "Attempt to acquire thread with no inferior" 1
+gdb_test "python print (nothread is None)" "True" "ensure that no threads are returned"
+
+gdb_test_multiline "register atexit function" \
+    "python" "" \
+    "import atexit" "" \
+    "def printit(arg):" "" \
+    "  print (arg)" "" \
+    "atexit.register(printit, 'good bye world')" "" \
+    "end" ""
+
+send_gdb "quit\n"
+gdb_expect {
+    -re "good bye world" {
+	pass "atexit handling"
+    }
+    default {
+	fail "atexit handling"
+    }
+}
+
+# Start with a fresh gdb.
+clean_restart ${testfile}
+
+# The following tests require execution.
+
+if {![runto_main]} {
+    return 0
+}
+
+set lineno [gdb_get_line_number "Break to end."]
+runto $lineno
+
+# Test gdb.decode_line.
+gdb_test "python gdb.decode_line(\"main.c:43\")" \
+    "gdb.error: No source file named main.c.*" "test decode_line no source named main"
+
+with_test_prefix "test decode_line current location" {
+    gdb_py_test_silent_cmd "python symtab = gdb.decode_line()" "decode current line" 1
+    gdb_test "python print (len(symtab))" "2" "length of result"
+    gdb_test "python print (symtab\[0\])" "None" "no unparsed text"
+    gdb_test "python print (len(symtab\[1\]))" "1" "length of result locations"
+}
+
+# Test that decode_line with an empty string argument does not crash.
+gdb_py_test_silent_cmd "python symtab2 = gdb.decode_line('')" \
+    "test decode_line with empty string" 1
+
+if { [is_remote host] } {
+    set python_c [string_to_regexp "python.c"]
+} else {
+    set python_c [string_to_regexp "gdb.python/python.c"]
+}
+with_test_prefix "test decode_line" {
+    gdb_test "python print (symtab\[1\]\[0\].symtab)" ".*${python_c}" "current location filename"
+    gdb_test "python print (symtab\[1\]\[0\].line)" "$lineno" "current location line number"
+
+    gdb_py_test_silent_cmd "python symtab = gdb.decode_line(\"python.c:26 if foo\")" "python.c:26 decode" 1
+    gdb_test "python print (len(symtab))" "2" "python.c:26 length 2"
+    gdb_test "python print (symtab\[0\])" "if foo" "expression parse"
+    gdb_test "python print (len(symtab\[1\]))" "1" "python.c:26 length 1"
+    gdb_test "python print (symtab\[1\]\[0\].symtab)" ".*${python_c}" "python.c:26 filename"
+    gdb_test "python print (symtab\[1\]\[0\].line)" "26" "python.c:26 line number"
+
+    gdb_test "python gdb.decode_line(\"randomfunc\")" \
+	"gdb.error: Function \"randomfunc\" not defined.*" "randomfunc"
+    gdb_py_test_silent_cmd "python symtab = gdb.decode_line(\"func1\")" "func1()" 1
+    gdb_test "python print (len(symtab))" "2" "func1 length 2"
+    gdb_test "python print (len(symtab\[1\]))" "1" "func1 length 1"
+}
+
+if { [is_remote host] } {
+    set python_1_c [string_to_regexp "python-1.c"]
+} else {
+    set python_1_c [string_to_regexp "gdb.python/python-1.c"]
+}
+gdb_test "python print (symtab\[1\]\[0\].symtab)" ".*${python_1_c}" "test decode_line func1 filename"
+
+# Set a default value for func1_lineno in case we fail to fetch the line number
+# below.
+set func1_lineno "noline"
+
+# Fetch the line GDB thinks func1 starts at.  This may change depending
+# on the architecture and on how GDB handles the prologue of the function.
+gdb_test_multiple "info line func1" "info line func1" {
+    -re "Line ($decimal) of .* starts at address $hex <func1> and ends at $hex <func1\\+$decimal>\.\[\r\n\]+$gdb_prompt $" {
+	# Fetch the line number.
+	set func1_lineno $expect_out(1,string)
+    }
+}
+
+gdb_test "python print (symtab\[1\]\[0\].line)" "$func1_lineno" "test decode_line func1 line number"
+gdb_py_test_silent_cmd {python symtab = gdb.decode_line ("func1,func2")} \
+    "test decode_line func1,func2" 1
+gdb_test {python print (symtab[0])} ",func2" "stop at comma in linespec"
+
+with_test_prefix "test decode_line" {
+    gdb_py_test_silent_cmd "python symtab = gdb.decode_line(\"*0\")" "*0" 1
+    gdb_test "python print (len(symtab))" "2" "*0 result length"
+    gdb_test "python print (symtab\[0\])" "None" "*0 unparsed"
+    gdb_test "python print (len(symtab\[1\]))" "1" "*0 locations length"
+    gdb_test "python print (symtab\[1\]\[0\].symtab)" "None" "*0 filename"
+    gdb_test "python print (symtab\[1\]\[0\].pc)" "0" "*0 pc"
+}
+
+# gdb.write
+gdb_test "python print (sys.stderr)" ".*gdb._GdbFile (instance|object) at.*" "test stderr location"
+gdb_test "python print (sys.stdout)" ".*gdb._GdbFile (instance|object) at.*" "test stdout location"
+gdb_test "python gdb.write(\"Foo\\n\")" "Foo" "test default write"
+gdb_test "python gdb.write(\"Error stream\\n\", stream=gdb.STDERR)" "Error stream" "test stderr write"
+gdb_test "python gdb.write(\"Normal stream\\n\", stream=gdb.STDOUT)" "Normal stream" "test stdout write"
+
+if ![gdb_debug_enabled] {
+  gdb_test "python gdb.write(\"Log stream\\n\", stream=gdb.STDLOG)" "Log stream" "test stdlog write"
+}
+
+# Turn on full stack printing for subsequent tests.
+gdb_py_test_silent_cmd "set python print-stack full" \
+    "Set print-stack full for prompt tests" 1
+
+# Test prompt substituion
+
+gdb_test_multiline "prompt substitution" \
+  "python" "" \
+  "someCounter = 0" "" \
+  "def prompt(current):" "" \
+  "   global someCounter" "" \
+  "   if (current == \"testfake \"):" "" \
+  "      return None" "" \
+  "   someCounter = someCounter + 1" "" \
+  "   return \"py prompt \" + str (someCounter) + \" \"" "" \
+  "end" ""
+
+gdb_test_multiline "prompt substitution readline" \
+  "python" "" \
+  "pCounter = 0" "" \
+  "def program_prompt(current):" "" \
+  "   global pCounter" "" \
+  "   if (current == \">\"):" "" \
+  "      pCounter = pCounter + 1" "" \
+  "      return \"python line \" + str (pCounter) + \": \"" "" \
+  "   return None" "" \
+  "end" ""
+
+set newprompt "py prompt 1"
+set newprompt2 "py prompt 2"
+set testfake "testfake"
+
+gdb_test_multiple "python gdb.prompt_hook = prompt" "set the hook = prompt" {
+    -re "\[\r\n\]$newprompt $" {
+	pass $gdb_test_name
+    }
+}
+
+gdb_test_multiple "set prompt testfake " "set testfake prompt in GDB" {
+    -re "\[\r\n\]$testfake $" {
+	pass $gdb_test_name
+    }
+}
+
+gdb_test_multiple "show prompt" "show testfake prompt" {
+    -re "Gdb's prompt is \"$testfake \"..* $" {
+	pass $gdb_test_name
+    }
+}
+
+gdb_test_multiple "set prompt blah " "set blah in GDB" {
+    -re "\[\r\n\]$newprompt2 $" {
+	pass $gdb_test_name
+    }
+}
+
+gdb_test_multiple "python gdb.prompt_hook = None" "delete hook" {
+    -re "\[\r\n\]$newprompt2 $" {
+	pass $gdb_test_name
+    }
+}
+
+gdb_test_multiple "set prompt $gdb_prompt " "set default prompt" {
+    -re "\[\r\n\]$gdb_prompt $" {
+	pass $gdb_test_name
+    }
+}
+
+set working_dir ""
+gdb_test_multiple "pwd" "pwd" {
+    -re "Working directory (.*)\\.\[\r\n\]+$gdb_prompt $" {
+	set working_dir $expect_out(1,string)
+    }
+}
+
+gdb_test_multiple "python gdb.prompt_hook = program_prompt" "set the programming hook" {
+    -re "\[\r\n\]$gdb_prompt $" {
+	pass $gdb_test_name
+    }
+}
+
+gdb_test_multiple "python" "test we ignore substitution for seconday prompts" {
+    -re "\r\n>$" {
+	pass $gdb_test_name
+    }
+}
+
+gdb_test_multiple "end" "end programming" {
+    -re "\[\r\n\]$gdb_prompt $" {
+	pass $gdb_test_name
+    }
+}
+
+gdb_test_multiline "prompt substitution readline import" \
+  "python" "" \
+  "import gdb.command.prompt" "" \
+  "end" ""
+
+gdb_test_multiple "set extended-prompt one two three " \
+    "set basic extended prompt" {
+    -re "\[\r\n\]one two three $" {
+	pass $gdb_test_name
+    }
+}
+
+gdb_test_multiple "set extended-prompt \\w " \
+    "set extended prompt working directory" {
+    -re "\[\r\n\][string_to_regexp $working_dir] $" {
+	pass $gdb_test_name
+    }
+}
+
+gdb_test_multiple "set extended-prompt some param \\p{python print-stack} " \
+    "set extended prompt parameter" {
+    -re "\[\r\n\]some param full $" {
+	pass $gdb_test_name
+    }
+}
+
+# Start with a fresh gdb.
+clean_restart ${testfile}
+
+# The following tests require execution.
+
+if {![runto_main]} {
+    return 0
+}
+
+# print-stack settings
+gdb_test "show python print-stack" \
+    "The mode of Python stack printing on error is \"message\".*" \
+    "Test print-stack show setting. Default is message."
+gdb_py_test_silent_cmd "set python print-stack full" \
+    "Test print-stack set setting to full" 1
+gdb_test "show python print-stack" \
+    "The mode of Python stack printing on error is \"full\".*" \
+    "Test print-stack show setting to full"
+gdb_py_test_silent_cmd "set python print-stack none" \
+    "Test print-stack set setting to none" 1
+gdb_test "show python print-stack" \
+    "The mode of Python stack printing on error is \"none\".*" \
+    "test print-stack show setting to none"
+
+gdb_py_test_silent_cmd "set python print-stack message" \
+    "Test print-stack set setting to message" 1
+
+gdb_test_multiline "prompt substitution readline error_prompt" \
+  "python" "" \
+  "pCounter = 0" "" \
+  "def error_prompt(current):" "" \
+  "   raise RuntimeError(\"Python exception called\")" "" \
+  "end" ""
+
+gdb_test_multiple "python gdb.prompt_hook = error_prompt" "set the hook error_prompt" {
+    -re "Python Exception (exceptions.RuntimeError|<(type 'exceptions.|class ')RuntimeError'>): Python exception called\r\n$gdb_prompt $" {
+	pass $gdb_test_name
+    }
+}
+
+gdb_py_test_silent_cmd "python gdb.prompt_hook = None" \
+    "set the hook to default 1" 1
+
+gdb_py_test_silent_cmd "set python print-stack full" \
+    "set print-stack full for prompt error test" 1
+
+gdb_test_multiple "python gdb.prompt_hook = error_prompt" "set the hook error_prompt traceback" {
+    -re "Traceback.*File.*line.*RuntimeError.*Python exception called.*$gdb_prompt $" {
+	pass $gdb_test_name
+    }
+}
+
+gdb_py_test_silent_cmd "python gdb.prompt_hook = None" \
+    "set the hook to default 2" 1
+
+# Start with a fresh gdb.
+clean_restart ${testfile}
+
+# The following tests require execution.
+
+if {![runto_main]} {
+    return 0
+}
+
+runto [gdb_get_line_number "Break at func2 call site."]
+
+gdb_py_test_silent_cmd "python line = gdb.selected_frame().find_sal().line" "Get line number of func2 call site" 1
+
+gdb_py_test_silent_cmd "python pc_call = gdb.selected_frame().pc()" \
+    "Get pc of func2 call site" 1
+
+gdb_test "python print (gdb.find_pc_line(gdb.selected_frame().pc()).line == line)" "True" "test find_pc_line at func2 call site"
+
+gdb_py_test_silent_cmd "step" "Step into func2" 1
+gdb_py_test_silent_cmd "up" "Step out of func2" 1
+
+# The point of the following test is to see if gdb has advanced past the
+# location where the branch to a function was made.
+set test_name "test find_pc_line with resume address"
+
+gdb_py_test_silent_cmd "python pc_rtn = gdb.selected_frame().pc()" \
+    "Get pc at func2 return site" 1
+
+gdb_test "python print (pc_rtn > pc_call)" "True" \
+    "test resume address greater then call address"
+
+gdb_test "python print (gdb.find_pc_line(pc_rtn).line >= line)" "True" \
+    "test find_pc_line with resume address"
+gdb_test "python print (gdb.find_pc_line(pc_rtn).line == gdb.find_pc_line(gdb.Value(pc_rtn)).line)" \
+    "True" \
+    "test find_pc_line using Value"
+
+gdb_test_no_output "set variable \$cvar1 = 23" "set convenience variable"
+gdb_test "python print(gdb.convenience_variable('cvar1'))" "23"
+gdb_test "python print(gdb.convenience_variable('cvar2'))" "None"
+gdb_test_no_output "python gdb.set_convenience_variable('cvar1', 89)" \
+    "change convenience variable from python"
+gdb_test "python print(gdb.convenience_variable('cvar1'))" "89" \
+    "print new value of convenience variable from python"
+gdb_test "print \$cvar1" " = 89" \
+    "print new value of convenience variable from CLI"
+gdb_test_no_output "python gdb.set_convenience_variable('cvar3', -5)" \
+    "make convenience variable from python"
+gdb_test "python print(gdb.convenience_variable('cvar3'))" "-5" \
+    "print value of new convenience variable from python"
+gdb_test_no_output "python gdb.set_convenience_variable('cvar3', None)" \
+    "reset convenience variable from python"
+gdb_test "python print(gdb.convenience_variable('cvar3'))" "None" \
+    "print reset convenience variable from python"
+gdb_test "print \$cvar3" "= void" \
+    "print reset convenience variable from CLI"
+
+# Test PR 23669, the following would invoke the "commands" command instead of
+# "show commands".
+gdb_test "python gdb.execute(\"show commands\")" "$decimal  print \\\$cvar3.*"
+
+# Check if starti command is supported.
+if { [use_gdb_stub] == 0 } {
+    # Test that the from_tty argument to gdb.execute is effective. If
+    # False, the user is not prompted for decisions such as restarting the
+    # program, and "yes" is assumed. If True, the user is prompted.
+    # Case 1, from_tty=False.
+    gdb_test "python gdb.execute('starti', from_tty=False)" \
+	"Program stopped.*" \
+	"starti via gdb.execute, not from tty"
+
+    # Case 2, from_tty=True.
+    set test "starti via gdb.execute, from tty"
+    set question \
+	[multi_line \
+	     {The program being debugged has been started already\.} \
+	     {Start it from the beginning\? \(y or n\) $}]
+    gdb_test_multiple "python gdb.execute('starti', from_tty=True)" $test {
+	-re $question {
+	    gdb_test "y" "Starting program:.*" $gdb_test_name
+	}
+    }
+}

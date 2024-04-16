@@ -1,0 +1,128 @@
+# Copyright 2013-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile
+
+remote_file host delete [standard_output_file ${testfile}.dwp]
+if [remote_file host exists [standard_output_file ${testfile}.dwp]] {
+    unsupported "dwp file cannot be deleted"
+    return 0
+}
+if { [build_executable ${testfile}.exp ${testfile} ${srcfile}] == -1 } {
+    return -1
+}
+if ![remote_file host exists [standard_output_file ${testfile}.dwp]] {
+    unsupported "testsuite run does not produce dwp files"
+    return 0
+}
+
+set thelink "${testfile}-thelink"
+
+remote_file host delete [standard_output_file ${thelink}]
+remote_file host delete [standard_output_file ${thelink}.dwp]
+# file link is only Tcl 8.4+.
+remote_exec host "ln -sf ${testfile} [standard_output_file $thelink]"
+if ![remote_file host exists [standard_output_file $thelink]] {
+    unsupported "host does not support symbolic links (binary symlink is missing)"
+    return 0
+}
+if [remote_file host exists [standard_output_file $thelink.dwp]] {
+    unsupported "host does not support symbolic links (we tried to delete a file and it is still there)"
+    return 0
+}
+
+clean_restart "$testfile"
+
+gdb_test "ptype main" {type = int \(int, char \*\*\)} "binary default, dwp default"
+
+clean_restart "$thelink"
+
+gdb_test "ptype main" {type = int \(int, char \*\*\)} "binary symlink, dwp default"
+
+gdb_exit
+remote_exec host "mv -f [standard_output_file ${testfile}.dwp] [standard_output_file ${thelink}.dwp]"
+if [remote_file host exists [standard_output_file ${testfile}.dwp]] {
+    unsupported "host does not support symbolic links (binary symlink exists)"
+    return 0
+}
+if ![remote_file host exists [standard_output_file ${thelink}.dwp]] {
+    unsupported "host does not support symbolic links (dwp symlink is missing)"
+    return 0
+}
+
+clean_restart "$testfile"
+
+# This case cannot work.
+gdb_test "ptype main" {type = int \(\)} "binary default, dwp at symlink"
+
+clean_restart "$thelink"
+
+gdb_test "ptype main" {type = int \(int, char \*\*\)} "binary symlink, dwp at symlink"
+
+# Verify we can still find the dwp if we change directories and we specified
+# a relative path for the program.
+
+# This is clean_restart, but specifying a relative path to the binary.
+clean_restart
+gdb_test "cd [file dirname [standard_output_file ${thelink}]]" \
+    "Working directory .*"
+gdb_load "./${thelink}"
+
+gdb_test "cd .." "Working directory .*"
+
+gdb_test "ptype main" {type = int \(int, char \*\*\)} \
+    "relative path, binary symlink, dwp at symlink"
+
+# Rename the dwp file back to its original name.
+remote_exec host "mv -f [standard_output_file ${thelink}.dwp] [standard_output_file ${testfile}.dwp]"
+
+# N.B. At this point the active gdb is in, essentially, some random directory.
+# Restart a new copy if you add more tests here.
+
+# Now verify that the following scenario works:
+# dir1/real-binary-with-random-name
+# dir2/real-dwp-with-random-name
+# dir3/symlink-to-real-binary
+# dir3/symlink-to-real-binary.dwp
+
+set dwp_bin_dir [standard_output_file dwp-dir1]
+set dwp_dwp_dir [standard_output_file dwp-dir2]
+set dwp_symlink_dir [standard_output_file dwp-dir3]
+set dwp_real_binary "dwp-abc"
+set dwp_real_dwp "dwp-def"
+set dwp_symlink_binary "dwp-symlink-binary"
+set dwp_symlink_dwp "${dwp_symlink_binary}.dwp"
+
+remote_exec host "rm -rf ${dwp_bin_dir}"
+remote_exec host "rm -rf ${dwp_dwp_dir}"
+remote_exec host "rm -rf ${dwp_symlink_dir}"
+remote_exec host "mkdir ${dwp_bin_dir}"
+remote_exec host "mkdir ${dwp_dwp_dir}"
+remote_exec host "mkdir ${dwp_symlink_dir}"
+remote_exec host "cp [standard_output_file $testfile] ${dwp_bin_dir}/${dwp_real_binary}"
+remote_exec host "cp [standard_output_file ${testfile}.dwp] ${dwp_dwp_dir}/${dwp_real_dwp}"
+# We don't test for failure to create the symlink here.
+# We assume that if the above symlinks are created ok, these will be too.
+remote_exec host "ln -sf ${dwp_bin_dir}/${dwp_real_binary} ${dwp_symlink_dir}/${dwp_symlink_binary}"
+remote_exec host "ln -sf ${dwp_dwp_dir}/${dwp_real_dwp} ${dwp_symlink_dir}/${dwp_symlink_dwp}"
+
+clean_restart "${dwp_symlink_dir}/${dwp_symlink_binary}"
+
+if ![runto_main] {
+    return -1
+}
+
+gdb_test {print argv[0]} "/${dwp_symlink_binary}\"" \
+    "separate executable/dwp symlinks"

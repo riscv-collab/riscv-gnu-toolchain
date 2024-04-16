@@ -1,0 +1,99 @@
+# Copyright 2004-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Please email any bugs, comments, and/or additions to this file to:
+# bug-gdb@gnu.org
+
+# This file is part of the gdb testsuite.
+
+
+require {is_any_target i?86-*-* x86_64-*-*}
+
+standard_testfile .c
+
+set flags { debug }
+
+# C11 for _Alignas, gnu for asm.
+lappend flags additional_flags=-std=gnu11
+
+if { [test_compiler_info gcc*] || [test_compiler_info clang*] } {
+    lappend flags "additional_flags=-msse -I${srcdir}/.."
+}
+
+lappend_include_file flags $srcdir/lib/precise-aligned-alloc.c
+
+if { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable \
+	  $flags] != "" } {
+    unsupported "compiler does not support SSE"
+    return
+}
+
+clean_restart ${binfile}
+
+if {![runto_main]} {
+    return 0
+}
+
+send_gdb "print have_sse ()\r"
+gdb_expect {
+    -re ".. = 1\r\n$gdb_prompt " {
+        pass "check whether processor supports SSE"
+    }
+    -re ".. = 0\r\n$gdb_prompt " {
+        verbose "processor does not support SSE; skipping SSE tests"
+        return
+    }
+    -re ".*$gdb_prompt $" {
+        fail "check whether processor supports SSE"
+    }
+    timeout {
+        fail "check whether processor supports SSE (timeout)"
+    }
+}
+
+gdb_test "break [gdb_get_line_number "first breakpoint here"]" \
+         "Breakpoint .* at .*i386-sse.c.*" \
+         "set first breakpoint in main"
+gdb_continue_to_breakpoint "continue to first breakpoint in main"
+
+if [is_amd64_regs_target] {
+    set nr_regs 16
+} else {
+    set nr_regs 8
+}
+
+for { set r 0 } { $r < $nr_regs } { incr r } {
+    gdb_test "print \$xmm$r.v4_float" \
+        ".. = \\{$r, $r.25, $r.5, $r.75\\}.*" \
+        "check float contents of %xmm$r"
+    gdb_test "print \$xmm$r.v16_int8" \
+        ".. = \\{(-?\[0-9\]+, ){15}-?\[0-9\]+\\}.*" \
+        "check int8 contents of %xmm$r"
+}
+
+for { set r 0 } { $r < $nr_regs } { incr r } {
+    gdb_test "set var \$xmm$r.v4_float\[0\] = $r + 10" "" "set %xmm$r"
+}
+
+gdb_test "break [gdb_get_line_number "second breakpoint here"]" \
+         "Breakpoint .* at .*i386-sse.c.*" \
+         "set second breakpoint in main"
+gdb_continue_to_breakpoint "continue to second breakpoint in main"
+
+for { set r 0 } { $r < $nr_regs } { incr r } {
+    gdb_test "print data\[$r\]" \
+        ".. = \\{f = \\{[expr $r + 10], $r.25, $r.5, $r.75\\}\\}.*" \
+        "check contents of data\[$r\]"
+}

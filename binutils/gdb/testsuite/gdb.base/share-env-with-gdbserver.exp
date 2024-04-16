@@ -1,0 +1,252 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test doesn't make sense on native-gdbserver.
+require !use_gdb_stub
+
+standard_testfile
+
+if { [build_executable "failed to prepare" $testfile $srcfile debug] } {
+    return -1
+}
+
+set test_var_name "GDB_TEST_VAR"
+
+# Helper function that performs a check on the output of "getenv".
+#
+# - VAR_NAME is the name of the variable to be checked.
+#
+# - VAR_VALUE is the value expected.
+#
+# - TEST_MSG, if not empty, is the test message to be used by the
+#   "gdb_test".
+#
+# - EMPTY_VAR_P, if non-zero, means that the variable is not expected
+#   to exist.  In this case, VAR_VALUE is not considered.
+
+proc check_getenv { var_name var_value { test_msg "" } { empty_var_p 0 } } {
+    global hex decimal
+
+    if { $test_msg == "" } {
+	set test_msg "print result of getenv for $var_name"
+    }
+
+    if { $empty_var_p } {
+	set var_value_match "0x0"
+    } else {
+	set var_value_match "$hex \"$var_value\""
+    }
+
+    gdb_test "print my_getenv (\"$var_name\")" "\\\$$decimal = $var_value_match" \
+	$test_msg
+}
+
+# Helper function to re-run to main and breaking at the "break-here"
+# label.
+
+proc do_prepare_inferior { } {
+    global decimal hex
+
+    if { ![runto_main] } {
+	return -1
+    }
+
+    gdb_breakpoint [gdb_get_line_number "break-here"]
+
+    gdb_test "continue" "Breakpoint $decimal, main \\\(argc=1, argv=$hex\\\) at.*" \
+	"continue until breakpoint"
+}
+
+# Helper function that does the actual testing.
+#
+# - VAR_VALUE is the value of the environment variable.
+#
+# - VAR_NAME is the name of the environment variable.  If empty,
+#   defaults to $test_var_name.
+#
+# - VAR_NAME_MATCH is the name (regex) that will be used to query the
+#   environment about the variable (via getenv).  This is useful when
+#   we're testing variables with strange names (e.g., with an equal
+#   sign in the name) and we know that the variable will actually be
+#   set using another name.  If empty, defatults, to $var_name.
+#
+# - VAR_VALUE_MATCH is the value (regex) that will be used to match
+#   the result of getenv.  The rationale is the same as explained for
+#   VAR_NAME_MATCH.  If empty, defaults, to $var_value.
+
+proc do_test { var_value { var_name "" } { var_name_match "" } { var_value_match "" } } {
+    global binfile test_var_name
+
+    clean_restart $binfile
+
+    if { $var_name == "" } {
+	set var_name $test_var_name
+    }
+
+    if { $var_name_match == "" } {
+	set var_name_match $var_name
+    }
+
+    if { $var_value_match == "" } {
+	set var_value_match $var_value
+    }
+
+    if { $var_value != "" } {
+	gdb_test_no_output "set environment $var_name = $var_value" \
+	    "set $var_name = $var_value"
+    } else {
+	gdb_test "set environment $var_name =" \
+	    "Setting environment variable \"$var_name\" to null value." \
+	    "set $var_name to null value"
+    }
+
+    do_prepare_inferior
+
+    check_getenv "$var_name_match" "$var_value_match" \
+	"print result of getenv for $var_name"
+}
+
+with_test_prefix "long var value" {
+    do_test "this is my test variable; testing long vars; {}"
+}
+
+with_test_prefix "empty var" {
+    do_test ""
+}
+
+with_test_prefix "strange named var" {
+    # In this test we're doing the following:
+    #
+    #   (gdb) set environment 'asd =' = 123 43; asd b ### [];;;
+    #
+    # However, due to how GDB parses this line, the environment
+    # variable will end up named <'asd> (without the <>), and its
+    # value will be <' = 123 43; asd b ### [];;;> (without the <>).
+    do_test "123 43; asd b ### \[\];;;" "'asd ='" "'asd" \
+	[string_to_regexp "' = 123 43; asd b ### \[\];;;"]
+}
+
+# Test setting and unsetting environment variables in various
+# fashions.
+
+proc test_set_unset_vars { } {
+    global binfile
+
+    clean_restart $binfile
+
+    with_test_prefix "set 3 environment variables" {
+	# Set some environment variables
+	gdb_test_no_output "set environment A = 1" \
+	    "set A to 1"
+	gdb_test_no_output "set environment B = 2" \
+	    "set B to 2"
+	gdb_test_no_output "set environment C = 3" \
+	    "set C to 3"
+
+	do_prepare_inferior
+
+	# Check that the variables are known by the inferior
+	check_getenv "A" "1"
+	check_getenv "B" "2"
+	check_getenv "C" "3"
+    }
+
+    with_test_prefix "unset one variable, reset one" {
+	# Now, unset/reset some values
+	gdb_test_no_output "unset environment A" \
+	    "unset A"
+	gdb_test_no_output "set environment B = 4" \
+	    "set B to 4"
+
+	do_prepare_inferior
+
+	check_getenv "A" "" "" 1
+	check_getenv "B" "4"
+	check_getenv "C" "3"
+    }
+
+    with_test_prefix "unset two variables, reset one" {
+	# Unset more values
+	gdb_test_no_output "unset environment B" \
+	    "unset B"
+	gdb_test_no_output "set environment A = 1" \
+	    "set A to 1 again"
+	gdb_test_no_output "unset environment C" \
+	    "unset C"
+
+	do_prepare_inferior
+
+	check_getenv "A" "1"
+	check_getenv "B" "" "" 1
+	check_getenv "C" "" "" 1
+    }
+}
+
+with_test_prefix "test set/unset of vars" {
+    test_set_unset_vars
+}
+
+# Test that unsetting works.
+
+proc test_unset { } {
+    global hex decimal binfile gdb_prompt
+
+    clean_restart $binfile
+
+    do_prepare_inferior
+
+    set test_msg "check if unset works"
+    set found_home 0
+    gdb_test_multiple "print my_getenv (\"HOME\")" $test_msg {
+	-re "\\\$$decimal = $hex \".*\"\r\n$gdb_prompt $" {
+	    pass $test_msg
+	    set found_home 1
+	}
+	-re "\\\$$decimal = 0x0\r\n$gdb_prompt $" {
+	    untested $test_msg
+	}
+    }
+
+    if { $found_home == 1 } {
+	with_test_prefix "simple unset" {
+	    # We can do the test, because $HOME exists (and therefore can
+	    # be unset).
+	    gdb_test_no_output "unset environment HOME" "unset HOME"
+
+	    do_prepare_inferior
+
+	    # $HOME now must be empty
+	    check_getenv "HOME" "" "" 1
+	}
+
+	with_test_prefix "set-then-unset" {
+	    clean_restart $binfile
+
+	    # Test if setting and then unsetting $HOME works.
+	    gdb_test_no_output "set environment HOME = test" "set HOME as test"
+	    gdb_test_no_output "unset environment HOME" "unset HOME again"
+
+	    do_prepare_inferior
+
+	    check_getenv "HOME" "" "" 1
+	}
+    }
+}
+
+with_test_prefix "test unset of vars" {
+    test_unset
+}

@@ -1,0 +1,91 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test the case where we have so many completions that we require the
+# completions hash table within GDB to grow.  Make sure that afte the
+# hash table has grown we try to add duplicate entries into the
+# hash. This checks that GDB doesn't corrupt the hash table when
+# resizing it.
+#
+# In this case we create a test with more functions than the default
+# number of entires in the completion hash table (which is 200), then
+# complete on all function names.
+#
+# GDB will add all the function names from the DWARF, and then from
+# the ELF symbol table, this ensures that we should have duplicates
+# added after resizing the table.
+
+# Create a test source file and return the name of the file.  COUNT is
+# the number of dummy functions to create, this should be more than
+# the default number of entries in the completion hash table within
+# GDB (see gdb/completer.c).
+proc prepare_test_source_file { count } {
+    global gdb_test_file_name
+
+    set filename [standard_output_file "$gdb_test_file_name.c"]
+    set outfile [open $filename w]
+
+    puts $outfile "
+#define MAKE_FUNC(NUM) \\
+  void                 \\
+  func_ ## NUM (void)  \\
+  { /* Nothing.  */ }
+
+#define CALL_FUNC(NUM) \\
+  func_ ## NUM ()
+"
+
+    for { set i 0 } { $i < $count } { incr i } {
+	puts $outfile "MAKE_FUNC ([format {%03d} $i])"
+    }
+
+    puts $outfile "\nint\nmain ()\n{"
+    for { set i 0 } { $i < $count } { incr i } {
+	puts $outfile "  CALL_FUNC ([format {%03d} $i]);"
+    }
+
+    puts $outfile "  return 0;\n}"
+    close $outfile
+
+    return $filename
+}
+
+# Build a source file and compile it.
+set filename [prepare_test_source_file 250]
+standard_testfile $filename
+if {[prepare_for_testing "failed to prepare" "$testfile" $srcfile \
+	 { debug }]} {
+    return -1
+}
+
+# Start the test.
+if {![runto_main]} {
+    return
+}
+
+# We don't want to stop gathering completions too early.
+gdb_test_no_output "set max-completions unlimited"
+
+# Collect all possible completions, and check for duplictes.
+set completions [capture_command_output "complete break func_" ""]
+set duplicates 0
+foreach {-> name} [regexp -all -inline -line {^break (\w+\S*)} $completions] {
+    incr all_funcs($name)
+    if { $all_funcs($name) > 1 } {
+	incr duplicates
+	verbose -log "Duplicate entry for '$name' found"
+    }
+}
+gdb_assert { $duplicates == 0 } "duplicate check"

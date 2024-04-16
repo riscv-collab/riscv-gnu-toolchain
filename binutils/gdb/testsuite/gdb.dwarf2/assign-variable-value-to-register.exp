@@ -1,0 +1,84 @@
+# Copyright 2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test writing to a variable that is in a register that causes
+# gdbarch_value_to_register to be called.  This was introduced to test
+# PR 31231 (https://sourceware.org/bugzilla/show_bug.cgi?id=31231).
+
+# This test uses a hard-coded x86-64 DWARF register number, so restrict it to
+# x86-64.
+require is_x86_64_m64_target
+
+load_lib dwarf.exp
+
+standard_testfile main.c -dw.S
+set dwarf_file [standard_output_file $srcfile2]
+
+set st0_dwarf_regnum 33
+
+Dwarf::assemble $dwarf_file {
+    get_func_info main
+
+    cu {} {
+	DW_TAG_compile_unit {} {
+	    declare_labels int_label float_label
+
+	    int_label: DW_TAG_base_type {
+		{ DW_AT_name int }
+		{ DW_AT_byte_size 4 DW_FORM_udata }
+		{ DW_AT_encoding @DW_ATE_signed }
+	    }
+
+	    float_label: DW_TAG_base_type {
+		{ DW_AT_name float }
+		{ DW_AT_byte_size 4 DW_FORM_udata }
+		{ DW_AT_encoding @DW_ATE_float }
+	    }
+
+	    DW_TAG_subprogram {
+		{ DW_AT_name main }
+		{ DW_AT_low_pc $main_start DW_FORM_addr }
+		{ DW_AT_high_pc $main_end DW_FORM_addr }
+		{ DW_AT_type :$int_label }
+	    } {
+		DW_TAG_variable {
+		    { DW_AT_name foo }
+		    { DW_AT_type :$float_label }
+		    { DW_AT_location {
+			DW_OP_regx $::st0_dwarf_regnum
+		    } SPECIAL_expr }
+		}
+	    }
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" $testfile \
+	[list $srcfile $dwarf_file] {nodebug}] } {
+    return
+}
+
+if { ![runto_main] } {
+    return
+}
+
+# st0 is expected to be initialized to 0.
+gdb_test "p foo" " = 0" "print foo before"
+
+# Set foo.  This used to cause an internal error.
+gdb_test_no_output "set foo = 1234"
+
+# Confirm the value.
+gdb_test "p foo" " = 1234" "print foo after"

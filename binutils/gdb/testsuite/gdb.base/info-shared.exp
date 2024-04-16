@@ -1,0 +1,175 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require allow_shlib_tests
+
+standard_testfile
+
+set lib1name $testfile-solib1
+set srcfile_lib1 $srcdir/$subdir/$lib1name.c
+set binfile_lib1 [standard_output_file $lib1name.so]
+
+set lib2name $testfile-solib2
+set srcfile_lib2 $srcdir/$subdir/$lib2name.c
+set binfile_lib2 [standard_output_file $lib2name.so]
+
+if { [gdb_compile_shlib $srcfile_lib1 $binfile_lib1 {}] != "" } {
+    untested "failed to compile shared library 1"
+    return -1
+}
+
+if { [gdb_compile_shlib $srcfile_lib2 $binfile_lib2 {}] != "" } {
+    untested "failed to compile shared library 2"
+    return -1
+}
+
+set binfile_lib1_target [gdb_download_shlib $binfile_lib1]
+set binfile_lib2_target [gdb_download_shlib $binfile_lib2]
+
+set define2 -DSHLIB2_NAME=\"$binfile_lib2_target\"
+set define1 -DSHLIB1_NAME=\"$binfile_lib1_target\"
+
+set cflags "$define1 $define2"
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile \
+	  [list additional_flags=$cflags shlib_load]] } {
+    return -1
+}
+
+gdb_locate_shlib $binfile_lib1
+gdb_locate_shlib $binfile_lib2
+
+# Run "info sharedlibrary" and check for the presence or absence of
+# our libraries.
+proc check_info_shared { test expect1 expect2 } {
+    global lib1name
+    global lib2name
+    global gdb_prompt
+
+    set actual1 0
+    set actual2 0
+
+    gdb_test_multiple "info sharedlibrary" $test {
+	-re $lib1name {
+	    set actual1 1
+	    exp_continue
+	}
+	-re $lib2name {
+	    set actual2 1
+	    exp_continue
+	}
+	-re "\r\n$gdb_prompt $" {
+	    if { $actual1 == $expect1 && $actual2 == $expect2 } {
+		pass $test
+	    } else {
+		fail $test
+	    }
+	}
+    }
+}
+
+# Start the inferior, and check neither of the libraries are loaded at
+# the start.
+if ![runto_main] {
+    return 0
+}
+check_info_shared "info sharedlibrary #1" 0 0
+
+# Set up breakpoints.
+gdb_breakpoint "stop"
+gdb_breakpoint "foo" allow-pending
+gdb_breakpoint "bar" allow-pending
+
+# Run to the first stop and check that only the first library is loaded.
+gdb_continue_to_breakpoint "library load #1" "\\.?stop .*"
+check_info_shared "info sharedlibrary #2" 1 0
+
+# Run to the second stop and check that both libraries are loaded.
+gdb_continue_to_breakpoint "library load #2" "\\.?stop .*"
+check_info_shared "info sharedlibrary #3" 1 1
+
+# Check that the next stop is in foo.
+gdb_continue_to_breakpoint "library function #1" "\\.?foo .*"
+
+# Check that the next stop is in bar.
+gdb_continue_to_breakpoint "library function #2" "\\.?bar .*"
+
+# Restart the inferior and make sure there are no breakpoint reset
+# errors.  These can happen with the probes-based runtime linker
+# interface if the cache is not cleared correctly.
+set test "restart"
+gdb_run_cmd
+gdb_test_multiple "" $test {
+    -re {Start it from the beginning\? \(y or n\) $} {
+	send_gdb "y\n"
+	exp_continue
+    }
+    -re {Error in re-setting breakpoint} {
+	fail $test
+    }
+    -re "\r\n$gdb_prompt $" {
+	pass $test
+    }
+}
+
+# Check that neither library is loaded.
+check_info_shared "info sharedlibrary #4" 0 0
+
+# Run to the first stop and check that only the first library is loaded.
+gdb_continue_to_breakpoint "library load #3" "\\.?stop .*"
+check_info_shared "info sharedlibrary #5" 1 0
+
+# Run to the second stop and check that both libraries are loaded.
+gdb_continue_to_breakpoint "library load #4" "\\.?stop .*"
+check_info_shared "info sharedlibrary #6" 1 1
+
+# Check that the next stop is in foo.
+gdb_continue_to_breakpoint "library function #3" "\\.?foo .*"
+
+# Check that the next stop is in bar.
+gdb_continue_to_breakpoint "library function #4" "\\.?bar .*"
+
+# Run to the next stop and check that the first library has been unloaded.
+gdb_continue_to_breakpoint "library unload #1" "\\.?stop .*"
+check_info_shared "info sharedlibrary #7" 0 1
+
+# Run to the last stop and check that both libraries are gone.
+gdb_continue_to_breakpoint "library unload #2" "\\.?stop .*"
+check_info_shared "info sharedlibrary #8" 0 0
+
+with_test_prefix styled {
+    save_vars { env(TERM) } {
+	# We need an ANSI-capable terminal to get the output.
+	setenv TERM ansi
+
+	clean_restart $testfile
+
+	gdb_test_no_output "set style enabled off"
+	if {![runto_main]} {
+	    return 0
+	}
+	gdb_breakpoint "stop"
+	gdb_continue_to_breakpoint "library load #1" "\\.?stop .*"
+
+	# Simple test for "info sharedlibrary" styling.  Look for styled
+	# addresses and file name.
+	set addr [style $hex address]
+	# Use a non-greedy match here to avoid accidentally picking up
+	# other escape sequences.
+	set sofile [style ".*?" file]
+	gdb_test_no_output "set style enabled on"
+	gdb_test "info sharedlibrary" \
+	    "$addr\[ \t\]+$addr.*$sofile\r\n.*"
+    }
+}

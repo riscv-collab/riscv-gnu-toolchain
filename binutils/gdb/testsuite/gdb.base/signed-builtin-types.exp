@@ -1,0 +1,75 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require allow_shlib_tests
+
+standard_testfile .c -lib.c
+
+# Compile the shared library.
+set srcdso [file join $srcdir $subdir $srcfile2]
+set libname "lib${gdb_test_file_name}.so"
+set objdso [standard_output_file $libname]
+if {[gdb_compile_shlib $srcdso $objdso {debug}] != ""} {
+    untested "failed to compile dso"
+    return -1
+}
+
+# Build the test executable and runto main.
+set opts [list debug shlib=$objdso]
+if { [prepare_for_testing "failed to " $testfile $srcfile $opts] } {
+    return -1
+}
+
+if {![runto_main]} {
+    return -1
+}
+
+if {[readnow]} {
+    untested "this test checks for delayed symtab expansion"
+    return -1
+}
+
+# Use 'info sources' to check if the debug information for the shared
+# library has been fully expanded or not.  Return true if the debug
+# information has NOT been fully expanded (which is what we want for this
+# test).
+proc assert_shared_library_debug_not_fully_expanded {} {
+    gdb_test_lines "maint print objfiles $::libname" "" \
+	"Object file \[^\r\n\]*$::libname" \
+	-re-not "Symtabs:"
+}
+
+foreach_with_prefix type_name {"short" "int" "long" "char"} {
+    foreach_with_prefix type_prefix {"" "signed" "unsigned"} {
+	with_test_prefix "before sizeof expression" {
+	    # Check that the debug information for the shared library has
+	    # not yet been read in.
+	    assert_shared_library_debug_not_fully_expanded
+	}
+
+	# Evaluate a sizeof expression for a builtin type.  At one point GDB
+	# would fail to find the builtin type, and would then start
+	# expanding compilation units looking for a suitable debug entry,
+	# for some builtin types GDB would never find a suitable match, and
+	# so would end up expanding all available compilation units.
+	gdb_test "print/d sizeof ($type_prefix $type_name)" " = $decimal"
+
+	with_test_prefix "after sizeof expression" {
+	    # Check that the debug information for the shared library has not
+	    # yet been read in.
+	    assert_shared_library_debug_not_fully_expanded
+	}
+    }
+}

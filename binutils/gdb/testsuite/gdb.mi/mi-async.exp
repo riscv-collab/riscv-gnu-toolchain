@@ -1,0 +1,79 @@
+# Copyright 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+#
+# Test asynchronous Machine Interface (MI) responses.
+#
+
+# Because of the way this test is written, using 'start' and not using
+# mi_run_cmd, it ignores whatever target the rest of GDB testsuite is
+# using, and always tries to run natively.  So, don't do anything unless
+# we're actually testing native.
+require isnative
+if {![istarget *-linux*]} {
+  return
+}
+
+# Check if start command is supported.
+require !use_gdb_stub
+
+# The plan is for async mode to become the default but toggle for now.
+set saved_gdbflags $GDBFLAGS
+set GDBFLAGS [concat $GDBFLAGS " -ex \"set mi-async on\""]
+
+load_lib mi-support.exp
+
+standard_testfile basics.c
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug}] != "" } {
+     untested "failed to compile"
+     return -1
+}
+
+if {[mi_clean_restart $binfile]} {
+    return
+}
+
+# mi_gdb_test cannot be used for asynchronous commands because there are
+# two prompts involved and this can lead to a race condition.
+
+proc linux_async_tests {} {
+    global mi_gdb_prompt
+    global hex
+
+    set line_main_head     [gdb_get_line_number "main ("]
+    set line_main_body     [expr $line_main_head + 2]
+    set line_main_next     [expr $line_main_head + 3]
+
+    mi_send_resuming_command_raw "start" "start: send"
+    mi_expect_stop "breakpoint-hit" "main" "" ".*basics.c" "$line_main_body" { "" "disp=\"del\"" } "start: stop"
+
+    mi_send_resuming_command_raw "next" "CLI next: send"
+    mi_expect_stop "end-stepping-range" "main" "" ".*basics.c" "$line_main_next" "" "CLI next: stop"
+
+    mi_gdb_test "-exec-interrupt" \
+	"" \
+	""
+
+    mi_send_resuming_command_raw "start" "restart: send"
+    mi_expect_stop "breakpoint-hit" "main" "" ".*basics.c" "$line_main_body" { "" "disp=\"del\"" } "restart: stop"
+}
+
+
+linux_async_tests
+
+mi_gdb_exit
+
+set GDBFLAGS $saved_gdbflags

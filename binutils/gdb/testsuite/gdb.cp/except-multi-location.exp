@@ -1,0 +1,81 @@
+# Copyright 2019-2024 Free Software Foundation, Inc.
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Regression test for a GDB internal error that would trigger if a
+# "catch catch" catchpoint ended up with multiple locations.  This
+# testcase exercises that scenario by building the binary with
+# -static-libgcc/-static-libstdc++ and a shared library that depends
+# on the libstc++.so DSO (which is how GDB was built and revealed the
+# bug), and vice versa.
+
+require allow_shlib_tests
+
+# STATIC_BIN indicates whether to build the main binary with
+# -static-libgcc/-static-libstdc++.  STATIC_LIB is the same, but for
+# the shared library.
+proc test_multi_libstdcpp {static_bin static_lib} {
+    global srcdir subdir
+    global decimal hex
+
+    # Library file.
+    set libname "except-multi-location-lib"
+    set srcfile_lib ${srcdir}/${subdir}/${libname}.cc
+    set binfile_lib [standard_output_file ${libname}-$static_bin-$static_lib.so]
+    set lib_flags {debug c++}
+    if {$static_lib} {
+	lappend lib_flags additional_flags=-static-libgcc additional_flags=-static-libstdc++
+    }
+
+    # Binary file.
+    set testfile "except-multi-location-main"
+    set srcfile ${srcdir}/${subdir}/${testfile}.cc
+    set binfile [standard_output_file ${testfile}-$static_bin-$static_lib]
+    set bin_flags [list debug c++ shlib=${binfile_lib}]
+    if {$static_bin} {
+	lappend bin_flags additional_flags=-static-libgcc additional_flags=-static-libstdc++
+    }
+
+    if { [gdb_compile_shlib ${srcfile_lib} ${binfile_lib} $lib_flags] != ""
+	 || [gdb_compile ${srcfile} ${binfile} executable $bin_flags] != "" } {
+	untested "failed to compile"
+	return -1
+    }
+
+    clean_restart
+
+    gdb_load ${binfile}
+    gdb_load_shlib $binfile_lib
+
+    if ![runto_main] {
+	return 0
+    }
+
+    gdb_test "catch catch" "Catchpoint \[0-9\]+ \\(catch\\)"
+    gdb_test "catch throw" "Catchpoint \[0-9\]+ \\(throw\\)"
+    gdb_test "catch rethrow" "Catchpoint \[0-9\]+ \\(rethrow\\)"
+
+    set ws "\[ \t\]*"
+    gdb_test "info breakpoints" \
+	[multi_line \
+	     "${decimal}${ws}catchpoint${ws}keep${ws}y${ws}exception catch" \
+	     "${decimal}${ws}catchpoint${ws}keep${ws}y${ws}exception throw" \
+	     "${decimal}${ws}catchpoint${ws}keep${ws}y${ws}exception rethrow"]
+}
+
+# Try different static/not-static combinations.
+foreach_with_prefix static_lib {"0" "1"} {
+    foreach_with_prefix static_bin {"0" "1"} {
+	test_multi_libstdcpp $static_lib $static_bin
+    }
+}

@@ -1,0 +1,200 @@
+# This testcase is part of GDB, the GNU debugger.
+#
+# Copyright 2016-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Skip this test if btrace is disabled.
+
+require allow_btrace_tests allow_python_tests
+
+load_lib gdb-python.exp
+
+standard_testfile
+
+if [prepare_for_testing "failed to prepare" $testfile $srcfile] { return -1 }
+
+if {![runto_main]} {
+    return -1
+}
+
+with_test_prefix "no or double record" {
+    gdb_test "python print(gdb.current_recording())" "None"
+
+    gdb_test_no_output "python gdb.start_recording(\"btrace\")"
+    gdb_test "python gdb.start_recording(\"btrace\")" \
+	".*gdb\.error: The process is already being recorded\..*" \
+	"already recording"
+
+    gdb_test_no_output "python gdb.stop_recording()" "first"
+    gdb_test "python gdb.stop_recording()" \
+	".*gdb\.error: No recording is currently active\..*" "second"
+}
+
+with_test_prefix "preopened record btrace" {
+    gdb_test_no_output "record btrace"
+    gdb_test "python print(gdb.current_recording().method)" "btrace"
+    gdb_test "python print(gdb.current_recording().format)" "pt|bts"
+    gdb_test_no_output "python gdb.stop_recording()"
+}
+
+with_test_prefix "prepare record" {
+    gdb_test_no_output "python r = gdb.start_recording(\"btrace\")"
+    gdb_test "python print(r.method)" "btrace"
+    gdb_test "python print(r.format)" "pt|bts"
+    gdb_test "stepi 100" ".*"
+
+    # There's a HW bug affecting Processor Trace on some Intel processors.
+    # The bug was exposed by linux kernel commit 670638477aed
+    # ("perf/x86/intel/pt: Opportunistically use single range output mode"),
+    # added in version v5.5.0, and was worked around by commit ce0d998be927
+    # ("perf/x86/intel/pt: Fix sampling using single range output") in version
+    # 6.1.0.  Detect the kernel version range for which the problem may
+    # manifest.
+    set have_xfail 0
+    set v [linux_kernel_version]
+    if { $v != {} } {
+	set have_xfail \
+	    [expr [version_compare [list 5 5 0] <= $v] \
+		 && [version_compare $v < [list 6 1 0]]]
+    }
+    set nonl_re \[^\r\n\]
+    set xfail_re \
+	[join \
+	     [list \
+		  "warning: Decode error \\($nonl_re*\\) at instruction $decimal" \
+		  "\\(offset = $hex, pc = $hex\\):" \
+		  "$nonl_re*\\."]]
+    set xfail_re_2 \
+	[join \
+	     [list \
+		  "warning: Non-contiguous trace at instruction $decimal" \
+		  "\\(offset = $hex\\)\\."]]
+
+    set got_xfail 0
+    set cmd "python insn = r.instruction_history"
+    gdb_test_multiple $cmd "" {
+	-re "^[string_to_regexp $cmd]\r\n$::gdb_prompt $" {
+	    pass $gdb_test_name
+	}
+	-re -wrap "($xfail_re|$xfail_re_2)" {
+	    if { $have_xfail } {
+		xfail $gdb_test_name
+		set got_xfail 1
+	    } else {
+		fail $gdb_test_name
+	    }
+	}
+    }
+    if { $got_xfail } {
+	return
+    }
+
+    # Also handle the case that we're running into the hw bug without
+    # triggering a decode error.
+    gdb_test_multiple "python print(len(insn))" "" {
+	-re -wrap "100" {
+	    pass $gdb_test_name
+	}
+	-re -wrap "" {
+	    if { $have_xfail } {
+		xfail $gdb_test_name
+		set got_xfail 1
+	    } else {
+		fail $gdb_test_name
+	    }
+	}
+    }
+    if { $got_xfail } {
+	return
+    }
+
+    gdb_test_no_output "python call = r.function_call_history"
+    gdb_test_no_output "python i = insn\[0\]"
+    gdb_test_no_output "python c = call\[0\]"
+}
+
+with_test_prefix "replay begin" {
+    gdb_test "python print(r.replay_position)" "None"
+    gdb_test "python r.goto(r.begin)"
+    gdb_test "python print(r.replay_position.number)" "1"
+}
+
+with_test_prefix "replay end" {
+    gdb_test "python r.goto(r.end)"
+    gdb_test "python print(r.replay_position)" "None"
+}
+
+with_test_prefix "instruction " {
+    gdb_test "python print(i.number)" "1"
+    gdb_test "python print(i.sal)" "symbol and line for .*"
+    gdb_test "python print(i.pc)" "$decimal"
+    gdb_test "python print(repr(i.data))" "<memory at $hex>"
+    gdb_test "python print(i.decoded)" ".*"
+    gdb_test "python print(i.size)" "$decimal"
+    gdb_test "python print(i.is_speculative)" "False"
+}
+
+with_test_prefix "function call" {
+    gdb_test "python print(c.number)" "1"
+    gdb_test "python print(c.symbol)" "main"
+    gdb_test "python print(c.level)" "$decimal"
+    gdb_test "python print(len(c.instructions))" "$decimal"
+    gdb_test "python print(c.up)" "None"
+    gdb_test "python print(c.prev)" "None"
+    gdb_test "python print(c == c.next.prev)" "True"
+}
+
+with_test_prefix "list" {
+    gdb_test "python print(len(insn\[23:65\]))" "42"
+    gdb_test "python print(insn\[17:\]\[2\].number)" "20"
+    gdb_test "python print(i in insn)" "True"
+    gdb_test "python print(i in call)" "False"
+    gdb_test "python print(c in insn)" "False"
+    gdb_test "python print(c in call)" "True"
+    gdb_test "python print(insn.index(i))" "0"
+    gdb_test "python print(insn.count(i))" "1"
+}
+
+with_test_prefix "sublist" {
+    gdb_test_no_output "python s1 = insn\[3:72:5\]"
+    gdb_test_no_output "python s2 = s1\[2:13:3\]"
+    gdb_test_no_output "python s3 = s1\[13:2:-3\]"
+    gdb_test_no_output "python s4 = insn\[::-1\]"
+
+    gdb_test "python print(\[i.number for i in s1\])" "\\\[4, 9, 14, 19, 24, 29, 34, 39, 44, 49, 54, 59, 64, 69\\\]"
+    gdb_test "python print(\[i.number for i in s2\])" "\\\[14, 29, 44, 59\\\]"
+    gdb_test "python print(\[i.number for i in s3\])" "\\\[69, 54, 39, 24\\\]"
+
+    gdb_test "python print(len(s1))" "14"
+    gdb_test "python print(len(s2))" "4"
+    gdb_test "python print(len(s3))" "4"
+    gdb_test "python print(len(s4))" "100"
+
+    gdb_test "python print(s4\[5\].number)" "95"
+    gdb_test "python print(s4\[-5\].number)" "5"
+    gdb_test "python print(s4\[100\].number)" ".*IndexError.*"
+    gdb_test "python print(s4\[-101\].number)" ".*IndexError.*"
+}
+
+with_test_prefix "level" {
+    gdb_test_no_output "python gdb.stop_recording()"
+    gdb_test "break inner" "Breakpoint.*"
+    gdb_test "continue" "Continuing\..*"
+    gdb_test_no_output "record btrace"
+    gdb_test "step" "outer ().*" "step one"
+    gdb_test "step" "main ().*" "step two"
+    gdb_test "python print(gdb.current_recording().function_call_history\[0\].level)" "1"
+    gdb_test "python print(gdb.current_recording().function_call_history\[1\].level)" "0"
+}

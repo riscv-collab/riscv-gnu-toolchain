@@ -1,0 +1,94 @@
+# Copyright 2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Tests for filename completion.  Create a directory tree on the test
+# machine and try completing filenames within the tree.
+
+load_lib completion-support.exp
+
+# Setup a directory tree in which completion tests can be run.  The
+# structure is:
+#
+# root/			[ DIRECTORY ]
+#   aaa/		[ DIRECTORY ]
+#   bb1/		[ DIRECTORY ]
+#   bb2/		[ DIRECTORY ]
+#   cc1/		[ DIRECTORY ]
+#   cc2			[ FILE ]
+proc setup_directory_tree {} {
+    set root [standard_output_file "root"]
+
+    remote_exec host "mkdir -p ${root}"
+    remote_exec host "mkdir -p ${root}/aaa"
+    remote_exec host "mkdir -p ${root}/bb1"
+    remote_exec host "mkdir -p ${root}/bb2"
+    remote_exec host "mkdir -p ${root}/cc1"
+    remote_exec host "touch ${root}/cc2"
+
+    return $root
+}
+
+# Run filename completetion tests.  ROOT is the base directory as
+# returned from setup_directory_tree, though, if ROOT is a
+# sub-directory of the user's home directory ROOT might have been
+# modified to replace the $HOME prefix with a single "~" character.
+proc run_tests { root } {
+    test_gdb_complete_none "file ${root}/xx" \
+	"expand a non-existent filename"
+
+    test_gdb_complete_unique "file ${root}/a" \
+	"file ${root}/aaa/" "" false \
+	"expand a unique filename"
+
+    test_gdb_complete_multiple "file ${root}/" \
+	"b" "b" {
+	    "bb1/"
+	    "bb2/"
+	} "" "" false \
+	"expand multiple directory names"
+
+    test_gdb_complete_multiple "file ${root}/" \
+	"c" "c" {
+	    "cc1/"
+	    "cc2"
+	} "" "" false \
+	"expand mixed directory and file names"
+}
+
+gdb_start
+
+set root [setup_directory_tree]
+
+run_tests $root
+
+# This test relies on using the $HOME directory.  We could make this
+# work for remote hosts, but right now, this isn't supported.
+if {![is_remote host]} {
+
+    # The users home directory.
+    set home $::env(HOME)
+
+    # Check if ROOT is within the $HOME directory.  If it is then we can
+    # rerun the tests, but replacing the $HOME part with "~".
+    if { [string compare -length [string length $home] $root $home] == 0 } {
+	# Convert the $HOME prefix in to ~.
+	set tilde_root "~[string range $root [string length $home] end]"
+
+	with_test_prefix "with tilde" {
+	    # And rerun the tests.
+	    run_tests $tilde_root
+	}
+    }
+}

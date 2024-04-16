@@ -1,0 +1,199 @@
+# Copyright 1992-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file was written by Fred Fish. (fnf@cygnus.com)
+
+standard_testfile opaque0.c opaque1.c
+
+# Some tests require GCC.
+set gcc_compiled [is_c_compiler_gcc]
+
+if {[prepare_for_testing "failed to prepare" $testfile \
+	 [list $srcfile $srcfile2] debug]} {
+    return -1
+}
+
+#
+# Test basic opaque structure handling (statically).
+# The ordering of the tests is significant.  We first try the things that
+# might fail if gdb fails to connect the uses of opaque structures to
+# the actual opaque structure definition.
+
+# When we start up, gdb sets the file containing main() as the current
+# source file.  The actual structure foo is defined in a different file.
+# A pointer (foop) to an instance of the opaque struct is defined in the same
+# source file as main().  Ensure that gdb correctly "connected" the definition
+# in the other file with the pointer to the opaque struct in the file containing
+# "foop".
+
+# Define a procedure to set up an xfail for all targets that do not support
+# this sort of cross reference.
+# Any target gcc that has a DBX_NO_XREFS definition in its config file will
+# not support it (FIXME: Is this still true; I suspect maybe not).
+
+# Native alpha ecoff doesn't support it either.
+# I don't think this type of cross reference works for any COFF target
+# either.
+
+proc setup_xfail_on_opaque_pointer {} {
+	global gcc_compiled
+
+	setup_xfail "vax-*-*" "i*86-sequent-bsd*"
+       if {!$gcc_compiled} {
+               setup_xfail "alpha-*-*"
+       }
+}
+
+# This seems easier than trying to track different versions of xlc; I'm
+# not sure there is much rhyme or reason regarding which tests it fails
+# and which ones it passes.
+if {[istarget "rs6000-*-aix*"] && !$gcc_compiled} {
+    warning "xfails in opaque.exp may not be set up correctly for xlc"
+}
+
+setup_xfail_on_opaque_pointer
+gdb_test "whatis foop" \
+    "type = struct foo \[*\]+" \
+    "whatis on opaque struct pointer (statically)"
+
+
+# Ensure that we know the form of the structure that foop points to.
+
+setup_xfail_on_opaque_pointer
+if {!$gcc_compiled} { setup_xfail "rs6000-*-*" }
+gdb_test "ptype foop" \
+    "type = struct foo \{\[\r\n\]+    int a;\[\r\n\]+    int b;\[\r\n\]+\} \[*\]+" \
+    "ptype on opaque struct pointer (statically)"
+
+
+# An instance of the opaque structure (afoo) is defined in a different file.
+# Ensure that we can locate afoo and the structure definition.
+
+gdb_test "whatis afoo" \
+    "type = struct foo" \
+    "whatis on opaque struct instance (statically)"
+
+
+# Ensure that we know the form of "afoo".
+
+gdb_test "ptype afoo" \
+    "type = struct foo \{\[\r\n\]+    int a;\[\r\n\]+    int b;\[\r\n\]+\}" \
+    "ptype on opaque struct instance (statically)"
+
+
+# Ensure that we know what a struct foo looks like.
+
+gdb_test "ptype struct foo" \
+    "type = struct foo \{\[\r\n\]+    int a;\[\r\n\]+    int b;\[\r\n\]+\}" \
+    "ptype on opaque struct tagname (statically)"
+
+
+#
+# Done with static tests, now test dynamic opaque structure handling.
+# We reload the symbol table so we forget about anything we might
+# have learned during the static tests.
+#
+
+gdb_reinitialize_dir $srcdir/$subdir
+gdb_load ${binfile}
+
+# Run to main, where struct foo is incomplete.
+if ![runto_main] {
+    return
+}
+
+
+# The current source file is now the one containing main().  The structure foo
+# is defined in a different file, but we have a pointer to an instance of
+# the opaque structure in the current file.  Ensure we know it's type.
+
+setup_xfail_on_opaque_pointer
+gdb_test "whatis foop" \
+    "type = struct foo \[*\]+" \
+    "whatis on opaque struct pointer (dynamically)"
+
+
+# Ensure that we know the form of the thing foop points to.
+
+setup_xfail_on_opaque_pointer
+if {!$gcc_compiled} { setup_xfail "rs6000-*-*" }
+gdb_test "ptype foop" \
+    "type = struct foo \{\[\r\n\]+    int a;\[\r\n\]+    int b;\[\r\n\]+\} \[*\]+" \
+    "ptype on opaque struct pointer (dynamically) 1"
+
+gdb_test "whatis afoo" \
+    "type = struct foo" \
+    "whatis on opaque struct instance (dynamically) 1"
+
+
+# Ensure that we know the form of afoo, an instance of a struct foo.
+
+gdb_test "ptype afoo" \
+    "type = struct foo \{\[\r\n\]+    int a;\[\r\n\]+    int b;\[\r\n\]+\}" \
+    "ptype on opaque struct instance (dynamically) 1"
+
+
+# Ensure that we know the form of an explicit struct foo.
+
+if {!$gcc_compiled} { setup_xfail "rs6000-*-*" }
+gdb_test "ptype struct foo" \
+    "type = struct foo \{\[\r\n\]+    int a;\[\r\n\]+    int b;\[\r\n\]+\}" \
+    "ptype on opaque struct tagname (dynamically) 1"
+
+
+# Now reload the symbols again so we forget about anything we might
+# have learned reading the symbols during the previous tests.
+
+gdb_reinitialize_dir $srcdir/$subdir
+gdb_load ${binfile}
+
+# Run to getfoo, where struct foo is complete.
+if ![runto getfoo] {
+    perror "cannot run to breakpoint at getfoo"
+}
+
+
+# Ensure that we know what foop is.
+
+setup_xfail_on_opaque_pointer
+gdb_test "whatis foop" \
+    "type = struct foo \[*\]+" \
+    "whatis on opaque struct pointer (dynamically) 1"
+
+
+# Ensure that we know the form of the thing foop points to.
+
+setup_xfail_on_opaque_pointer
+gdb_test "ptype foop" \
+    "type = struct foo \{\[\r\n\]+    int a;\[\r\n\]+    int b;\[\r\n\]+\} \[*\]+" \
+    "ptype on opaque struct pointer (dynamically) 2"
+
+gdb_test "whatis afoo" \
+    "type = struct foo" \
+    "whatis on opaque struct instance (dynamically) 2"
+
+
+# Ensure that we know the form of afoo, an instance of a struct foo.
+
+gdb_test "ptype afoo" \
+    "type = struct foo \{\[\r\n\]+    int a;\[\r\n\]+    int b;\[\r\n\]+\}" \
+    "ptype on opaque struct instance (dynamically) 2"
+
+
+# Ensure that we know the form of an explicit struct foo.
+
+gdb_test "ptype struct foo" \
+    "type = struct foo \{\[\r\n\]+    int a;\[\r\n\]+    int b;\[\r\n\]+\}" \
+    "ptype on opaque struct tagname (dynamically) 2"

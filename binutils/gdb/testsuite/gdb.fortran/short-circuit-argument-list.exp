@@ -1,0 +1,138 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/> .
+
+# Test evaluating logical expressions that contain array references, function
+# calls and substring operations that are to be skipped due to short
+# circuiting.
+
+require allow_fortran_tests
+
+standard_testfile ".f90"
+
+if {[prepare_for_testing ${testfile}.exp ${testfile} ${srcfile} {debug f90}]} {
+    return -1
+}
+
+if {![runto [gdb_get_line_number "post_truth_table_init"]]} {
+    return
+}
+
+# Non-zero value to use as the function call count base. Using zero is avoided
+# as this is a common value in memory.
+set prime 17
+
+# Reset all call counts to the initial value ($prime).
+proc reset_called_flags { } {
+    global prime
+    foreach counter {no_arg no_arg_false one_arg two_arg array} {
+	gdb_test_no_output "set var calls%function_${counter}_called=$prime"
+    }
+}
+
+reset_called_flags
+
+# Vary conditional and input over the standard truth table.
+# Test that the debugger can evaluate expressions of the form
+# a(x,y) .OR./.AND. a(a,b) correctly.
+foreach_with_prefix truth_table_index {1 2 3 4} {
+    gdb_test "p truth_table($truth_table_index, 1) .OR. truth_table($truth_table_index, 2)" \
+	     "[expr $truth_table_index > 1 ? \".TRUE.\" : \".FALSE.\"]"
+}
+
+foreach_with_prefix truth_table_index {1 2 3 4} {
+    gdb_test "p truth_table($truth_table_index, 1) .AND. truth_table($truth_table_index, 2)" \
+	     "[expr $truth_table_index > 3 ? \".TRUE.\" : \".FALSE.\"]"
+}
+
+# Vary number of function arguments to skip.
+set argument_list ""
+foreach_with_prefix arg {"No" "One" "Two"} {
+    set trimmed_args [string trimright $argument_list ,]
+    set arg_lower [string tolower $arg]
+    gdb_test "p function_no_arg_false() .OR. function_${arg_lower}_arg($trimmed_args)" \
+	     " = .TRUE."
+    reset_called_flags
+    gdb_test "p .TRUE. .OR. function_${arg_lower}_arg($trimmed_args)" \
+	     " = .TRUE."
+    # Check that none of the short-circuited functions have been called.
+    gdb_test "p calls" \
+	     " = \\\( function_no_arg_called = $prime, function_no_arg_false_called = $prime, function_one_arg_called = $prime, function_two_arg_called = $prime, function_array_called = $prime \\\)"
+    append argument_list " .TRUE.,"
+}
+
+with_test_prefix "nested call not skipped" {
+    reset_called_flags
+    # Check nested calls
+    gdb_test "p function_one_arg(.FALSE. .OR. function_no_arg())" \
+	     " = .TRUE."
+    gdb_test "p calls" \
+	     " = \\\( function_no_arg_called = [expr $prime + 1], function_no_arg_false_called = $prime, function_one_arg_called = [expr $prime + 1], function_two_arg_called = $prime, function_array_called = $prime \\\)"
+}
+
+with_test_prefix "nested call skipped" {
+    gdb_test "p function_one_arg(.TRUE. .OR. function_no_arg())" \
+	     " = .TRUE."
+    gdb_test "p calls" \
+	     " = \\\( function_no_arg_called = [expr $prime + 1], function_no_arg_false_called = $prime, function_one_arg_called = [expr $prime + 2], function_two_arg_called = $prime, function_array_called = $prime \\\)"
+}
+
+# Vary number of components in the expression to skip.
+set expression "p .TRUE."
+foreach_with_prefix expression_components {1 2 3 4} {
+    set expression "$expression .OR. function_one_arg(.TRUE.)"
+    gdb_test "$expression" \
+	     " = .TRUE."
+}
+
+# Check parsing skipped substring operations.
+gdb_test "p .TRUE. .OR. binary_string(1)" " = .TRUE."
+
+# Check parsing skipped substring operations with ranges. These should all
+# return true as the result is > 0.
+# The second binary_string access is important as an incorrect pos update
+# will not be picked up by a single access.
+foreach_with_prefix range1 {"1:2" ":" ":2" "1:"} {
+    foreach_with_prefix range2 {"1:2" ":" ":2" "1:"} {
+	gdb_test "p .TRUE. .OR. binary_string($range1) .OR. binary_string($range2)" \
+		 " = .TRUE."
+    }
+}
+
+# Skip multi-dimensional arrays with ranges.
+foreach_with_prefix range1 {"1:2" ":" ":2" "1:"} {
+    foreach_with_prefix range2 {"1:2" ":" ":2" "1:"} {
+	gdb_test "p .TRUE. .OR. binary_string($range1) .OR. truth_table($range2, 1)" \
+		 " = .TRUE."
+    }
+}
+
+# Check evaluation of substring operations in logical expressions.
+gdb_test "p .FALSE. .OR. binary_string(1)" " = .FALSE."
+
+with_test_prefix "binary string skip" {
+    reset_called_flags
+    # Function call and substring skip.
+    gdb_test "p .TRUE. .OR. function_one_arg(binary_string(1))" \
+	     " = .TRUE."
+    gdb_test "p calls%function_one_arg_called" " = $prime"
+}
+
+with_test_prefix "array skip" {
+    # Function call and array skip.
+    reset_called_flags
+    gdb_test "p .TRUE. .OR. function_array(binary_string)" \
+	     " = .TRUE."
+    gdb_test "p calls%function_array_called" " = $prime"
+}

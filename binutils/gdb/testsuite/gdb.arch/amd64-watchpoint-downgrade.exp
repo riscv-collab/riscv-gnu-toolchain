@@ -1,0 +1,67 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Ask GDB to watch a large structure before the inferior has started,
+# GDB will assume it can place a hardware watchpoint.
+#
+# Once the inferior starts GDB realises that it is not able to watch
+# such a large structure and downgrades to a software watchpoint.
+#
+# This test checks that GDB emits a warnings about this downgrade, as
+# a software watchpoint will be significantly slower than a hardware
+# watchpoint, and the user probably wants to know about this.
+
+require target_can_use_run_cmd is_x86_64_m64_target
+
+# The remote/extended-remote target has its own set of flags to
+# control the use of s/w vs h/w watchpoints, this test isn't about
+# those, so skip the test in these cases.
+if {[target_info gdb_protocol] == "remote"
+    || [target_info gdb_protocol] == "extended-remote"} {
+    unsupported "using [target_info gdb_protocol] protocol"
+    return -1
+}
+
+standard_testfile
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile} \
+	  { debug }] } {
+    return -1
+}
+
+# Insert the watchpoint, it should default to a h/w watchpoint.
+gdb_test "watch global_var" \
+    "Hardware watchpoint $decimal: global_var"
+set num [get_integer_valueof "\$bpnum" "*UNKNOWN*" \
+	     "get watchpoint number"]
+
+# Watchpoint should initially show as a h/w watchpoint.
+gdb_test "info watchpoints" \
+    "\r\n$num\\s+hw watchpoint\\s+keep\\s+y\\s+global_var" \
+    "check info watchpoints before starting"
+
+# Start the inferior, GDB should emit a warning that the watchpoint
+# type has changed.
+gdb_test "starti" \
+    [multi_line \
+	 "warning: watchpoint $num downgraded to software watchpoint" \
+	 "" \
+	 "Program stopped\\." \
+	 ".*"]
+
+# Watchpoint should now have downgraded to a s/w watchpoint.
+gdb_test "info watchpoints" \
+    "\r\n$num\\s+watchpoint\\s+keep\\s+y\\s+global_var" \
+    "check info watchpoints after starting"

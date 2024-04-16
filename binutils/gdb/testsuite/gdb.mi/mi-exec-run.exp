@@ -1,0 +1,180 @@
+# Copyright 2016-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that -exec-run works as expected.  Exercises various testing
+# axes:
+#
+# - MI running on main UI vs separate UI.
+#
+# - inferior tty set to main tty vs separate tty.
+#
+# - forking the child failing and sending output to the right inferior
+#   terminal, vs the child not failing to start.
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+# The purpose of this testcase is to test the -exec-run command. If we
+# cannot use it, then there is no point in running this testcase.
+require !use_gdb_stub
+
+standard_testfile mi-start.c
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug}] != "" } {
+     untested "could not build mi-exec-run"
+     return -1
+}
+
+# The test proper.  INFTTY_MODE determines whether "set inferior-tty"
+# is in effect.  MI_MODE determines whether MI is run on the main UI,
+# or as a separate UI.  FORCE_FAIL is true when we want -exec-run to
+# fail and cause inferior output be sent to the inferior tty.
+
+proc test {inftty_mode mi_mode force_fail} {
+    global srcdir subdir binfile srcfile
+    global gdb_spawn_id gdb_main_spawn_id mi_spawn_id inferior_spawn_id
+    global decimal
+
+    mi_gdb_exit
+
+    set start_ops {}
+    if {$inftty_mode == "separate"} {
+	lappend start_ops "separate-inferior-tty"
+    }
+    if {$mi_mode == "separate"} {
+	lappend start_ops "separate-mi-tty"
+    }
+
+    if [mi_gdb_start $start_ops] {
+	return
+    }
+
+    if {$force_fail} {
+	# Disable the shell so that it's the first exec that fails,
+	# instead of the shell starting and then failing with some
+	# unspecified output.
+	mi_gdb_test "-gdb-set startup-with-shell off" ".*"
+	set bin $binfile.nox
+    } else {
+	set bin $binfile
+    }
+
+    mi_delete_breakpoints
+    mi_gdb_reinitialize_dir $srcdir/$subdir
+    mi_gdb_load ${bin}
+
+    # Useful for debugging:
+    verbose -log "Channels:"
+    verbose -log " inferior_spawn_id=$inferior_spawn_id"
+    verbose -log " gdb_spawn_id=$gdb_spawn_id"
+    verbose -log " gdb_main_spawn_id=$gdb_main_spawn_id"
+    verbose -log " mi_spawn_id=$mi_spawn_id"
+
+    if {$force_fail} {
+	set saw_perm_error 0
+	set saw_mi_error 0
+	set already_failed 0
+	set test "run failure detected"
+	send_gdb "-exec-run --start\n"
+
+	# Redirect through SPAWN_LIST global.  If the
+	# inferior_spawn_id is not the same as gdb_spawn_id, e.g. when
+	# testing with gdbserver, the gdbserver can exit after
+	# emitting it's error message.
+	#
+	# If inferior_spawn_id exits then we may see the eof from that
+	# spawn-id before we see the pattern from the gdb_spawn_id,
+	# which will kick us out of the gdb_expect, and cause us to
+	# fail the test.
+	#
+	# Instead we clean SPAWN_LIST once we've seen the expected
+	# pattern from that spawn-id, and after that we no longer care
+	# when gdbserver exits.
+	global spawn_list
+	set spawn_list "$inferior_spawn_id"
+
+	gdb_expect {
+	    -i spawn_list
+	    -re ".*Cannot exec.*Permission denied" {
+		set saw_perm_error 1
+		set spawn_list ""
+		verbose -log "saw perm error"
+		if {!$saw_mi_error} {
+		    exp_continue
+		}
+	    }
+	    -i "$gdb_spawn_id"
+	    -re "\\^error,msg=\"(During startup program exited with code 127|Running .* on the remote target failed)" {
+		set saw_mi_error 1
+		verbose -log "saw mi error"
+		if {!$saw_perm_error} {
+		    exp_continue
+		}
+	    }
+	    timeout {
+		set already_failed 1
+		fail "$test (timeout)"
+	    }
+	    -i "$gdb_main_spawn_id"
+	    eof {
+		set already_failed 1
+		fail "$test (eof)"
+	    }
+	}
+
+	if {$saw_perm_error && $saw_mi_error} {
+	    pass $test
+	} elseif {!$already_failed} {
+	    verbose -log "saw_perm_error=$saw_perm_error; saw_mi_error=$saw_mi_error"
+	    fail $test
+	}
+    } else {
+	mi_run_cmd "--start"
+	mi_expect_stop "breakpoint-hit" "main" "" ".*$srcfile" "$decimal" \
+	    { "" "disp=\"del\"" } "breakpoint hit reported on mi"
+
+	if {$mi_mode == "separate"} {
+	    # Check that the breakpoint hit is reported on the main
+	    # UI/CLI.  Note no prompt is expected.
+	    switch_gdb_spawn_id $gdb_main_spawn_id
+
+	    set test "breakpoint hit reported on console"
+	    gdb_test_multiple "" $test {
+		-re "Temporary breakpoint .*, main \\(\\) at .*$srcfile:$decimal.*return 0;" {
+		    pass $test
+		}
+	    }
+
+	    # Switch back to the MI UI.
+	    global mi_spawn_id
+	    switch_gdb_spawn_id $mi_spawn_id
+	}
+    }
+}
+
+# Create a not-executable copy of the program, in order to exercise
+# vfork->exec failing.
+gdb_remote_download host $binfile $binfile.nox
+remote_exec target "chmod \"a-x\" $binfile.nox"
+
+foreach_with_prefix inferior-tty {"main" "separate"} {
+    foreach_with_prefix mi {"main" "separate"} {
+	foreach_with_prefix force-fail {0 1} {
+	    test ${inferior-tty} ${mi} ${force-fail}
+	}
+    }
+}
+
+mi_gdb_exit

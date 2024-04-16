@@ -1,0 +1,112 @@
+# Copyright (C) 2010-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test various error conditions.
+
+set testfile "scm-error"
+
+load_lib gdb-guile.exp
+
+require allow_guile_tests
+
+# Start with a fresh gdb.
+gdb_exit
+gdb_start
+
+# Test error while loading .scm.
+
+set remote_guile_file_1 [gdb_remote_download host \
+			     ${srcdir}/${subdir}/${testfile}-1.scm]
+set remote_guile_file_2 [gdb_remote_download host \
+			     ${srcdir}/${subdir}/${testfile}-2.scm]
+
+gdb_test "source $remote_guile_file_1" \
+    "(ERROR: )?In procedure \[+\]: Wrong type.*: #f.*" \
+    "error loading scm file caught"
+
+gdb_test "p 1" " = 1" "no delayed error"
+
+# Test setting/showing the various states for "guile print-stack".
+
+gdb_test "show guile print-stack" \
+    "The mode of Guile exception printing on error is \"message\".*" \
+    "test print-stack show setting of default"
+gdb_test_no_output "set guile print-stack full" \
+    "test print-stack full setting"
+gdb_test "show guile print-stack" \
+    "The mode of Guile exception printing on error is \"full\".*" \
+    "test print-stack show setting to full"
+gdb_test_no_output "set guile print-stack none" \
+    "test print-stack none setting"
+gdb_test "show guile print-stack" \
+    "The mode of Guile exception printing on error is \"none\".*" \
+    "test print-stack show setting to none"
+# Reset back to default, just in case.
+gdb_test_no_output "set guile print-stack message" \
+    "reset print-stack to default, post set/show tests"
+
+# Test "set guile print-stack none".
+
+gdb_test_no_output "set guile print-stack none" \
+    "set print-stack to none, for error test"
+
+set test_name "no error printed"
+set command "guile (define x doesnt-exist)"
+gdb_test_multiple $command $test_name {
+    -re "Backtrace.*$gdb_prompt $" { fail $test_name }
+    -re "ERROR.*$gdb_prompt $"     { fail $test_name }
+    -re "$gdb_prompt $"            { pass $test_name }
+}
+
+# Test "set guile print-stack message".
+
+gdb_test_no_output "set guile print-stack message" \
+    "set print-stack to message, for error test"
+
+set test_name "error message printed"
+set command "guile (define x doesnt-exist)"
+gdb_test_multiple $command $test_name {
+    -re "Backtrace.*$gdb_prompt $" { fail $test_name }
+    -re "ERROR.*$gdb_prompt $"     { pass $test_name }
+}
+
+# Test "set guile print-stack full".
+
+gdb_scm_test_silent_cmd "source $remote_guile_file_2" ""
+
+gdb_test_no_output "set guile print-stack full" \
+    "set print-stack to full, for backtrace test"
+
+gdb_test "guile (define x (top-func 42))" \
+    "Guile Backtrace:.*top-func (42|_).*middle-func (42|_).*bottom-func (42|_).*" \
+    "backtrace printed"
+
+# Verify gdb-specific errors are printed properly.
+# i.e., each gdb error is registered to use init.scm:%error-printer.
+
+gdb_test_no_output "set guile print-stack message" \
+    "set print-stack to message, for error printing tests"
+
+gdb_test "guile (throw 'gdb:error \"subr\" \"misc error: ~a\" (list 42))" \
+    "ERROR: In procedure subr: misc error: 42.*"
+
+gdb_test "guile (throw 'gdb:invalid-object-error \"subr\" \"invalid object error: ~a\" (list 42))" \
+    "ERROR: In procedure subr: invalid object error: 42.*"
+
+gdb_test "guile (throw 'gdb:memory-error \"subr\" \"memory error: ~a\" (list 42))" \
+    "ERROR: In procedure subr: memory error: 42.*"
+
+gdb_test "guile (throw 'gdb:pp-type-error \"subr\" \"pp-type error: ~a\" (list 42))" \
+    "ERROR: In procedure subr: pp-type error: 42.*"

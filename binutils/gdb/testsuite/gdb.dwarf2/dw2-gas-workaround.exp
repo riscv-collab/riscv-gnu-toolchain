@@ -1,0 +1,92 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test line number information in various configurations.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+standard_testfile dw2-lines.c -dw2.S
+
+with_shared_gdb {
+    set func_info_vars [get_func_info bar]
+}
+
+# Helper function.
+proc line_for { l } {
+    global srcfile
+    set line [gdb_get_line_number "$l:" $srcfile]
+    return [expr $line + 1]
+}
+
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    declare_labels Llines
+    global srcdir subdir srcfile objdir
+    global func_info_vars
+    foreach var $func_info_vars {
+	global $var
+    }
+
+    cu { version 5 } {
+	compile_unit {
+	    {language @DW_LANG_Mips_Assembler}
+	    {name $srcfile}
+	    {comp_dir $objdir}
+	    {stmt_list $Llines DW_FORM_sec_offset}
+	    {producer "GNU AS 2.35.2"}
+	} {
+	    subprogram {
+		{external 1 flag}
+		{name bar}
+		{low_pc $bar_start addr}
+		{high_pc "$bar_start + $bar_len" addr}
+	    }
+	}
+    }
+
+    lines [list version 5] Llines {
+	set diridx1 [include_dir "${srcdir}/${subdir}"]
+	set diridx2 [include_dir "${srcdir}/${subdir}"]
+	file_name "$srcfile" $diridx1
+	file_name "$srcfile" $diridx2
+
+	program {
+	    DW_LNE_set_address bar_label
+	    line [line_for bar_label]
+	    DW_LNS_copy
+
+	    DW_LNE_set_address bar_label_2
+	    DW_LNE_end_sequence
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	  [list $srcfile $asm_file] {nodebug}] } {
+    return -1
+}
+
+gdb_test_no_output "set debug symtab-create 1"
+gdb_test_multiple "ptype bar" "" {
+    -re -wrap "name_for_id = $objdir/$srcfile\r\n.*" {
+	fail $gdb_test_name
+    }
+    -re -wrap "" {
+	pass $gdb_test_name
+    }
+}

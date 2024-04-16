@@ -1,0 +1,391 @@
+# Copyright 2011-2024 Free Software Foundation, Inc.
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "trace-support.exp"
+
+require allow_shlib_tests
+
+standard_testfile
+set executable $testfile
+
+set libipa [get_in_proc_agent]
+
+set lib_opts debug
+
+set additional_flags [list quiet debug shlib=$libipa shlib_load \
+			  "additional_flags=-lust -lurcu-bp" ]
+
+if { [gdb_compile $srcdir/$subdir/$srcfile $binfile executable $additional_flags] != ""} {
+    untested "UST library or headers are not installed"
+    return -1
+}
+
+# Test that the socket file is removed when GDB quits, detaches or
+# resumes the inferior until it exits.
+
+proc strace_remove_socket { action } {
+    with_test_prefix "remove_socket_after_${action}" {
+
+    global executable
+    global gdb_prompt
+    global libipa
+
+    # Restart with a fresh gdb.
+    clean_restart $executable
+    gdb_load_shlib $libipa
+    if ![runto_main] {
+	return -1
+    }
+
+    # List the markers in program.
+    gdb_test "info static-tracepoint-markers" \
+	".*ust/bar\[\t \]+n\[\t \]+.*ust/bar2\[\t \]+n\[\t \]+.*"
+
+    set pid ""
+    set test "collect pid"
+    gdb_test_multiple "info inferiors" $test {
+	-re "process (\[-0-9a-fx\]+) \[^\n\]*\n.*${gdb_prompt} $" {
+	    set pid $expect_out(1,string)
+	    pass $test
+	}
+	-re ".*${gdb_prompt} $" {
+	    fail $test
+	}
+    }
+
+    set test "socket file exists"
+    set socket_file "/tmp/gdb_ust${pid}"
+    set status [remote_exec target "sh -c { \[ -S $socket_file \] }"]
+
+    if { [lindex $status 0] == 0 } {
+	pass $test
+    } else {
+	fail $test
+    }
+
+    send_gdb "${action}\n"
+    gdb_expect {
+	-re "A debugging session is active.\r\n.*\r\nQuit anyway\\? \\(y or n\\) $" {
+	    send_gdb "y\n"
+	}
+	-re "Detaching .*, process .*$" {
+	}
+	-re "Continuing.*$" {
+	}
+    }
+
+    set exists 1
+
+    for {set i 1} {$i <= 5} {incr i} {
+	set status [remote_exec target "sh -c { \[ -S $socket_file \] }"]
+	if { [lindex $status 0] != 0 } {
+	    set exists 0
+	    break
+	}
+	sleep 1
+    }
+
+    if { ![is_remote target] && ![string equal $action "detach"] } {
+	setup_kfail gdb/14161 *-*-*
+    }
+
+    set test "socket file removed"
+
+    if { $exists } {
+	fail $test
+	# Since $socket_file is a socket file instead of a regular file, we
+	# can't use 'remote_file target delete $socket_file' here.
+	remote_exec target "sh -c \"rm -r $socket_file\""
+    } else {
+	pass $test
+    }
+
+    if { [string equal $action "quit"] && [is_remote host] } {
+	global gdb_spawn_id
+	# unset gdb_spawn_id here to avoid sending command 'quit' to GDB
+	# later in default_gdb_exit.
+	unset gdb_spawn_id
+    }
+}}
+
+proc strace_info_marker { } {
+    with_test_prefix "info_marker" {
+	global executable
+	global gdb_prompt
+	global libipa
+
+	# Restart with a fresh gdb.
+	clean_restart $executable
+	gdb_load_shlib $libipa
+	if ![runto_main] {
+	    return -1
+	}
+
+	# List the markers in program.  They should be disabled.
+	gdb_test "info static-tracepoint-markers" \
+	    ".*ust/bar\[\t \]+n\[\t \]+.*ust/bar2\[\t \]+n\[\t \]+.*"
+
+	# List all the thread.  It is expected to get three threads without
+	# any errors.
+	gdb_test_multiple "info threads 3 2 1" "info threads" {
+	    -re "3\[ \t\]+Thread .*2\[ \t\]+Thread .*1\[ \t\]+Thread .*${gdb_prompt} $" {
+		pass "info threads"
+	    }
+	}
+
+	# GDB detaches inferior so that the socket file can be removed.
+	gdb_test_multiple "detach" "detach" {
+	    -re "Detaching .*, process .*${gdb_prompt} $" {
+		pass "detach"
+	    }
+	}
+    }
+}
+
+proc strace_probe_marker { } {
+    with_test_prefix "probe_marker" {
+	global executable
+	global expect_out
+	global gdb_prompt
+	global hex
+	global libipa
+
+	# Restart with a fresh gdb.
+	clean_restart $executable
+	gdb_load_shlib $libipa
+	if ![runto_main] {
+	    return -1
+	}
+
+	gdb_test "strace -m ust/bar" \
+	    "Static tracepoint \[0-9\]+ at ${hex}: file.*"
+	gdb_test "strace -m ust/bar2" \
+	    "Static tracepoint \[0-9\]+ at ${hex}: file.*"
+	# Two trace markers should be enabled.
+	gdb_test "info static-tracepoint-markers" \
+	    "ust/bar\[\t \]+y\[\t \]+$hex .*ust/bar2\[\t \]+y\[\t \]+$hex.*"
+
+	gdb_breakpoint "end" qualified
+
+	gdb_test_no_output "tstart"
+	gdb_test "continue" "Continuing\\.\[ \r\n\]+Breakpoint.*" \
+	    "continue to end"
+	gdb_test_no_output "tstop"
+
+	gdb_test "tfind" "Found trace frame 0, tracepoint .*" \
+	    "tfind frame 0"
+	gdb_test "tfind" "Found trace frame 1, tracepoint .*" \
+	    "tfind frame 1"
+	gdb_test "tfind" \
+	    "Target failed to find requested trace frame\\..*"
+    }
+}
+
+proc strace_trace_on_same_addr { type } {
+    with_test_prefix "trace_same_addr $type" {
+	global executable
+	global expect_out
+	global gdb_prompt
+	global hex
+	global libipa
+
+	# Restart with a fresh gdb.
+	clean_restart $executable
+	gdb_load_shlib $libipa
+	if ![runto_main] {
+	    return -1
+	}
+
+	set marker_bar_addr ""
+	set marker_bar2_addr ""
+
+	# List the markers in program.  They should be disabled.
+	gdb_test_multiple "info static-tracepoint-markers" "info static-tracepoint-markers 1" {
+	    -re ".*ust/bar\[\t \]+n.*${gdb_prompt} $" {
+		set ignore ""
+
+		regexp "ust/bar\[\t \]+n\[\t \]+($hex) .*ust/bar2\[\t \]+n\[\t \]+($hex) " \
+		    "$expect_out(0,string)" ignore marker_bar_addr marker_bar2_addr
+
+		pass "info static-tracepoint-markers 1"
+	    }
+	    -re ".*${gdb_prompt} $" {
+		fail "info static-tracepoint-markers 1"
+	    }
+	}
+
+	gdb_test "strace -m ust/bar" "Static tracepoint \[0-9\]+ at ${hex}: file.*"
+	gdb_test "strace -m ust/bar2" "Static tracepoint \[0-9\]+ at ${hex}: file.*"
+	# Two trace markers should be enabled.
+	gdb_test "info static-tracepoint-markers" \
+	    "ust/bar\[\t \]+y\[\t \]+$hex .*ust/bar2\[\t \]+y\[\t \]+$hex.*" \
+	    "info static-tracepoint-markers 2"
+
+	# Set breakpoints or tracepoints.
+	set test "${type} on marker bar"
+	gdb_test_multiple "${type} *${marker_bar_addr}" $test {
+	    -re "\(Fast trace|Trace|Break\)point \[0-9\]+ at ${hex}: file.*\r\n$gdb_prompt $" {
+		pass $test
+	    }
+	    -re ".*\r\n$gdb_prompt $" {
+		if [string equal $type "ftrace"] {
+		    # The instruction may be not long enough to set a fast
+		    # tracepoint.  Skip the rest of this test.
+		    return -1
+		} else {
+		    fail $test
+		}
+	    }
+	}
+	set test "${type} on marker bar2"
+	gdb_test_multiple "${type} *${marker_bar2_addr}" $test {
+	    -re "\(Fast trace|Trace|Break\)point \[0-9\]+ at ${hex}: file.*" {
+		pass $test
+	    }
+	    -re ".*\r\n$gdb_prompt $" {
+		if [string equal $type "ftrace"] {
+		    # The instruction may be not long enough to set a fast
+		    # tracepoint.  Skip the rest of this test.
+		    return -1
+		} else {
+		    fail $test
+		}
+	    }
+	}
+
+	gdb_breakpoint "end" qualified
+
+	if [string equal $type "break"] {
+	    gdb_test "continue" "Continuing\\.\[ \r\n\]+Breakpoint.*" \
+		"continue to bar"
+	    gdb_test "continue" "Continuing\\.\[ \r\n\]+Breakpoint.*" \
+		"continue to bar2"
+	    gdb_test "continue" "Continuing\\.\[ \r\n\]+Breakpoint.*" \
+		"continue to end"
+	} else {
+
+	    gdb_test_no_output "tstart"
+	    gdb_test "continue" "Continuing\\.\[ \r\n\]+Breakpoint.*" \
+		"continue to end"
+	    gdb_test_no_output "tstop"
+
+	    gdb_test "tfind" "Found trace frame 0, tracepoint .*" \
+		"tfind frame 0"
+	    gdb_test "tfind" "Found trace frame 1, tracepoint .*" \
+		"tfind frame 1"
+	    gdb_test "tfind" "Found trace frame 2, tracepoint .*" \
+		"tfind frame 2"
+	    gdb_test "tfind" "Found trace frame 3, tracepoint .*" \
+		"tfind frame 3"
+	    gdb_test "tfind" \
+		"Target failed to find requested trace frame\\..*"
+	}
+    }
+}
+
+proc strace_trace_on_diff_addr { } {
+    with_test_prefix "trace_diff_addr" {
+
+	global executable
+	global expect_out
+	global gdb_prompt
+	global hex
+	global libipa
+
+	# Restart with a fresh gdb.
+	clean_restart $executable
+	gdb_load_shlib $libipa
+	if ![runto_main] {
+	    return -1
+	}
+
+	set marker_bar_addr ""
+	set marker_bar2_addr ""
+
+	# List the markers in program.  They should be disabled.
+	gdb_test_multiple "info static-tracepoint-markers" "info static-tracepoint-markers 1" {
+	    -re ".*ust/bar\[\t \]+n.*${gdb_prompt} $" {
+		set ignore ""
+
+		regexp "ust/bar\[\t \]+n\[\t \]+($hex) .*ust/bar2\[\t \]+n\[\t \]+($hex) " \
+		    "$expect_out(0,string)" ignore marker_bar_addr marker_bar2_addr
+
+		pass "info static-tracepoint-markers 1"
+	    }
+	    -re ".*${gdb_prompt} $" {
+		fail "info static-tracepoint-markers 1"
+	    }
+	}
+
+	gdb_test "strace -m ust/bar" "Static tracepoint \[0-9\]+ at ${hex}: file.*"
+
+	gdb_test "info static-tracepoint-markers" \
+	    "ust/bar\[\t \]+y\[\t \]+$hex .*ust/bar2\[\t \]+n\[\t \]+$hex.*" \
+	    "info static-tracepoint-markers 2"
+
+
+	# Set common tracepoint.
+	gdb_test "trace *${marker_bar2_addr}" \
+	    "Tracepoint \[0-9\]+ at ${hex}: file.*"
+
+	gdb_breakpoint "end" qualified
+
+	gdb_test_no_output "tstart"
+	gdb_test "continue" "Continuing\\.\[ \r\n\]+Breakpoint.*" \
+	    "continue to end"
+	gdb_test_no_output "tstop"
+
+	gdb_test "tfind" "Found trace frame 0, tracepoint .*" \
+	    "tfind frame 0"
+	gdb_test "tfind" "Found trace frame 1, tracepoint .*" \
+	    "tfind frame 1"
+	gdb_test "tfind" \
+	    "Target failed to find requested trace frame\\..*"
+    }
+}
+
+# Run it on x86/x86_64 linux.
+if { [istarget "x86_64-*-linux*"] || [istarget "i\[34567\]86-*-linux*"] } {
+    strace_info_marker
+    strace_remove_socket "quit"
+    strace_remove_socket "detach"
+    strace_remove_socket "continue"
+}
+
+clean_restart $executable
+gdb_load_shlib $libipa
+if ![runto_main] {
+    return -1
+}
+if {![gdb_target_supports_trace]} {
+    # At this point, the socket file has been created.  We must make sure it is
+    # removed when we return here.  GDB detaches inferior so that the socket
+    # file can be removed.  Note that GDB simply kill inferior doesn't remove
+    # the socket file.
+    gdb_test "detach" "Detaching .*, process .*"
+    unsupported "current target does not support trace"
+    return -1
+}
+
+# Double-check that marker ID ("-m") is not mistaken for an explicit location
+# flag.
+gdb_test "strace -m gdbfoobarbaz" \
+    "No known static tracepoint marker named gdbfoobarbaz"
+
+strace_probe_marker
+
+strace_trace_on_same_addr "trace"
+strace_trace_on_same_addr "ftrace"
+strace_trace_on_same_addr "break"
+strace_trace_on_diff_addr

@@ -1,0 +1,65 @@
+# Copyright 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require allow_hw_watchpoint_tests
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+standard_testfile .c
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug}] != "" } {
+     untested "failed to compile"
+     return
+}
+
+proc test_memory_changed_observer { mi_command } {
+    with_test_prefix "${mi_command}" {
+	global srcfile binfile
+
+	mi_clean_restart $binfile
+	mi_runto_main
+
+	set line_number [gdb_get_line_number "break here"]
+	mi_gdb_test "-break-insert ${srcfile}:${line_number}" \
+	    {\^done,bkpt=.number="2",type="breakpoint".*\}} \
+	    "set breakpoint"
+
+	mi_gdb_test "watch x" ".*" "set watchpoint"
+
+	mi_execute_to "exec-continue" "breakpoint-hit" "main" "" ".*" ".*" \
+	    { "" "disp=\"keep\"" } "breakpoint hit"
+
+	mi_execute_to "exec-continue" "watchpoint-trigger" "main" "" ".*" ".*" \
+	    { "" "wpt=\{number=\"3\",exp=\"x\"\},value=\{old=\"0\",new=\"42\"\}" } \
+	    "watchpoint hit"
+
+	mi_execute_to "exec-continue" "breakpoint-hit" "main" "" ".*" ".*" \
+	    { "" "disp=\"keep\"" } "breakpoint hit 2"
+
+	mi_gdb_test "-${mi_command}" {\^done} "set x"
+
+	mi_execute_to "exec-continue" "watchpoint-trigger" "main" "" ".*" ".*" \
+	    { "" "wpt=\{number=\"3\",exp=\"x\"\},value=\{old=\"1\",new=\"42\"\}" } \
+	    "watchpoint hit 2"
+
+	mi_gdb_exit
+    }
+}
+
+test_memory_changed_observer "data-write-memory-bytes &x \"01\""
+# We want to trigger a target memory write here, so the word size (4 or 8)
+# is not that important.
+test_memory_changed_observer "data-write-memory &x x 4 \"01\""

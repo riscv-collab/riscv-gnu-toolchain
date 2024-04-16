@@ -1,0 +1,58 @@
+# Copyright 2011-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "ada.exp"
+
+require allow_ada_tests gnat_runtime_has_debug_info
+
+standard_ada_testfile bla
+
+if {[gdb_compile_ada "${srcfile}" "${binfile}" executable [list debug additional_flags=-gnata ]] != "" } {
+  return -1
+}
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+mi_clean_restart $binfile
+
+###################################################
+# 2. Try catching conditionnal failed assertion.  #
+###################################################
+
+# Here is the scenario:
+#  - Restart the debugger from scratch, runto_main
+#    We'll catch assertions if Global_Var = 2
+#  - continue, we should see the second failed assertion
+#  - continue, the program exits.
+
+if {[mi_runto_main] < 0} {
+   return 0
+}
+
+mi_gdb_test "-catch-assert -c \"Global_Var = 2\"" \
+            "\\^done,bkptno=\"$decimal\",bkpt={.*disp=\"keep\",enabled=\"y\",what=\"failed Ada assertions\",.*,cond=\"Global_Var = 2\",.*}" \
+            "catch assert failures with condition"
+
+set bp_location [gdb_get_line_number "STOP" ${testdir}/bla.adb]
+mi_execute_to "exec-continue" \
+              "\"breakpoint-hit\",disp=\"keep\",bkptno=\"$decimal\"" \
+              "bla" "" ".*" "$bp_location" \
+              ".*" \
+              "continue to assert failure catchpoint hit"
+
+# Exit the inferior.
+mi_send_resuming_command "exec-continue" "continuing to inferior exit"
+mi_expect_stop "exited-normally" "" "" "" "" "" "exit normally"

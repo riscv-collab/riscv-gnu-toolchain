@@ -1,0 +1,99 @@
+# Copyright 2011-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is a dejagnu "board file" and is used to run the testsuite
+# with a remotehost and gdbserver using stdio for communicating through
+# ssh. Certain firewalls prevent gdbserver from using the usual mechanism of
+# listening on a remote port, so use stdio via ssh instead.
+#
+# To use this file:
+# bash$ cd ${build_dir}/gdb
+# bash$ make check RUNTESTFLAGS="--target_board=remote-stdio-gdbserver \
+#    REMOTE_USERNAME=... REMOTE_HOSTNAME=... \
+#    [REMOTE_TMPDIR=${remote_dir}] [GDBSERVER=${remote_gdbserver}]"
+
+load_board_description "stdio-gdbserver-base"
+
+# Test machine info. The generic_config gdbserver reads some of these
+# values from board_info, so this file must set them there.
+if [info exists REMOTE_USERNAME] {
+    set_board_info username $REMOTE_USERNAME
+} else {
+    set_board_info username unspecified_username
+}
+if [info exists REMOTE_HOSTNAME] {
+    set_board_info hostname $REMOTE_HOSTNAME
+} else {
+    set_board_info hostname unspecified_hostname
+}
+
+set_board_info rsh_prog /usr/bin/ssh
+set_board_info rcp_prog /usr/bin/scp
+
+# Some remote machines don't have writable home directories.
+if [info exists REMOTE_TMPDIR] {
+    set_board_info remotedir $REMOTE_TMPDIR
+} else {
+    # Set remotedir by default, to force remote_download target to give an
+    # absolute file name.
+    save_vars {rsh_cmd res} {
+	set rsh_cmd \
+	    [join \
+		 [list \
+		      [board_info $board rsh_prog] \
+		      -l [board_info $board username] \
+		      [board_info $board hostname]]]
+	set res [remote_exec build $rsh_cmd pwd]
+	if { [lindex $res 0] != 0 } {
+	    error "Couldn't set remotedir using pwd"
+	}
+	set_board_info remotedir [string trim [lindex $res 1]]
+    }
+}
+
+if [info exists GDBSERVER] {
+    unset_board_info gdb_server_prog
+    set_board_info gdb_server_prog $GDBSERVER
+}
+
+proc get_remote_login { } {
+    set result ""
+    if {[board_info [target_info name] exists username]} {
+	append result "[board_info [target_info name] username]@"
+    }
+    if {[board_info [target_info name] exists hostname]} {
+	append result "[board_info [target_info name] hostname]"
+    }
+    return $result
+}
+
+proc get_target_remote_pipe_cmd { } {
+    set target_exec [gdbserver_download_current_prog]
+    set rsh_cmd "[board_info [target_info name] rsh_prog] [get_remote_login]"
+    set gdbserver "[board_info [target_info name] gdb_server_prog]"
+    return "$rsh_cmd $gdbserver --once stdio $target_exec"
+}
+
+proc ${board}_spawn { board cmd } {
+    global board_info
+
+    set remote [board_info $board hostname]
+    set username [board_info $board username]
+    set RSH [board_info $board rsh_prog]
+
+    spawn $RSH -t -l $username $remote $cmd
+    set board_info($board,fileid) $spawn_id
+    return $spawn_id
+}

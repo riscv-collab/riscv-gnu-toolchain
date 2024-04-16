@@ -1,0 +1,145 @@
+# Copyright 2011-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is a dejagnu "board file" and is used to run the testsuite
+# natively with gdbserver, in extended-remote mode.
+#
+# To use this file:
+# bash$ cd ${build_dir}/gdb
+# bash$ make check RUNTESTFLAGS="--target_board=native-extended-gdbserver"
+
+load_generic_config "extended-gdbserver"
+load_board_description "gdbserver-base"
+load_board_description "local-board"
+
+# We will be using the extended GDB remote protocol.
+set_board_info gdb_protocol "extended-remote"
+
+send_user "configuring for gdbserver local testing (extended-remote)\n"
+
+# We must load this explicitly here, and rename the procedures we want
+# to override.  If we didn't do this, given that mi-support.exp is
+# loaded later in the test files, the procedures loaded then would
+# override our definitions.
+load_lib mi-support.exp
+
+# Overriden in order to start a "gdbserver --multi" instance whenever
+# GDB is started.  Note nothing is needed for gdb_exit, since
+# gdbserver is started with --once, causing it to exit once GDB
+# disconnects.
+proc gdb_start { } {
+    # Spawn GDB.
+    default_gdb_start
+
+    # And then GDBserver, ready for extended-remote mode.
+    gdbserver_start_multi
+
+    return 0
+}
+
+# Likewise, for MI.
+#
+if { [info procs extended_gdbserver_mi_gdb_start] == "" } {
+    rename mi_gdb_start extended_gdbserver_mi_gdb_start
+}
+proc mi_gdb_start { args } {
+    global gdbserver_reconnect_p
+
+    # Spawn GDB.
+    set res [eval extended_gdbserver_mi_gdb_start $args]
+    if { $res } {
+	return $res
+    }
+
+    # And then spawn GDBserver and connect to it in extended-remote
+    # mode, unless the test wants to explicitly test reconnection.
+    if {![info exists gdbserver_reconnect_p] || !$gdbserver_reconnect_p} {
+	mi_gdbserver_start_multi
+    }
+    return 0
+}
+
+# Helper that runs "set remote exec-file" with the last loaded file.
+
+proc extended_gdbserver_load_last_file {} {
+    global gdb_prompt
+    global last_loaded_file
+
+    send_gdb "set remote exec-file $last_loaded_file\n"
+    gdb_expect {
+	-re "$gdb_prompt $" {}
+	timeout {
+	    perror "couldn't set the remote exec-file (timed out)."
+	    return -1
+	}
+    }
+
+    return 0
+}
+
+# Overriden in order to set the remote exec-file whenever a file is
+# loaded to gdb.
+#
+if { [info procs extended_gdbserver_gdb_file_cmd] == "" } {
+    rename gdb_file_cmd extended_gdbserver_gdb_file_cmd
+}
+proc gdb_file_cmd { arg {kill_flag 1} } {
+    if [extended_gdbserver_gdb_file_cmd $arg $kill_flag] {
+	return -1
+    }
+    return [extended_gdbserver_load_last_file]
+}
+
+proc gdb_reload { {inferior_args {}} } {
+    return [extended_gdbserver_load_last_file]
+}
+
+# With the two procedure overrides above, it shouldn't be necessary to
+# override this one too.  However, not doing so regresses
+# gdb.base/dbx.exp.  See comments above gdb.base/dbx.exp:gdb_file_cmd.
+# Once testing of the "symbol-file"/"exec-file" commands is moved out
+# to a separate non-dbx testcase, we should be able to remove this.
+proc gdb_load { arg } {
+    if { $arg != "" } {
+	if {[gdb_file_cmd $arg]} { return -1 }
+    }
+
+    return [extended_gdbserver_load_last_file]
+}
+
+
+# Likewise, for MI.
+#
+if { [info procs extended_gdbserver_mi_gdb_load] == "" } {
+    rename mi_gdb_load extended_gdbserver_mi_gdb_load
+}
+proc mi_gdb_load { arg } {
+    global mi_gdb_prompt
+
+    set res [extended_gdbserver_mi_gdb_load $arg]
+    if {$res} { return -1 }
+
+    send_gdb "100-gdb-set remote exec-file $arg\n"
+    gdb_expect 10 {
+	-re ".*100-gdb-set remote exec-file $arg\r\n100\\\^done\r\n$mi_gdb_prompt$" {
+	    verbose "set the remote exec-file to $arg."
+	}
+	timeout {
+	    perror "couldn't set the remote exec-file (timed out)."
+	}
+    }
+
+    return 0
+}

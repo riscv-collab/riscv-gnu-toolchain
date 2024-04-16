@@ -1,0 +1,157 @@
+//Original:/proj/frio/dv/testcases/core/c_dsp32mac_dr_a1a0_m/c_dsp32mac_dr_a1a0_m.dsp
+// Spec Reference: dsp32mac dr_a1a0 m
+# mach: bfin
+
+.include "testutils.inc"
+	start
+
+	A1 = A0 = 0;
+	R0 = 0;
+	ASTAT = R0;
+
+// The result accumulated in A       , and stored to a reg half
+	imm32 r0, 0x13545abd;
+	imm32 r1, 0xb2bcfec7;
+	imm32 r2, 0xc1348679;
+	imm32 r3, 0xd0049007;
+	imm32 r4, 0xefbc5569;
+	imm32 r5, 0xcd35560b;
+	imm32 r6, 0xe00c807d;
+	imm32 r7, 0xf78e9008;
+	A1 = A0 = 0;
+	R6.H = (A1 += R0.L * R0.L) (M), R6.L = (A0 = R0.L * R0.L);
+	P1 = A1.w;
+	P2 = A0.w;
+	R1.H = (A1 += R2.L * R3.L) (M), R1.L = (A0 -= R2.H * R3.L);
+	P3 = A1.w;
+	P4 = A0.w;
+	R2.H = (A1 -= R4.L * R5.L) (M), R2.L = (A0 -= R4.H * R5.H);
+	P5 = A1.w;
+	FP = A0.w;
+	R3.H = (A1 += R0.L * R7.L) (M), R3.L = (A0 += R0.L * R7.H);
+	R4 = A1.w;
+	R5 = A0.w;
+	CHECKREG r0, 0x13545ABD;
+	CHECKREG r1, 0xDBCA0964;
+	CHECKREG r2, 0xBF1502EF;
+	CHECKREG r3, 0xF222FCF3;
+	CHECKREG r4, 0xF222613D;
+	CHECKREG r5, 0xFCF2D20E;
+	CHECKREG r6, 0x20294053;
+	CHECKREG r7, 0xF78E9008;
+	CHECKREG p1, 0x20296F89;
+	CHECKREG p2, 0x4052DF12;
+	CHECKREG p3, 0xDBCA2CD8;
+	CHECKREG p4, 0x0963CE3A;
+	CHECKREG p5, 0xBF153B55;
+	CHECKREG fp, 0x02EF7262;
+
+	imm32 r0, 0x13545abd;
+	imm32 r1, 0x22bcfec7;
+	imm32 r2, 0x43348679;
+	imm32 r3, 0x50049007;
+	imm32 r4, 0x6fbc5569;
+	imm32 r5, 0x7d35560b;
+	imm32 r6, 0x800c807d;
+	imm32 r7, 0xf98e9008;
+	A1 = A0 = 0;
+	R0.H = (A1 += R1.L * R0.H) (M), R0.L = (A0 -= R1.L * R0.L);
+	P1 = A1.w;
+	P2 = A0.w;
+	R6.H = (A1 += R2.L * R2.H) (M), R6.L = (A0 = R2.H * R2.L);
+	P3 = A1.w;
+	P4 = A0.w;
+	R2.H = (A1 -= R4.L * R5.H) (M), R2.L = (A0 += R4.H * R5.H);
+	P5 = A1.w;
+	FP = A0.w;
+	R3.H = (A1 += R3.L * R7.H) (M), R3.L = (A0 -= R3.L * R7.H);
+	R4 = A1.w;
+	R5 = A0.w;
+	CHECKREG r0, 0xFFE800DE;
+	CHECKREG r1, 0x22BCFEC7;
+	CHECKREG r2, 0xB63B2D7E;
+	CHECKREG r3, 0x800027DA;
+	CHECKREG r4, 0x49141905;
+	CHECKREG r5, 0x27DA6D3C;
+	CHECKREG r6, 0xE001C032;
+	CHECKREG r7, 0xF98E9008;
+	CHECKREG p1, 0xFFE85E4C;
+	CHECKREG p2, 0x00DDE22A;
+	CHECKREG p3, 0xE00159E0;
+	CHECKREG p4, 0xC031F728;
+	CHECKREG p5, 0xB63B6623;
+	CHECKREG fp, 0x2D7DD300;
+
+	imm32 r0, 0x13545abd;
+	imm32 r1, 0x42bcfec7;
+	imm32 r2, 0x51348679;
+	imm32 r3, 0x60049007;
+	imm32 r4, 0x7fbc5569;
+	imm32 r5, 0x8d35560b;
+	imm32 r6, 0x900c807d;
+	imm32 r7, 0xa78e9008;
+	A1 = A0 = 0;
+	R0.H = (A1 += R1.H * R0.L) (M), R0.L = (A0 = R1.L * R0.L);
+	P1 = A1.w;
+	P2 = A0.w;
+	R1.H = (A1 -= R2.H * R3.L) (M), R1.L = (A0 -= R2.H * R3.L);
+	P3 = A1.w;
+	P4 = A0.w;
+	R2.H = (A1 -= R4.H * R5.L) (M), R2.L = (A0 += R4.H * R5.H);
+	P5 = A1.w;
+	FP = A0.w;
+	R3.H = (A1 += R6.H * R7.L) (M), R3.L = (A0 += R6.L * R7.H);
+	R4 = A1.w;
+	R5 = A0.w;
+	CHECKREG r0, 0x17A7FF22;
+	CHECKREG r1, 0xE9F8462B;
+	CHECKREG r2, 0xBF09D39D;
+	CHECKREG r3, 0x800C2BB9;
+	CHECKREG r4, 0x800C7FAC;
+	CHECKREG r5, 0x2BB8C982;
+	CHECKREG r6, 0x900C807D;
+	CHECKREG r7, 0xA78E9008;
+	CHECKREG p1, 0x17A75CCC;
+	CHECKREG p2, 0xFF221DD6;
+	CHECKREG p3, 0xE9F7E460;
+	CHECKREG p4, 0x462B2CFE;
+	CHECKREG p5, 0xBF093F4C;
+	CHECKREG fp, 0xD39D28D6;
+
+	imm32 r0, 0x03545abd;
+	imm32 r1, 0xb3bcfec7;
+	imm32 r2, 0x24348679;
+	imm32 r3, 0x60049007;
+	imm32 r4, 0x7fbc5569;
+	imm32 r5, 0x9d35560b;
+	imm32 r6, 0xa00c807d;
+	imm32 r7, 0x078e9008;
+	A1 = A0 = 0;
+	R0.H = (A1 += R1.H * R0.H) (M), R0.L = (A0 -= R1.L * R0.L);
+	P1 = A1.w;
+	P2 = A0.w;
+	R1.H = (A1 -= R2.H * R3.H) (M), R1.L = (A0 = R2.H * R3.L);
+	P3 = A1.w;
+	P4 = A0.w;
+	R2.H = (A1 = R4.H * R5.H) (M), R2.L = (A0 += R4.H * R5.H);
+	P5 = A1.w;
+	FP = A0.w;
+	R3.H = (A1 += R6.H * R7.H) (M), R3.L = (A0 += R6.L * R7.H);
+	R4 = A1.w;
+	R5 = A0.w;
+	CHECKREG r0, 0xFF0200DE;
+	CHECKREG r1, 0xF16EE054;
+	CHECKREG r2, 0x4E718000;
+	CHECKREG r3, 0x4B9C8000;
+	CHECKREG r4, 0x4B9BD894;
+	CHECKREG r5, 0x7637575C;
+	CHECKREG r6, 0xA00C807D;
+	CHECKREG r7, 0x078E9008;
+	CHECKREG p1, 0xFF022DB0;
+	CHECKREG p2, 0x00DDE22A;
+	CHECKREG p3, 0xF16E1CE0;
+	CHECKREG p4, 0xE0547AD8;
+	CHECKREG p5, 0x4E70BDEC;
+	CHECKREG fp, 0x7DBDF6B0;
+
+	pass

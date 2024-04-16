@@ -1,0 +1,80 @@
+# This testcase is part of GDB, the GNU debugger.
+#
+# Copyright 2013-2024 Free Software Foundation, Inc.
+#
+# Contributed by Intel Corp. <markus.t.metzger@intel.com>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require allow_btrace_tests
+
+# We expect a specific function call history.  This gets messed up with
+# PIE on 32-bit.
+standard_testfile exception.cc
+if [prepare_for_testing "failed to prepare" $testfile $srcfile \
+	{nopie c++ debug}] {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+# we want to see the full trace for this test
+gdb_test_no_output "set record function-call-history-size 0"
+
+# set bp
+set bp_1 [gdb_get_line_number "bp.1" $srcfile]
+set bp_2 [gdb_get_line_number "bp.2" $srcfile]
+gdb_breakpoint $bp_1
+gdb_breakpoint $bp_2
+
+# trace the code between the two breakpoints
+gdb_continue_to_breakpoint "cont to bp.1" ".*$srcfile:$bp_1\r\n.*"
+# increase the BTS buffer size - the trace can be quite big
+gdb_test_no_output "set record btrace bts buffer-size 128000"
+gdb_test_no_output "record btrace"
+gdb_continue_to_breakpoint "cont to bp.2" ".*$srcfile:$bp_2\r\n.*"
+
+# show the flat branch trace
+send_gdb "record function-call-history 1\n"
+gdb_expect_list "flat" "\r\n$gdb_prompt $" [list \
+  [multi_line \
+    "1\tmain\\(\\)" \
+    "2\ttest\\(\\)" \
+    "3\tfoo\\(\\)" \
+    "4\tbar\\(\\)" \
+    "5\tbad\\(\\)\r" \
+  ] "" \
+  [multi_line \
+    "\[0-9\]*\ttest\\(\\)" \
+    "\[0-9\]*\tmain\\(\\)" \
+  ] "" \
+  ]
+
+# show the branch trace with calls indented
+send_gdb "record function-call-history /c 1\n"
+gdb_expect_list "indented" "\r\n$gdb_prompt $" [list \
+  [multi_line \
+    "1\tmain\\(\\)" \
+    "2\t  test\\(\\)" \
+    "3\t    foo\\(\\)" \
+    "4\t      bar\\(\\)" \
+    "5\t        bad\\(\\)\r" \
+  ] "" \
+  [multi_line \
+    "\[0-9\]*\t  test\\(\\)" \
+    "\[0-9\]*\tmain\\(\\)" \
+  ] "" \
+  ]

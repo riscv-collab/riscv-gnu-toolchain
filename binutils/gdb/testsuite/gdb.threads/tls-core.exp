@@ -1,0 +1,77 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile
+
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" \
+	executable { debug }] != "" } {
+    return -1
+}
+
+# Generate a native core file.
+
+set corefile [core_find $binfile]
+set core_supported [expr {$corefile != ""}]
+
+# Generate a core file with "gcore".
+
+clean_restart ${binfile}
+
+runto thread_proc
+
+set gcorefile [standard_output_file gcore.test]
+set gcore_supported [gdb_gcore_cmd "$gcorefile" "gcore"]
+
+# Restart gdb and load COREFILE as a core file.  SUPPORTED is true iff
+# the core was generated successfully; otherwise, the tests are marked
+# unsupported.
+#
+proc tls_core_test {supported corefile} {
+    upvar target_triplet target_triplet
+    upvar host_triplet host_triplet
+    upvar binfile binfile
+
+    clean_restart ${binfile}
+
+    set test "load core file"
+    if {$supported} {
+	set core_loaded [gdb_core_cmd $corefile $test]
+    } else {
+	set core_loaded 0
+	unsupported $test
+    }
+
+    set test "print thread-local storage variable"
+    if { $core_loaded == 1 } {
+	# This fails in cross-debugging due to the use of native
+	# `libthread_db'.
+	if {![string match $host_triplet $target_triplet]} {
+	    setup_kfail "threads/22381" "*-*-*"
+	}
+	gdb_test "p/x foo" "\\$\[0-9]+ = 0xdeadbeef" $test
+    } else {
+	unsupported $test
+    }
+}
+
+with_test_prefix "native" {
+    tls_core_test $core_supported $corefile
+}
+
+with_test_prefix "gcore" {
+    tls_core_test $gcore_supported $gcorefile
+}
+
+gdb_exit

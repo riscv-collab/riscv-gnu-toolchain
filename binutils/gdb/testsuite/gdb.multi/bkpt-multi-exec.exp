@@ -1,0 +1,78 @@
+# Copyright 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require target_can_use_run_cmd
+
+# Until "catch exec" is implemented on other targets...
+#
+if {![istarget "*-linux*"]} {
+    return
+}
+
+set testfile "bkpt-multi-exec"
+
+set exec1 "bkpt-multi-exec"
+set srcfile1 ${exec1}.c
+set binfile1 [standard_output_file ${exec1}]
+
+set exec2 "crashme"
+set srcfile2 ${exec2}.c
+set binfile2 [standard_output_file ${exec2}]
+
+set compile_options {debug}
+
+if { [build_executable ${testfile}.exp ${exec1} "${srcfile1}" $compile_options] == -1 } {
+    return -1
+}
+
+if { [build_executable ${testfile}.exp ${exec2} "${srcfile2}" $compile_options] == -1 } {
+    return -1
+}
+
+# Start with a fresh gdb
+
+clean_restart ${exec1}
+
+# Start the program running, and stop at main.
+#
+if {![runto_main]} {
+    return
+}
+
+delete_breakpoints
+
+# continuing should exec and trigger the bug
+gdb_test "continue" "SIGSEGV.*"
+
+# Start over, but this time, set a breakpoint before the app crashes.
+
+clean_restart ${exec1}
+
+gdb_test "add-inferior -exec ${binfile2}" \
+    "Added inferior 2.*" \
+    "add inferior 2 with -exec ${exec2}"
+
+set bp_location [gdb_get_line_number "set breakpoint here" ${srcfile2}]
+
+gdb_test "inferior 2"
+gdb_test "break ${srcfile2}:${bp_location}" ".*"
+
+# Start the program running, and stop at main.
+#
+gdb_test "inferior 1"
+
+# Now run to the breakpoint.  This should cross the exec, and stop at
+# the breakpoint before the crash.
+gdb_test "run" "${srcfile2}:${bp_location}.*set breakpoint here.*"

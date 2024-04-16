@@ -1,0 +1,69 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+load_lib gdbserver-support.exp
+
+require allow_gdbserver_tests
+
+standard_testfile normal.c
+
+if {[build_executable "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+set target_binfile [gdb_remote_download target $binfile]
+
+# Test running GDB without providing a local binary for it.  In order
+# to do that, we unset GDBFLAGS before running GDB.  We also start
+# gdbserver "by hand".  For more details about this test, see PR
+# remote/21852.
+save_vars { GDBFLAGS } {
+    set GDBFLAGS ""
+
+    # If GDB and GDBserver are both running locally, set the sysroot to avoid
+    # reading files via the remote protocol.
+    if { ![is_remote host] && ![is_remote target] } {
+	set GDBFLAGS "-ex \"set sysroot\""
+    }
+
+    gdb_exit
+    gdb_start
+
+    gdb_test_no_output "set remote exec-file $target_binfile" \
+	"set remote exec-file"
+
+    # Make sure we're disconnected, in case we're testing with an
+    # extended-remote board, therefore already connected.
+    gdb_test "disconnect" ".*"
+
+    # Let's start gdbserver in extended-remote mode now.  We cannot
+    # use gdbserver_start_extended here because it starts gdbserver,
+    # then GDB *with* a local binary, and the connect both.
+    set res [gdbserver_start "--multi" ""]
+    set gdbserver_protocol [lindex $res 0]
+    if { [string first "extended-" $gdbserver_protocol] != 0} {
+	set gdbserver_protocol "extended-$gdbserver_protocol"
+    }
+    set gdbserver_gdbport [lindex $res 1]
+    set use_gdb_stub 0
+
+    gdb_test "target ${gdbserver_protocol} ${gdbserver_gdbport}" \
+	"Remote debugging using [string_to_regexp $gdbserver_gdbport]" \
+	"connect to gdbserver"
+
+    gdb_test "run" \
+	"\\\[Inferior $decimal \\\(process $decimal\\\) exited normally\\\]" \
+	"run test program until the end"
+}

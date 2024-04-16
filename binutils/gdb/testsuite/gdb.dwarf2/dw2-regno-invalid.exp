@@ -1,0 +1,66 @@
+# Copyright 2015-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+load_lib dwarf.exp
+
+# Test GDB does not internal error on DWARF register number -1 which is invalid
+# in DWARF.  clang-3.5.0-9.fc22.x86_64 produced it inside DW_AT_location.
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+standard_testfile main.c .S
+
+# Make some DWARF for the test.
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    cu {} {
+	compile_unit {
+	    {MACRO_AT_range {main}}
+	} {
+	    declare_labels integer_label
+
+	    integer_label: DW_TAG_base_type {
+		{DW_AT_byte_size 4 DW_FORM_sdata}
+		{DW_AT_encoding  @DW_ATE_signed}
+		{DW_AT_name      integer}
+	    }
+
+	    DW_TAG_subprogram {
+		{DW_AT_external 1 flag}
+		{MACRO_AT_func {main}}
+	    } {
+		DW_TAG_variable {
+		    {DW_AT_name bregx}
+			{DW_AT_type :$integer_label}
+			{DW_AT_external 1 flag}
+		    {DW_AT_location {
+			DW_OP_bregx 0xffffffff 0
+		    } SPECIAL_expr}
+		}
+	    }
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+			  [list $srcfile $asm_file] {nodebug}] } {
+    return -1
+}
+
+runto_main
+
+# Variable 'bregx' needs to be inside main as for global symbols GDB does not
+# support non-trivial DW_AT_location.  Former GDB printed internal error here.
+gdb_test "p bregx"

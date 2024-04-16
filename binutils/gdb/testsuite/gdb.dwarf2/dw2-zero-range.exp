@@ -1,0 +1,162 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check that the ".debug_ranges entry has start address of zero" complaint
+# is triggered for a loaded shared lib.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support allow_shlib_tests
+
+standard_testfile .c -shlib.c -dw.S
+
+# Test with both a .debug_ranges section (DWARF 4) and a .debug_rnglists
+# section (DWARF 5).
+
+foreach_with_prefix ranges_sect {ranges rnglists} {
+    set asm_file [standard_output_file ${ranges_sect}-$srcfile3]
+
+    if { $ranges_sect == "ranges" } {
+	Dwarf::assemble $asm_file {
+	    global srcdir subdir srcfile2
+	    declare_labels ranges_label
+
+	    cu {} {
+		compile_unit {
+		    {language @DW_LANG_C}
+		    {name $srcfile2}
+		    {ranges ${ranges_label} DW_FORM_sec_offset}
+		} {
+		    subprogram {
+			{external 1 flag}
+			{name foo}
+		    }
+		}
+	    }
+
+	    ranges {is_64 [is_64_target]} {
+		ranges_label: sequence {
+		    base 0
+		    range 0 1
+		}
+	    }
+	}
+    } elseif { $ranges_sect == "rnglists" } {
+	Dwarf::assemble $asm_file {
+	    global srcdir subdir srcfile2
+	    declare_labels rnglists_label
+
+	    cu {
+		version 5
+	    } {
+		compile_unit {
+		    {language @DW_LANG_C}
+		    {name $srcfile2}
+		    {ranges ${rnglists_label} DW_FORM_sec_offset}
+		} {
+		    subprogram {
+			{external 1 flag}
+			{name foo}
+		    }
+		}
+	    }
+
+	    rnglists {} {
+		table {} {
+		    rnglists_label: list_ {
+			start_end 0 1
+		    }
+		}
+	    }
+	}
+    } else {
+	error "invalid ranges section kind"
+    }
+
+    set lib1 [standard_output_file shr1.sl]
+    set lib_opts "nodebug"
+
+    set sources [list ${srcdir}/${subdir}/$srcfile2 $asm_file]
+    if { [gdb_compile_shlib $sources ${lib1} $lib_opts] != "" } {
+	untested "failed to compile"
+	return -1
+    }
+
+    set exec_opts [list debug shlib=${lib1}]
+    set sources ${srcdir}/${subdir}/${srcfile}
+    if { [gdb_compile $sources  ${binfile} executable \
+	      $exec_opts] != ""} {
+	untested "failed to compile"
+	return -1
+    }
+
+    clean_restart $binfile
+    gdb_load_shlib $lib1
+
+    set readnow_p [readnow]
+
+    # Don't load the symbols for $lib1 during runto_main.
+    # Instead, we do this afterwards using "sharedlibrary $lib1".
+    gdb_test_no_output "set auto-solib-add off"
+
+    if { ![runto_main] } {
+	return -1
+    }
+
+    set complaint_re ".debug_${ranges_sect} entry has start address of zero"
+    set re \
+	"During symbol reading: $complaint_re \\\[in module \[^\r\n\]*\\\]"
+
+    # Test for presence of complaint, with lib1 relocated.
+    with_complaints 1 {
+	set test "Zero address complaint - relocated - psymtab"
+	set have_complaint 0
+	gdb_test_multiple "maint with dwarf synchronous on -- sharedlibrary [file tail $lib1]" $test {
+	    -re -wrap $re {
+		set have_complaint 1
+	    }
+	    -re -wrap "" {
+	    }
+	}
+
+	gdb_assert { $have_complaint } $test
+    }
+
+    if { ! $readnow_p } {
+	with_complaints 1 {
+	    gdb_test "maint expand-symtabs $srcfile2" $re \
+		"Zero address complaint - relocated - symtab"
+	}
+    }
+
+    clean_restart
+    # Test for presence of complaint, with lib1 unrelocated.
+    gdb_test_no_output "maint set dwarf synchronous on"
+    with_complaints 1 {
+	gdb_load $lib1
+	set test "Zero address complaint - unrelocated - psymtab"
+	set have_complaint [regexp $re.* $gdb_file_cmd_msg]
+	gdb_assert { $have_complaint } $test
+    }
+    gdb_test_no_output "maint set dwarf synchronous off"
+
+    if { ! $readnow_p } {
+	with_complaints 1 {
+	    gdb_test "maint expand-symtabs $srcfile2" $re \
+		"Zero address complaint - unrelocated - symtab"
+	}
+    }
+}

@@ -1,0 +1,76 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require supports_reverse
+
+require {istarget "x86*"}
+
+standard_testfile
+
+set cflags {}
+lappend cflags debug
+lappend cflags additional_flags=-mindirect-branch=thunk
+lappend cflags additional_flags=-mfunction-return=thunk
+
+set fcf_protection_none additional_flags=-fcf-protection=none
+if { [gdb_can_simple_compile fcf-protection-none {int main () { return 0; }} \
+	  executable $fcf_protection_none] } {
+    lappend cflags $fcf_protection_none
+}
+
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile $cflags] } {
+    return -1
+}
+
+if { ![runto_main] } {
+    return -1
+}
+
+gdb_test_no_output "record"
+gdb_test "next" ".*" "record trace"
+
+# Normal stepping steps through all thunks.
+gdb_test "reverse-step" "apply\.3.*" "reverse-step into apply"
+gdb_test "reverse-step" "inc\.3.*" "reverse-step into inc"
+gdb_test "reverse-step" "inc\.2.*" "reverse-step inside inc"
+gdb_test "reverse-step" "apply\.2.*" \
+    "reverse-step through call thunk into apply, first time"
+gdb_test "reverse-step" "main\.2.*" "reverse-step into main"
+gdb_test "step" "apply\.2.*" "step into apply"
+gdb_test "step" "inc\.2.*" "step through call thunk into inc"
+gdb_test "reverse-step" "apply\.2.*" \
+    "reverse-step through call thunk into apply, second time"
+gdb_test "next" "apply\.3.*" "step through thunks and over inc"
+gdb_test "reverse-next" "apply\.2.*" \
+    "reverse-step through thunks and over inc"
+
+# We can use instruction stepping to step into thunks.
+repeat_cmd_until "stepi" "apply\.2" "indirect_thunk" "stepi into call thunk"
+repeat_cmd_until "stepi" "indirect_thunk" "inc" \
+    "stepi out of call thunk into inc"
+set alphanum_re "\[a-zA-Z0-9\]"
+set pic_thunk_re  "__$alphanum_re*\\.get_pc_thunk\\.$alphanum_re* \\(\\)"
+repeat_cmd_until "stepi" "(inc|$pic_thunk_re)" "return_thunk" "stepi into return thunk"
+repeat_cmd_until "stepi" "return_thunk" "apply" \
+    "stepi out of return thunk back into apply"
+
+repeat_cmd_until "reverse-stepi" "apply" "return_thunk" \
+    "reverse-stepi into return thunk"
+repeat_cmd_until "reverse-stepi" "return_thunk" "inc" \
+    "reverse-stepi out of return thunk into inc"
+repeat_cmd_until "reverse-stepi" "(inc|$pic_thunk_re)" "indirect_thunk" \
+    "reverse-stepi into call thunk"
+repeat_cmd_until "reverse-stepi" "indirect_thunk" "apply" \
+    "reverse-stepi out of call thunk into apply"

@@ -1,0 +1,302 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the gdb testsuite.
+
+# Test ABI tag support in linespecs.
+
+load_lib completion-support.exp
+
+standard_testfile cpls-abi-tag.cc
+
+if { [test_compiler_info gcc-*] } {
+    # With earlier gcc versions we run into:
+    #   cpls-abi-tag.cc:71:26: error:
+    #     ‘abi_tag’ attribute applied to non-function ‘s’
+    # See gcc PR65046.
+    require {expr [gcc_major_version] >= 5}
+}
+
+if {[prepare_for_testing "failed to prepare" $testfile \
+	 [list $srcfile] {c++ debug}]} {
+    return -1
+}
+
+# Tests below are about tab-completion, which doesn't work if readline
+# library isn't used.  Check it first.
+
+if { ![readline_is_used] } {
+    untested "no tab completion support without readline"
+    return -1
+}
+
+gdb_test_no_output "set max-completions unlimited"
+
+# Check that the explicit location completer manages to find the next
+# option name after a -function option, when the -function's argument
+# is a function with an ABI tag.
+
+proc check_explicit_skips_function_argument {function} {
+    test_gdb_complete_unique \
+	"b -function $function -sour" \
+	"b -function $function -source"
+}
+
+# The ABI tag tests.
+
+proc_with_prefix test_abi_tag {} {
+    with_test_prefix "completion" {
+	foreach cmd_prefix {"b" "b -function"} {
+	    # Complete all prefixes between "_funcio" and the full
+	    # prototype.  The ABI tag is not considered for actual
+	    # completion.
+
+	    with_test_prefix "skip tag" {
+		# set location "test_abi_tag_function\[abi:tag1\](int)"
+		set location "test_abi_tag_function(int)"
+		set line "$cmd_prefix $location"
+		set start [index_after "_functio" $line]
+		test_complete_prefix_range $line $start
+	    }
+
+	    # Now the same, but start completing at the [.  In that case,
+	    # GDB considers the ABI tag as part of actual completion.
+	    with_test_prefix "at tag" {
+		set location "test_abi_tag_function\[abi:tag1\](int)"
+		set line "$cmd_prefix $location"
+		set start [index_after "_function" $line]
+		test_complete_prefix_range $line $start
+	    }
+
+	    # Same, but with extra spaces.  Note that the original spaces in
+	    # the input line are preserved after completion.
+
+	    with_test_prefix "spaces" {
+		test_gdb_complete_unique \
+		    "$cmd_prefix test_abi_tag_function \[abi:tag1\] (" \
+		    "$cmd_prefix test_abi_tag_function \[abi:tag1\] (int)"
+
+		test_gdb_complete_unique \
+		    "$cmd_prefix test_abi_tag_function \[abi:tag1\] ( int " \
+		    "$cmd_prefix test_abi_tag_function \[abi:tag1\] ( int )"
+	    }
+	}
+    }
+
+    with_test_prefix "set breakpoints" {
+	foreach cmd_prefix {"b" "b -function"} {
+	    # Test setting breakpoints.  If the symbol name has an ABI
+	    # tag, but the input linespec doesn't, then the ABI tag in the
+	    # symbol name is ignored.
+	    set linespec_list {
+		"test_abi_tag_function"
+		"test_abi_tag_function[abi:tag1]"
+		"test_abi_tag_function[abi:tag1](int)"
+		"test_abi_tag_function [abi:tag1]"
+		"test_abi_tag_function [abi:tag1] ( int )"
+		"test_abi_tag_function(int)"
+		"test_abi_tag_function (int)"
+		"test_abi_tag_function ( int )"
+	    }
+	    foreach linespec $linespec_list {
+		check_bp_locations_match_list \
+		    "$cmd_prefix $linespec" [list $location]
+	    }
+	}
+    }
+
+    with_test_prefix "set breakpoints wrong ABI tag" {
+	foreach cmd_prefix {"b" "b -function"} {
+	    # Test setting breakpoints with the wrong ABI tag.  Should
+	    # fail to create the breakpoints.  Completion should not find
+	    # any match either.
+	    set linespec_list {
+		"test_abi_tag_function[abi:tag2]"
+		"test_abi_tag_function[abi:tag2](int)"
+		"test_abi_tag_function [abi:tag2]"
+		"test_abi_tag_function [abi:tag2] ( int )"
+	    }
+	    foreach linespec $linespec_list {
+		check_setting_bp_fails "$cmd_prefix $linespec"
+		test_gdb_complete_none "$cmd_prefix $linespec"
+	    }
+
+	}
+    }
+
+    # Test completion of overloaded functions with ABI tags.
+    with_test_prefix "completion of overloaded functions" {
+	foreach cmd_prefix {"b" "b -function"} {
+	    set completion_list {
+		"test_abi_tag_ovld_function[abi:tag1]()"
+		"test_abi_tag_ovld_function[abi:tag1](int)"
+	    }
+
+	    # If the input string does not include the ABI tag, then
+	    # actual completion ignores it.
+	    test_gdb_complete_multiple \
+		"$cmd_prefix " "test_abi_tag_ovld_f" "unction(" \
+		$completion_list
+
+	    # Otherwise, it's considered.
+	    test_gdb_complete_multiple \
+		"$cmd_prefix " "test_abi_tag_ovld_function\[" "abi:tag1\](" \
+		$completion_list
+
+	}
+    }
+
+    # Test setting breakpoints on overloaded functions with ABI tags.
+    with_test_prefix "breakpoints on overloaded functions" {
+	foreach cmd_prefix {"b" "b -function"} {
+	    set completion_list {
+		"test_abi_tag_ovld_function[abi:tag1]()"
+		"test_abi_tag_ovld_function[abi:tag1](int)"
+	    }
+	    set location_list {
+		"test_abi_tag_ovld_function"
+		"test_abi_tag_ovld_function[abi:tag1]"
+	    }
+	    foreach linespec $location_list {
+		check_bp_locations_match_list \
+		    "$cmd_prefix $linespec" $completion_list
+	    }
+
+	}
+    }
+
+    with_test_prefix "completion of overloaded functions different abi" {
+	foreach cmd_prefix {"b" "b -function"} {
+	    # Test completion of overloaded functions with ABI tags.
+	    set completion_list {
+		"test_abi_tag_ovld2_function()"
+		"test_abi_tag_ovld2_function[abi:tag1](short)"
+		"test_abi_tag_ovld2_function[abi:tag2](int)"
+		"test_abi_tag_ovld2_function[abi:tag2](long)"
+	    }
+
+	    # If the input string does not include the ABI tag, then
+	    # actual completion ignores it.
+	    test_gdb_complete_multiple \
+		"$cmd_prefix " "test_abi_tag_ovld2_f" "unction(" \
+		$completion_list
+
+	    # Otherwise, it's considered.  Match stops at the part of
+	    # the tag that diverges, and the completion list only
+	    # shows matches with ABI tags.
+	    set completion_list {
+		"test_abi_tag_ovld2_function[abi:tag1](short)"
+		"test_abi_tag_ovld2_function[abi:tag2](int)"
+		"test_abi_tag_ovld2_function[abi:tag2](long)"
+	    }
+	    test_gdb_complete_multiple \
+		"$cmd_prefix " "test_abi_tag_ovld2_function\[" "abi:tag" \
+		$completion_list
+
+	    # If you disambiguate, matches include only locations for
+	    # the specified tag.
+	    set completion_list {
+		"test_abi_tag_ovld2_function[abi:tag2](int)"
+		"test_abi_tag_ovld2_function[abi:tag2](long)"
+	    }
+	    test_gdb_complete_multiple \
+		"$cmd_prefix " "test_abi_tag_ovld2_function\[abi:tag2" "\](" \
+		$completion_list
+
+	    test_gdb_complete_unique \
+		"$cmd_prefix test_abi_tag_ovld2_function\[abi:tag1" \
+		"$cmd_prefix test_abi_tag_ovld2_function\[abi:tag1\](short)"
+	}
+    }
+
+    with_test_prefix "completion of struct prefixes with tags" {
+	foreach cmd_prefix {"b" "b -function"} {
+	    # Test completion of methods of structs with ABI tags.
+	    set completion_list {
+		"test_abi_tag_struct[abi:tag1]::test_abi_tag_struct[abi:tag2]()"
+		"test_abi_tag_struct[abi:tag1]::~test_abi_tag_struct[abi:tag2]()"
+	    }
+
+	    # If the input string does not include the ABI tag, then
+	    # actual completion ignores it.
+	    test_gdb_complete_multiple \
+		"$cmd_prefix " "test_abi_tag_struc" "t::" \
+		$completion_list
+
+	    # Otherwise, it's considered.
+	    test_gdb_complete_multiple \
+		"$cmd_prefix " "test_abi_tag_struct\[" "abi:tag1\]::" \
+		$completion_list
+
+	    # Mix and match different abi tag positions.
+	    test_gdb_complete_unique \
+		"$cmd_prefix test_abi_tag_struct::t" \
+		"$cmd_prefix test_abi_tag_struct::test_abi_tag_struct()"
+
+	    test_gdb_complete_unique \
+		"$cmd_prefix test_abi_tag_struct\[abi:tag1\]::t" \
+		"$cmd_prefix test_abi_tag_struct\[abi:tag1\]::test_abi_tag_struct()"
+
+	    test_gdb_complete_unique \
+		"$cmd_prefix test_abi_tag_struct\[abi:tag1\]::test_abi_tag_struct\[" \
+		"$cmd_prefix test_abi_tag_struct\[abi:tag1\]::test_abi_tag_struct\[abi:tag2\]()"
+	}
+    }
+
+    with_test_prefix "abi tag in parameters" {
+	foreach cmd_prefix {"b" "b -function"} {
+	    # Complete all prefixes between "_funcio" and the full
+	    # prototype.  The ABI tag is not considered for actual
+	    # completion.
+
+	    set completion_list {
+		"test_abi_tag_in_params(abi_tag_param_struct1[abi:tag2])"
+		"test_abi_tag_in_params(abi_tag_param_struct1[abi:tag2], abi_tag_param_struct2[abi:tag2])"
+	    }
+	    # If the input string does not include the ABI tag, then
+	    # actual completion ignores it.
+	    test_gdb_complete_multiple \
+		"$cmd_prefix " "test_abi_tag_in_para" "ms(abi_tag_param_struct1" \
+		$completion_list
+
+	    # If OTOH the input string includes the ABI tag, then it
+	    # is considered.
+	    test_gdb_complete_multiple \
+		"$cmd_prefix " "test_abi_tag_in_params(abi_tag_param_struct1\[ab" "i:tag2\]"\
+		$completion_list
+
+	    set location_list {
+		"test_abi_tag_in_params(abi_tag_param_struct1[abi:tag2], abi_tag_param_struct2[abi:tag2])"
+	    }
+
+	    set tags {"" "\[abi:tag2\]"}
+	    foreach tag1 $tags {
+		foreach tag2 $tags {
+		    set linespec "test_abi_tag_in_params(abi_tag_param_struct1${tag1}, abi_tag_param_struct2${tag2})"
+		    check_bp_locations_match_list \
+			"$cmd_prefix $linespec" $location_list
+		}
+	    }
+	}
+    }
+
+    # Check that the explicit location completer manages to find the
+    # option name after -function, when the -function's argument is a
+    # function with an ABI tag.
+    check_explicit_skips_function_argument \
+	"test_abi_tag_function\[abi:unknown\](int)"
+}
+
+test_abi_tag

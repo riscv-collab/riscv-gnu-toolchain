@@ -1,0 +1,200 @@
+# This testcase is part of GDB, the GNU debugger.
+#
+# Copyright 2013-2024 Free Software Foundation, Inc.
+#
+# Contributed by Intel Corp. <christian.himpel@intel.com>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require allow_btrace_tests
+
+standard_testfile .c .S
+if [prepare_for_testing "failed to prepare" $testfile "$srcfile $srcfile2" {debug}] {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+# set bp before loop and continue
+set bp_location [gdb_get_line_number "bp.1" $srcfile2]
+gdb_breakpoint $srcfile2:$bp_location
+gdb_continue_to_breakpoint "cont to $bp_location" ".*$srcfile2:$bp_location.*"
+
+# start btrace
+gdb_test_no_output "record btrace"
+
+# set bp after loop and continue
+set bp_location [gdb_get_line_number "bp.2" $srcfile2]
+gdb_breakpoint $srcfile2:$bp_location
+gdb_continue_to_breakpoint "cont to $bp_location" ".*$srcfile2:$bp_location.*"
+
+# The following test cases test if "browsing" through the
+# instruction history works as expected. So for the tests
+# it is necessary to count the number of lines that are
+# shown by the "record instruction-history" command.
+
+set traced {}
+set testname "determine number of recorded instructions"
+gdb_test_multiple "info record" $testname {
+    -re "Active record target: record-btrace\r\n.*\r\nRecorded \(\[0-9\]*\) instructions in \(\[0-9\]*\) functions \\\(0 gaps\\\) for thread 1 .*\\.\r\n$gdb_prompt $" {
+        set traced $expect_out(1,string)
+        pass $testname
+    }
+}
+
+# we have exactly 11 instructions here
+set message "exactly 11 instructions"
+if { $traced != 11 } {
+    fail $message
+} else {
+    pass $message
+}
+
+# test that we see the expected instructions
+gdb_test "record instruction-history 3,7" [multi_line \
+  "3\t   0x\[0-9a-f\]+ <loop\\+\[0-9\]+>:\tje     0x\[0-9a-f\]+ <loop\\+\[0-9\]+>" \
+  "4\t   0x\[0-9a-f\]+ <loop\\+\[0-9\]+>:\tdec    %eax" \
+  "5\t   0x\[0-9a-f\]+ <loop\\+\[0-9\]+>:\tjmp    0x\[0-9a-f\]+ <loop\\+\[0-9\]+>" \
+  "6\t   0x\[0-9a-f\]+ <loop\\+\[0-9\]+>:\tcmp    \\\$0x0,%eax" \
+  "7\t   0x\[0-9a-f\]+ <loop\\+\[0-9\]+>:\tje     0x\[0-9a-f\]+ <loop\\+\[0-9\]+>" \
+  ]
+
+gdb_test "record instruction-history /f 3,+5" [multi_line \
+  "3\t   0x\[0-9a-f\]+ <\\+\[0-9\]+>:\tje     0x\[0-9a-f\]+ <loop\\+\[0-9\]+>" \
+  "4\t   0x\[0-9a-f\]+ <\\+\[0-9\]+>:\tdec    %eax" \
+  "5\t   0x\[0-9a-f\]+ <\\+\[0-9\]+>:\tjmp    0x\[0-9a-f\]+ <loop\\+\[0-9\]+>" \
+  "6\t   0x\[0-9a-f\]+ <\\+\[0-9\]+>:\tcmp    \\\$0x0,%eax" \
+  "7\t   0x\[0-9a-f\]+ <\\+\[0-9\]+>:\tje     0x\[0-9a-f\]+ <loop\\+\[0-9\]+>" \
+  ]
+
+gdb_test "record instruction-history /p 7,-5" [multi_line \
+  "3\t   0x\[0-9a-f\]+ <loop\\+\[0-9\]+>:\tje     0x\[0-9a-f\]+ <loop\\+\[0-9\]+>" \
+  "4\t   0x\[0-9a-f\]+ <loop\\+\[0-9\]+>:\tdec    %eax" \
+  "5\t   0x\[0-9a-f\]+ <loop\\+\[0-9\]+>:\tjmp    0x\[0-9a-f\]+ <loop\\+\[0-9\]+>" \
+  "6\t   0x\[0-9a-f\]+ <loop\\+\[0-9\]+>:\tcmp    \\\$0x0,%eax" \
+  "7\t   0x\[0-9a-f\]+ <loop\\+\[0-9\]+>:\tje     0x\[0-9a-f\]+ <loop\\+\[0-9\]+>" \
+  ]
+
+gdb_test "record instruction-history /pf 3,7" [multi_line \
+  "3\t   0x\[0-9a-f\]+ <\\+\[0-9\]+>:\tje     0x\[0-9a-f\]+ <loop\\+\[0-9\]+>" \
+  "4\t   0x\[0-9a-f\]+ <\\+\[0-9\]+>:\tdec    %eax" \
+  "5\t   0x\[0-9a-f\]+ <\\+\[0-9\]+>:\tjmp    0x\[0-9a-f\]+ <loop\\+\[0-9\]+>" \
+  "6\t   0x\[0-9a-f\]+ <\\+\[0-9\]+>:\tcmp    \\\$0x0,%eax" \
+  "7\t   0x\[0-9a-f\]+ <\\+\[0-9\]+>:\tje     0x\[0-9a-f\]+ <loop\\+\[0-9\]+>" \
+  ]
+
+gdb_test "record instruction-history 3,3" "3\t   0x\[0-9a-f\]+ <loop\\+\[0-9\]+>:\tje     0x\[0-9a-f\]+ <loop\\+\[0-9\]+>"
+
+# the following tests are checking the iterators
+# to avoid lots of regexps, we just check the number of lines that
+# were printed during command execution.
+
+# test_lines_output returns the output lines from command as a list.
+proc test_lines_output { command message } {
+    global gdb_prompt
+    set message "test_lines_output: $message"
+    gdb_test_multiple $command $message {
+        -re "\n\(.*\)\r\n$gdb_prompt $" {
+            return [split [string trim $expect_out(1,string)] "\n"]
+        }
+    }
+}
+
+# test_lines_length returns the number of lines from command.
+proc test_lines_length { command message } {
+    return [llength [test_lines_output $command $message]]
+}
+
+# show instruction history with unlimited size, we expect to see
+# all $traced instructions
+gdb_test_no_output "set record instruction-history-size 0"
+set message "record instruction-history - unlimited"
+set lines [test_lines_length "record instruction-history 1" $message]
+if { $traced != $lines } {
+    fail $message
+} else {
+    pass $message
+}
+
+gdb_test_no_output "set record instruction-history-size $traced"
+set message "record instruction-history - traced"
+set lines [test_lines_length "record instruction-history 1" $message]
+if { $traced != $lines } {
+    fail $message
+} else {
+    pass $message
+}
+
+# test that the iterator works
+set history_size 4
+gdb_test_no_output "set record instruction-history-size $history_size"
+set message "browse history forward start"
+set lines [test_lines_length "record instruction-history 1" $message]
+if { $lines != $history_size } {
+    fail $message
+} else {
+    pass $message
+}
+
+set message "browse history forward middle"
+set lines [test_lines_length "record instruction-history +" $message]
+if { $lines != $history_size } {
+    fail $message
+} else {
+    pass $message
+}
+
+set message "browse history forward last"
+set lines [test_lines_length "record instruction-history +" $message]
+if { $lines != 3 } {
+    fail $message
+} else {
+    pass $message
+}
+
+gdb_test "record instruction-history" "At the end of the branch trace record\\." "browse history forward beyond 1"
+
+# make sure we cannot move further
+gdb_test "record instruction-history" "At the end of the branch trace record\\." "browse history forward beyond 2"
+
+set message "browse history backward last"
+set lines [test_lines_length "record instruction-history -" $message]
+if { $lines != $history_size } {
+    fail $message
+} else {
+    pass $message
+}
+
+set message "browse history backward middle"
+set lines [test_lines_length "record instruction-history -" $message]
+if { $lines != $history_size } {
+    fail $message
+} else {
+    pass $message
+}
+
+set message "browse history backward first"
+set lines [test_lines_length "record instruction-history -" $message]
+if { $lines != 3 } {
+    fail $message
+} else {
+    pass $message
+}
+
+gdb_test "record instruction-history -" "At the start of the branch trace record\\." "browse history backward beyond 1"
+
+# make sure we cannot move further back
+gdb_test "record instruction-history -" "At the start of the branch trace record\\." "browse history backward beyond 2"

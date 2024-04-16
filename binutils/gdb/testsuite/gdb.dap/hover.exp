@@ -1,0 +1,80 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test DAP "hover" evaluation.
+
+require allow_dap_tests
+
+load_lib dap-support.exp
+
+standard_testfile
+
+if {[build_executable ${testfile}.exp $testfile] == -1} {
+    return
+}
+
+if {[dap_launch $testfile] == ""} {
+    return
+}
+
+set line [gdb_get_line_number "BREAK"]
+set obj [dap_check_request_and_response "set breakpoint by line number" \
+	     setBreakpoints \
+	     [format {o source [o path [%s]] breakpoints [a [o line [i %d]]]} \
+		  [list s $srcfile] $line]]
+set line_bpno [dap_get_breakpoint_number $obj]
+
+dap_check_request_and_response "start inferior" configurationDone
+dap_wait_for_event_and_check "inferior started" thread "body reason" started
+
+dap_wait_for_event_and_check "stopped at breakpoint" stopped \
+    "body reason" breakpoint \
+    "body hitBreakpointIds" $line_bpno
+
+set obj [dap_check_request_and_response "evaluate global" \
+	     evaluate {o expression [s global_variable]}]
+dap_match_values "global value in function" [lindex $obj 0] \
+    "body result" 23
+
+set obj [dap_check_request_and_response "evaluate global as hex" \
+	     evaluate {o expression [s global_variable] format [o hex [l true]]}]
+dap_match_values "global value in function as hex" [lindex $obj 0] \
+    "body result" 0x17
+
+set obj [dap_check_request_and_response "evaluate global in hover mode" \
+	     evaluate {o context [s hover] expression [s global_variable]}]
+dap_match_values "global value in hover mode" [lindex $obj 0] \
+    "body result" 23
+
+set obj [dap_request_and_response \
+	     evaluate {o context [s hover] expression [s increment()]}]
+gdb_assert {[dict get [lindex $obj 0] success] == "false"} \
+    "increment was rejected in hover mode"
+
+dap_check_request_and_response "call increment" \
+    evaluate {o expression [s increment()]}
+
+set obj [dap_request_and_response \
+	     evaluate {o context [s hover] \
+			   expression [s "global_variable = -1"]}]
+gdb_assert {[dict get [lindex $obj 0] success] == "false"} \
+    "assignment was rejected in hover mode"
+
+set obj [dap_check_request_and_response "evaluate global again" \
+	     evaluate {o expression [s global_variable]}]
+dap_match_values "global value incremented once" [lindex $obj 0] \
+    "body result" 24
+
+dap_shutdown

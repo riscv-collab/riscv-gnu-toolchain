@@ -1,0 +1,108 @@
+#   Copyright 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It tests stepping over
+# consecutive instructions in reverse.
+
+require supports_reverse
+
+standard_testfile
+
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile] } {
+    return -1
+}
+
+runto_main
+
+if [supports_process_record] {
+    # Activate process record/replay
+    gdb_test_no_output "record" "turn on process record"
+}
+
+set is_stmt [is_stmt_addresses $srcfile]
+
+gdb_breakpoint foo
+gdb_test "continue" "Breakpoint $decimal, foo .*" \
+	"continue to breakpoint in foo"
+
+set foo1_addr 0
+set foo2_addr 0
+set stop_addr 0
+
+gdb_test_multiple "x /2i \$pc" "get breakpoint address for foo" {
+    global hex
+    global foo1_addr
+    global foo2_addr
+    global gdb_prompt
+
+    -re "=> ($hex).*\[\r\n\]+   ($hex).*$gdb_prompt $" {
+	set foo1_addr $expect_out(1,string)
+	set foo2_addr $expect_out(2,string)
+	pass "get breakpoint address for foo"
+    }
+}
+
+gdb_test "break \*$foo2_addr" "Breakpoint $decimal at $foo2_addr: file .*" \
+	"set bp, 2nd instr"
+
+set testmsg "stopped at bp, 2nd instr"
+gdb_test_multiple "step" $testmsg {
+    -re -wrap "Breakpoint $decimal, ($hex) in foo.*" {
+	set stop_addr $expect_out(1,string)
+	if {[eval expr "$foo2_addr == $stop_addr"]} {
+	    pass "stopped at bp, 2nd instr"
+	} else {
+	    fail "stopped at bp, 2nd instr (wrong address)"
+	}
+    }
+    -re -wrap "Breakpoint $decimal, foo.*" {
+       set stop_addr [get_valueof "/x" "\$pc" "" "value of pc"]
+       set stop_addr_is_stmt [hex_in_list $stop_addr $is_stmt]
+       if { ! $stop_addr_is_stmt } {
+           fail "stopped at bp, 2nd instr (missing hex prefix)"
+       } elseif {[eval expr "$foo2_addr == $stop_addr"]} {
+           pass "stopped at bp, 2nd instr"
+       } else {
+           fail "stopped at bp, 2nd instr (wrong address)"
+       }
+    }
+}
+
+###
+###
+###
+
+# Set reverse execution direction
+
+gdb_test_no_output "set exec-dir reverse" "set reverse execution"
+
+# Now step backward and hope to hit the first breakpoint.
+
+set test_msg "stopped at bp in reverse, 1st instr"
+gdb_test_multiple "step" "$test_msg" {
+    -re "Breakpoint $decimal, ($hex) in foo.*$gdb_prompt $" {
+	set stop_addr $expect_out(1,string)
+	if {[eval expr "$foo1_addr == $stop_addr"]} {
+	    pass "$test_msg"
+	} else {
+	    fail "$test_msg (wrong address)"
+	}
+    }
+    -re "Breakpoint $decimal, foo.*$gdb_prompt $" {
+	gdb_test "print \$pc == $foo1_addr" \
+	    "$decimal = 1" \
+	    "$test_msg"
+    }
+}

@@ -1,0 +1,215 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+
+# Test 'frame apply [all | COUNT | -COUNT | level LEVEL...] [FLAG]... COMMAND'.
+
+standard_testfile
+
+if { [prepare_for_testing "failed to prepare" ${testfile}] } {
+    return -1
+}
+
+if {![runto setup_done]} {
+    return 0
+}
+
+set any "\[^\r\n\]*"
+set ws "\[ \t\]\+"
+set number "\[0-9]\+"
+
+
+# Check all | COUNT | -COUNT | level LEVEL... with a simple command.
+with_test_prefix "simple command" {
+    foreach_with_prefix frame_apply_args {
+	"all"
+	"6"
+	"-6"
+	"level 0-5"
+	"level 0-3 4-5"
+	"level 0 1-2 3-5"
+	"level 0 1 2 3 4 5"
+	"level 0-0 1-1 2-2 3-3 4-4 5-5" } {
+	    set cmd "frame apply $frame_apply_args p /x 20"
+	    gdb_test $cmd \
+		[multi_line \
+		     "#0${ws}setup_done ${any}" \
+		     "\\\$\[0-9]+ = 0x14${any}" \
+		     "#1${ws}${any} f1 ${any}" \
+		     "\\\$\[0-9]+ = 0x14${any}" \
+		     "#2${ws}${any} f2 ${any}" \
+		     "\\\$\[0-9]+ = 0x14${any}" \
+		     "#3${ws}${any} f3 ${any}" \
+		     "\\\$\[0-9]+ = 0x14${any}" \
+		     "#4${ws}${any} f4 ${any}" \
+		     "\\\$\[0-9]+ = 0x14${any}" \
+		     "#5${ws}${any} main ${any}" \
+		     "\\\$\[0-9]+ = 0x14${any}" \
+		    ] \
+		"run a simple command on all frames"
+	}
+}
+
+# Check frame apply on 3 innermost frames.
+with_test_prefix "innermost 3" {
+    foreach_with_prefix frame_apply_args {
+	"3"
+	"level 0-2" } {
+	    set cmd "frame apply $frame_apply_args p /x 20"
+	    gdb_test $cmd \
+		[multi_line \
+		     "#0${ws}setup_done ${any}" \
+		     "\\\$\[0-9]+ = 0x14${any}" \
+		     "#1${ws}${any} f1 ${any}" \
+		     "\\\$\[0-9]+ = 0x14${any}" \
+		     "#2${ws}${any} f2 ${any}" \
+		     "\\\$\[0-9]+ = 0x14${any}" \
+		    ] \
+		"run a simple command on the 3 innermost frames"
+	}
+}
+
+# Check frame apply on 3 outermost frames.
+with_test_prefix "outermost 3" {
+    foreach_with_prefix frame_apply_args {
+	"-3" } {
+	    set cmd "frame apply $frame_apply_args p /x 20"
+	    gdb_test $cmd \
+		[multi_line \
+		     "#3${ws}${any} f3 ${any}" \
+		     "\\\$\[0-9]+ = 0x14${any}" \
+		     "#4${ws}${any} f4 ${any}" \
+		     "\\\$\[0-9]+ = 0x14${any}" \
+		     "#5${ws}${any} main ${any}" \
+		     "\\\$\[0-9]+ = 0x14${any}" \
+		    ] \
+		"run a simple command on the 3 outermost frames"
+	}
+}
+
+# Check -c (continue) and -s (silently continue) flags.
+with_test_prefix "!cont !silent flags" {
+    foreach_with_prefix frame_apply_args {
+	"all"
+	"level 0-5"
+    } {
+	set cmd "frame apply $frame_apply_args p f3arg"
+	gdb_test $cmd \
+	    [multi_line \
+		 "#0${ws}setup_done ${any}" \
+		 "No symbol \\\"f3arg\\\" in current context." \
+		] \
+	    "run a failing command that aborts frame apply"
+    }
+}
+
+with_test_prefix "cont !silent flags" {
+    foreach_with_prefix frame_apply_args {
+	"all -c"
+	"level 0-5 -c"} {
+	    set cmd "frame apply $frame_apply_args p f3arg"
+	    gdb_test $cmd \
+		[multi_line \
+		     "#0${ws}setup_done ${any}" \
+		     "No symbol \\\"f3arg\\\" in current context." \
+		     "#1${ws}${any} f1 ${any}" \
+		     "No symbol \\\"f3arg\\\" in current context." \
+		     "#2${ws}${any} f2 ${any}" \
+		     "No symbol \\\"f3arg\\\" in current context." \
+		     "#3${ws}${any} f3 ${any}" \
+		     "\\\$\[0-9]+ = 3${any}" \
+		     "#4${ws}${any} f4 ${any}" \
+		     "No symbol \\\"f3arg\\\" in current context." \
+		     "#5${ws}${any} main ${any}" \
+		     "No symbol \\\"f3arg\\\" in current context." \
+		    ] \
+		"run a command failing in all frames except #3, -c to continue"
+	}
+}
+
+with_test_prefix "!cont silent flags" {
+    foreach_with_prefix cmd_and_args {
+	"frame apply all -s"
+	"faas"
+	"frame apply level 0-5 -s"} {
+	    set cmd "$cmd_and_args p f3arg"
+	    gdb_test $cmd \
+		[multi_line \
+		     "#3${ws}${any} f3 ${any}" \
+		     "\\\$\[0-9]+ = 3${any}" \
+		    ] \
+		"run a command failing in all frames except #3, -s to silently continue"
+	}
+}
+
+# Check quietness.
+with_test_prefix "!quiet flag" {
+    foreach_with_prefix frame_apply_args {
+	"2"
+	"level 0-1"} {
+	    set cmd "frame apply $frame_apply_args p /x 20"
+	    gdb_test $cmd \
+		[multi_line \
+		     "#0${ws}setup_done ${any}" \
+		     "\\\$\[0-9]+ = 0x14${any}" \
+		     "#1${ws}${any} f1 ${any}" \
+		     "\\\$\[0-9]+ = 0x14${any}" \
+		    ] \
+		"run a command, printing location"
+	}
+}
+
+with_test_prefix "quiet flag" {
+    foreach_with_prefix frame_apply_args {
+	"2 -q"
+	"level 0-1 -q"} {
+	    set cmd "frame apply $frame_apply_args p /x 20"
+	    gdb_test $cmd \
+		[multi_line \
+		     "\\\$\[0-9]+ = 0x14${any}" \
+		     "\\\$\[0-9]+ = 0x14${any}" \
+		    ] \
+		"run a command with -q quiet flag, printing only command results"
+	}
+}
+
+# Check multiple flags together.
+with_test_prefix "quiet silent flags" {
+    foreach_with_prefix frame_apply_args {
+	"all -q -s -q"
+	"level 0-5 -q -s -q"} {
+	    set cmd "frame apply $frame_apply_args p f3arg"
+	    gdb_test $cmd \
+		"\\\$\[0-9]+ = 3${any}" \
+		"run a command failing in all frames except #3, -s to silently continue, quiet"
+	}
+}
+
+# Check invalid flag combinations.
+gdb_test "frame apply all -c -s p f3arg" \
+    "frame apply all: -c and -s are mutually exclusive" \
+    "check -c and -s cannot be used simultaneously"
+
+# Check some cases of missing or wrong args.
+gdb_test "frame apply" "Missing COUNT argument." "missing COUNT"
+gdb_test "frame apply -c" "Invalid COUNT argument." "invalid COUNT arg"
+gdb_test "frame apply level 4-2 p 1" "inverted range" "inverted range"
+gdb_test "frame apply level 0-3" \
+    "Please specify a command to apply on the selected frames" \
+    "missing command"
+gdb_test "faas" "Please specify a command to apply on all frames" \
+    "missing command for faas"

@@ -1,0 +1,80 @@
+# Copyright 2019-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require allow_shlib_tests
+
+load_lib "ada.exp"
+
+require allow_ada_tests shared_gnat_runtime_has_debug_info
+
+standard_ada_testfile foo
+
+set srcfile2 [file join [file dirname $srcfile] some_package.adb]
+set sofile [standard_output_file libsome_package.so]
+
+set outdir [file dirname $binfile]
+
+# Create the shared library.
+if {[gdb_compile_shlib $srcfile2 $sofile {ada debug}] != ""} {
+    return -1
+}
+
+# Set linkarg such that the executable can find the shared library.
+if {[istarget "*-*-mingw*"]
+    || [istarget *-*-cygwin*]
+    || [istarget *-*-pe*]} {
+    # Do not need anything.
+    set linkarg ""
+} elseif {[istarget *-*-freebsd*] || [istarget *-*-openbsd*]} {
+    set linkarg "-Wl,-rpath,$outdir"
+} else {
+    set linkarg "-Wl,-rpath,\\\$ORIGIN"
+}
+
+# Make sure we link against the shared GNAT run time.
+set gnatbind_options [list -bargs -shared -margs]
+
+# Link against the shared library.
+set gnatlink_options [list -largs $linkarg -Wl,-lsome_package -margs]
+
+set options [list debug]
+foreach option [concat $gnatbind_options $gnatlink_options] {
+    lappend options [concat "additional_flags=" $option]
+}
+
+# Create executable.
+if {[gdb_compile_ada $srcfile $binfile executable $options] != ""} {
+    return -1
+}
+
+clean_restart ${testfile}
+
+# Do whatever is necessary to make sure that the shared library is
+# loaded for remote targets.
+gdb_load_shlib $sofile
+
+if {![runto_main]} {
+   return 0
+}
+
+gdb_test "catch exception some_kind_of_error" \
+    "Catchpoint \[0-9\]+: `some_kind_of_error' Ada exception"
+
+gdb_test "cont" \
+    "Catchpoint \[0-9\]+, .* at .*foo\.adb:\[0-9\]+.*" \
+    "caught the exception"
+
+gdb_test "print \$_ada_exception = some_package.some_kind_of_error'Address" \
+    " = true"

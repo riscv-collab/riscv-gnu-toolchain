@@ -1,0 +1,74 @@
+# Copyright 2015-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+# Check that we can connect to GDBserver with the multiprocess
+# extensions disabled, run to main, and finish the process.
+
+load_lib gdbserver-support.exp
+
+require allow_gdbserver_tests
+
+standard_testfile
+
+if {[build_executable "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+# Test spawning gdbserver with a program, connect to it and run to
+# main, with both multiprocess extensions on and off.
+proc do_test {multiprocess} {
+    global binfile GDBFLAGS
+
+    save_vars { GDBFLAGS } {
+	# If GDB and GDBserver are both running locally, set the sysroot to avoid
+	# reading files via the remote protocol.
+	if { ![is_remote host] && ![is_remote target] } {
+	    set GDBFLAGS "$GDBFLAGS -ex \"set sysroot\""
+	}
+
+	clean_restart $binfile
+    }
+
+    # Make sure we're disconnected, in case we're testing with an
+    # extended-remote board, therefore already connected.
+    gdb_test "disconnect" ".*"
+
+    gdb_test \
+	"set remote multiprocess-feature $multiprocess" \
+	"Support for the 'multiprocess-feature' packet on future remote targets is set to \"$multiprocess\"."
+
+    set res [gdbserver_spawn ""]
+    set gdbserver_protocol [lindex $res 0]
+    set gdbserver_gdbport [lindex $res 1]
+
+    gdb_test "break -q main" "Breakpoint .*"
+
+    gdb_test "target $gdbserver_protocol $gdbserver_gdbport" \
+	"Remote debugging using .*" \
+	"target $gdbserver_protocol"
+
+    gdb_test "continue" "main .*" "continue to main"
+
+    # The W/X packets do not include the PID of the exiting process
+    # without the multi-process extensions.  Check that we handle
+    # process exit correctly in that case.
+    gdb_continue_to_end
+}
+
+foreach multiprocess { "off" "auto" } {
+    with_test_prefix "multiprocess=$multiprocess" {
+	do_test $multiprocess
+    }
+}

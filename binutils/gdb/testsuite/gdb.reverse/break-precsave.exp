@@ -1,0 +1,112 @@
+#   Copyright 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It tests reverse debugging
+# with breakpoints in a process record logfile.
+
+# This test suitable only for process record-replay
+require supports_process_record
+
+standard_testfile break-reverse.c
+set precsave [standard_output_file break.precsave]
+
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile] } {
+    return -1
+}
+
+set foo_location  [gdb_get_line_number "break in foo" ]
+set bar_location  [gdb_get_line_number "break in bar" ]
+set main_location [gdb_get_line_number "break in main"]
+set end_location  [gdb_get_line_number "end of main"  ]
+
+proc precsave_tests {} {
+    global foo_location bar_location main_location end_location
+    global decimal srcfile precsave gdb_prompt
+
+    runto_main
+
+    # Activate process record/replay
+    gdb_test_no_output "record" "turn on process record"
+
+    gdb_test "break $end_location" \
+	"Breakpoint $decimal at .*$srcfile, line $end_location\." \
+	"BP at end of main"
+
+    gdb_test "continue" "Breakpoint .* end of main .*" "run to end of main"
+
+    gdb_test "record save $precsave" \
+	"Saved core file $precsave with execution log\."  \
+	"save process recfile"
+
+    gdb_test "kill" "" "kill process, prepare to debug log file" \
+	"Kill the program being debugged\\? \\(y or n\\) " "y"
+
+    gdb_test "record restore $precsave" \
+	"Restored records from core file .*" \
+	"reload precord save file"
+
+    gdb_test "break foo" \
+	"Breakpoint $decimal at .* line $foo_location\." \
+	"set breakpoint on foo"
+
+    gdb_test "break bar" \
+	"Breakpoint $decimal at .* line $bar_location\." \
+	"set breakpoint on bar"
+
+    gdb_continue_to_breakpoint "foo forward after restore" \
+	".*$srcfile:$foo_location.*"
+    gdb_continue_to_breakpoint "bar forward after restore" \
+	".*$srcfile:$bar_location.*"
+    gdb_test_multiple "continue" "go to end of main forward" {
+	-re ".*Breakpoint $decimal,.*$srcfile:$end_location.*$gdb_prompt $"  {
+	    pass "go to end of main forward"
+	}
+	-re "No more reverse-execution history.* end of main .*$gdb_prompt $" {
+	    pass "go to end of main forward"
+	}
+    }
+
+    gdb_test_no_output "set exec-direction reverse" "set reverse"
+
+    gdb_continue_to_breakpoint "bar backward"  ".*$srcfile:$bar_location.*"
+    gdb_continue_to_breakpoint "foo backward"  ".*$srcfile:$foo_location.*"
+
+    gdb_test_multiple "continue" "main backward" {
+	-re ".*Breakpoint $decimal,.*$srcfile:$main_location.*$gdb_prompt $" {
+	    pass "main backward"
+	}
+	-re "No more reverse-execution history.* break in main .*$gdb_prompt $" {
+	    pass "main backward"
+	}
+    }
+
+    gdb_test_no_output "set exec-direction forward" "set forward"
+
+    gdb_continue_to_breakpoint "foo forward again" \
+	".*$srcfile:$foo_location.*"
+    gdb_continue_to_breakpoint "bar forward again" \
+	".*$srcfile:$bar_location.*"
+
+    gdb_test_multiple "continue" "end of record log" {
+	-re ".*Breakpoint $decimal,.*$srcfile:$end_location.*$gdb_prompt $" {
+	    pass "end of record log"
+	}
+	-re "No more reverse-execution history.* end of main .*$gdb_prompt $" {
+	    pass "end of record log"
+	}
+    }
+}
+
+precsave_tests

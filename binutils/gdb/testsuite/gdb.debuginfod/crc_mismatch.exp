@@ -1,0 +1,135 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# This test compiles two executables: crc_mismatch and crc_mismatch-2
+# and then strips them of debuginfo creating separate debug files. The test
+# then replaces crc_mismatch-2.debug with crc_mismatch.debug to trigger
+# "CRC mismatch" warning. A local debuginfod server is setup to supply
+# the correct debug file, now when GDB looks up the debug info no warning
+# is given.
+
+standard_testfile .c -2.c
+
+load_lib debuginfod-support.exp
+
+require allow_debuginfod_tests
+
+if {[build_executable "build executable" $testfile $srcfile debug] == -1} {
+    untested "failed to compile"
+    return -1
+}
+
+# The procedure gdb_gnu_strip_debug will produce an executable called
+# ${binfile}, which is just like the executable ($binfile) but without
+# the debuginfo. Instead $binfile has a .gnu_debuglink section which
+# contains the name of a debuginfo only file.
+if {[gdb_gnu_strip_debug $binfile]} {
+    # Check that you have a recent version of strip and objcopy installed.
+    unsupported "cannot produce separate debug info files"
+    return -1
+}
+
+set debugfile [standard_output_file ${testfile}.debug]
+set debugdir [standard_output_file "debug"]
+remote_exec build "mkdir $debugdir"
+remote_exec build "mkdir -p [file dirname $debugfile]"
+remote_exec build "mv -f [standard_output_file ${testfile}.debug] $debugfile"
+
+# Test CRC mismatch is reported.
+if {[build_executable crc_mismatch.exp crc_mismatch-2 crc_mismatch-2.c debug] != -1
+    && ![gdb_gnu_strip_debug [standard_output_file crc_mismatch-2]]} {
+
+    # Copy the correct debug file for crc_mismatch-2 to the debugdir
+    # which is going to be used by local debuginfod.
+    remote_exec build "cp [standard_output_file crc_mismatch-2.debug] ${debugdir}"
+    # Move the unmatching debug file for crc_mismatch-2 instead of its real one
+    # to trigger the "CRC mismatch" warning.
+    remote_exec build "mv ${debugfile} [standard_output_file crc_mismatch-2.debug]"
+
+    clean_restart
+
+    set escapedobjdirsubdir [string_to_regexp [standard_output_file {}]]
+    gdb_test "file [standard_output_file crc_mismatch-2]" \
+	[multi_line \
+	     "Reading symbols from ${escapedobjdirsubdir}/crc_mismatch-2\\.\\.\\." \
+	     "warning: the debug information found in \"${escapedobjdirsubdir}/crc_mismatch-2\\.debug\" does not match \"${escapedobjdirsubdir}/crc_mismatch-2\" \\(CRC mismatch\\)\\." \
+	     "\\(No debugging symbols found in .*\\)"] \
+	"CRC mismatch is reported"
+
+    # Do the same thing again, but this time check that the styling is
+    # correct.
+    with_test_prefix "check styling" {
+	with_ansi_styling_terminal {
+	    clean_restart
+
+	    set debug_file_re [style "${escapedobjdirsubdir}/crc_mismatch-2\\.debug" file]
+	    set exe_file_re [style "${escapedobjdirsubdir}/crc_mismatch-2" file]
+
+	    gdb_test "file [standard_output_file crc_mismatch-2]" \
+		[multi_line \
+		     "Reading symbols from ${exe_file_re}\\.\\.\\." \
+		     "warning: the debug information found in \"${debug_file_re}\" does not match \"${exe_file_re}\" \\(CRC mismatch\\)\\." \
+		     "\\(No debugging symbols found in \[^\r\n\]+\\)"] \
+		"CRC mismatch is reported"
+	}
+    }
+
+    # Restart GDB with styling disabled.
+    clean_restart
+}
+
+# Create CACHE and DB directories ready for debuginfod to use.
+prepare_for_debuginfod cache db
+
+# Start debuginfod server, test the correct debuginfo was fetched
+# from the server so there're not warnings anymore.
+proc_with_prefix local_debuginfod { } {
+    global binfile db debugdir cache
+    set escapedobjdirsubdir [string_to_regexp [standard_output_file {}]]
+
+    set url [start_debuginfod $db $debugdir]
+    if {$url eq ""} {
+	unresolved "failed to start debuginfod server"
+	return
+    }
+
+    # Point the client to the server.
+    setenv DEBUGINFOD_URLS $url
+
+    # GDB should now find the symbol and source files.
+    clean_restart
+
+    # Enable debuginfod and fetch the debuginfo.
+    gdb_test_no_output "set debuginfod enabled on"
+    gdb_test "file $binfile" ".*Reading symbols from.*debuginfo.*" \
+	"file [file tail $binfile] cmd on"
+
+    # CRC mismatch should not be reported now because the correct debuginfo
+    # should be fetched from debuginfod.
+    gdb_test "file [standard_output_file crc_mismatch-2]" \
+	[multi_line \
+	     "Reading symbols from ${escapedobjdirsubdir}/crc_mismatch-2\\.\\.\\." \
+	     "Downloading.*separate debug info for ${escapedobjdirsubdir}/crc_mismatch-2\\.\\.\\." \
+	     "Reading symbols from ${cache}/\[^\r\n\]+\\.\\.\\.(?:\r\nExpanding full symbols from \[^\r\n\]+)*"] \
+	 "debuginfod running, info downloaded, no CRC mismatch"
+}
+
+with_debuginfod_env $cache {
+    local_debuginfod
+}
+
+stop_debuginfod
+# Spare debug files may confuse testsuite runs in the future.
+remote_exec build "rm -f $debugfile"

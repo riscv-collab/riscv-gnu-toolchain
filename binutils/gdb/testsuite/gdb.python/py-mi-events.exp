@@ -1,0 +1,86 @@
+# Copyright (C) 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It tests PR 19743.
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi2"
+
+require allow_python_tests
+
+standard_testfile
+
+set pyfile ${testfile}-gdb.py
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+set remote_python_file [gdb_remote_download host ${srcdir}/${subdir}/${pyfile}]
+
+if {[mi_clean_restart]} {
+    return
+}
+
+mi_gdb_test "set auto-load safe-path ${remote_python_file}" \
+    {.*\^done} \
+    "set safe-path"
+
+if [is_remote host] {
+    set filename ${testfile}
+    remote_download host ${binfile} ${filename}
+} else {
+    set filename ${binfile}
+}
+
+mi_gdb_test "-file-exec-and-symbols ${filename}"  ".*\\^done" "file-exec-and-symbols operation"
+mi_gdb_load ${binfile}
+mi_runto_main
+
+
+# register the python event handlers with test-events command
+mi_gdb_test "test-events" \
+    ".*~\"Event testers registered.*\\^done" \
+    "register events"
+
+
+set lineno [gdb_get_line_number "i++;"]
+
+# set a breakpoint into the for loop
+mi_gdb_test "break ${srcfile}:$lineno" \
+    ".*Breakpoint $decimal at 0x\[0-9a-fA-F\]+: file .*${srcfile}.*\\\.*\\^done" \
+    "set the breakpoint"
+
+
+# resume the program
+mi_execute_to "exec-continue" "breakpoint-hit" "main" "" ".*$srcfile" "$lineno" { "" "disp=\"keep\"" } "continue"
+
+
+# test the python event handlers execution. The following checks are performed:
+# - python continue handler is executed
+# - the continue handler prints "info breakpoints" output in console format
+# - breakpoint is hit and python stop handler is executed
+# - the stop handler prints "info breakpoints" output in console format
+
+mi_gdb_test "python print (stop_handler_str)" \
+".*stop_handler.*Num.*Type.*Disp.*Enb.*Address.*$decimal.*breakpoint.*keep.*y.* 0x\[0-9a-fA-F\]+.*${srcfile}.*" \
+"python stop handler ran"
+
+mi_gdb_test "python print (cont_handler_str)" \
+".*continue_handler.*Num.*Type.*Disp.*Enb.*Address.*$decimal.*breakpoint.*keep.*y.* 0x\[0-9a-fA-F\]+.*${srcfile}.*" \
+"python continue handler ran"
+
+mi_gdb_exit

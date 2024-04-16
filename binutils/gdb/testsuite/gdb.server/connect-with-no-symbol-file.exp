@@ -1,0 +1,105 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2016-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test GDB's ability to properly connect to GDBserver with no pre-opened
+# symbol file.  If GDB is buggy, it will drop the connection when
+# it attempts to open the symbol file indicated by GDBserver and fails.
+#
+# This test is only meaningful for standard remote connections.
+
+load_lib gdbserver-support.exp
+
+standard_testfile
+
+require allow_gdbserver_tests
+
+if { [build_executable "failed to prepare" $testfile $srcfile debug] } {
+    return -1
+}
+
+# Test connecting GDB to GDBserver without loading a symbol file.
+#
+# SYSROOT is the desired sysroot string
+#
+# ACTION is the action to perform to the symbol file on the target.
+# It can be either "permission" to deny access to the file or "delete"
+# to remove the file.
+#
+proc connect_no_symbol_file { sysroot action } {
+    global binfile
+
+    with_test_prefix "setup" {
+	# Restore original $binfile.
+	gdb_remote_download build $binfile.bak $binfile
+
+	# Copy the symbol file to the target.
+	set target_exec [gdb_remote_download target $binfile]
+
+	# Make sure we're disconnected, in case we're testing with an
+	# extended-remote board, therefore already connected.
+	gdb_test "disconnect" ".*"
+
+	# Set sysroot to something non-target and possibly also invalid so that
+	# GDB is unable to open the symbol file.
+	gdb_test_no_output "set sysroot $sysroot" "adjust sysroot"
+
+	# Start GDBserver.
+	set res [gdbserver_start "" $target_exec]
+
+	set gdbserver_protocol [lindex $res 0]
+	set gdbserver_gdbport [lindex $res 1]
+
+	# Perform test actions to the symbol file on the target.
+	if {$action == "delete"} {
+	  remote_file target delete $target_exec
+	} elseif { $action == "permission" } {
+	  remote_exec target "chmod 000 $target_exec"
+	}
+       
+	# Connect to GDBserver.
+	gdb_target_cmd $gdbserver_protocol $gdbserver_gdbport
+    }
+
+    # Check if GDB succeeded connecting to GDBserver by attempting to detach
+    # from the process.
+    # Use an explicit fail clause to prevent the implicit clause matching
+    # "Ending remote debugging" from triggering, which would cause silent
+    # failure.
+    set ok 0
+    gdb_test_multiple "detach" "" {
+	-re "\r\nDetaching from \[^\r\n\]*" {
+	    set ok 1
+	    exp_continue
+	}
+	-re -wrap "" {
+	}
+    }
+    gdb_assert $ok "connection to GDBserver succeeded"
+}
+
+# Make sure we have the original symbol file in a safe place to copy from.
+gdb_remote_download build $binfile $binfile.bak
+
+# Start with no executable loaded.
+clean_restart
+
+# Run the test with different permutations.
+foreach_with_prefix sysroot {"" "target:"} {
+    foreach_with_prefix action {"permission" "delete"} {
+	connect_no_symbol_file $sysroot $action
+    }
+}

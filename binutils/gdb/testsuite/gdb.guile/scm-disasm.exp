@@ -1,0 +1,134 @@
+# Copyright 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib gdb-guile.exp
+
+require allow_guile_tests
+
+standard_testfile
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+    return
+}
+
+if ![gdb_guile_runto_main] {
+   return
+}
+
+# Disassemble one instruction at pc and verify the result.
+
+proc test_disassemble_1 { name address extra_args } {
+    with_test_prefix $name {
+	gdb_scm_test_silent_cmd "guile (define insn-list (arch-disassemble arch $address $extra_args #:size 1 #:count 1))" \
+	    "disassemble"
+
+	gdb_test "guile (print (length insn-list))" \
+	    "= 1" "test number of instructions"
+	gdb_scm_test_silent_cmd "guile (define insn (car insn-list))" \
+	    "get instruction"
+
+	# Verify all the fields are present.
+	gdb_test "guile (print (->bool (assq-ref insn 'address)))" \
+	    "= #t" "test key address"
+	gdb_test "guile (print (->bool (assq-ref insn 'asm)))" \
+	    "= #t" "test key asm"
+	gdb_test "guile (print (->bool (assq-ref insn 'length)))" \
+	    "= #t" "test key length"
+
+	# Verify the correct address is used.
+	gdb_test "guile (print (= $address (assq-ref insn 'address)))" \
+	    "= #t" "verify correct address"
+    }
+}
+
+gdb_scm_test_silent_cmd "guile (define frame (selected-frame))" "get frame"
+gdb_scm_test_silent_cmd "guile (define arch (frame-arch frame))" "get arch"
+gdb_scm_test_silent_cmd "guile (define pc (frame-pc frame))" "get pc"
+
+gdb_test "guile (print (arch-disassemble arch pc #:size 0))" \
+    "= \\(\\)" "disassemble, zero size"
+gdb_test "guile (print (arch-disassemble arch pc #:count 0))" \
+    "= \\(\\)" "disassemble, zero count"
+
+gdb_scm_test_silent_cmd "guile (define insn-list1 (arch-disassemble arch pc #:size 1 #:count 1))" \
+    "disassemble"
+gdb_scm_test_silent_cmd "guile (define insn-list2 (arch-disassemble arch pc #:size 1))" \
+    "disassemble, no count"
+gdb_scm_test_silent_cmd "guile (define insn-list3 (arch-disassemble arch pc #:count 1))" \
+    "disassemble, no end"
+gdb_scm_test_silent_cmd "guile (define insn-list4 (arch-disassemble arch pc))" \
+    "disassemble, no end no count"
+
+gdb_test "guile (print (length insn-list1))" \
+    "= 1" "test number of instructions 1"
+gdb_test "guile (print (length insn-list2))" \
+    "= 1" "test number of instructions 2"
+gdb_test "guile (print (length insn-list3))" \
+    "= 1" "test number of instructions 3"
+gdb_test "guile (print (length insn-list4))" \
+    "= 1" "test number of instructions 4"
+
+test_disassemble_1 "basic" "pc" ""
+
+if { ![is_address_zero_readable] } {
+    # Negative test
+    gdb_test "guile (arch-disassemble arch 0 #:size 1)" \
+	"ERROR: Cannot access memory at address 0x.*" "test bad memory access"
+}
+
+# Test disassembly through a port.
+
+gdb_scm_test_silent_cmd "guile (define mem (open-memory))" \
+    "open memory port"
+
+test_disassemble_1 "memory-port" "pc" "#:port mem"
+
+gdb_scm_test_silent_cmd "guile (define insn-list-mem (arch-disassemble arch pc #:port mem #:size 1 #:count 1))" \
+    "disassemble via memory port"
+
+# Test memory error reading from port.
+
+gdb_scm_test_silent_cmd "guile (define mem1 (open-memory #:start pc #:size 4))" \
+    "open restricted range memory port"
+
+# The x86 disassembler tries to be clever and will print "byte 0x42" if
+# there is insufficient memory for the entire instruction.
+# So we pass "#:count 5" to ensure the disassembler tries to read beyond
+# the end of the memory range.
+gdb_test "guile (arch-disassemble arch pc #:port mem1 #:count 5 #:offset pc)" \
+    "ERROR: Cannot access memory at address 0x.*" \
+    "test bad memory access from port"
+
+# Test disassembly of a bytevector.
+
+gdb_scm_test_silent_cmd "guile (use-modules (rnrs io ports))" \
+    "import (rnrs io ports)"
+
+# First fetch the length of the instruction at $pc.
+gdb_scm_test_silent_cmd "guile (define insn-list-for-bv (arch-disassemble arch pc))" \
+    "get insn for bytevector"
+gdb_test_no_output "guile (define insn-length (assq-ref (car insn-list-for-bv) 'length))" \
+    "get insn length for bytevector"
+
+# Read the insn into a bytevector.
+gdb_test_no_output "guile (define insn-bv (get-bytevector-n (open-memory #:start pc #:size insn-length) insn-length))" \
+    "read insn into bytevector"
+
+# Disassemble the bytevector.
+gdb_scm_test_silent_cmd "guile (define insn-list-from-bv (arch-disassemble arch pc #:port (open-bytevector-input-port insn-bv) #:offset pc))" \
+    "disassemble bytevector"
+
+gdb_test "guile (print (equal? insn-list-for-bv insn-list-from-bv))" \
+    "= #t" "verify bytevector disassembly"

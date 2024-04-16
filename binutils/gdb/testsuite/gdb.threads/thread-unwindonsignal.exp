@@ -1,0 +1,99 @@
+# Copyright (C) 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test use of unwindonsignal when a hand function call that gets interrupted
+# by a signal in another thread.
+
+set NR_THREADS 4
+
+standard_testfile interrupted-hand-call.c
+
+# Some targets can't do function calls, so don't even bother with this
+# test.
+require {!target_info exists gdb,cannot_call_functions}
+
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable [list debug "additional_flags=-DNR_THREADS=$NR_THREADS"]] != "" } {
+    return -1
+}
+
+clean_restart ${binfile}
+
+if { ![runto_main] } {
+    return 0
+}
+
+gdb_test "break all_threads_running" \
+         "Breakpoint 2 at .*: file .*${srcfile}, line .*" \
+         "breakpoint on all_threads_running"
+
+# Run the program and make sure GDB reports that we stopped after
+# hitting breakpoint 2 in all_threads_running().
+
+gdb_test "continue" \
+         ".*Breakpoint 2, all_threads_running ().*" \
+         "run to all_threads_running"
+
+# NOTE: Don't turn on scheduler-locking here.
+# We want the main thread (hand_call_with_signal) and
+# thread 1 (sigabrt_handler) to both run.
+
+# Do turn on unwindonsignal.
+# We want to test gdb handling of the current thread changing when
+# unwindonsignal is in effect.
+gdb_test_no_output "set unwindonsignal on" \
+	"setting unwindonsignal"
+gdb_test "show unwindonsignal" \
+	"Unwinding of stack .* is on." \
+	"showing unwindonsignal"
+
+gdb_test "call hand_call_with_signal()" \
+    "The program received a signal.*" \
+    "hand-call interrupted by signal in another thread"
+
+# Verify dummy stack frame is still present.
+# ??? Should unwindonsignal still apply even if the program stops
+# because of a signal in another thread?
+
+gdb_test "maint print dummy-frames" ".*stack=.*" "dummy stack frame present"
+
+# GDB 6.8 would perform the unwindonsignal, but on the thread that stopped,
+# not the thread with the hand-called function.
+# This is tested by verifying only one thread has main in its backtrace.
+
+gdb_test_multiple "thread apply all bt" "wrong thread not unwound" {
+    -re ".* in main .* in main .*$gdb_prompt $" {
+	fail "wrong thread not unwound"
+    }
+    -re ".* in main .*$gdb_prompt $" {
+	pass "wrong thread not unwound"
+    }
+}
+
+# Continuing now should exit the hand-call and pop the dummy frame.
+
+gdb_test "continue" ".*" "finish hand-call"
+
+gdb_test_multiple "maint print dummy-frames" "dummy frame popped" {
+    -re ".*stack=.*$gdb_prompt $" {
+	fail "dummy frame popped"
+    }
+    -re ".*$gdb_prompt $" {
+	pass "dummy frame popped"
+    }
+}
+
+# Continue one last time, the program should exit normally.
+
+gdb_continue_to_end "" continue 1

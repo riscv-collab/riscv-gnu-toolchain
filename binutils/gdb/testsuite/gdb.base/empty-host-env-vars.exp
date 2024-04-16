@@ -1,0 +1,75 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test assumes host == build.
+require {!is_remote host}
+
+# GDB reads some environment variables on startup, make sure it behaves
+# correctly if these variables are defined but empty.
+
+set all_env_vars { HOME XDG_CACHE_HOME LOCALAPPDATA XDG_CONFIG_HOME }
+
+# Record the initial value of the index-cache directory.
+clean_restart
+set index_cache_directory ""
+gdb_test_multiple "show index-cache directory" "" {
+    -re -wrap "The directory of the index cache is \"(.*)\"\\." {
+	set index_cache_directory $expect_out(1,string)
+	set index_cache_directory [string_to_regexp $index_cache_directory]
+	pass $gdb_test_name
+    }
+}
+
+foreach_with_prefix env_var_name $all_env_vars {
+    # Restore the original state of the environment variable.
+    save_vars env($env_var_name) {
+	set env($env_var_name) {}
+	clean_restart
+
+	# Verify that the empty environment variable didn't affect the
+	# index-cache directory setting, that we still see the initial value.
+	# "HOME" is different, because if that  one is unset, GDB isn't even
+	# able to compute the default location.  In that case, we expect it to
+	# be empty.
+	if { $env_var_name == "HOME" } {
+	    gdb_test "show index-cache directory" \
+		"The directory of the index cache is \"\"\\."
+	} else {
+	    gdb_test "show index-cache directory" \
+		"The directory of the index cache is \"$index_cache_directory\"\\."
+	}
+    }
+}
+
+# Try the same, but with all the env vars set to an empty value at the same
+# time.
+with_test_prefix "all env vars" {
+    set save_vars_arg {}
+    foreach env_var_name $all_env_vars {
+	lappend save_vars_arg env($env_var_name)
+    }
+
+    # Restore the original state of all the environment variables.
+    save_vars $save_vars_arg {
+	foreach env_var_name $all_env_vars {
+	    set env($env_var_name) {}
+	}
+
+	clean_restart
+
+	gdb_test "show index-cache directory" \
+	    "The directory of the index cache is \"\"\\."
+    }
+}

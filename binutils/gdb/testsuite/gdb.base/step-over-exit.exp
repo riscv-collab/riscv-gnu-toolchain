@@ -1,0 +1,124 @@
+#   Copyright 2016-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile
+
+# Test a thread is doing step-over a syscall instruction which is exit,
+# and GDBserver should cleanup its state of step-over properly.
+
+set syscall_insn ""
+
+# Define the syscall instruction for each target.
+
+if { [istarget "i\[34567\]86-*-linux*"] || [istarget "x86_64-*-linux*"] } {
+    set syscall_insn "\[ \t\](int|syscall|sysenter)\[ \t\]*"
+} elseif { [istarget "aarch64*-*-linux*"] || [istarget "arm*-*-linux*"] } {
+    set syscall_insn "\[ \t\](swi|svc)\[ \t\]"
+} else {
+    unsupported "unknown syscall instruction"
+    return -1
+}
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+gdb_test "set follow-fork-mode child"
+gdb_test "set detach-on-fork off"
+
+# Step 1, find the syscall instruction address.
+
+gdb_test "break _exit" "Breakpoint $decimal at .*"
+
+# Hit the breakpoint on _exit.  The address of syscall insn is recorded.
+
+gdb_test "continue" \
+    "Continuing\\..*Breakpoint $decimal.*_\[eE\]xit \\(.*\\).*" \
+    "continue to exit"
+
+gdb_test "display/i \$pc" ".*"
+
+# Single step until we see a syscall insn or we reach the
+# upper bound of loop iterations.
+set msg "find syscall insn in exit"
+set steps 0
+set max_steps 1000
+gdb_test_multiple "stepi" $msg {
+    -re ".*$syscall_insn.*$gdb_prompt $" {
+	pass $msg
+    }
+    -re "x/i .*=>.*\r\n$gdb_prompt $" {
+	incr steps
+	if {$steps == $max_steps} {
+	    fail $msg
+	} else {
+	    send_gdb "stepi\n"
+	    exp_continue
+	}
+    }
+}
+
+if {$steps == $max_steps} {
+    return
+}
+
+# Remove the display
+gdb_test_no_output "delete display 1"
+
+set syscall_insn_addr [get_hexadecimal_valueof "\$pc" "0"]
+
+gdb_test "continue" "exited normally.*" "continue to end, first time"
+gdb_test "inferior 1" ".*Switching to inferior 1.*" \
+    "switch back to inferior 1, first time"
+
+delete_breakpoints
+
+gdb_test "break marker"
+
+gdb_test "continue" "Continuing\\..*Breakpoint $bkptno_num_re, .*" \
+    "continue to marker, first time"
+
+# Step 2, create a breakpoint which evaluates false, and force it
+# evaluated on the target side.
+
+set test "set breakpoint condition-evaluation target"
+gdb_test_multiple $test $test {
+    -re "warning: Target does not support breakpoint condition evaluation.\r\nUsing host evaluation mode instead.\r\n$gdb_prompt $" {
+	# Target doesn't support breakpoint condition evaluation
+	# on its side, but it is no harm to run the test.
+    }
+    -re "^$test\r\n$gdb_prompt $" {
+    }
+}
+
+gdb_test "break \*$syscall_insn_addr if main == 0" \
+    "Breakpoint \[0-9\]* at .*" \
+    "set conditional break at syscall address"
+
+# Resume the child process, and the step-over is being done.
+
+gdb_test "continue" "exited normally.*" "continue to end, second time"
+gdb_test "inferior 1" ".*Switching to inferior 1.*" \
+    "switch back to inferior 1, second time"
+
+# Switch back to the parent process, continue to the marker to
+# test GDBserver's state is still correct.
+
+gdb_test "continue" "Continuing\\..*Breakpoint $bkptno_numopt_re, .*" \
+    "continue to marker, second time"

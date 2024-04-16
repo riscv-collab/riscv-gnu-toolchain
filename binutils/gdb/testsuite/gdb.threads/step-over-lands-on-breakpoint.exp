@@ -1,0 +1,81 @@
+# Copyright (C) 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that when a step-over lands on a breakpoint, that breakpoint
+# hit is reported.
+
+standard_testfile
+set executable ${testfile}
+
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" \
+	 executable [list debug "incdir=${objdir}"]] != "" } {
+    return -1
+}
+
+# The test proper.  DISPLACED is true if we should try with displaced
+# stepping.  COMMAND is the execution command to test.
+proc do_test {displaced command} {
+    global executable
+
+    with_test_prefix "displaced=$displaced: $command" {
+	clean_restart $executable
+
+	if ![runto_main] {
+	    return
+	}
+
+	gdb_test_no_output "set displaced-stepping $displaced"
+
+	set line [gdb_get_line_number "set wait-thread breakpoint here"]
+	if { ![gdb_breakpoint $line] } {
+	    return
+	}
+	gdb_continue_to_breakpoint "run to wait-thread breakpoint"
+	gdb_test "info threads" "\\\* 1 .*  2 .*" "info threads shows all threads"
+
+	gdb_test_no_output "set scheduler-locking on"
+
+	delete_breakpoints
+
+	gdb_breakpoint [gdb_get_line_number "set breakpoint child here"]
+	gdb_test "thread 2" "Switching to .*"
+	gdb_continue_to_breakpoint "run to breakpoint in thread 2"
+	gdb_test "p counter = 0" " = 0" "unbreak loop in thread 2"
+
+	# Set a breakpoint exactly where the step-over will land.
+	gdb_breakpoint [gdb_get_line_number "breakpoint after step-over here"]
+
+	# Switch back to thread 1 and disable scheduler locking.
+	gdb_test "thread 1" "Switching to .*"
+	gdb_test_no_output "set scheduler-locking off"
+
+	# Thread 2 is still stopped at a breakpoint that needs to be
+	# stepped over.  However, right where the step-over lands
+	# there's another breakpoint installed, which should trap and
+	# be reported to the user.
+	gdb_test "$command" "step-over here.*"
+    }
+}
+
+foreach displaced { "off" "on" } {
+    if { $displaced != "off" && ![support_displaced_stepping] } {
+	continue
+    }
+
+    # Cover both stepping and non-stepping execution commands.
+    foreach command { "step" "next" "continue" } {
+	do_test $displaced $command
+    }
+}

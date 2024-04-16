@@ -1,0 +1,186 @@
+# Copyright 2019-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Checks for a bug where a baddly formed ELF would cause GDB to crash.
+# A section containing executable code, for which there was DWARF is
+# accidentally marked as non-alloctable, GDB becomes unhappy.
+#
+# This test creates some fake DWARF pointing at some symbols in a
+# non-allocatable section that is still marked as executable.  We then
+# start GDB and try to place a breakpoint on the symbol in the
+# non-allocatable section.
+#
+# It is not expected that the final debug experience really makes
+# sense, the symbol is in a non-allocatable section after all, but GDB
+# absolutely shouldn't crash.  All we try to do after placing the
+# breakpoint is check that GDB is still alive.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+standard_testfile main.c -other.S -dwarf.S
+
+if { [prepare_for_testing ${testfile}.exp ${testfile} ${srcfile}] } {
+    untested "failed to compile"
+    return -1
+}
+
+set int_size [get_sizeof "int" 4]
+
+# Make some DWARF for the test.
+set asm_file [standard_output_file $srcfile3]
+Dwarf::assemble $asm_file {
+    global srcdir subdir srcfile srcfile2 int_size
+
+    declare_labels ranges_label_1 ranges_label_2 L1 L2
+
+    set main_result [function_range main ${srcdir}/${subdir}/${srcfile}]
+    set main_start [lindex $main_result 0]
+    set main_length [lindex $main_result 1]
+
+    cu {} {
+	DW_TAG_compile_unit {
+	    {DW_AT_language @DW_LANG_C}
+	    {DW_AT_name     $srcfile}
+	    {DW_AT_comp_dir ${srcdir}/${subdir}}
+	    {stmt_list $L1 DW_FORM_sec_offset}
+	    {ranges ${ranges_label_1} DW_FORM_sec_offset}
+	    {DW_AT_low_pc   0 addr}
+	} {
+	    declare_labels integer_label
+
+	    DW_TAG_subprogram {
+		{name main}
+		{low_pc $main_start addr}
+		{high_pc $main_length data8}
+		{DW_AT_type :$integer_label}
+		{DW_AT_decl_file 1 data1}
+		{DW_AT_decl_line 10 data1}
+	    }
+
+	    integer_label: DW_TAG_base_type {
+		{DW_AT_byte_size $int_size DW_FORM_sdata}
+		{DW_AT_encoding  @DW_ATE_signed}
+		{DW_AT_name      integer}
+	    }
+	}
+    }
+
+    cu {} {
+	DW_TAG_compile_unit {
+	    {DW_AT_language @DW_LANG_C}
+	    {DW_AT_name     $srcfile2}
+	    {DW_AT_comp_dir ${srcdir}/${subdir}}
+	    {stmt_list $L2 DW_FORM_sec_offset}
+	    {ranges ${ranges_label_2} DW_FORM_sec_offset}
+	    {DW_AT_low_pc   0 addr}
+	} {
+	    declare_labels integer_label
+
+	    DW_TAG_subprogram {
+		{name some_func}
+		{low_pc some_func addr}
+		{high_pc some_func_end addr}
+		{DW_AT_type :$integer_label}
+		{DW_AT_decl_file 2 data1}
+		{DW_AT_decl_line 5 data1}
+	    }
+
+	    integer_label: DW_TAG_base_type {
+		{DW_AT_byte_size $int_size DW_FORM_sdata}
+		{DW_AT_encoding  @DW_ATE_signed}
+		{DW_AT_name      integer}
+	    }
+	}
+    }
+
+    ranges {is_64 [is_64_target]} {
+	ranges_label_1: sequence {
+	    base [lindex $main_result 0]
+	    range 0 [lindex $main_result 1]
+	}
+	ranges_label_2: sequence {
+	    base some_func
+	    range 0 64
+	}
+    }
+
+    lines {version 2} L1 {
+	include_dir "${srcdir}/${subdir}"
+	file_name "$srcfile" 1
+
+	# Line data doens't need to be correct, just present.
+	program {
+	    DW_LNE_set_address [lindex $main_result 0]
+	    DW_LNS_advance_line 10
+	    DW_LNS_copy
+	    DW_LNS_advance_pc [lindex $main_result 1]
+	    DW_LNS_advance_line 19
+	    DW_LNS_copy
+	    DW_LNE_end_sequence
+	}
+    }
+
+    lines {version 2} L2 {
+	include_dir "${srcdir}/${subdir}"
+	file_name "dw2-bad-elf-other.c" 1
+
+	# Line data doens't need to be correct, just present.
+	program {
+	    DW_LNE_set_address some_func
+	    DW_LNS_advance_line 5
+	    DW_LNS_copy
+	    DW_LNS_advance_pc 64
+	    DW_LNS_advance_line 8
+	    DW_LNS_copy
+	    DW_LNE_end_sequence
+	}
+    }
+}
+
+if { [build_executable ${testfile}.exp ${testfile} \
+	  [list $srcfile $srcfile2 $asm_file] {nodebug}] } {
+    return -1
+}
+
+# Attempt to place a breakpoint on 'some_func', then check GDB is
+# still alive.  This test can optionally set a breakpoint on 'main'
+# first (based on GOTO_MAIN), the original bug behaved differently
+# when there was already a breakpoint set.
+proc run_test { goto_main } {
+    global binfile decimal hex
+
+    clean_restart ${binfile}
+
+    if { $goto_main } {
+	if ![runto_main] {
+	    return -1
+	}
+    }
+
+    # Place a breakpoint.
+    gdb_test "break some_func" \
+	"Breakpoint $decimal at $hex: file .*dw2-bad-elf-other\\.c, line 6\\."
+
+    # Check GDB is still alive.
+    gdb_test "echo hello\\n" "hello"
+}
+
+# Run the tests.
+foreach_with_prefix goto_main { 0 1 } {
+    run_test $goto_main
+}

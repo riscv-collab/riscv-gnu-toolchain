@@ -1,0 +1,153 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+# Support routines for aarch64-specific tests
+
+#
+# Return a regular expression that matches what gdb would print for a
+# 1-dimension vector containing ELEMENTS elements of value BYTE.
+#
+# The pattern is of the form "{BYTE <repeats ELEMENTS times>".
+#
+proc 1d_array_value_pattern { byte elements } {
+    set brace_open "{"
+    set brace_close "}"
+
+    append data $brace_open $byte
+    if {$elements > 1} {
+	append data " <repeats $elements times>"
+    }
+    append data $brace_close
+
+    verbose -log "1d_array_value_pattern Pattern string is..."
+    verbose -log $data
+    return $data
+}
+
+#
+# Return a regular expression that matches what gdb would print for a
+# 2-dimension vector containing ROWS rows and COLUMNS columns of elements
+# of value BYTE.
+#
+# The pattern is of the form
+# "{{BYTE <repeats COLUMNS times>} <repeats ROWS times>}".
+#
+proc 2d_array_value_pattern { byte rows columns } {
+    set brace_open "{"
+    set brace_close "}"
+
+    append data $brace_open [1d_array_value_pattern $byte $columns]
+    if {$rows > 1} {
+	append data " <repeats $rows times>"
+    }
+    append data $brace_close
+
+    verbose -log "2d_array_value_pattern Pattern string is..."
+    verbose -log $data
+    return $data
+}
+
+#
+# Initialize register NAME, a 1-dimension vector, with ELEMENTS elements
+# by setting all elements to BYTE.  ELEMENTS is limited at 256 for memory
+# usage purposes.
+#
+# The initialization is of the form "{BYTE, BYTE, BYTE ...}".
+#
+proc initialize_1d_array { name byte elements } {
+    set brace_open "{"
+    set brace_close "}"
+
+    append data $brace_open
+
+    # Build the assignment in a single shot.
+    for {set element 0} {$element < $elements} {incr element} {
+	# Construct the initializer by appending elements to it.
+	append data $byte
+
+	# If this isn't the last element, add a comma.
+	if {[expr $element + 1] < $elements} {
+	    append data ", "
+	}
+    }
+    append data $brace_close
+
+    verbose -log "initialization string is..."
+    verbose -log $data
+    gdb_test_no_output "set $name = $data" "write to $name"
+}
+
+#
+# Return an initializer string for a 2-dimension vector with ROWS rows and
+# COLUMNS columns, initializing all elements to BYTE for register NAME.
+#
+# COLUMNS is limited to 256 elements for memory usage purposes.
+#
+# The initialization is of the form "{{BYTE, BYTE}, ..., {BYTE, BYTE}}}".
+#
+proc initialize_2d_array { name byte rows columns } {
+    set brace_open "{"
+    set brace_close "}"
+
+    if {[expr $rows * $columns] <= 256} {
+	# Build the assignment in a single shot, as we have a maximum of 256
+	# elements.
+	for {set row 0} {$row < $rows} {incr row} {
+	    append data $brace_open
+	    for {set column 0} {$column < $columns} {incr column} {
+		# Construct the initializer by appending elements to it.
+		append data $byte
+
+		# If this isn't the last column, add a comma.
+		if {[expr $column + 1] < $columns} {
+		    append data ", "
+		}
+	    }
+
+	    append data $brace_close
+
+	    # If this isn't the last row, add a comma.
+	    if {[expr $row + 1] < $rows} {
+		append data ","
+	    }
+	}
+
+	set data $brace_open$data
+	set data $data$brace_close
+
+	verbose -log "initialization string is..."
+	verbose -log $data
+	gdb_test_no_output "set $name = $data" "write to $name"
+    } else {
+	# There are too many elements to initialize (more than 256), so we
+	# will do the initialization row by row.
+	for {set row 0} {$row < $rows} {incr row} {
+	    initialize_1d_array "$name\[$row\]" $byte $columns
+	}
+    }
+}
+
+#
+# Validate the values of the FPSIMD registers.
+#
+proc check_fpsimd_regs { byte state vl svl} {
+    set fpsimd_pattern [string_to_regexp [1d_array_value_pattern $byte 16]]
+
+    for {set number 0} {$number < 32} {incr number} {
+	set register_name "\$v${number}\.b\.u"
+	gdb_test "print sizeof $register_name" " = 16"
+	gdb_test "print $register_name" $fpsimd_pattern
+    }
+}

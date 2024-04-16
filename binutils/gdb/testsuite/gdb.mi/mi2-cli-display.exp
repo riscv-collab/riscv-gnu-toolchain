@@ -1,0 +1,82 @@
+# Copyright 2019-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Ensure that CLI "display"s aren't double-emitted in MI mode.
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi2"
+
+standard_testfile
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+if {[mi_clean_restart $binfile]} {
+    return
+}
+
+mi_runto do_tests
+
+# A helper procedure that checks for the display and the line number,
+# and the following *stopped.  X is the expected value of "x" and is
+# also used in test names.
+proc check_cli_display {x show_source} {
+    global mi_gdb_prompt
+
+    # Now check for the display and the source line.  We don't check
+    # the source line too closely, since it's not really important
+    # here, but we do check that the stop happened.
+    set stop "\\*stopped,reason=.*\r\n$mi_gdb_prompt$"
+    if {$show_source} {
+	set src "~\"\[0-9\]+\[^\"\]*\\\\n\"\r\n"
+    } else {
+	set src ""
+    }
+    set display "~\"1: x = $x\\\\n\"\r\n"
+    gdb_expect {
+	-re "^${display}${src}${display}${stop}" {
+	    # This case is the bug: the display is shown twice.
+	    fail "check display and source line x=$x"
+	}
+	-re "^${src}${display}${stop}" {
+	    verbose -log "got <<<$expect_out(buffer)>>>"
+	    pass "check display and source line x=$x"
+	}
+	-re ".*\r\n$mi_gdb_prompt$" {
+	    verbose -log "got <<<$expect_out(buffer)>>>"
+	    fail "check display and source line x=$x (unexpected output)"
+	}
+	timeout {
+	    fail "check display and source line x=$x (timeout)"
+	}
+    }
+}
+
+mi_gdb_test "display x" \
+    "&\"display x\\\\n\"\r\n~\"1: x = 23\\\\n\"\r\n\\^done" \
+    "display x"
+
+if {![mi_send_resuming_command "interpreter-exec console next" next]} {
+    pass "next"
+}
+check_cli_display 24 1
+
+# Also check that displays are shown for -exec-next.
+if {![mi_send_resuming_command exec-next exec-next]} {
+    pass "-exec-next"
+}
+check_cli_display 25 0

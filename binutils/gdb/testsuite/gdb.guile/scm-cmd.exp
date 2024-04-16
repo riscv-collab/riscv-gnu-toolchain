@@ -1,0 +1,201 @@
+# Copyright (C) 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It tests the mechanism
+# for defining new GDB commands in Scheme.
+
+load_lib gdb-guile.exp
+
+require allow_guile_tests
+
+standard_testfile
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+    return
+}
+
+if ![gdb_guile_runto_main] {
+    return
+}
+
+# Test a simple command, and command? while we're at it.
+
+gdb_test_multiline "input simple command" \
+    "guile" "" \
+    "(define test-cmd" "" \
+    " (make-command \"test-cmd\"" "" \
+    "  #:command-class COMMAND_OBSCURE" "" \
+    "  #:invoke (lambda (self arg from-tty)" "" \
+    "    (display (format #f \"test-cmd output, arg = ~a\\n\" arg)))))" "" \
+    "(register-command! test-cmd)" "" \
+    "end" ""
+
+gdb_test "guile (print (command? test-cmd))" "= #t"
+gdb_test "guile (print (command? 42))" "= #f"
+
+gdb_test "test-cmd ugh" "test-cmd output, arg = ugh" "call simple command"
+
+# Test a prefix command, and a subcommand within it.
+
+gdb_test_multiline "input prefix command" \
+    "guile" "" \
+    "(register-command! (make-command \"prefix-cmd\"" "" \
+    "  #:command-class COMMAND_OBSCURE" "" \
+    "  #:completer-class COMPLETE_NONE" "" \
+    "  #:prefix? #t" "" \
+    "  #:invoke (lambda (self arg from-tty)" "" \
+    "    (display (format #f \"prefix-cmd output, arg = ~a\\n\" arg)))))" "" \
+    "end" ""
+
+gdb_test "prefix-cmd ugh" "prefix-cmd output, arg = ugh" "call prefix command"
+
+gdb_test_multiline "input subcommand" \
+    "guile" "" \
+    "(register-command! (make-command \"prefix-cmd subcmd\"" "" \
+    "  #:command-class COMMAND_OBSCURE" "" \
+    "  #:invoke (lambda (self arg from-tty)" "" \
+    "    (display (format #f \"subcmd output, arg = ~a\\n\" arg)))))" "" \
+    "end" ""
+
+gdb_test "prefix-cmd subcmd ugh" "subcmd output, arg = ugh" "call subcmd"
+
+# Test a subcommand in an existing GDB prefix.
+
+gdb_test_multiline "input new subcommand" \
+    "guile" "" \
+    "(register-command! (make-command \"info newsubcmd\"" "" \
+    "  #:command-class COMMAND_OBSCURE" "" \
+    "  #:invoke (lambda (self arg from-tty)" "" \
+    "    (display (format #f \"newsubcmd output, arg = ~a\\n\" arg)))))" "" \
+    "end" ""
+
+gdb_test "info newsubcmd ugh" "newsubcmd output, arg = ugh" "call newsubcmd"
+
+# Test a command that throws gdb:user-error.
+
+gdb_test_multiline "input command to throw error" \
+    "guile" "" \
+    "(register-command! (make-command \"test-error-cmd\"" "" \
+    "  #:command-class COMMAND_OBSCURE" "" \
+    "  #:invoke (lambda (self arg from-tty)" "" \
+    "    (throw-user-error \"you lose! ~a\" arg))))" "" \
+    "end" ""
+
+gdb_test "test-error-cmd ugh" "ERROR: you lose! ugh\r\n" "call error command"
+
+# Test string->argv.
+
+gdb_test "guile (raw-print (string->argv \"1 2 3\"))" \
+    {= \("1" "2" "3"\)} \
+    "(string->argv \"1 2 3\")"
+
+gdb_test "guile (raw-print (string->argv \"'1 2' 3\"))" \
+    {= \("1 2" "3"\)} \
+    "(string->argv \"'1 2' 3\")"
+
+gdb_test "guile (raw-print (string->argv \"\\\"1 2\\\" 3\"))" \
+    {= \("1 2" "3"\)} \
+    "(string->argv (\"\\\"1 2\\\" 3\")"
+
+gdb_test "guile (raw-print (string->argv \"1\\\\ 2 3\"))" \
+    {= \("1 2" "3"\)} \
+    "(string->argv \"1\\\\ 2 3\")"
+
+# Test user-defined guile commands.
+
+gdb_test_multiline "input simple user-defined command" \
+    "guile" "" \
+    "(register-command! (make-command \"test-help\"" "" \
+    "  #:doc \"Docstring\"" "" \
+    "  #:command-class COMMAND_USER" "" \
+    "  #:invoke (lambda (self arg from-tty)" "" \
+    "    (display (format #f \"test-cmd output, arg = ~a\\n\" arg)))))" "" \
+    "end" ""
+
+gdb_test "test-help ugh" "test-cmd output, arg = ugh" \
+    "call simple user-defined command"
+
+# Make sure the command shows up in `help user-defined`.
+test_user_defined_class_help {"test-help -- Docstring[\r\n]"}
+
+# Make sure the command does not show up in `show user`.
+gdb_test "show user test-help" "Not a user command\." \
+    "don't show user-defined scheme command in `show user command`"
+
+# Test expression completion on fields.
+
+gdb_test_multiline "expression completion command" \
+    "guile" "" \
+    "(register-command! (make-command \"expr-test\"" "" \
+    "  #:command-class COMMAND_USER" ""\
+    "  #:completer-class COMPLETE_EXPRESSION" "" \
+    "  #:invoke (lambda (self arg from-tty)" "" \
+    "    (display (format #f \"invoked on = ~a\\n\" arg)))))" "" \
+    "end" ""
+
+gdb_test "complete expr-test bar\." \
+    "expr-test bar\.bc.*expr-test bar\.ij.*" \
+    "test completion through complete command"
+
+
+if { [readline_is_used] } {
+    set test "complete 'expr-test bar.i'"
+    send_gdb "expr-test bar\.i\t\t"
+    gdb_test_multiple "" "$test" {
+	-re "expr-test bar\.ij \\\x07$" {
+	    send_gdb "\n"
+	    gdb_test_multiple "" $test {
+		-re "invoked on = bar.ij.*$gdb_prompt $" {
+		    pass "$test"
+		}
+	    }
+	}
+    }
+}
+
+# Test using a function for completion.
+
+gdb_test_multiline "completer-as-function command" \
+    "guile" "" \
+    "(register-command! (make-command \"completer-as-function\"" "" \
+    "  #:command-class COMMAND_USER" ""\
+    "  #:completer-class (lambda (self text word)" "" \
+    "    (list \"1\" \"2\" \"3\"))" "" \
+    "  #:invoke (lambda (self arg from-tty)" "" \
+    "    (display (format #f \"invoked on = ~a\\n\" arg)))))" "" \
+    "end" ""
+
+gdb_test "complete completer-as-function 42\." \
+    "completer-as-function 42\.1.*completer-as-function 42\.2.*completer-as-function 42\.3" \
+    "test completion with completion function"
+
+# Test Scheme error in invoke function.
+
+gdb_test_multiline "input command with Scheme error" \
+    "guile" "" \
+    "(register-command! (make-command \"test-scheme-error-cmd\"" "" \
+    "  #:command-class COMMAND_OBSCURE" "" \
+    "  #:invoke (lambda (self arg from-tty)" "" \
+    "    oops-bad-spelling)))" "" \
+    "end" ""
+
+gdb_test "test-scheme-error-cmd ugh" \
+    "Error occurred in Scheme-implemented GDB command." \
+    "call scheme-error command"
+
+# If there is a problem with object management, this can often trigger it.
+# It is useful to do this last, after we've created a bunch of command objects.
+
+gdb_test_no_output "guile (gc)"

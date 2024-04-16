@@ -1,0 +1,164 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test prompt edit wrapping in tuiterm, both in CLI and TUI mode.
+
+# Required for tuiterm.
+require {!is_remote host}
+
+tuiterm_env
+
+# Make cols wide enough for the longest command.
+set cols 50
+set lines 24
+set dims [list $lines $cols]
+
+# Sometimes we see ^C.  This is something we'd like to fix.  It's reported as
+# a readline problem here (
+# https://lists.gnu.org/archive/html/bug-readline/2023-06/msg00000.html ).
+# For now, ignore it.
+set re_control_c "(\\^C)?Quit"
+
+# Fill line, assuming we start after the gdb prompt.
+proc fill_line { width } {
+    set res ""
+
+    # Take into account that the prompt also takes space.
+    set prefix [string length "(gdb) "]
+    set start [expr $prefix + 1]
+
+    # Print chars.
+    for { set i $start } { $i <= $width } { incr i } {
+	set c [expr $i % 10]
+	send_gdb $c
+	append res $c
+    }
+
+    return $res
+}
+
+# Test wrapping.
+proc test_wrap { wrap_width } {
+    # Generate a prompt and parse it.
+    send_gdb "\003"
+    gdb_assert { [Term::wait_for "(^|$::gdb_prompt )$::re_control_c"] } "start line"
+
+    # Fill the line to just before wrapping.
+    set str [fill_line $wrap_width]
+
+    # Remaining space on line.
+    set space [string repeat " " [expr $::cols - $wrap_width]]
+
+    # Now print the first char we expect to wrap.
+    send_gdb "W"
+
+    # Check that the wrap occurred at the expected location.
+    gdb_assert { [Term::wait_for_region_contents 0 0 $::cols $::lines \
+		      "$::gdb_prompt $str$space\r\nW"] } "wrap"
+
+    # Generate a prompt and parse it.
+    send_gdb "\003"
+    gdb_assert { [Term::wait_for "^W$::re_control_c"] } "prompt after wrap"
+}
+
+# Test wrapping in both CLI and TUI.
+proc test_wrap_cli_tui { auto_detected_width } {
+    if { [allow_tui_tests] } {
+	# Use a TUI layout with just a command window.
+	gdb_test_no_output "tui new-layout command-layout cmd 1"
+    }
+
+    set gdb_width 0
+    set readline_width 0
+    set re1 "Number of characters gdb thinks are in a line is ($::decimal)\\."
+    set re2 \
+	"Number of characters readline reports are in a line is ($::decimal)\\."
+    set cmd "maint info screen"
+    set re \
+	[multi_line \
+	     "^$re1" \
+	     $re2 \
+	    ".*"]
+    gdb_test_multiple $cmd "" {
+	-re -wrap $re {
+	    set gdb_width $expect_out(1,string)
+	    set readline_width $expect_out(2,string)
+	    pass $gdb_test_name
+	}
+    }
+
+    gdb_assert { $gdb_width == $::cols } "width"
+
+    # TERM=ansi, so readline hides the last column.
+    gdb_assert { $gdb_width == [expr $readline_width + 1] }
+
+    with_test_prefix cli {
+	set wrap_width $readline_width
+
+	test_wrap $wrap_width
+    }
+
+    with_test_prefix tui {
+	if {![Term::prepare_for_tui]} {
+	    unsupported "TUI not supported"
+	    return
+	}
+
+	# Enter TUI.
+	send_gdb "layout command-layout\n"
+	gdb_assert { [Term::wait_for ""] } "switched to TUI"
+
+	# TUI interacts with readline for prompt editing, but doesn't wrap at
+	# $cols - 1.  This is due to the fact that TUI defines its own
+	# rl_redisplay_function, tui_redisplay_readline which takes its cue
+	# for wrapping from curses.
+	set wrap_width $::cols
+
+	test_wrap $wrap_width
+    }
+}
+
+with_test_prefix width-hard-coded {
+    Term::clean_restart {*}$dims
+
+    gdb_test_no_output "set width $cols"
+
+    # Run tests with hard-coded screen width.
+    test_wrap_cli_tui 0
+}
+
+with_test_prefix width-auto-detected {
+    Term::with_tuiterm {*}$dims {
+	save_vars { ::INTERNAL_GDBFLAGS } {
+	    # Avoid "set width 0" argument.
+	    set INTERNAL_GDBFLAGS \
+		[string map {{-iex "set width 0"} ""} $INTERNAL_GDBFLAGS]
+
+	    # Avoid "set width 0" in default_gdb_start.
+	    gdb_exit
+	    gdb_spawn
+	}
+
+	set test "startup prompt"
+	gdb_test_multiple "" $test {
+	    -re "^$gdb_prompt $" {
+		pass "$test"
+	    }
+	}
+    }
+
+    # Run tests with auto-detected screen width.
+    test_wrap_cli_tui 1
+}

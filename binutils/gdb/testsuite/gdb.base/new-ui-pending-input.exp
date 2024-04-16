@@ -1,0 +1,123 @@
+# Copyright 2016-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test 'gdb "-ex new-ui TTY" -ex "start"' (or any other synchronous
+# execution command), when TTY already has input pending.  GDB used to
+# internal error in this situation.
+
+standard_testfile
+
+set compile_options "debug"
+if {[build_executable $testfile.exp $testfile ${srcfile} ${compile_options}] == -1} {
+    untested "failed to compile"
+    return -1
+}
+
+# See intro.
+
+proc test_command_line_new_ui_pending_input {} {
+    global gdb_prompt
+    global binfile
+
+    # This test requires running a synchronous execution command from
+    # the command line.
+    if {[use_gdb_stub] || [target_info gdb_protocol] == "extended-remote" } {
+	unsupported "can't run from the command line"
+	return 0
+    }
+
+    spawn -pty
+    set extra_spawn_id $spawn_id
+    set extra_tty_name $spawn_out(slave,name)
+
+    # An arbitrary number of prints.
+    set nprints 3
+
+    # Queue a few commands before GDB is started.
+    with_spawn_id $extra_spawn_id {
+	for {set i 1} {$i <= $nprints} {incr i} {
+	    send_gdb "print $i\n"
+	}
+    }
+    pass "commands pending"
+
+    # Now spawn GDB, creating a new-ui and at the same time running a
+    # synchronous command.
+    set test "spawn gdb"
+
+    set bpline [gdb_get_line_number "set breakpoint here"]
+
+    set options ""
+    append options " -iex \"set height 0\""
+    append options " -iex \"set width 0\""
+    append options " -iex \"new-ui console $extra_tty_name\""
+    append options " -ex \"b $bpline\""
+    append options " -ex \"run\""
+
+    if {[gdb_spawn_with_cmdline_opts "$options $binfile"] != 0} {
+	fail $test
+	return
+    } else {
+	pass $test
+    }
+
+    # Consume the initial prompt on the extra console.
+    with_spawn_id $extra_spawn_id {
+	set test "initial prompt on extra console"
+	gdb_test_multiple "" $test {
+	    -re "\r\nprint 3\r\n$gdb_prompt " {
+		pass $test
+	    }
+	}
+    }
+
+    # Check that we see the result of the print commands in the extra
+    # UI.
+    with_spawn_id $extra_spawn_id {
+	for {set i 1} {$i <= $nprints} {incr i} {
+	    set test "print $i on extra console"
+	    gdb_test_multiple "" $test {
+		-re " = $i\r\n$gdb_prompt " {
+		    pass "$test"
+		}
+	    }
+	}
+    }
+
+    # Now check that we reach the breakpoint successfully.
+    set test "run to breakpoint on main console"
+    gdb_test_multiple "" $test {
+	-re "Breakpoint .* main .*set breakpoint here.*$gdb_prompt $" {
+	    pass $test
+	}
+    }
+
+    # And likewise on the extra console.  No prompt is expected.
+    with_spawn_id $extra_spawn_id {
+	set test "run to breakpoint on extra console"
+	gdb_test_multiple "" $test {
+	    -re "Breakpoint .* main .*set breakpoint here" {
+		pass $test
+	    }
+	}
+    }
+}
+
+# The driver.  Calls all tests.
+proc testcase_driver {} {
+    test_command_line_new_ui_pending_input
+}
+
+testcase_driver

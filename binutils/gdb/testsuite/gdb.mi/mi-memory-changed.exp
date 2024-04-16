@@ -1,0 +1,79 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile basics.c
+if { [gdb_compile "$srcdir/$subdir/$srcfile" $binfile \
+	  executable {debug nowarnings}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+load_lib mi-support.exp
+
+if {[mi_clean_restart $binfile]} {
+    return
+}
+
+mi_gdb_test "-break-insert -t ${srcfile}:[gdb_get_line_number "C = A + B"]" \
+    "\\^done,bkpt=\{number=\"1\".*" \
+    "insert breakpoint"
+mi_run_cmd
+mi_expect_stop "breakpoint-hit" "callee4" "" ".*" ".*" {"" "disp=\"del\""} \
+    "continue to callee4"
+
+mi_gdb_test "set var C = 4" \
+    ".*=memory-changed,thread-group=\"i${decimal}\".addr=\"${hex}\",len=\"${hex}\".*\\^done" \
+    "set var C = 4"
+
+# Write memory through MI commands shouldn't trigger MI notification.
+mi_gdb_test "-var-create var_c * C" \
+    "\\^done,name=\"var_c\",numchild=\"0\",value=\"4\",type=\"int\",thread-id=\"1\",has_more=\"0\"" \
+    "create objvar for C"
+
+mi_gdb_test "-var-assign var_c 5" \
+    "-var-assign var_c 5\r\n\\^done,value=\"5\"" \
+    "change C thru. varobj"
+
+mi_gdb_test  "-data-write-memory-bytes &C \"00\"" \
+    {\^done} \
+    "change C thru. -data-write-memory-bytes"
+
+# Modify code section also triggers MI notification.
+
+# Get the instruction content of function main and its address.
+set main_addr ""
+set main_insn ""
+set test "get address of main"
+send_gdb "x/x main\n"
+gdb_expect {
+    -re ".*(${hex}) <main>:.*(${hex}).*$mi_gdb_prompt$" {
+	set main_addr $expect_out(1,string)
+	set main_insn $expect_out(2,string)
+	pass $test
+    }
+    -re ".*$mi_gdb_prompt$" {
+	fail $test
+	return
+    }
+    timeout {
+	fail "$test (timeout)"
+	return
+    }
+}
+
+regsub ^0x0* $main_addr "" main_addr
+mi_gdb_test "set var *(unsigned int *) 0x${main_addr} = ${main_insn}" \
+    ".*=memory-changed,thread-group=\"i${decimal}\".addr=\"0x0*${main_addr}\",len=\"0x4\",type=\"code\".*\\^done"
+mi_gdb_exit

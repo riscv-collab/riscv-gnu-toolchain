@@ -1,0 +1,1007 @@
+# Copyright 1998-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file was written by Elena Zannoni (ezannoni@cygnus.com)
+
+# This file is part of the gdb testsuite.
+
+#
+# tests for command completion
+#
+# Here are some useful test cases for completion.  
+# They should be tested with both M-? and TAB.
+#
+#   "show output-" "radix"
+#   "show output" "-radix"
+#   "p" ambiguous (commands starting with p--path, print, printf, etc.)
+#   "p "  ambiguous (all symbols)
+#   "info t foo" no completions
+#   "info t " no completions
+#   "info t" ambiguous ("info target", "info terminal", etc.)
+#   "info ajksdlfk" no completions
+#   "info ajksdlfk " no completions
+#   "info" " "
+#   "info " ambiguous (all info commands)
+#   "p \"break1" unambiguous (completes to filename "break1.c")
+#   "p \"break1." unambiguous (should complete to "break1.c" but does not,
+#	due to readline limitations)
+#   "p 'arg" ambiguous (all symbols starting with arg)
+#   "p b-arg" ambiguous (all symbols starting with arg)
+#   "p b-" ambiguous (all symbols)
+#   "file Make" "file" (word break hard to screw up here)
+#   "file ../gdb.stabs/we" "ird" (needs to not break word at slash)
+#
+
+
+
+#
+# test running programs
+#
+
+standard_testfile break.c break1.c
+
+if {[prepare_for_testing "failed to prepare" $testfile \
+	 [list $srcfile $srcfile2] {debug nowarnings}]} {
+    return -1
+}
+
+if {![runto_main]} {
+    return
+}
+
+set timeout 30
+gdb_test_no_output "set max-completions unlimited"
+
+gdb_test_no_output "complete print values\[0\].x." \
+    "field completion with invalid field"
+
+# If there is a non-deprecated completion, it should be returned.
+gdb_test "complete sav" "save" "test non-deprecated completion"
+# If there is only a deprecated completion, then it should be returned.
+gdb_test "complete save-t" "save-tracepoints" "test deprecated completion"
+
+
+#
+# Tag name completion.
+#
+
+gdb_test "complete ptype struct some_" "ptype struct some_struct"
+gdb_test "complete ptype enum some_" "ptype enum some_enum"
+gdb_test "complete ptype union some_" "ptype union some_union"
+
+
+gdb_test "complete set gnutarget aut" "set gnutarget auto"
+
+
+gdb_test "complete set cp-abi aut" "set cp-abi auto"
+
+# Test that completion of commands 'target FOO' works well.
+set targets [list "core" "tfile" "exec"]
+
+# Test that completion of command 'target ctf' if GDB supports ctf
+# target.
+gdb_test_multiple "target ctf" "" {
+    -re "Undefined target command: \"ctf\"\.  Try \"help target\"\.\r\n$gdb_prompt $" {
+    }
+    -re "No CTF directory specified.*\r\n$gdb_prompt $" {
+	lappend targets "ctf"
+    }
+}
+
+# Test artifacts are put in different locations depending on test
+# is a parallel run or not.  Firstly check file exists, and then
+# do the test on file completion.
+
+foreach dir1 [ list "./gdb.base" "./outputs/gdb.base/completion" ] {
+    if { [remote_file host exists ${dir1}/completion]
+	 && [remote_file host exists ${dir1}/completion0.o]
+	 && [remote_file host exists ${dir1}/completion1.o] } {
+	foreach target_name ${targets} {
+	    gdb_test "complete target ${target_name} ${dir1}/completion" \
+		"target ${target_name} ${dir1}/completion.*${dir1}/completion0\\.o.*${dir1}/completion1\\.o.*" \
+		"complete target ${target_name}"
+	}
+	break
+    }
+}
+
+#
+# "set foo unlimited" completion.
+#
+
+# A var_uinteger command.
+gdb_test "complete set height " "set height unlimited"
+gdb_test "complete set height u" "set height unlimited"
+
+# A var_integer command.
+gdb_test "complete set listsize " "set listsize unlimited"
+gdb_test "complete set listsize unl" "set listsize unlimited"
+
+# A var_zuinteger_unlimited command.
+gdb_test "complete set trace-buffer-size " "set trace-buffer-size unlimited"
+gdb_test "complete set trace-buffer-size unl" "set trace-buffer-size unlimited"
+
+# Test "info registers" completion: First determine this
+# architecture's registers and reggroups...
+
+set regs_output [capture_command_output "mt print registers" \
+		     ".*Name.*Nr.*Rel.*Offset.*Size.*Type.\[^\n\]*\n"]
+append regs_output "\n"
+append regs_output [capture_command_output "mt print reggroups" \
+			".*Group.*Type\[^\n]*\n"]
+append regs_output "\n"
+append regs_output [capture_command_output "mt print user-registers" \
+		     ".*Name.*Nr\[^\n]*\n"]
+set all_regs {}
+foreach {- reg} [regexp -all -inline -line {^\s+(\w+)} $regs_output] {
+    lappend all_regs $reg
+}
+
+set all_regs [join [lsort -unique $all_regs]]
+
+# ... and then compare them to the completion of "info registers".
+
+set regs_output [capture_command_output "complete info registers " ""]
+set completed_regs {}
+foreach {-> reg} [regexp -all -inline -line {^info registers (\w+\S*)} $regs_output] {
+    lappend completed_regs $reg
+}
+set completed_regs [join [lsort $completed_regs]]
+gdb_assert {$all_regs eq $completed_regs} "complete 'info registers '"
+
+# Tests below are about tab-completion, which doesn't work if readline
+# library isn't used.  Check it first.
+
+if { ![readline_is_used] } {
+    return -1
+}
+
+# The bulk of this test script pre-dates the completion-support
+# library, and should probably (where possible) be converted.
+# However, for now, new tests are being added using this library.
+load_lib completion-support.exp
+
+set test "complete 'hfgfh'"
+send_gdb "hfgfh\t"
+gdb_test_multiple "" "$test" {
+    -re "^hfgfh\\\x07$" {
+	send_gdb "\n"
+	gdb_test_multiple "" $test {
+	    -re "Undefined command: \"hfgfh\"\\.  Try \"help\"\\..*$gdb_prompt $" {
+		pass "$test"
+	    }
+	}
+    }
+}
+
+#exp_internal 0
+
+set test "complete 'show output'"
+send_gdb "show output\t"
+gdb_test_multiple "" "$test" {
+    -re "^show output-radix $" {
+	send_gdb "\n"
+	gdb_test_multiple "" "$test" {
+	    -re "Default output radix for printing of values is 10\\..*$gdb_prompt $" {
+		pass "$test"
+	    }
+	}
+    }
+}
+
+set test "complete 'show output-'"
+send_gdb "show output-\t"
+gdb_test_multiple "" "$test" {
+    -re "^show output-radix $" {
+	send_gdb "\n"
+	gdb_test_multiple "" "$test" {
+	    -re "Default output radix for printing of values is 10\\..*$gdb_prompt $" {
+		pass "$test"
+	    }
+        }
+    }
+}
+
+set test "complete 'p'"
+send_gdb "p\t"
+gdb_test_multiple "" "$test" {
+    -re "^p\\\x07$" {
+	send_gdb "\n"
+	gdb_test_multiple "" "$test" {
+	    -re "The history is empty\\..*$gdb_prompt $" {
+		pass "$test"
+	    }
+        }
+    }
+}
+
+set test "complete 'p '"
+send_gdb "p \t"
+gdb_test_multiple "" "$test" {
+    -re "^p \\\x07$" {
+	send_gdb "\n"
+	gdb_test_multiple "" "$test" {
+	    -re "The history is empty\\..*$gdb_prompt $" {
+		pass "$test"
+	    }
+	}
+    }
+}
+
+set test "complete 'info t foo'"
+send_gdb "info t foo\t"
+gdb_test_multiple "" "$test" {
+    -re "^info t foo\\\x07$" {
+	send_gdb "\n"
+	gdb_test_multiple "" "$test" {
+	    -re "Ambiguous info command \"t foo\": target, tasks, terminal, threads, tp, tracepoints, tvariables, (type-printers, )?types\\..*$gdb_prompt $" {
+		pass "$test"
+	    }
+	}
+    }
+}
+
+set test "complete 'info t'"
+send_gdb "info t\t"
+gdb_test_multiple "" "$test" {
+    -re "^info t\\\x07$" {
+	send_gdb "\n"
+	gdb_test_multiple "" "$test" {
+	    -re "Ambiguous info command \"t\": target, tasks, terminal, threads, tp, tracepoints, tvariables, (type-printers, )?types\\..*$gdb_prompt $" {
+		pass "$test"
+	    }
+	}
+    }
+}
+
+set test "complete 'info t '"
+send_gdb "info t \t"
+gdb_test_multiple "" "$test" {
+    -re "^info t \\\x07$" {
+	send_gdb "\n"
+	gdb_test_multiple "" "$test" {
+	    -re "Ambiguous info command \"t \": target, tasks, terminal, threads, tp, tracepoints, tvariables, (type-printers, )?types\\..*$gdb_prompt $" {
+		pass "$test"
+	    }
+	}
+    }
+}
+
+set test "complete 'info asdfgh'"
+send_gdb "info asdfgh\t"
+gdb_test_multiple "" "$test" {
+    -re "^info asdfgh\\\x07$" {
+	send_gdb "\n"
+	gdb_test_multiple "" "$test" {
+	    -re "Undefined info command: \"asdfgh\".  Try \"help info\"\\..*$gdb_prompt $" {
+		pass "$test"
+	    }
+	}
+    }
+}
+
+set test "complete 'info asdfgh '"
+send_gdb "info asdfgh \t"
+gdb_test_multiple "" "$test" {
+    -re "^info asdfgh \\\x07$" {
+	send_gdb "\n"
+	gdb_test_multiple "" "$test" {
+	    -re "Undefined info command: \"asdfgh \".  Try \"help info\"\\..*$gdb_prompt $" {
+		pass "$test"
+	    }
+	}
+    }
+}
+
+set test "complete 'info'"
+send_gdb "info\t"
+gdb_test_multiple "" "$test" {
+    -re "^info $" {
+	send_gdb "\n"
+	gdb_test_multiple "" "$test" {
+	    -re "List of info subcommands.*$gdb_prompt $" {
+		pass "$test"
+	    }
+	}
+    }
+}
+
+set test "complete 'info '"
+send_gdb "info \t"
+gdb_test_multiple "" "$test" {
+    -re "^info \\\x07$" {
+	send_gdb "\n"
+	gdb_test_multiple "" "$test" {
+	    -re "List of info subcommands:\r\n\r\n.*$gdb_prompt $" {
+		pass "$test"
+	    }
+	}
+    }
+}
+
+set test "complete (2) 'info '"
+send_gdb "info \t"
+gdb_test_multiple "" "$test" {
+    -re "^info \\\x07$" {
+	send_gdb "\t"
+	gdb_test_multiple "" "$test" {
+	    -re "address.*types.*$gdb_prompt " {
+		send_gdb "\n"
+		gdb_test_multiple "" "$test" {
+		    -re "allowed if unambiguous\\..*$gdb_prompt $" {
+			pass "$test"
+		    }
+		}
+	    }
+	}
+    }
+}
+
+set test "complete 'help info wat'"
+send_gdb "help info wat\t"
+gdb_test_multiple "" "$test" {
+    -re "^help info watchpoints $" {
+	send_gdb "\n"
+	gdb_test_multiple "" "$test" {
+	    -re "Status of specified watchpoints.*\r\n.*$gdb_prompt $" {
+		pass "$test"
+	    }
+	}
+    }
+    -re "^help info wat\\\x07$" {
+	fail "$test"
+    }
+}
+
+set test "complete 'p \"break1'"
+send_gdb "p \"break1\t"
+gdb_test_multiple "" "$test" {
+    -re "^p \"break1\\\x07$" {
+	send_gdb "\n"
+	gdb_test_multiple "" "$test" {}
+    }
+    -re "^p \"break1\\.c\"$" {
+	send_gdb "\n"
+	gdb_test_multiple "" "$test" {
+	    -re "$gdb_prompt $" {
+		pass "$test"
+	    }
+	}
+    }
+}
+
+setup_xfail "*-*-*"
+set test "complete 'p \"break1.'"
+send_gdb "p \"break1.\t"
+gdb_test_multiple "" "$test" {
+    -re "^p \"break1\\.\\\x07$" {
+	send_gdb "\n"
+	gdb_test_multiple "" "$test" {}
+    }
+    -re "^p \"break1\\.c\"$" {
+	send_gdb "\n"
+	gdb_test_multiple "" "$test" {
+	    -re "$gdb_prompt $" {
+		pass "$test"
+	    }
+	}
+    }
+    -re "^p \"break1\\..*$" {
+	send_gdb "\n"
+	gdb_test_multiple "" "$test" {}
+    }
+}
+
+set test "complete 'p 'arg'"
+send_gdb "p 'arg\t"
+gdb_test_multiple "" "$test" {
+    -re "^p 'arg\\\x07$" {
+	send_gdb "\n"
+	gdb_test_multiple "" "$test" {
+	    -re "(Invalid character constant\\.|Unmatched single quote\\.).*$gdb_prompt $" {
+		pass "$test"
+	    }
+	}
+    }
+}
+
+set test "complete (2) 'p 'arg'"
+send_gdb "p 'arg\t"
+gdb_test_multiple "" "$test" {
+    -re "^p 'arg\\\x07$" {
+	send_gdb "\t"
+	gdb_test_multiple "" "$test" {
+	    -re "argv.*$gdb_prompt " {
+		send_gdb "\n"
+		gdb_test_multiple "" "$test" {
+		    -re "(Invalid character constant\\.|Unmatched single quote\\.).*$gdb_prompt $" {
+			pass "$test"
+		    }
+		}
+	    }
+	    -re "(There are $decimal possibilities\\.  Do you really\r\nwish to see them all.|Display all $decimal possibilities.) \\(y or n\\)$" {
+		send_gdb "n"
+		gdb_test_multiple "" "$test" {
+		    -re "\\(gdb\\) p 'arg$" {
+			send_gdb "\n"
+			gdb_test_multiple "" "$test" {
+			    -re "(Invalid character constant\\.|Unmatched single quote\\.).*$gdb_prompt $" {
+				pass "$test"
+			    }
+			}
+		    }
+		}
+	    }
+	}
+    }
+}
+
+set test "complete 'handle signal'"
+send_gdb "handle sigq\t"
+gdb_test_multiple "" "$test" {
+    -re "^handle sigqSIGQUIT $" {
+	send_gdb "\n"
+	gdb_test_multiple "" "$test" {
+	    -re "SIGQUIT.*Quit.*$gdb_prompt $" {
+		pass "$test"
+	    }
+	}
+    }
+}
+
+set test "complete 'handle keyword'"
+send_gdb "handle nos\t"
+gdb_test_multiple "" "$test" {
+    -re "^handle nostop $" {
+	send_gdb "\n"
+	gdb_test_multiple "" "$test" {
+	    -re "$gdb_prompt $" {
+		pass "$test"
+	    }
+	}
+    }
+}
+
+set test "complete help aliases"
+send_gdb "help user-define\t"
+gdb_test_multiple "" "$test" {
+    -re "^help user-defined $" {
+	send_gdb "\n"
+	gdb_test_multiple "" "$test" {
+	    -re "$gdb_prompt $" {
+		pass "$test"
+	    }
+	}
+    }
+}
+
+
+# These tests used to try completing the shorter "p b-a".
+# Unfortunately, on some systems, there are .o files in system
+# libraries which declare static variables named `b'.  Of course,
+# those variables aren't really in scope, as far as the compiler is
+# concerned.  But GDB deliberately tries to be more liberal: if you
+# enter an identifier that doesn't have any binding in scope, GDB will
+# search all the program's compilation units for a static variable of
+# the given name.
+#
+# This behavior can help avoid a lot of pedantry, so it's usually a
+# good thing.  But in this test case, it causes GDB to print the value
+# of some random variable, instead of giving us the "No symbol..."
+# error we were expecting.
+#
+# For example, on S/390 linux, the file s_atan.c in libm.a declares a
+# `b', which is a structure containing an int and a float, so GDB says
+# ``Argument to arithmetic operation not a number or boolean'' instead
+# of ``No symbol ...''.
+#
+# So, I'm hoping that there is no system with a static library variable named
+# `no_var_by_this_name'.
+
+set test "complete 'p no_var_named_this-arg'"
+send_gdb "p no_var_named_this-arg\t"
+gdb_test_multiple "" "$test" {
+    -re "^p no_var_named_this-arg\\\x07$" {
+        send_gdb "\n"
+	gdb_test_multiple "" "$test" {
+            -re "No symbol \"no_var_named_this\" in current context\\..*$gdb_prompt $" {
+		pass "$test"
+            }
+        }
+    }
+}
+
+set test "complete (2) 'p no_var_named_this-arg'"
+send_gdb "p no_var_named_this-arg\t"
+gdb_test_multiple "" "$test" {
+    -re "^p no_var_named_this-arg\\\x07$" {
+	send_gdb "\t"
+	gdb_test_multiple "" "$test" {
+	    -re "argv.*$gdb_prompt " {
+		send_gdb "\n"
+		gdb_test_multiple "" "$test" {
+		    -re "No symbol \"no_var_named_this\" in current context\\..*$gdb_prompt $" {
+			pass "$test"
+		    }
+		}
+	    }
+	    -re "(There are $decimal possibilities\\.  Do you really\r\nwish to see them all.|Display all $decimal possibilities.) \\(y or n\\)$" {
+		send_gdb "n\n"
+
+		# Eat the prompt
+		gdb_expect {
+		    -re "$gdb_prompt " {
+			pass "$test (eat prompt)"
+		    }
+		    timeout {
+			fail "(timeout) $test (eat prompt)"
+		    }
+		}
+
+		gdb_test_multiple "" "$test" {
+		    -re "No symbol \"no_var_named_this\" in current context\\..*$gdb_prompt $" {
+			pass "$test"
+		    }
+		}
+	    }
+        }
+    }
+}
+
+set test "complete (2) 'p no_var_named_this-'"
+send_gdb "p no_var_named_this-\t"
+gdb_test_multiple "" "$test" {
+    -re "^p no_var_named_this-\\\x07$" {
+	send_gdb "\t"
+	gdb_test_multiple "" "$test" {
+	    -re "(There are $decimal possibilities\\.  Do you really\r\nwish to see them all.|Display all $decimal possibilities.) \\(y or n\\)$" {
+		send_gdb "n\n"
+
+		# Eat the prompt
+		gdb_expect {
+		    -re "$gdb_prompt " {
+			pass "$test (eat prompt)"
+		    }
+		    timeout {
+			fail "(timeout) $test (eat prompt)"
+		    }
+		}
+
+		gdb_test_multiple "" "$test" {
+		    -re "No symbol \"no_var_named_this\" in current context\\..*$gdb_prompt $" {
+			pass "$test"
+		    }
+		}
+	    }
+	    -re "argv.*$gdb_prompt $" {
+		send_gdb "\n"
+		gdb_test_multiple "" "$test" {
+		    -re "No symbol \"no_var_named_this\" in current context\\..*$gdb_prompt $" {
+			pass "$test"
+		    }
+		}
+	    }
+	}
+    }
+}
+
+set test "complete 'p values\[0\].a'"
+send_gdb "p values\[0\].a\t"
+gdb_test_multiple "" "$test" {
+    -re "^p values.0..a_field $" {
+	send_gdb "\n"
+	gdb_test_multiple "" "$test" {
+	    -re " = 0.*$gdb_prompt $" {
+		pass "$test"
+	    }
+	}
+    }
+}
+
+set test "complete 'p values\[0\] . a'"
+send_gdb "p values\[0\] . a\t"
+gdb_test_multiple "" "$test" {
+    -re "^p values.0. . a_field $" {
+	send_gdb "\n"
+	gdb_test_multiple "" "$test" {
+	    -re " = 0.*$gdb_prompt $" {
+		pass "$test"
+	    }
+	}
+    }
+}
+
+set test "complete 'p &values\[0\] -> a'"
+send_gdb "p &values\[0\] -> a\t"
+gdb_test_multiple "" "$test" {
+    -re "^p &values.0. -> a_field $" {
+	send_gdb "\n"
+	gdb_test_multiple "" "$test" {
+	    -re " = .*0x\[0-9a-fA-F\]*.*$gdb_prompt $" {
+		pass "$test"
+	    }
+	}
+    }
+}
+
+gdb_test "complete p &values\[0\]->z" \
+    "p &values.0.->z_field" \
+    "completion of field in anonymous union"
+
+gdb_test "complete ptype &values\[0\]->z" \
+    "ptype &values.0.->z_field" \
+    "ptype completion of field in anonymous union"
+
+gdb_test "complete whatis &values\[0\]->z" \
+    "whatis &values.0.->z_field" \
+    "whatis completion of field in anonymous union"
+
+# The following tests used to simply try to complete `${objdir}/file',
+# and so on.  The problem is that ${objdir} can be very long; the
+# completed filename may be more than eighty characters wide.  When
+# this happens, readline tries to manage things, producing output that
+# may make sense on the screen, but is rather hard for our script to
+# recognize.
+#
+# In the case that motivated this change, the (gdb) prompt occupied
+# the leftmost six columns, and `${objdir}/' was seventy-four
+# characters long --- eighty in all.  After printing the slash,
+# readline emitted a space, a carriage return, and then `Makefile'
+# (the tab character being received as input after `Make'.
+#
+# Basically, you have to let readline do whatever it's going to do to
+# make the screen look right.  If it happens to use a different
+# strategy on Tuesdays to get the cursor in the right place, that's
+# not something the testsuite should care about.
+#
+# So, we avoid long lines.  We `cd' to ${srcdir} first, and then do
+# the completion relative to the current directory.
+
+# ${srcdir} may be a relative path.  We want to make sure we end up
+# in the right directory - so make sure we know where it is.
+with_cwd $srcdir {
+    set fullsrcdir [pwd]
+}
+
+# If the directory name contains a '+' we must escape it, adding a backslash.
+# If not, the test below will fail because it will interpret the '+' as a 
+# regexp operator. We use string_to_regexp for this purpose.
+
+gdb_test "cd ${fullsrcdir}" \
+         "Working directory [string_to_regexp ${fullsrcdir}].*" \
+         "cd to \${srcdir}"
+
+
+# GDB used to fail adding / on directories, on the first try only.
+set uniquedir ../testsuite/gdb.base/comp-dir
+set escapeduniquedir [string_to_regexp ${uniquedir}]
+set uniquesu subdi
+set uniquesub ${uniquesu}r
+set escapeuniquesub [string_to_regexp ${uniquesub}]
+send_gdb "dir ${uniquedir}\t"
+gdb_expect {
+	-re "${escapeduniquedir}/" {
+	    pass "directory completion"
+	    send_gdb "${uniquesu}\t"
+	}
+	-re "${escapeduniquedir} $" {
+	    fail "directory completion (old gdb bug)"
+	    send_gdb "\b/${uniquesu}\t"
+	}
+	default {
+	    fail "directory completion (timeout)"
+	    send_gdb "\ndir ${uniquedir}/${uniquesu}\t"
+	}
+}
+
+gdb_expect {
+	-re "${escapeuniquesub}/$" {
+	    pass "directory completion 2"
+	}
+	timeout {
+	    fail "directory completion 2"
+	}
+}
+
+# Empty COMMAND sends no newline while " " sends the newline we need.
+gdb_test " " "Source directories searched: .*" "glob remaining of directory test"
+
+gdb_test "complete file ./gdb.base/compl" \
+    "file ./gdb.base/completion\\.exp.*" \
+    "complete-command 'file ./gdb.base/compl'"
+
+set test "complete 'file ./gdb.base/completi'"
+send_gdb "file ./gdb.base/completi\t"
+gdb_test_multiple "" "$test" {
+    -re "^file ./gdb.base/completion\\.exp $" {
+	send_gdb "\n"
+	# Ignore the exact error message.
+	gdb_test_multiple "" "complete 'file ./gdb.base/completi'" {
+	    -re "\r\nA program is being debugged already\\.\[\r\n\]+Are you sure you want to change the file\\? \\(y or n\\) $" {
+		send_gdb "n\n"
+		exp_continue
+	    }
+	    -re "$gdb_prompt $" {
+		pass "$test"
+	    }
+	}
+    }
+}
+
+set test "complete 'info func marke'"
+send_gdb "info func marke\t"
+gdb_test_multiple "" "$test" {
+    -re "^info func marke.*r$" {
+	send_gdb "\t\t"
+	gdb_test_multiple "" "$test" {
+	    -re "marker1.*$gdb_prompt " {
+		send_gdb "\n"
+		gdb_test_multiple "" "$test" {
+		    -re "All functions matching regular expression \"marker\":.*File.*break1.c:.*\tint marker1\\((void|)\\);\r\n.*:\tint marker2\\(int\\).*marker3\\(char.*char.*\\).*marker4\\(long( int)?\\);.*$gdb_prompt $" {
+			pass "$test"
+		    }
+		}
+	    }
+	}
+    }
+}
+
+
+set test "complete 'set follow-fork-mode'"
+send_gdb "set follow-fork-mode \t\t"
+gdb_test_multiple "" "$test" {
+    -re "child.*parent.*$gdb_prompt " {
+	send_gdb "\n"
+	gdb_test_multiple "" "$test" {
+	    -re "Requires an argument.*child.*parent.*$gdb_prompt $" {
+		pass "$test"
+	    }
+	    -re "Ambiguous item \"\"\\..*$gdb_prompt $" {
+		pass "$test"
+	    }
+	}
+    }
+}
+
+#
+# Tests for the location completer
+#
+
+# Turn off pending breakpoint support so that we don't get queried
+# all the time.
+gdb_test_no_output "set breakpoint pending off"
+
+set subsrc [string range $srcfile 0 [expr {[string length $srcfile] - 3}]]
+set test "tab complete break $subsrc"
+send_gdb "break $subsrc\t\t"
+gdb_test_multiple "" $test {
+    -re "break\.c.*break1\.c.*$gdb_prompt " {
+	send_gdb "1\t\n"
+	gdb_test_multiple "" $test {
+	    -re "malformed linespec error: unexpected end of input\r\n$gdb_prompt " {
+		pass $test
+	    }
+	    -re "$gdb_prompt p$" {
+		fail $test
+	    }
+	}
+    }
+
+    -re "$gdb_prompt p$" {
+	fail $test
+    }
+}
+
+gdb_test "complete break $subsrc" "break\.c.*break1\.c"
+
+set test "tab complete break need"
+send_gdb "break need\t"
+gdb_test_multiple "" $test {
+    -re "break need_malloc " {
+	send_gdb "\n"
+	gdb_test_multiple "" $test {
+	    -re ".*Breakpoint.*at .*/$srcfile, line .*$gdb_prompt " {
+		pass $test
+		gdb_test_no_output "delete breakpoint \$bpnum" \
+		    "delete breakpoint for $test"
+	    }
+	    -re "$gdb_prompt p$" {
+		fail $test
+	    }
+	}
+    }
+    -re "$gdb_prompt p$" {
+	fail $test
+    }
+}
+
+gdb_test "complete break need" "need_malloc"
+
+# gdb/17960
+# Enabling max-completions is necessary to trigger the bug.
+gdb_test_no_output "set max-completions 10"
+set test "tab complete break $srcfile:ma"
+send_gdb "break $srcfile:ma\t"
+gdb_test_multiple "" $test {
+    -re "break $srcfile:main " {
+	send_gdb "\n"
+	gdb_test_multiple "" $test {
+	    -re ".*Breakpoint.*at .*/$srcfile, line .*$gdb_prompt " {
+		pass $test
+		gdb_test_no_output "delete breakpoint \$bpnum" \
+		    "delete breakpoint for $test"
+	    }
+	    -re "$gdb_prompt p$" {
+		fail $test
+	    }
+	}
+    }
+    -re "$gdb_prompt p$" {
+	fail $test
+    }
+}
+
+gdb_test "complete break $srcfile:ma" "break\.c:main"
+
+# End of gdb/17960 testing.
+
+#
+# Completion limiting.
+#
+
+gdb_test_no_output "set max-completions 5"
+
+proc ignore_and_resync {cmd result test} {
+    global gdb_prompt
+
+    gdb_test_multiple "" "$test" {
+	-re "^${cmd}$" {
+	    # Complete the command and ignore the output
+	    # to resync gdb for the next test.
+	    send_gdb "\n"
+	    gdb_test_multiple "" "$test" {
+		-re "$gdb_prompt $" {
+		    $result $test
+		}
+	    }
+	}
+    }
+}
+
+proc test_tab_complete {cmd test} {
+    global gdb_prompt
+
+    send_gdb "${cmd}\t"
+    gdb_test_multiple "" "$test" {
+	-re "^${cmd}\\\x07$" {
+	    send_gdb "\t"
+	    gdb_test_multiple "" "$test" {
+		-re "List may be truncated, max-completions reached.*\r\n$gdb_prompt " {
+		    ignore_and_resync $cmd pass $test
+		}
+		-re "$gdb_prompt " {
+		    ignore_and_resync $cmd fail $test
+		}
+	    }
+	}
+    }
+}
+
+test_tab_complete "p" \
+    "command-name completion limiting using tab character"
+
+set test "command-name completion limiting using complete command"
+send_gdb "complete p\n"
+gdb_test_multiple "" "$test" {
+    -re "List may be truncated, max-completions reached.*\r\n$gdb_prompt $" {
+	pass "$test"
+    }
+}
+
+gdb_test_no_output "set max-completions 3"
+
+test_tab_complete "p marker" \
+    "symbol-name completion limiting using tab character"
+
+set test "symbol-name completion limiting using complete command"
+send_gdb "complete p mark\n"
+gdb_test_multiple "" "$test" {
+    -re "List may be truncated, max-completions reached.*\r\n$gdb_prompt $" {
+	pass "$test"
+    }
+}
+
+# Test completion of 'p', 'x', and 'display' all using a /FMT.
+foreach_with_prefix spc { " " "" } {
+    test_gdb_complete_multiple "p${spc}/d some_union_global." "" "f" {
+	"f1"
+	"f2"
+    }
+
+    test_gdb_complete_none "p${spc}/"
+    test_gdb_complete_unique "p${spc}/d" "p${spc}/d"
+
+    # Try completion on an invalid /FMT string.  GDB doesn't attempt
+    # to validate the /FMT string during completion, the string is
+    # just assumed to be complete when the user hits TAB.
+    test_gdb_complete_unique "p${spc}/@" "p${spc}/@"
+
+    test_gdb_complete_unique "x${spc}/1w values\[0\].b"\
+	"x${spc}/1w values\[0\].b_field"
+
+    test_gdb_complete_unique "display${spc}/x values\[0\].z"\
+	"display${spc}/x values\[0\].z_field"
+}
+
+# Test 'p' using both options and /FMT.
+test_gdb_complete_multiple "p -array on -- /d some_union_global." \
+    "" "f" {
+	"f1"
+	"f2"
+    }
+
+# Check the watch commands can all complete, with and without flags.
+foreach_with_prefix cmd { "watch" "awatch" "rwatch" } {
+    foreach_with_prefix opt { "" "-l" "-location" } {
+	test_gdb_complete_multiple "${cmd} ${opt} some_union_global." \
+	    "" "f" {
+		"f1"
+		"f2"
+	    }
+    }
+}
+
+# Check that tab completion of a deprecated alias does not display the
+# warning about the alias being deprecated during tab completion.
+gdb_test_no_output "alias xxx_yyy_zzz=break"
+gdb_test_no_output "maint deprecate xxx_yyy_zzz"
+test_gdb_complete_unique "xxx_yyy_" "xxx_yyy_zzz"
+
+# Check that tab completion of a deprecated alias with a prefix does
+# not display the warning about the alias being deprecated during tab
+# completion.
+gdb_test_no_output "alias set aaa_bbb_ccc=set debug"
+gdb_test_no_output "maint deprecate set aaa_bbb_ccc"
+test_gdb_complete_unique "set aaa_bbb_" "set aaa_bbb_ccc"
+
+# Test command completion for the disassemble command.
+test_gdb_complete_unique \
+    "disassemble multi_line_if" \
+    "disassemble multi_line_if_conditional"
+
+test_gdb_complete_multiple "disassemble " \
+    "multi_li" "ne_" {
+	"multi_line_if_conditional"
+	"multi_line_while_conditional"
+    }
+
+foreach_with_prefix spc { " " "" } {
+    test_gdb_complete_none "disassemble${spc}/"
+
+    foreach_with_prefix flg { "r" "b" "rb" "s" "m" "ms" } {
+	test_gdb_complete_unique "disassemble${spc}/${flg}" \
+	    "disassemble${spc}/${flg}"
+
+	test_gdb_complete_unique \
+	    "disassemble${spc}/${flg} multi_line_if" \
+	    "disassemble${spc}/${flg} multi_line_if_conditional"
+
+	test_gdb_complete_multiple "disassemble${spc}/${flg} " \
+	    "multi_li" "ne_" {
+		"multi_line_if_conditional"
+		"multi_line_while_conditional"
+	    }
+    }
+}

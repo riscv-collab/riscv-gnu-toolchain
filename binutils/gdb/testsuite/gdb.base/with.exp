@@ -1,0 +1,293 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2019-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test the "with" command.
+
+load_lib completion-support.exp
+
+standard_testfile .c
+
+if {[build_executable "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+clean_restart $binfile
+
+# Test "maint with".  VALUES is a list of values.  A nested "with" is
+# performed with each combination of pair of values from this list.
+# This exercises setting a value, and restoring it too.  This is
+# particularly important for the "special" values like "unlimited",
+# which for example for var_uinteger maps to 0 at the user-visible
+# level, but maps to -1 internally.
+
+proc test_with {setting values} {
+    foreach val1 $values {
+	foreach val2 $values {
+	    gdb_test \
+		"maint with test-settings $setting $val1 -- maint with test-settings $setting $val2 -- p 1" \
+		" = 1"
+	}
+    }
+}
+
+# Test "maint with" in the error case.  SETTING is the "maint set
+# test-setting" setting to exercise.  TMP_VAL is the value to set the
+# setting to.  EXPECTED_RE is the expected GDB output, which should be
+# an error of some kind.  Also checks that the setting's original
+# value is preserved across the error.
+
+proc test_with_error {setting tmp_val expected_re} {
+    global gdb_prompt
+
+    with_test_prefix "$setting, $tmp_val" {
+	set org_val ""
+	gdb_test_multiple "maint show test-settings $setting" \
+	    "save org value" {
+		-re "^maint show test-settings $setting\r\n" {
+		    exp_continue
+		}
+		-re "^(.*)\r\n$gdb_prompt $" {
+		    set org_val $expect_out(1,string)
+		    pass $gdb_test_name
+		}
+	    }
+
+	gdb_test \
+	    "maint with test-settings $setting $tmp_val -- p 1" \
+	    $expected_re
+
+	gdb_test "maint show test-settings $setting" "^$org_val" \
+	    "value hasn't changed across error"
+    }
+}
+
+# Test "with" framework basics, using the internal "maint with
+# test-settings" subcommands.
+with_test_prefix "maint" {
+    test_with "auto-boolean" {"on" "off" "auto"}
+    test_with "boolean" {"" "on" "off" "0" "1" "enable" "disable"}
+    test_with "integer" {"0" "1" "-1" "unlimited"}
+    test_with "uinteger" {"0" "1" "unlimited"}
+    test_with "zinteger" {"0" "1" "-1"}
+    test_with "zuinteger" {"0" "1"}
+    test_with "zuinteger-unlimited" {"-1" "unlimited" "0" "1"}
+    test_with "string" {"" "foo" "\"hello world\""}
+    test_with "string-noescape" {"" "foo" "\"hello world\""}
+    test_with "filename" {"/foo" "bar/x/y"}
+    test_with "optional-filename" {"" "/foo" "bar/x/y"}
+    test_with "enum" {"xxx" "yyy"}
+
+    # Check the most important error conditions.  E.g., empty,
+    # negative or "unlimited" values for settings that don't accept
+    # those.  Exhaustive error coverage of the set/with value parsing
+    # is left to "set" testing, in gdb.base/settings.exp.
+    test_with_error "auto-boolean" "" \
+	"\"on\", \"off\" or \"auto\" expected\\."
+    test_with_error "auto-boolean" "xxx" \
+	"\"on\", \"off\" or \"auto\" expected\\."
+    test_with_error "boolean" "2" "\"on\" or \"off\" expected\\."
+    test_with_error "uinteger" "-1" "integer -1 out of range"
+    test_with_error "uinteger" "" \
+	"Argument required \\(integer to set it to, or \"unlimited\"\\)\\."
+    test_with_error "zuinteger" "-1" "integer -1 out of range"
+    test_with_error "zuinteger" "" \
+	"Argument required \\(integer to set it to\\)\\."
+    test_with_error "zuinteger-unlimited" "-2" \
+	"integer -2 out of range"
+    test_with_error "zuinteger-unlimited" "" \
+	"Argument required \\(integer to set it to, or \"unlimited\"\\)\\."
+    test_with_error "filename" "" \
+	"Argument required \\(filename to set it to\\.\\)\\."
+    test_with_error "enum" "" \
+	"Requires an argument\\. Valid arguments are xxx, yyy, zzz\\."
+}
+
+# Basic/core tests using user-visible commands.
+with_test_prefix "basics" {
+    gdb_test "print g_s" " = {a = 1, b = 2, c = 3}"
+    gdb_test "with print pretty -- print g_s" \
+	[multi_line  \
+	     " = {" \
+	     "  a = 1," \
+	     "  b = 2," \
+	     "  c = 3" \
+	     "}"]
+
+    # A boolean setting.
+    gdb_test "with non-stop on -- show non-stop" \
+	"Controlling the inferior in non-stop mode is on\\."
+    gdb_test "show non-stop" \
+	"Controlling the inferior in non-stop mode is off\\."
+
+    # Language.
+    gdb_test "with language pascal -- show language" \
+	"The current source language is \"pascal\"\\."
+
+    gdb_test "show language" \
+	"The current source language is \"auto; currently c\"\\."
+
+    gdb_test "with language ada -- print g_s" \
+	" = \\(a => 1, b => 2, c => 3\\)"
+
+    # Nested "with"s.
+    gdb_test "with language ada -- with language c -- print g_s" \
+	" = {a = 1, b = 2, c = 3}"
+
+    # "w" alias.
+    gdb_test "w language pascal -- show language" \
+	"The current source language is \"pascal\"\\." \
+	"w alias works"
+
+    # An early prototype of the "with" command got this wrong.
+    gdb_test \
+	"w print repeats unlimited -- w print repeats 1 -- p \"1223334444\"" \
+	" = \"1\", '2' <repeats 2 times>, '3' <repeats 3 times>, '4' <repeats 4 times>"
+}
+
+# Check a user-defined command.
+with_test_prefix "user-defined" {
+    # A user defined command.
+    set test "define usercmd"
+    gdb_test_multiple "define usercmd" $test {
+	-re "End with"  {
+	    gdb_test \
+		[multi_line_input \
+		     {print g_s} \
+		     {end}] \
+		"" \
+		$test
+	}
+    }
+    gdb_test "with language ada -- usercmd" \
+	" = \\(a => 1, b => 2, c => 3\\)"
+}
+
+# Check repeating.
+with_test_prefix "repeat" {
+    clean_restart $binfile
+
+    # "with" with no command reinvokes the previous command.
+    gdb_test "with language ada" \
+	"No previous command to relaunch" \
+	"reinvoke with no previous command to relaunch"
+
+    gdb_test "print g_s" " = {a = 1, b = 2, c = 3}"
+
+    gdb_test "with language ada" \
+	" = \\(a => 1, b => 2, c => 3\\)" \
+	"reinvoke with language"
+
+    # Same, but with "--".
+    gdb_test "with language fortran --" \
+	" = \\( a = 1, b = 2, c = 3 \\)" \
+	"reinvoke with language and --"
+
+    # Repeating repeats the original "print g_s", not the last "with"
+    # command.
+    set test "repeat command line"
+    send_gdb "\n"
+    gdb_test_multiple "" $test {
+	-re " = {a = 1, b = 2, c = 3}\r\n$gdb_prompt $" {
+	    pass $test
+	}
+    }
+}
+
+# Basic run control.
+with_test_prefix "run control" {
+    clean_restart $binfile
+
+    if ![runto_main] {
+	return
+    }
+
+    # Check "with" with a synchronous execution command.
+    gdb_test "with disassemble-next-line on -- next" \
+	"return 0;.*=>.*"
+}
+
+# Check errors.
+with_test_prefix "errors" {
+    gdb_test "with" "Missing arguments\\."
+
+    # Try both an unknown root setting and an unknown prefixed
+    # setting.  The errors come from different locations in the
+    # sources.
+    gdb_test "with xxxx yyyy" \
+	"Undefined set command: \"xxxx\".  Try \"help set\"\\."
+    gdb_test "with print xxxx yyyy" \
+	"Undefined set print command: \"xxxx yyyy\".  Try \"help set print\"\\."
+    # Try one error case for "maint with", to make sure the right
+    # "maintenance with" prefix is shown.
+    gdb_test "maint with xxxx yyyy" \
+	"Undefined maintenance set command: \"xxxx\".  Try \"help maintenance set\"\\."
+
+    # Try ambiguous settings.
+    gdb_test "with w" \
+	"Ambiguous set command \"w\": watchdog, width, write\\."
+    gdb_test "with print m" \
+	"Ambiguous set print command \"m\": max-depth, max-symbolic-offset, memory-tag-violations\\."
+
+    gdb_test "with variable xxx=1" \
+	"Cannot use this setting with the \"with\" command"
+
+    gdb_test "with print elements -- p 1" \
+	"Argument required \\(integer to set it to, or \"unlimited\"\\)\\."
+
+    gdb_test "with -- p 1" \
+	"Missing setting before '--' delimiter"
+
+    # Check that the setting is restored even if the command throws.
+    gdb_test "with print elements 1 -- unknowncommand" \
+	"Undefined command: \"unknowncommand\"\\.  Try \"help\"\\."
+    gdb_test "show print elements" \
+	"Limit on string chars or array elements to print is 200\\."
+}
+
+# Check completion.
+with_test_prefix "completion" {
+    test_gdb_complete_unique \
+	"with pri" \
+	"with print"
+
+    test_gdb_complete_unique \
+	"with print ele" \
+	"with print elements"
+
+    test_gdb_complete_unique \
+	"with print elements u" \
+	"with print elements unlimited"
+
+    test_gdb_complete_none \
+	"with print elements unlimited "
+
+    test_gdb_completion_offers_commands "with print elements unlimited -- "
+
+    # Check that the completer nests into the nested command line's
+    # completer.
+    test_gdb_complete_unique \
+	"with print elements unlimited -- with print ele" \
+	"with print elements unlimited -- with print elements"
+
+    # Check completion of "maint with".  "maint with" and "with"'s
+    # completers share 99% of the code.  All we need to care about
+    # here is that the completion word point is computed correctly, so
+    # any simple completion is sufficient.
+    test_gdb_complete_unique \
+	"maint with test-set" \
+	"maint with test-settings"
+}

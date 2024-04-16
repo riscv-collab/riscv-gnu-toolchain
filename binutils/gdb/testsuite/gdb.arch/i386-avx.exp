@@ -1,0 +1,108 @@
+# Copyright 2010-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Please email any bugs, comments, and/or additions to this file to:
+# bug-gdb@gnu.org
+
+# This file is part of the gdb testsuite.
+
+
+require {is_any_target i?86-*-* x86_64-*-*}
+
+require have_avx
+
+standard_testfile .c
+
+set flags { debug }
+
+# C11 for _Alignas, gnu for asm.
+lappend flags additional_flags=-std=gnu11
+
+lappend_include_file flags $srcdir/lib/precise-aligned-alloc.c
+
+if { [test_compiler_info gcc*] || [test_compiler_info clang*] } {
+    lappend flags "additional_flags=-mavx -I${srcdir}/.."
+}
+
+if { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable \
+	  $flags] != "" } {
+    unsupported "compiler does not support AVX"
+    return
+}
+
+clean_restart ${binfile}
+
+if {![runto_main]} {
+    return 0
+}
+
+gdb_test "break [gdb_get_line_number "first breakpoint here"]" \
+         "Breakpoint .* at .*i386-avx.c.*" \
+         "set first breakpoint in main"
+gdb_continue_to_breakpoint "continue to first breakpoint in main"
+
+if [is_amd64_regs_target] {
+    set nr_regs 16
+} else {
+    set nr_regs 8
+}
+
+for { set r 0 } { $r < $nr_regs } { incr r } {
+    gdb_test "print \$ymm$r.v8_float" \
+        ".. = \\{$r, $r.125, $r.25, $r.375, $r.5, $r.625, $r.75, $r.875\\}.*" \
+        "check float contents of %ymm$r"
+    gdb_test "print \$ymm$r.v32_int8" \
+        ".. = \\{(-?\[0-9\]+, ){31}-?\[0-9\]+\\}.*" \
+        "check int8 contents of %ymm$r"
+}
+
+for { set r 0 } { $r < $nr_regs } { incr r } {
+    gdb_test "set var \$ymm$r.v8_float\[0\] = $r + 10" "" "set %ymm$r"
+}
+
+gdb_test "break [gdb_get_line_number "second breakpoint here"]" \
+         "Breakpoint .* at .*i386-avx.c.*" \
+         "set second breakpoint in main"
+gdb_continue_to_breakpoint "continue to second breakpoint in main"
+
+for { set r 0 } { $r < $nr_regs } { incr r } {
+    gdb_test "print data\[$r\]" \
+        ".. = \\{f = \\{[expr $r + 10], $r.125, $r.25, $r.375, $r.5, $r.625, $r.75, $r.875\\}\\}.*" \
+        "check contents of data\[$r\]"
+}
+
+# If testing with a remote protocol target, check that we can
+# force-disable the use of XML descriptions.  This should make the
+# client/server fallback to the pre-XML register file.
+
+with_test_prefix "force-disable xml descriptions" {
+    if {[target_info gdb_protocol] == "remote"
+	|| [target_info gdb_protocol] == "extended-remote"} {
+
+	save_vars { GDBFLAGS } {
+	    append GDBFLAGS " -ex \"set remote target-features-packet off\""
+	    clean_restart ${binfile}
+	}
+
+	if {![runto_main]} {
+	    return
+	}
+
+	# With qXfer:features:read disabled, we won't know anything
+	# about YMM registers.
+	gdb_test "print \$ymm0" " = void"
+	gdb_test "print \$xmm0" "v4_float.*"
+    }
+}

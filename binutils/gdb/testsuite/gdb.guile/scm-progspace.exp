@@ -1,0 +1,87 @@
+# Copyright (C) 2010-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.
+# It tests the program space support in Guile.
+
+load_lib gdb-guile.exp
+
+require allow_guile_tests
+
+standard_testfile
+
+if {[build_executable $testfile.exp $testfile $srcfile debug] == -1} {
+    return -1
+}
+
+clean_restart
+
+gdb_install_guile_utils
+gdb_install_guile_module
+
+proc print_current_progspace { filename_regexp smob_filename_regexp } {
+    gdb_test "gu (print (progspace-filename (current-progspace)))" \
+	"= $filename_regexp" "current progspace filename"
+    gdb_test "gu (print (progspaces))" \
+	"= \\(#<gdb:progspace $smob_filename_regexp>\\)"
+}
+
+gdb_test "gu (print (progspace? 42))" "= #f"
+gdb_test "gu (print (progspace? (current-progspace)))" "= #t"
+
+with_test_prefix "at start" {
+    print_current_progspace "#f" "{no symfile}"
+}
+
+gdb_load ${binfile}
+
+with_test_prefix "program loaded" {
+    print_current_progspace ".*$testfile" ".*$testfile"
+    gdb_test_no_output "gu (define progspace (current-progspace))"
+    gdb_test "gu (print (progspace-valid? progspace))" "= #t"
+    gdb_test "gu (print (progspace-filename progspace))" "= .*$testfile"
+    gdb_test "gu (print (list? (progspace-objfiles progspace)))" "= #t"
+}
+
+# Verify we keep the same progspace when the program is unloaded.
+
+gdb_unload
+with_test_prefix "program unloaded" {
+    print_current_progspace "#f" "{no symfile}"
+    gdb_test "gu (print (eq? progspace (current-progspace)))" "= #t"
+}
+
+# Verify the progspace is garbage collected ok.
+# Note that when a program is unloaded, the associated progspace doesn't get
+# deleted.  We need to, for example, delete an inferior to get the progspace
+# to go away.
+
+gdb_test "add-inferior" "Added inferior 2.*" "create new inferior"
+gdb_test "inferior 2" ".*" "switch to new inferior"
+gdb_test_no_output "remove-inferiors 1" "remove first inferior"
+
+with_test_prefix "inferior removed" {
+    gdb_test "gu (print (progspace-valid? progspace))" "= #f"
+    gdb_test "gu (print (progspace-filename progspace))" \
+	"ERROR:.*Invalid object.*"
+    gdb_test "gu (print (progspace-objfiles progspace))" \
+	"ERROR:.*Invalid object.*"
+    print_current_progspace "#f" "{no symfile}"
+}
+
+# garbage-collects can trigger segvs if we've messed up somewhere.
+
+gdb_test_no_output "gu (gc)"
+gdb_test "gu (print progspace)" "= #<gdb:progspace {invalid}>"

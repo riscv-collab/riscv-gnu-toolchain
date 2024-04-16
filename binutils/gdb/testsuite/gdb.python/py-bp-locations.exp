@@ -1,0 +1,96 @@
+# Copyright (C) 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib gdb-python.exp
+
+require allow_python_tests
+
+standard_testfile
+
+if {[gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {c++ debug}] != "" } {
+    return -1
+}
+
+save_vars { GDBFLAGS } {
+    clean_restart $testfile
+}
+
+if ![runto_main] {
+    return -1
+}
+
+# Build a regexp string that represents the __repr__ of a
+# gdb.BreakpointLocation object.  Accepts arguments -enabled, -address,
+# -source, -line, and -func.
+proc build_bpl_regexp { args } {
+    parse_args [list {enabled True} [list address "$::hex"] {source ".*"} \
+		    [list line "$::decimal"] {func ""}]
+
+    set pattern "<gdb.BreakpointLocation"
+
+    if {$enabled} {
+	set pattern "$pattern enabled"
+    } else {
+	set pattern "$pattern disabled"
+    }
+
+    set pattern "$pattern address=${address}(?: requested_address=$::hex)?"
+    set pattern "$pattern source=${source}:${line}"
+    if {$func ne ""} {
+	set pattern "$pattern in ${func}"
+    }
+    set pattern "$pattern>"
+    return $pattern
+}
+
+# Set breakpoint with 2 locations.
+gdb_breakpoint "add"
+
+set expected_line_a [gdb_get_line_number "a + b"]
+set expected_line_b [gdb_get_line_number "c + d"]
+
+# Test that the locations return correct source locations.
+gdb_test "python print(gdb.breakpoints()\[1\].locations\[0\].source)" \
+	 ".*('.*py-bp-locations.c', $expected_line_a).*"
+gdb_test "python print(gdb.breakpoints()\[1\].locations\[1\].source)" \
+	 ".*('.*py-bp-locations.c', $expected_line_b).*"
+gdb_test "python print(gdb.breakpoints()\[1\].locations\[1\])" \
+    [build_bpl_regexp -enabled True -source ".*py-bp-locations.c" \
+	 -line "$expected_line_b" -func ".*"] \
+    "check repr of enabled breakpoint location"
+
+# Disable first location and make sure we don't hit it.
+gdb_test "python gdb.breakpoints()\[1\].locations\[0\].enabled = False" ""
+gdb_test "python print(gdb.breakpoints()\[1\].locations\[0\])" \
+    [build_bpl_regexp -enabled False -source ".*py-bp-locations.c" \
+	 -line "$expected_line_a" -func ".*"] \
+    "check repr of disabled breakpoint location"
+gdb_continue_to_breakpoint "" ".*25.*"
+
+if ![runto_main] {
+    return -1
+}
+
+gdb_breakpoint "add"
+# Disable "add" owner breakpoint and verify all locations still are enabled.
+gdb_test "python gdb.breakpoints()\[1\].enabled = False" "" "Disable add owner breakpoint."
+
+gdb_test "python print(gdb.breakpoints()\[1\].locations\[0\].enabled)" "True" "First location still enabled"
+
+gdb_test "python print(gdb.breakpoints()\[1\].locations\[1\].enabled)" "True" "Second location still enabled"
+
+# Set breakpoint at end and make sure we run past the still enabled locations,
+gdb_breakpoint 32
+gdb_continue_to_breakpoint "end of main" ".*32.*"

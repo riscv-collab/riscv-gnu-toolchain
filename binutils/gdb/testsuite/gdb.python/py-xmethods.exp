@@ -1,0 +1,186 @@
+# Copyright 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It tests the debug methods
+# feature in the Python extension language.
+
+load_lib gdb-python.exp
+
+require allow_cplus_tests allow_python_tests
+
+standard_testfile py-xmethods.cc
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile {debug c++}]} {
+    return -1
+}
+
+if ![runto_main] {
+   return -1
+}
+
+set xmethods_script [gdb_remote_download host \
+		     ${srcdir}/${subdir}/${testfile}.py]
+
+gdb_breakpoint [gdb_get_line_number "Break here."]
+gdb_continue_to_breakpoint "Break here" ".*Break here.*"
+
+# Tests before loading the debug methods.
+gdb_test "p a1 + a2" ".* = 15" "before: a1 + a2"
+gdb_test "p a_plus_a" ".* = 1" "before: a_plus_a 1"
+
+gdb_test "p a2 - a1" ".* = 5" "before: a2 - a1"
+gdb_test "p a_minus_a" ".* = 1" "before: a_minus_a 1"
+
+gdb_test "p b1 - a1" ".* = 25" "before: b1 - a1"
+gdb_test "p a_minus_a" ".* = 2" "before: a_minus_a 2"
+
+gdb_test "p a1.geta()" ".* = 5" "before: a1.geta()"
+gdb_test "p a_geta" ".* = 1" "before: a_geta 1"
+
+gdb_test "p ++a1" "No symbol.*" "before: ++a1"
+gdb_test "p a1.getarrayind(5)" "Couldn't find method.*" \
+  "before: a1.getarrayind(5)"
+gdb_test "ptype a1.getarrayind" \
+    "There is no member or method named getarrayind\\." \
+    "before: ptype a1.getarrayind"
+
+gdb_test "p a_ptr->geta()" ".* = 60" "before: a_ptr->geta()"
+gdb_test "p b_geta" ".* = 1" "before: b_geta 1"
+
+gdb_test "p e.geta()" ".* = 100" "before: e.geta()"
+gdb_test "p a_geta" ".* = 2" "before: a_geta 2"
+
+# Since g.size_diff operates of sizes of int and float, do not check for
+# actual result value as it could be different on different platforms.
+gdb_test "p g.size_diff<float>()" ".*" "before: call g.size_diff<float>()"
+gdb_test "p g_size_diff" ".* = 2" "before: g_size_diff 2"
+
+gdb_test "p g.size_diff<unsigned long>()" "Couldn't find method.*" \
+  "before: g.size_diff<unsigned long>()"
+
+gdb_test "p g.size_mul<2>()" ".*" "before: g.size_mul<2>()"
+gdb_test "p g_size_mul" ".* = 2" "before: g_size_mul 2"
+
+gdb_test "p g.size_mul<5>()" "Couldn't find method.*" \
+  "before: g.size_mul<5>()"
+
+gdb_test "p g.mul<double>(2.0)" ".* = 10" "before: g.mul<double>(2.0)"
+gdb_test "p g_mul" ".* = 2" "before: g_mul 2"
+
+gdb_test "p g.mul<char>('a')" "Couldn't find method.*" \
+  "before: g.mul<char>('a')"
+
+# Load the script which adds the debug methods.
+gdb_test_no_output "source ${xmethods_script}" "load the script file"
+
+# Tests after loading debug methods.
+gdb_test "p a1 + a2" "From Python <A_plus_A>.*15" "after: a1 + a2"
+
+gdb_test "p a2 - a1" ".* = 5" "after: a2 - a1"
+gdb_test "p a_minus_a" ".* = 3" "after: a_minus_a 3"
+
+gdb_test "p b1 + a1" "From Python <A_plus_A>.*35" "after: b1 + a1"
+
+gdb_test "p b1 - a1" ".* = 25" "after: b1 - a1"
+gdb_test "p a_minus_a" ".* = 4" "after: a_minus_a 4"
+
+gdb_test "p a1.geta()" "From Python <A_geta>.*5" "after: a1.geta()"
+gdb_test "p ++a1" "From Python <plus_plus_A>.*6" "after: ++a1"
+gdb_test "p a1.getarrayind(5)" "From Python <A_getarrayind>.*5" \
+  "after: a1.getarrayind(5)"
+gdb_test "ptype a1.getarrayind" \
+  "There is no member or method named getarrayind\\." \
+  "after: ptype a1.getarrayind"
+
+gdb_test "p a1\[6\]" ".*int &.*6" "after a1\[\]"
+gdb_test "p b1\[7\]" ".*const int &.*7" "after b1\[\]"
+# Note the following test.  Xmethods on dynamc types are not looked up
+# currently.  Hence, even though a_ptr points to a B object, the xmethod
+# defined for A objects is invoked.
+gdb_test "p a_ptr->geta()" "From Python <A_geta>.*30" "after: a_ptr->geta()"
+gdb_test "p e.geta()" "From Python <A_geta>.*100" "after: e.geta()"
+gdb_test "p e_ptr->geta()" "From Python <A_geta>.*100" "after: e_ptr->geta()"
+gdb_test "p e_ref.geta()" "From Python <A_geta>.*100" "after: e_ref.geta()"
+gdb_test "p e.method(10)" "From Python <E_method_int>.* = void" \
+  "after: e.method(10)"
+gdb_test "p e.method('a')" "From Python <E_method_char>.* = void" \
+  "after: e.method('a')"
+gdb_test "p g.size_diff<float>  ()" "From Python G<>::size_diff.*" \
+  "after: g.size_diff<float>()"
+gdb_test "p g.size_diff<  unsigned long  >()" "From Python G<>::size_diff.*" \
+  "after: g.size_diff<unsigned long>()"
+gdb_test "p g.size_mul<2>()" "From Python G<>::size_mul.*" \
+  "after: g.size_mul<2>()"
+gdb_test "p g.size_mul<  5  >()" "From Python G<>::size_mul.*" \
+  "after: g.size_mul<  5  >()"
+gdb_test "p g.mul<double>(2.0)" "From Python G<>::mul.*" \
+  "after: g.mul<double>(2.0)"
+gdb_test "p g.mul<char>('a')" "From Python G<>::mul.*" \
+  "after: g.mul<char>('a')"
+gdb_test "p g_ptr->mul<char>('a')" "From Python G<>::mul.*" \
+  "after: g_ptr->mul<char>('a')"
+
+# Tests for 'disable/enable xmethod' command.
+gdb_test_no_output "disable xmethod progspace G_methods" \
+  "disable G_methods"
+gdb_test "p g.mul<char>('a')" "Couldn't find method.*" \
+  "g.mul<char>('a') after disabling G_methods"
+gdb_test_no_output "enable xmethod progspace G_methods" \
+  "dnable G_methods"
+gdb_test "p g.mul<char>('a')" "From Python G<>::mul.*" \
+  "after enabling G_methods"
+gdb_test_no_output "disable xmethod progspace G_methods;mul" \
+  "disable G_methods;mul"
+gdb_test "p g.mul<char>('a')" "Couldn't find method.*" \
+  "g.mul<char>('a') after disabling G_methods;mul"
+gdb_test_no_output "enable xmethod progspace G_methods;mul" \
+  "enable G_methods;mul"
+gdb_test "p g.mul<char>('a')" "From Python G<>::mul.*" \
+  "after enabling G_methods;mul"
+
+# Test for 'info xmethods' command
+gdb_test "info xmethod global plus" "global.*plus_plus_A" \
+  "info xmethod global plus 1"
+gdb_test_no_output "disable xmethod progspace E_methods;method_int" \
+  "disable xmethod progspace E_methods;method_int"
+gdb_test "info xmethod progspace E_methods;method_int" ".* \\\[disabled\\\]" \
+  "info xmethod xmethods E_methods;method_int"
+gdb_test_no_output "disable xmethod progspace G_methods" "disable G_methods 2"
+gdb_test "info xmethod progspace" ".*G_methods \\\[disabled\\\].*"
+
+# PR 18285
+# First make sure both are enabled.
+gdb_test_no_output "enable xmethod progspace E_methods;method_char"
+gdb_test_no_output "enable xmethod progspace E_methods;method_int"
+gdb_test "pt e.method('a')" "type = void"
+gdb_test "pt e.method(10)" \
+    "NotImplementedError.*Error while fetching result type of an xmethod worker defined in Python."
+
+# Verify `max-value-size' obedience with `gdb.Value.const_value'.
+gdb_test "p a1.getarray()" \
+  "From Python <A_getarray>.* = \\{0, 1, 2, 3, 4, 5, 6, 7, 8, 9\\}" \
+  "after: a1.getarray"
+gdb_test "p b1.getarray()" \
+  "From Python <B_getarray>.* = \\{0, 1, 2, 3, 4, 5, 6, 7, 8, 9\\}" \
+  "after: b1.getarray"
+gdb_test_no_output "python gdb.set_parameter('max-value-size', 16)"
+gdb_test "p a1.getarray()" \
+  "From Python <A_getarray>.*value requires $decimal bytes,\
+   which is more than max-value-size" \
+  "after: a1.getarray (max-value-size)"
+gdb_test "p b1.getarray()" \
+  "From Python <B_getarray>.*value requires $decimal bytes,\
+   which is more than max-value-size" \
+  "after: b1.getarray (max-value-size)"

@@ -1,0 +1,291 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the gdb testsuite.
+
+# Tests which verify (or not) that GDB can access in-scope variables
+# when stopped within an OpenMP parallel region.
+
+standard_testfile
+
+set have_nested_function_support 0
+set opts {openmp debug}
+if [support_nested_function_tests] {
+    lappend opts "additional_flags=-DHAVE_NESTED_FUNCTION_SUPPORT"
+    set have_nested_function_support 1
+}
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile $opts]} {
+    return -1
+}
+
+# gdb_openmp_setup may be defined to set auto-load safe-path and possibly
+# sysroot.  These settings are required for gdb to be able to find
+# the libgomp python plugin.  (sysroot only needs to be defined for
+# remote debugging.)
+#
+# This approach has both pros and cons.  On the plus side, it's easy
+# to automatically set a precise auto-load safe-path.  (It's easy because
+# the output of ldd on the binary may be examined to learn the location
+# of libgomp.so.)
+#
+# However, making these settings is also a drawback due to potentially
+# overriding settings made by a board file.  Therefore, this proc
+# is optional and will only be called if it's defined.
+
+if {[info procs gdb_openmp_setup] != ""} {
+    if {[gdb_openmp_setup $binfile] != ""} {
+	untested "could not set up OpenMP environment"
+	return -1
+    }
+}
+
+if {![runto_main]} {
+    return -1
+}
+
+# We want to invoke setup_kfail (and in some cases setup_xfail) when
+# GDB does not yet have support for finding the values of variables in
+# (non-master) threads.  We'll check this by looking at the output of
+# "maint print thread-parent".  If this command is undefined, then GDB
+# does not yet have thread parent support, and it makes sense to kfail
+# tests which won't work.  It's possible for GDB to have this support,
+# but not work.  E.g. it may be the case that the plugin doesn't
+# exist or is not found.  We may eventually need to add additional
+# constraints related to setting allow_kfail to 0.  But, for the moment,
+# this simple test should be sufficient.
+
+set allow_kfail 1
+gdb_test_multiple "maint print thread-parent" "maint print thread-parent" {
+    -re "Undefined maintenance print command.*$gdb_prompt" {
+	pass "maint print thread-parent (does not exist)"
+    }
+    -re "No parent found.*" {
+	pass "maint print thread-parent"
+	set allow_kfail 0
+    }
+}
+
+# Determine whether to xfail some of the tests based on GCC version.
+#
+# This may need to be tweaked somewhat.  Testing shows that GCC 7.3.1
+# needs the xfails.  GCC 8.3.1 and 9.1.1 do not.  The assumption made
+# below is that all versions of gcc 8 and above won't require the
+# XFAIL setup and that all versions of gcc 7 and below will, but it's
+# possible that there are versions in between 7.3.1 and 8.3.1 for
+# which this assumption is invalid.
+
+set have_older_gcc 0
+if {[test_compiler_info {gcc-[0-7]-*}]} {
+    set have_older_gcc 1
+}
+
+# maybe_setup_kfail will set up a kfail for gdb/22214 when COND holds in
+# addition to considering the values of $have_older_gcc and $allow_kfail.
+#
+# When $have_older_gcc evaluates to true, setup_xfail will invoked
+# instead.
+
+proc maybe_setup_kfail {cond} {
+    global have_older_gcc allow_kfail
+    if {$have_older_gcc} {
+	setup_xfail *-*-*
+    } elseif {[uplevel 1 [list expr $cond]] && $allow_kfail} {
+	setup_kfail "gdb/22214" *-*-*
+    }
+}
+
+with_test_prefix "single_scope" {
+
+    gdb_breakpoint [gdb_get_line_number "single_scope: thread_num="]
+    gdb_breakpoint [gdb_get_line_number "single_scope: s1="]
+
+    foreach pref {"first thread" "second thread"} {
+	with_test_prefix $pref {
+	    gdb_continue_to_breakpoint "at printf"
+
+	    if {$have_older_gcc} { setup_xfail "*-*-*" }
+	    set thread_num [get_valueof "" thread_num "unknown"]
+	    if {$have_older_gcc} { setup_xfail "*-*-*" }
+	    gdb_test "print s1" "= -41"
+	    gdb_test "print s2" "= \[12\]02"
+	    if {$have_older_gcc} { setup_xfail "*-*-*" }
+	    gdb_test "print s3" "= -43"
+	    gdb_test "print i1" "= 11"
+	    gdb_test "print i2" "= \[12]12"
+	    maybe_setup_kfail {$thread_num != 0}
+	    gdb_test "print i3" "= 13"
+	}
+    }
+
+    with_test_prefix "after parallel region" {
+	gdb_continue_to_breakpoint "at printf"
+
+	gdb_test "print s1" "= -41"
+	gdb_test "print s2" "= -42"
+	gdb_test "print s3" "= -43"
+	gdb_test "print i1" "= 11"
+	gdb_test "print i2" "= 12"
+	gdb_test "print i3" "= 13"
+    }
+
+}
+
+with_test_prefix "multi_scope" {
+    gdb_breakpoint [gdb_get_line_number "multi_scope: thread_num="]
+    gdb_breakpoint [gdb_get_line_number "multi_scope: i01="]
+
+    foreach pref {"first thread" "second thread"} {
+	with_test_prefix $pref {
+	    gdb_continue_to_breakpoint "at printf"
+
+	    if {$have_older_gcc} { setup_xfail "*-*-*" }
+	    set thread_num [get_valueof "" thread_num "unknown"]
+
+	    gdb_test "print i01" "= 1"
+	    maybe_setup_kfail {$thread_num != 0}
+	    gdb_test "print i02" "= 2"
+	    gdb_test "print i11" "= 11"
+	    maybe_setup_kfail {$thread_num != 0}
+	    gdb_test "print i12" "= 12"
+	    gdb_test "print i21" "= \[12\]21"
+	    maybe_setup_kfail {$thread_num != 0}
+	    gdb_test "print i22" "= 22"
+	    gdb_test "print file_scope_var" "= 9876"
+	}
+    }
+
+    with_test_prefix "after parallel" {
+	gdb_continue_to_breakpoint "at printf"
+
+	gdb_test "print i01" "= 1"
+	gdb_test "print i02" "= 2"
+	gdb_test "print i11" "= 11"
+	gdb_test "print i12" "= 12"
+	gdb_test "print i21" "= -21"
+	gdb_test "print i22" "= 22"
+	gdb_test "print file_scope_var" "= 9876"
+    }
+}
+
+# Nested functions in C are a GNU extension, so only do the nested function
+# tests if compiling with -DHAVE_NESTED_FUNCTION_SUPPORT was successful.
+
+if $have_nested_function_support {
+    with_test_prefix "nested_func" {
+	gdb_breakpoint [gdb_get_line_number "nested_func: tn="]
+
+	foreach call_prefix {"1st call" "2nd call"} {
+	    with_test_prefix $call_prefix {
+		foreach thread_prefix {"1st thread" "2nd thread"} {
+		    with_test_prefix $thread_prefix {
+			gdb_continue_to_breakpoint "at printf"
+
+			if {$have_older_gcc} { setup_xfail "*-*-*" }
+			set thread_num [get_valueof "" "tn" "unknown"]
+
+			gdb_test "print file_scope_var" "= 9876"
+			if {$have_older_gcc} { setup_xfail *-*-* }
+			gdb_test "print s1" "= -42"
+			if {$call_prefix eq "1st call"} {
+			    gdb_test "print i" "= 1"
+			} else {
+			    gdb_test "print i" "= 101"
+			}
+			gdb_test "print j" "= \[12\]000"
+			maybe_setup_kfail {$thread_num != 0}
+			if {$call_prefix eq "1st call"} {
+			    gdb_test "print k" "= 3"
+			} else {
+			    gdb_test "print k" "= 103"
+			}
+			if {$call_prefix eq "1st call"} {
+			    gdb_test "print p" "= 10"
+			} else {
+			    gdb_test "print p" "= 20"
+			}
+			gdb_test "print q" "= \[12\]001"
+			maybe_setup_kfail {$thread_num != 0}
+			if {$call_prefix eq "1st call"} {
+			    gdb_test "print r" "= 12"
+			} else {
+			    gdb_test "print r" "= 22"
+			}
+			gdb_test "print x" "= 4"
+			gdb_test "print y" "= \[12\]002"
+			maybe_setup_kfail {$thread_num != 0}
+			gdb_test "print z" "= 6"
+			if {$have_older_gcc} { setup_xfail "*-*-*" }
+			gdb_test "print tn" "= \[01\]"
+		    }
+		}
+	    }
+	}
+    }
+}
+
+with_test_prefix "nested_parallel" {
+    gdb_breakpoint [gdb_get_line_number "nested_parallel (inner threads)"]
+
+    with_test_prefix "inner_threads" {
+	foreach pref {"1st stop" "2nd stop" "3rd stop" "4th stop"} {
+	    with_test_prefix $pref {
+		gdb_continue_to_breakpoint "at printf"
+
+		# Don't need setup_xfail here due to fact that num is made
+		# made known to the inner parallel region.
+		set thread_num [get_valueof "" "num" "unknown"]
+
+		if {$have_older_gcc} { setup_xfail "*-*-*" }
+		set inner_thread_num [get_valueof "" "inner_num" "unknown"]
+
+		gdb_test "print file_scope_var" "= 9876"
+		gdb_test "print num" "= \[01\]"
+		maybe_setup_kfail {$thread_num != 0 || $inner_thread_num != 0}
+		gdb_test "print i" "= 1"
+		maybe_setup_kfail {$thread_num != 0 || $inner_thread_num != 0}
+		gdb_test "print j" "= 2"
+		if {$have_older_gcc || ($inner_thread_num != 0 && $allow_kfail)} { setup_xfail *-*-* }
+		gdb_test "print l" "= 10\[24\]"
+		if {$have_older_gcc ||( $inner_thread_num != 0 && $allow_kfail)} { setup_xfail *-*-* }
+		gdb_test "print k" "= 10\[13\]"
+	    }
+	}
+    }
+
+    with_test_prefix "outer_threads" {
+	gdb_breakpoint [gdb_get_line_number "nested_parallel (outer threads)"]
+
+	with_test_prefix "outer stop" {
+	    gdb_continue_to_breakpoint "at printf"
+
+	    if {$have_older_gcc} { setup_xfail "*-*-*" }
+	    # Use get_local_valueof instead of get_valueof to avoid picking up
+	    # some random 'num' in a shared library.
+	    set thread_num [get_local_valueof "num" "unknown"]
+
+	    gdb_test "print file_scope_var" "= 9876"
+	    if {$have_older_gcc} { setup_xfail "*-*-*" }
+	    gdb_test "print num" "= \[01\]"
+	    maybe_setup_kfail {$thread_num != 0}
+	    gdb_test "print i" "= 1"
+	    maybe_setup_kfail {$thread_num != 0}
+	    gdb_test "print j" "= 2"
+	    gdb_test "print l" "= 10\[24\]"
+	    if {$have_older_gcc} { setup_xfail "*-*-*" }
+	    gdb_test "print k" "= 10\[13\]"
+	}
+    }
+}

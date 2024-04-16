@@ -1,0 +1,93 @@
+# Copyright 2015-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check that letting the inferior exit and restarting it again resets
+# the global TID counter, and thus the new thread 1.1 should end up
+# with global TID == 1.
+#
+# Also, check the same but with another inferior still running, in
+# which case the new thread 1.1 should end up with global TID == 3.
+
+standard_testfile
+
+if { [build_executable "failed to prepare" ${testfile} ${srcfile} \
+	  {pthreads debug}] } {
+    return -1
+}
+
+with_test_prefix "single-inferior" {
+    with_test_prefix "before restart" {
+	clean_restart ${testfile}
+
+	if {![runto_main]} {
+	    return -1
+	}
+
+	gdb_test "info threads -gid" "\\* 1 +1 +.*"
+    }
+
+    with_test_prefix "restart" {
+	gdb_continue_to_end
+	if {![runto_main]} {
+	    return -1
+	}
+    }
+
+    with_test_prefix "after restart" {
+	gdb_test "info threads -gid" "\\* 1 +1 +.*"
+    }
+}
+
+# For the following tests, multiple inferiors are needed, therefore
+# non-extended gdbserver is not supported.
+require !use_gdb_stub
+
+# Test with multiple inferiors.  This time, since we restart inferior
+# 1 while inferior 2 still has threads, then the new thread 1.1 should
+# end up with GID == 3, since we won't be able to reset the global
+# thread ID counter.
+with_test_prefix "multi-inferior" {
+    gdb_test "add-inferior" "Added inferior 2.*" "add empty inferior 2"
+    gdb_test "inferior 2" "Switching to inferior 2 .*" "switch to inferior 2"
+    gdb_load ${binfile}
+
+    if {![runto_main]} {
+	return
+    }
+
+    gdb_test "inferior 1" "Switching to inferior 1 .*" \
+	"switch back to inferior 1"
+
+    with_test_prefix "before restart" {
+	gdb_test "info threads -gid" \
+	    [multi_line \
+		 "\\* 1\.1 +1 +.*" \
+		 "  2\.1 +2 +.*"]
+    }
+
+    with_test_prefix "restart" {
+	gdb_continue_to_end
+	if {![runto_main]} {
+	    return -1
+	}
+    }
+
+    with_test_prefix "after restart" {
+	gdb_test "info threads -gid" \
+	    [multi_line \
+		 "\\* 1\.1 +3 +.*" \
+		 "  2\.1 +2 +.*"]
+    }
+}

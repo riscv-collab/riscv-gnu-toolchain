@@ -1,0 +1,77 @@
+# Copyright 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+# We need to start the inferior to place the breakpoints in the memory at all.
+if ![runto_main] {
+    return -1
+}
+
+# The default "auto" mode removes all the breakpoints when we stop (and not
+# running the nonstop mode).  We would not be able to test the shadow.
+gdb_test_no_output "set breakpoint always-inserted on"
+gdb_test "show breakpoint always-inserted" "Always inserted breakpoint mode is on."
+
+set match "\nDump of assembler code for function main:\r\n(.*)End of assembler dump.\r\n$gdb_prompt $"
+
+set test "disassembly without breakpoints"
+gdb_test_multiple "disass main" $test {
+    -re $match {
+    	set orig $expect_out(1,string)
+	pass $test
+    }
+}
+
+gdb_test "b [gdb_get_line_number "break-first"]" "Breakpoint \[0-9\] at .*" "first breakpoint placed"
+gdb_test "b [gdb_get_line_number "break-second"]" "Breakpoint \[0-9\] at .*" "second breakpoint placed"
+
+# Disassemble main, and compare the output to the original output
+# before breakpoints were inserted.  TEST is used as test message.
+
+proc test_disassembly {test} {
+    global match orig
+
+    gdb_test_multiple "disass main" $test {
+	-re $match {
+	    set got $expect_out(1,string)
+	    if [string equal -nocase $orig $got] {
+		pass $test
+	    } else {
+		fail $test
+	    }
+	}
+    }
+}
+
+test_disassembly "disassembly with breakpoints"
+
+# Now check the interaction between the code cache and breakpoint
+# always-inserted mode.
+
+# Recreate the code cache when breakpoints are already inserted.
+gdb_test_no_output "set code-cache off"
+gdb_test_no_output "set code-cache on"
+
+test_disassembly "disassembly with breakpoints, fresh code cache"
+
+# Delete breakpoints.  This should update the code cache as well.
+delete_breakpoints
+
+test_disassembly "disassembly without breakpoints, no stale breakpoints"

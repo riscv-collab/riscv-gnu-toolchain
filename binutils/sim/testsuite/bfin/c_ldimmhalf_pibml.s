@@ -1,0 +1,212 @@
+//Original:/proj/frio/dv/testcases/core/c_ldimmhalf_pibml/c_ldimmhalf_pibml.dsp
+// Spec Reference: ldimmhalf p i b m l
+# mach: bfin
+
+.include "testutils.inc"
+	start
+
+// set all reg=-1
+
+
+//p0 =0x0123;
+	P1 = 0x1234 (X);
+	P2 = 0x2345 (X);
+	P3 = 0x3456 (X);
+	P4 = 0x4567 (X);
+	P5 = 0x5678 (X);
+	FP = 0x6789 (X);
+	SP = 0x789a (X);
+//CHECKREG p0, 0x00000123;
+	CHECKREG p1, 0x00001234;
+	CHECKREG p2, 0x00002345;
+	CHECKREG p3, 0x00003456;
+	CHECKREG p4, 0x00004567;
+	CHECKREG p5, 0x00005678;
+	CHECKREG fp, 0x00006789;
+	CHECKREG sp, 0x0000789A;
+
+//p0 = -32768;
+	P1 = -32768 (X);
+	P2 = -2222 (X);
+	P3 = -3333 (X);
+	P4 = -4444 (X);
+	P5 = -5555 (X);
+	FP = -6666 (X);
+	SP = -7777 (X);
+//CHECKREG r0, 0xFFFF8000;
+	CHECKREG p1, 0xFFFF8000;
+	CHECKREG p2, 0xFFFFF752;
+	CHECKREG p3, 0xFFFFF2FB;
+	CHECKREG p4, 0xFFFFEEA4;
+	CHECKREG p5, 0xFFFFEA4D;
+	CHECKREG fp, 0xFFFFE5F6;
+	CHECKREG sp, 0xFFFFE19F;
+
+//p0 =0x0123;
+	P1 = 0x7abc (X);
+	P2 = 0x6def (X);
+	P3 = 0x5f56 (X);
+	P4 = 0x7dd7 (X);
+	P5 = 0x4abd (X);
+	FP = 0x7fff (X);
+	SP = 0x7ffa (X);
+//CHECKREG p0, 0x00000123;
+	CHECKREG p1, 0x00007abc;
+	CHECKREG p2, 0x00006def;
+	CHECKREG p3, 0x00005f56;
+	CHECKREG p4, 0x00007dd7;
+	CHECKREG p5, 0x00004abd;
+	CHECKREG fp, 0x00007fff;
+	CHECKREG sp, 0x00007ffa;
+
+	I0 = 0x0123 (X);
+	I1 = 0x1234 (X);
+	I2 = 0x2345 (X);
+	I3 = 0x3456 (X);
+	B0 = 0x0567 (X);
+	B1 = 0x1678 (X);
+	B2 = 0x2789 (X);
+	B3 = 0x389a (X);
+	R0 = I0;
+	R1 = I1;
+	R2 = I2;
+	R3 = I3;
+	R4 = B0;
+	R5 = B1;
+	R6 = B2;
+	R7 = B3;
+	CHECKREG r0, 0x00000123;
+	CHECKREG r1, 0x00001234;
+	CHECKREG r2, 0x00002345;
+	CHECKREG r3, 0x00003456;
+	CHECKREG r4, 0x00000567;
+	CHECKREG r5, 0x00001678;
+	CHECKREG r6, 0x00002789;
+	CHECKREG r7, 0x0000389A;
+
+	I0 = -32768 (X);
+	I1 = -12345 (X);
+	I2 = -23456 (X);
+	I3 = -3456 (X);
+	B0 = -4567 (X);
+	B1 = -5678 (X);
+	B2 = -6678 (X);
+	B3 = -7012 (X);
+	R0 = I0;
+	R1 = I1;
+	R2 = I2;
+	R3 = I3;
+	R4 = B0;
+	R5 = B1;
+	R6 = B2;
+	R7 = B3;
+	CHECKREG r0, 0xFFFF8000;
+	CHECKREG r1, 0xFFFFCFC7;
+	CHECKREG r2, 0xFFFFA460;
+	CHECKREG r3, 0xFFFFF280;
+	CHECKREG r4, 0xFFFFEE29;
+	CHECKREG r5, 0xFFFFE9D2;
+	CHECKREG r6, 0xFFFFE5EA;
+	CHECKREG r7, 0xFFFFE49C;
+
+	I0 = 0x7abd (X);
+	I1 = 0x7bf4 (X);
+	I2 = 0x6c45 (X);
+	I3 = 0x7d56 (X);
+	B0 = 0x7e67 (X);
+	B1 = 0x7f78 (X);
+	B2 = 0x7ff9 (X);
+	B3 = 0x7fff (X);
+	R0 = I0;
+	R1 = I1;
+	R2 = I2;
+	R3 = I3;
+	R4 = B0;
+	R5 = B1;
+	R6 = B2;
+	R7 = B3;
+	CHECKREG r0, 0x00007abd;
+	CHECKREG r1, 0x00007bf4;
+	CHECKREG r2, 0x00006c45;
+	CHECKREG r3, 0x00007d56;
+	CHECKREG r4, 0x00007e67;
+	CHECKREG r5, 0x00007f78;
+	CHECKREG r6, 0x00007ff9;
+	CHECKREG r7, 0x00007fff;
+
+	M0 = 0x7123 (X);
+	M1 = 0x7234 (X);
+	M2 = 0x7345 (X);
+	M3 = 0x7456 (X);
+	L0 = 0x7567 (X);
+	L1 = 0x7678 (X);
+	L2 = 0x7789 (X);
+	L3 = 0x789a (X);
+	R0 = M0;
+	R1 = M1;
+	R2 = M2;
+	R3 = M3;
+	R4 = L0;
+	R5 = L1;
+	R6 = L2;
+	R7 = L3;
+	CHECKREG r0, 0x00007123;
+	CHECKREG r1, 0x00007234;
+	CHECKREG r2, 0x00007345;
+	CHECKREG r3, 0x00007456;
+	CHECKREG r4, 0x00007567;
+	CHECKREG r5, 0x00007678;
+	CHECKREG r6, 0x00007789;
+	CHECKREG r7, 0x0000789A;
+
+	M0 = -32768 (X);
+	M1 = -123 (X);
+	M2 = -234 (X);
+	M3 = -345 (X);
+	L0 = -456 (X);
+	L1 = -567 (X);
+	L2 = -667 (X);
+	L3 = -701 (X);
+	R0 = M0;
+	R1 = M1;
+	R2 = M2;
+	R3 = M3;
+	R4 = L0;
+	R5 = L1;
+	R6 = L2;
+	R7 = L3;
+	CHECKREG r0, 0xFFFF8000;
+	CHECKREG r1, 0xFFFFFF85;
+	CHECKREG r2, 0xFFFFFF16;
+	CHECKREG r3, 0xFFFFFEA7;
+	CHECKREG r4, 0xFFFFFE38;
+	CHECKREG r5, 0xFFFFFDC9;
+	CHECKREG r6, 0xFFFFFD65;
+	CHECKREG r7, 0xFFFFFD43;
+
+	M0 = 0x7aaa (X);
+	M1 = 0x7bbb (X);
+	M2 = 0x7ccc (X);
+	M3 = 0x7ddd (X);
+	L0 = 0x7eee (X);
+	L1 = 0x7fa8 (X);
+	L2 = 0x7fb9 (X);
+	L3 = 0x7fcc (X);
+	R0 = M0;
+	R1 = M1;
+	R2 = M2;
+	R3 = M3;
+	R4 = L0;
+	R5 = L1;
+	R6 = L2;
+	R7 = L3;
+	CHECKREG r0, 0x00007aaa;
+	CHECKREG r1, 0x00007bbb;
+	CHECKREG r2, 0x00007ccc;
+	CHECKREG r3, 0x00007ddd;
+	CHECKREG r4, 0x00007eee;
+	CHECKREG r5, 0x00007fa8;
+	CHECKREG r6, 0x00007fb9;
+	CHECKREG r7, 0x00007fcc;
+
+	pass

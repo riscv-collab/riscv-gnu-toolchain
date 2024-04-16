@@ -1,0 +1,148 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/> .
+
+# Testing GDB's implementation of SIZE keyword.
+
+require allow_fortran_tests
+
+standard_testfile ".f90"
+load_lib fortran.exp
+
+if {[prepare_for_testing ${testfile}.exp ${testfile} ${srcfile} \
+	 {debug f90}]} {
+    return -1
+}
+
+if ![fortran_runto_main] {
+    return -1
+}
+
+gdb_breakpoint [gdb_get_line_number "Test Breakpoint 1"]
+gdb_breakpoint [gdb_get_line_number "Test Breakpoint 2"]
+gdb_breakpoint [gdb_get_line_number "Test Breakpoint 3"]
+gdb_breakpoint [gdb_get_line_number "Test Breakpoint 4"]
+
+gdb_breakpoint [gdb_get_line_number "Breakpoint before deallocate\."]
+gdb_breakpoint [gdb_get_line_number "Final Breakpoint"]
+
+# We place a limit on the number of tests that can be run, just in
+# case something goes wrong, and GDB gets stuck in an loop here.
+set found_dealloc_breakpoint false
+set test_count 0
+while { $test_count < 600 } {
+    with_test_prefix "test $test_count" {
+	incr test_count
+
+	gdb_test_multiple "continue" "continue" {
+	    -re -wrap "! Test Breakpoint \[0-9\]" {
+		# We can run a test from here.
+	    }
+	    -re -wrap "! Breakpoint before deallocate\." {
+		# We're done with the tests.
+		set found_dealloc_breakpoint true
+	    }
+	}
+
+	if ($found_dealloc_breakpoint) {
+	    break
+	}
+
+	# First grab the expected answer.
+	set answer [get_valueof "" "answer" "**unknown**"]
+
+	# Now move up a frame and figure out a command for us to run
+	# as a test.
+	set command ""
+	gdb_test_multiple "up" "up" {
+	    -re -wrap "\r\n\[0-9\]+\[ \t\]+call test_size_\[0-9\]* \\((\[^\r\n\]+)\\)" {
+		set command $expect_out(1,string)
+	    }
+	}
+
+	gdb_assert { ![string equal $command ""] } "found a command to run"
+
+	gdb_test_multiple "p $command" "p $command" {
+	    -re -wrap " = $answer" {
+		pass $gdb_test_name
+	    }
+	    -re -wrap "SIZE can only be applied to arrays" {
+		# Because of ifort's DWARF pointer representation we need to
+		# aditionally de-reference Fortran pointers.
+		regsub -all "\\(" $command "\(\*" command_deref
+		gdb_test "p $command_deref" " = $answer"
+		pass $gdb_test_name
+	    }
+	}
+    }
+}
+
+# Since the behavior of size (array_1d, 2) differs for different compilers and
+# neither of them seem to behave as expected (gfortran prints apparently random
+# things, ifort would print 0), we test for GDB's error message instead.
+gdb_assert {$found_dealloc_breakpoint} "ran all compiled in tests"
+
+foreach var {array_1d_p array_2d_p allocatable_array_1d \
+		 allocatable_array_2d} {
+    gdb_test_multiple "p size ($var, 3)" "p size ($var, 3)" {
+	-re -wrap "DIM argument to SIZE must be between 1 and \[1-2\]" {
+	    pass $gdb_test_name
+	}
+	-re -wrap "SIZE can only be applied to arrays" {
+	    # Because of ifort's DWARF pointer representation we need to
+	    # aditionally de-reference Fortran pointers.
+	    gdb_test "p size (*$var, 3)" \
+		"DIM argument to SIZE must be between 1 and \[1-2\]"
+	    pass $gdb_test_name
+	}
+    }
+}
+
+# For wrong kind parameters GBD and compiler behavior differs.  Here,
+# gfortran/ifort/ifx would already throw a compiler error - a user might still
+# try and call size with something like -3 as kind parameter, so we test GDB's
+# error handling here.
+
+foreach var {array_1d_p array_2d_p allocatable_array_1d \
+		 allocatable_array_2d} {
+    gdb_test "p size ($var, 1, -10)" \
+	"unsupported kind -10 for type integer\\*4"
+    gdb_test "p size ($var, 1, 123)" \
+	"unsupported kind 123 for type integer\\*4"
+}
+
+# Ensure we reached the final breakpoint.  If more tests have been added
+# to the test script, and this starts failing, then the safety 'while'
+# loop above might need to be increased.
+gdb_continue_to_breakpoint "Final Breakpoint"
+
+foreach var {array_1d_p array_2d_p allocatable_array_1d \
+		 allocatable_array_2d} {
+    gdb_test_multiple "p size ($var)" "p size ($var)" {
+	-re -wrap "SIZE can only be used on allocated/associated arrays" {
+	    pass $gdb_test_name
+	}
+	-re -wrap "SIZE can only be applied to arrays" {
+	    # Because of ifort's DWARF pointer representation we need to
+	    # aditionally de-reference Fortran pointers.
+	    gdb_test "p size (*$var)" \
+		"Attempt to take contents of a not associated pointer\."
+	    pass $gdb_test_name
+	}
+    }
+}
+
+foreach var {an_integer a_real} {
+    gdb_test "p size ($var)" "SIZE can only be applied to arrays"
+}

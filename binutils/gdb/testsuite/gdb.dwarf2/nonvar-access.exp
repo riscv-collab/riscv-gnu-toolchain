@@ -1,0 +1,241 @@
+# Copyright 2016-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test accessing "non-variable" variables, i.e., variables which are
+# optimized to a constant DWARF location expression and/or
+# partially/fully optimized out.
+
+load_lib dwarf.exp
+
+require dwarf2_support
+
+standard_testfile main.c -dw.S
+
+# Make some DWARF for the test.
+set asm_file [standard_output_file $srcfile2]
+
+Dwarf::assemble $asm_file {
+    global srcfile
+
+    cu {} {
+	compile_unit {
+	    {DW_AT_name $srcfile}
+	} {
+	    declare_labels int_type_label char_type_label \
+		struct_s_label struct_t_label array_a9_label \
+		char_ptr_label implicit_a_label stack_b_label
+
+	    int_type_label: base_type {
+		{name "int"}
+		{encoding @DW_ATE_signed}
+		{byte_size 4 DW_FORM_sdata}
+	    }
+	    char_type_label: base_type {
+		{name "char"}
+		{encoding @DW_ATE_unsigned}
+		{byte_size 1 DW_FORM_sdata}
+	    }
+	    char_ptr_label: pointer_type {
+		{type :$char_type_label}
+	    }
+
+	    struct_s_label: structure_type {
+		{name s}
+		{byte_size 4 DW_FORM_sdata}
+	    } {
+		member {
+		    {name a}
+		    {type :$int_type_label}
+		    {data_member_location 0 DW_FORM_udata}
+		    {bit_size 8 DW_FORM_udata}
+		}
+		member {
+		    {name b}
+		    {type :$int_type_label}
+		    {data_bit_offset 8 DW_FORM_udata}
+		    {bit_size 24 DW_FORM_udata}
+		}
+	    }
+
+	    struct_t_label: structure_type {
+		{name t}
+		{byte_size 4 DW_FORM_sdata}
+	    } {
+		member {
+		    {name a}
+		    {type :$int_type_label}
+		    {data_member_location 0 DW_FORM_udata}
+		    {bit_size 9 DW_FORM_udata}
+		}
+		member {
+		    {name b}
+		    {type :$int_type_label}
+		    {data_bit_offset 9 DW_FORM_udata}
+		    {bit_size 23 DW_FORM_udata}
+		}
+	    }
+
+	    array_a9_label: array_type {
+		{type :$char_type_label}
+	    } {
+		subrange_type {
+		    {type :$int_type_label}
+		    {upper_bound 8 DW_FORM_udata}
+		}
+	    }
+
+	    DW_TAG_subprogram {
+		{MACRO_AT_func {main}}
+		{DW_AT_external 1 flag}
+	    } {
+		# Simple variable without location.
+		DW_TAG_variable {
+		    {name undef_int}
+		    {type :$int_type_label}
+		}
+		# Struct variable without location.
+		DW_TAG_variable {
+		    {name undef_s}
+		    {type :$struct_s_label}
+		}
+		# Composite location: byte-aligned pieces.
+		DW_TAG_variable {
+		    {name def_s}
+		    {type :$struct_s_label}
+		    {location {
+			const1u 0
+			stack_value
+			bit_piece 8 0
+			const1s -1
+			stack_value
+			bit_piece 24 0
+		    } SPECIAL_expr}
+		}
+		# Composite location: non-byte-aligned pieces.
+		DW_TAG_variable {
+		    {name def_t}
+		    {type :$struct_t_label}
+		    {location {
+			const2s -184
+			stack_value
+			bit_piece 9 0
+			const4u 1752286
+			stack_value
+			bit_piece 23 0
+		    } SPECIAL_expr}
+		}
+		# Composite location with some empty pieces.
+		DW_TAG_variable {
+		    {name part_def_a}
+		    {type :$array_a9_label}
+		    {location {
+			piece 3
+			const4u 0xf1927314
+			stack_value
+			piece 4
+			piece 2
+		    } SPECIAL_expr}
+		}
+		# Implicit location: immediate value.
+		DW_TAG_variable {
+		    {name def_implicit_s}
+		    {type :$struct_s_label}
+		    {location {
+			implicit_value 0x12 0x34 0x56 0x78
+		    } SPECIAL_expr}
+		}
+		# Implicit location: immediate value for whole array, with
+		# excess bytes.
+		implicit_a_label: DW_TAG_variable {
+		    {name def_implicit_a}
+		    {type :$array_a9_label}
+		    {location {
+			implicit_value 0x1 0x12 0x23 0x34 0x45 \
+			    0x56 0x67 0x78 0x89 0x9a 0xab
+		    } SPECIAL_expr}
+		}
+		# Implicit pointer into immediate value.
+		DW_TAG_variable {
+		    {name implicit_a_ptr}
+		    {type :$char_ptr_label}
+		    {location {
+			implicit_pointer $implicit_a_label 5
+		    } SPECIAL_expr}
+		}
+		# Stack-value location.
+		stack_b_label: DW_TAG_variable {
+		    {name def_stack_b}
+		    {type :$struct_t_label}
+		    {location {
+			const4u 0x1a2b3c4d
+			stack_value
+		    } SPECIAL_expr}
+		}
+		# Implicit pointer into stack value.
+		DW_TAG_variable {
+		    {name implicit_b_ptr}
+		    {type :$char_ptr_label}
+		    {location {
+			implicit_pointer $stack_b_label 1
+		    } SPECIAL_expr}
+		}
+	    }
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	  [list $srcfile $asm_file] {nodebug}] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+# Determine byte order.
+set endian [get_endianness]
+
+# Byte-aligned objects with simple location descriptions.
+switch $endian { big {set val 0x345678} little {set val 0x785634} }
+gdb_test "print/x def_implicit_s" " = \\{a = 0x12, b = $val\\}"
+gdb_test "print/x def_implicit_s.b" " = $val"
+gdb_test "print/x def_implicit_a" \
+    " = \\{0x1, 0x12, 0x23, 0x34, 0x45, 0x56, 0x67, 0x78, 0x89\\}"
+gdb_test "print/x def_implicit_a\[5\]" " = 0x56"
+gdb_test "print/x *(char (*)\[5\]) implicit_a_ptr" \
+    " = \\{0x56, 0x67, 0x78, 0x89, 0x9a\\}"
+switch $endian {
+    big {set val "a = 52, b = 2833485"}
+    little {set val "a = 77, b = 857502"}
+}
+gdb_test "print def_stack_b" " = \\{$val\\}"
+switch $endian {big {set val 0x2b} little {set val 0x3c}}
+gdb_test "print/x *implicit_b_ptr" " = $val"
+
+# Byte-aligned fields, pieced together from DWARF stack values.
+gdb_test "print def_s" " = \\{a = 0, b = -1\\}"
+switch $endian { big {set val 0x92} little {set val 0x73} }
+gdb_test "print/x part_def_a\[4\]" " = $val"
+gdb_test "print/x part_def_a\[8\]" " = <optimized out>"
+
+# Non-byte-aligned fields, pieced together from DWARF stack values.
+gdb_test "print def_t" " = \\{a = -184, b = 1752286\\}"
+
+# Simple variable without location.
+gdb_test "print undef_int" " = <optimized out>"
+
+# Member of a structure without location.
+gdb_test "print undef_s.a" " = <optimized out>"

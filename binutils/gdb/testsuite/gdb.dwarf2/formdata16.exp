@@ -1,0 +1,95 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+standard_testfile main.c -dw.S
+
+# We need to know the endianess in order
+# to write some of the debugging info we'd like to generate.
+if [prepare_for_testing "failed to prepare for endianness test" ${testfile} ${srcfile}] {
+    return -1
+}
+
+set endianness [get_endianness]
+
+set high "0x123456789abcdef0"
+set low "0x0fedcba987654321"
+if { $endianness == "big" } {
+    set pair $high,$low
+    set pair2 0x0,$low
+    set negative 0xffffffffffffffff,$low
+} else {
+    set pair $low,$high
+    set pair2 $low,0x0
+    set negative $low,0xffffffffffffffff
+}
+
+# Make some DWARF for the test.
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    global pair pair2 negative
+
+    cu { addr_size 4 } {
+ 	compile_unit {} {
+	    declare_labels int_label sint_label
+
+	    int_label: DW_TAG_base_type {
+		{DW_AT_byte_size 16 DW_FORM_udata}
+		{DW_AT_encoding @DW_ATE_unsigned}
+		{DW_AT_name "__uint128"}
+	    }
+
+	    sint_label: DW_TAG_base_type {
+		{DW_AT_byte_size 16 DW_FORM_udata}
+		{DW_AT_encoding @DW_ATE_signed}
+		{DW_AT_name "__int128"}
+	    }
+
+	    DW_TAG_variable {
+		{name xxx}
+		{type :$int_label}
+		{const_value $pair DW_FORM_data16}
+	    }
+
+	    DW_TAG_variable {
+		{name yyy}
+		{type :$int_label}
+		{const_value $pair2 DW_FORM_data16}
+	    }
+
+	    DW_TAG_variable {
+		{name sss}
+		{type :$sint_label}
+		{const_value $negative DW_FORM_data16}
+	    }
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+			  [list $srcfile $asm_file] {nodebug}] } {
+    return -1
+}
+
+gdb_test "p/x xxx" " = 0x123456789abcdef00fedcba987654321"
+gdb_test "p xxx" "= 24197857203266734864629346612071973665"
+gdb_test "p/x yyy" " = 0xfedcba987654321"
+gdb_test "p yyy" "= 1147797409030816545"
+gdb_test "p/x sss" " = 0xffffffffffffffff0fedcba987654321"
+gdb_test "p sss" "= -17298946664678735071"

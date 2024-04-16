@@ -1,0 +1,116 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Make sure printing virtual base class data member works correctly (PR16841)
+
+require allow_cplus_tests
+
+standard_testfile .cc
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile {debug c++}]} {
+    return -1
+}
+
+if {![runto_main]} {
+    return
+}
+
+# From a list of nested scopes, generate all possible ways of accessing something
+# in those scopes.  For example, with the argument {foo bar baz}, this proc will
+# return:
+#  - {} (empty string)
+#  - baz::
+#  - bar::
+#  - bar::baz::
+#  - foo::
+#  - foo::baz::
+#  - foo::bar::
+#  - foo::bar::baz::
+
+proc make_scope_list { scopes } {
+    if { [llength $scopes] == 1 } {
+        return [list "" "${scopes}::"]
+    }
+
+    # Pop the first element, save the first scope.
+    set this_scope [lindex $scopes 0]
+    set scopes [lreplace $scopes 0 0]
+
+    set child_result [make_scope_list $scopes]
+
+    # Add a copy of the child's result without this scope...
+    set result $child_result
+
+    # ... and a copy of the child's result with this scope.
+    foreach r $child_result {
+        lappend result "${this_scope}::$r"
+    }
+
+    return $result
+}
+
+proc test_variables_in_base { scopes } {
+  with_test_prefix "$scopes" {
+      foreach scope [make_scope_list $scopes] {
+	  gdb_test "print ${scope}i" " = 55"
+	  gdb_test "print ${scope}d" " = 6.25"
+	  gdb_test "print ${scope}x" " = 22"
+      }
+  }
+}
+
+proc test_variables_in_superbase { scopes } {
+  with_test_prefix "$scopes" {
+      foreach scope [make_scope_list $scopes] {
+	  gdb_test "print ${scope}x" " = 22"
+      }
+  }
+}
+
+proc test_variables_in_super { scopes } {
+  with_test_prefix "$scopes" {
+      foreach scope [make_scope_list $scopes] {
+	  gdb_test "print ${scope}w" " = 17"
+      }
+  }
+}
+
+with_test_prefix "derived::func_d" {
+    gdb_breakpoint "derived::func_d"
+    gdb_continue_to_breakpoint "continue to derived::func_d"
+    test_variables_in_base {derived base}
+    test_variables_in_superbase {derived base superbase}
+    test_variables_in_superbase {base superbase}
+    test_variables_in_superbase {derived superbase}
+    test_variables_in_superbase {superbase}
+    test_variables_in_superbase {base}
+    test_variables_in_super {super}
+    test_variables_in_super {derived super}
+}
+
+with_test_prefix "foo::func_f" {
+    gdb_breakpoint "foo::func_f"
+    gdb_continue_to_breakpoint "continue to foo::func_f"
+    test_variables_in_base {foo derived base}
+    test_variables_in_base {foo base}
+    test_variables_in_base {base}
+    test_variables_in_superbase {superbase}
+    test_variables_in_superbase {foo superbase}
+    test_variables_in_superbase {foo derived superbase}
+    test_variables_in_superbase {foo derived base superbase}
+    test_variables_in_super {super}
+    test_variables_in_super {foo super}
+    test_variables_in_super {foo derived super}
+}

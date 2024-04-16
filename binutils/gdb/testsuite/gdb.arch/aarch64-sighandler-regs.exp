@@ -1,0 +1,152 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# This file is part of the gdb testsuite.
+
+require is_aarch64_target
+
+set compile_flags {debug}
+
+if { ![allow_aarch64_sve_tests] } {
+    unsupported "target does not support SVE"
+    set sve_hw 0
+} else {
+    set sve_hw 1
+    lappend compile_flags "additional_flags=-DSVE"
+}
+
+standard_testfile
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile} ${compile_flags}] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+set endianness [get_endianness]
+
+if {$endianness == "little"} {
+    set reg_handler_value_128 "0x5f5e5d5c5b5a59585756555453525150"
+    set reg_handler_value_64 "0x5756555453525150"
+    set reg_handler_value_32 "0x53525150"
+    set reg_handler_value_16 "0x5150"
+    set reg_handler_value_8 "0x50"
+    set reg_main_value_128 "0x1f1e1d1c1b1a19181716151413121110"
+    set reg_main_value_64 "0x1716151413121110"
+    set reg_main_value_32 "0x13121110"
+    set reg_main_value_16 "0x1110"
+    set reg_main_value_8 "0x10"
+} else {
+    set reg_handler_value_128 "0x505152535455565758595a5b5c5d5e5f"
+    set reg_handler_value_64 "0x5051525354555657"
+    set reg_handler_value_32 "0x50515253"
+    set reg_handler_value_16 "0x5051"
+    set reg_handler_value_8 "0x50"
+    set reg_main_value_128 "0x101112131415161718191a1b1c1d1e1f"
+    set reg_main_value_64 "0x1011121314151617"
+    set reg_main_value_32 "0x10111213"
+    set reg_main_value_16 "0x1011"
+    set reg_main_value_8 "0x10"
+}
+set zreg_handler_value "\\{0x5756555453525150, .*"
+set zreg_main_value "\\{0x1716151413121110, .*"
+set preg_handler_value "\\{0x11, .*"
+set preg_main_value "\\{0x1, 0x0, .*"
+
+#Ignore x0, and x29 to x31
+set xreg_nums [list 1 2 3 4 5 6 7 8 9 11 12 13 14 15 16 17 18 19 21 22 23 24 \
+		    25 26 27 28 ]
+set vreg_nums [list 0 1 2 3 4 5 6 7 8 9 11 12 13 14 15 16 17 18 19 21 22 23 \
+		    24 25 26 27 28 29 30 31]
+set preg_nums [list 0 1 2 3 4 5 6 7 8 9 11 12 13 14 15]
+
+proc check_regs {regtype regnums value postfix} {
+  foreach regnum $regnums {
+    gdb_test "print /x \$$regtype$regnum$postfix" \
+      ".* = {?$value}?" \
+      "check register \$$regtype$regnum has value $value"
+  }
+}
+
+# Run until end of signal handler
+
+gdb_test "continue" \
+    "Continuing.*Program received signal SIGILL.*" \
+    "continue until signal"
+
+gdb_breakpoint [gdb_get_line_number "exit(0)"]
+gdb_continue_to_breakpoint "exit" ".*exit.*"
+
+set handlerframe [get_current_frame_number]
+set mainframe [expr $handlerframe + 2]
+
+
+# Check register values
+
+with_test_prefix "handler frame 1st" {
+  check_regs x $xreg_nums $reg_handler_value_64 ""
+  check_regs v $vreg_nums $reg_handler_value_128 ".q.u"
+  check_regs q $vreg_nums $reg_handler_value_128 ".u"
+  check_regs d $vreg_nums $reg_handler_value_64 ".u"
+  check_regs s $vreg_nums $reg_handler_value_32 ".u"
+  check_regs h $vreg_nums $reg_handler_value_16 ".u"
+  check_regs b $vreg_nums $reg_handler_value_8 ".u"
+  if { $sve_hw } {
+    check_regs z $vreg_nums $zreg_handler_value ".d.u"
+    check_regs p $preg_nums $preg_handler_value ""
+  }
+}
+
+# Switch to the frame for main(), and check register values
+
+gdb_test "frame $mainframe" \
+      "#$mainframe.*in main ().*" \
+      "set to main frame"
+
+
+with_test_prefix "main frame" {
+  check_regs x $xreg_nums $reg_main_value_64 ""
+  check_regs v $vreg_nums $reg_main_value_128 ".q.u"
+  check_regs q $vreg_nums $reg_main_value_128 ".u"
+  check_regs d $vreg_nums $reg_main_value_64 ".u"
+  check_regs s $vreg_nums $reg_main_value_32 ".u"
+  check_regs h $vreg_nums $reg_main_value_16 ".u"
+  check_regs b $vreg_nums $reg_main_value_8 ".u"
+  if { $sve_hw } {
+    check_regs z $vreg_nums $zreg_main_value ".d.u"
+    check_regs p $preg_nums $preg_main_value ""
+  }
+}
+
+# Switch back to the signal handler frame, and check register values
+
+gdb_test "frame $handlerframe" \
+      "#$handlerframe.*handler \\\(sig=4\\\).*" \
+      "set to signal handler frame"
+
+with_test_prefix "handler frame 2nd" {
+  check_regs x $xreg_nums $reg_handler_value_64 ""
+  check_regs v $vreg_nums $reg_handler_value_128 ".q.u"
+  check_regs q $vreg_nums $reg_handler_value_128 ".u"
+  check_regs d $vreg_nums $reg_handler_value_64 ".u"
+  check_regs s $vreg_nums $reg_handler_value_32 ".u"
+  check_regs h $vreg_nums $reg_handler_value_16 ".u"
+  check_regs b $vreg_nums $reg_handler_value_8 ".u"
+  if { $sve_hw } {
+    check_regs z $vreg_nums $zreg_handler_value ".d.u"
+    check_regs p $preg_nums $preg_handler_value ""
+}
+}

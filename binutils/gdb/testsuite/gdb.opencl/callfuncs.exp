@@ -1,0 +1,91 @@
+# Copyright 2011-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+#
+# Contributed by Ulrich Weigand <ulrich.weigand@de.ibm.com>.
+#
+# Tests OpenCL function calling conventions.
+
+load_lib opencl.exp
+
+require allow_opencl_tests
+
+set testfile "callfuncs"
+set clprogram [remote_download target ${srcdir}/${subdir}/${testfile}.cl]
+
+# Compile the generic OpenCL host app
+if { [gdb_compile_opencl_hostapp "${clprogram}" "${testfile}" "" ] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+clean_restart [standard_testfile $testfile]
+
+# Set breakpoint at the OpenCL kernel
+gdb_test "tbreak testkernel" \
+    "" \
+    "Set pending breakpoint" \
+    ".*Function \"testkernel\" not defined.*Make breakpoint pending.*y or \\\[n\\\]. $" \
+    "y"
+
+gdb_run_cmd
+gdb_test "" ".*reakpoint.*1.*testkernel.*" "run"
+
+# Continue to the marker
+gdb_breakpoint [gdb_get_line_number "marker" "${clprogram}"]
+gdb_continue_to_breakpoint "marker"
+
+# Check if the language was switched to opencl
+gdb_test "show language" "The current source language is \"auto; currently opencl\"\."
+
+# Prevent multi-threaded execution during inferior calls
+gdb_test_no_output "set scheduler-locking on"
+
+# Retrieve some information about the OpenCL version and the availability of extensions
+set opencl_version [get_integer_valueof "opencl_version" 0]
+set have_cl_khr_fp64 [get_integer_valueof "have_cl_khr_fp64" 0]
+set have_cl_khr_fp16 [get_integer_valueof "have_cl_khr_fp16" 0]
+
+# Check function call / return sequence
+proc call_test { type var } {
+  global opencl_version
+
+  gdb_test "print/d call_${type} (${var}, ${var})" " = 2"
+  gdb_test "print/d call_${type}2 (${var}2, ${var}2)" " = \\{2, 4\\}"
+  if { ${opencl_version} >= 110 } {
+    gdb_test "print/d call_${type}3 (${var}3, ${var}3)" " = \\{2, 4, 6\\}"
+  }
+  gdb_test "print/d call_${type}4 (${var}4, ${var}4)" " = \\{2, 4, 6, 8\\}"
+  gdb_test "print/d call_${type}8 (${var}8, ${var}8)" " = \\{2, 4, 6, 8, 10, 12, 14, 16\\}"
+  gdb_test "print/d call_${type}16 (${var}16, ${var}16)" " = \\{2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32\\}"
+}
+
+call_test "char" "c"
+call_test "uchar" "uc"
+call_test "short" "s"
+call_test "ushort" "us"
+call_test "int" "i"
+call_test "uint" "ui"
+call_test "long" "l"
+call_test "ulong" "ul"
+if { ${have_cl_khr_fp16} } {
+  call_test "half" "h"
+}
+call_test "float" "f"
+if { ${have_cl_khr_fp64} } {
+  call_test "double" "d"
+}
+
+# Delete the OpenCL program source
+remote_file target delete ${clprogram}

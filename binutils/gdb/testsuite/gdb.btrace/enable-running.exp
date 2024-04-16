@@ -1,0 +1,96 @@
+# This testcase is part of GDB, the GNU debugger.
+#
+# Copyright 2017-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require allow_btrace_tests
+
+standard_testfile
+if {[gdb_compile_pthreads "$srcdir/$subdir/$srcfile" "$binfile" executable {debug}] != "" } {
+    untested "failed to prepare"
+    return -1
+}
+
+# We need to enable non-stop mode for the remote case.
+save_vars { GDBFLAGS } {
+    append GDBFLAGS " -ex \"set non-stop on\""
+    clean_restart $testfile
+}
+
+if ![runto_main] {
+    return -1
+}
+
+set bp_1 [gdb_get_line_number "bp.1" $srcfile]
+
+gdb_breakpoint $bp_1
+gdb_continue_to_breakpoint "cont to $bp_1" ".*$bp_1\r\n.*"
+gdb_test "cont&" "Continuing\."
+
+# All threads are running.  Let's start recording.
+gdb_test_no_output "record btrace"
+
+proc check_tracing_enabled { thread } {
+    global gdb_prompt
+
+    with_test_prefix "thread $thread" {
+        gdb_test "thread $thread" "(running).*" "is running"
+
+        # We can't read the trace while the thread is running.
+        gdb_test "info record" "Selected thread is running\." \
+            "info record while running"
+
+        # Try various commands that try to read trace.
+        gdb_test "record instruction-history" "Selected thread is running\."
+        gdb_test "record function-call-history" "Selected thread is running\."
+
+        # Including reverse-stepping commands.
+        gdb_test "reverse-continue" "\[Ss\]elected thread is running\."
+        gdb_test "reverse-step" "\[Ss\]elected thread is running\."
+        gdb_test "reverse-next" "\[Ss\]elected thread is running\."
+        gdb_test "reverse-finish" "\[Ss\]elected thread is running\."
+
+        # Stop the thread before reading the trace.
+        gdb_test_multiple "interrupt" "interrupt" {
+            -re "interrupt\r\n$gdb_prompt " {
+                pass "interrupt"
+            }
+        }
+        # Wait until the thread actually stopped.
+        gdb_test_multiple "" "stopped" {
+            -re "Thread $thread.*stopped\." {
+                pass "stopped"
+            }
+        }
+        # We will consume the thread's current location as part of the
+        # "info record" output.
+        gdb_test "info record" [multi_line \
+            "Active record target: record-btrace" \
+            "Recording format: .*" \
+            "Recorded \[0-9\]+ instructions \[^\\\r\\\n\]*" \
+        ]
+
+        # Continue the thread again.
+        gdb_test "cont&" "Continuing\."
+    }
+}
+
+# Check that recording was started on each thread.
+foreach thread {1 2 3 4} {
+    check_tracing_enabled $thread
+}
+
+# Stop recording while all threads are running.
+gdb_test "record stop" "Process record is stopped \[^\\\r\\\n\]*"

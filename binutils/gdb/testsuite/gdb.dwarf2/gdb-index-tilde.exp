@@ -1,0 +1,92 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that tilde expansion works for the 'save gdb-index' command.
+
+# This test relies on using the $HOME directory.  We could make this
+# work for remote hosts, but right now, this isn't supported.
+require {!is_remote host}
+
+# Can't save an index with readnow.
+require !readnow
+
+standard_testfile main.c
+
+# Create a directory to generate an index file into.
+set full_dir [standard_output_file "index_files"]
+remote_exec host "mkdir -p ${full_dir}"
+
+# The users home directory.
+set home $::env(HOME)
+
+# Check that FULL_DIR is within the $HOME directory.  If it's not, then
+# that's fine, but we can't test tilde expansion in this case.
+if { [string compare -length [string length $home] $full_dir $home] != 0 } {
+    unsupported "test not run within home directory"
+    return -1
+}
+
+# Convert the $HOME prefix in to ~.
+set dir "~[string range $full_dir [string length $home] end]"
+
+# Build the test executable.
+if { [prepare_for_testing "failed to prepare" "${testfile}" ${srcfile}] } {
+    return -1
+}
+
+# Start GDB and load in the executable.
+clean_restart ${binfile}
+
+# If the executable was built with an index, or lacks the debug
+# information required to create an index, then we'll not be able to
+# generate an index, so lets not even try.
+set has_index false
+set can_dump_index false
+gdb_test_multiple "maint print objfile $binfile" "check we can generate an index" {
+    -re "\r\n\\.gdb_index: version ${decimal}(?=\r\n)" {
+	set has_index true
+	gdb_test_lines "" $gdb_test_name ".*"
+    }
+    -re "\r\n\\.debug_names: exists(?=\r\n)" {
+	set has_index true
+	gdb_test_lines "" $gdb_test_name ".*"
+    }
+    -re "\r\n(Cooked index in use:|Psymtabs)(?=\r\n)" {
+	set can_dump_index true
+	gdb_test_lines "" $gdb_test_name ".*"
+    }
+    -re -wrap "" {
+    }
+}
+
+if { $has_index } {
+    unsupported "already have an index"
+    return -1
+}
+
+if { !$can_dump_index } {
+    unsupported "lacks debug information needed to dump index"
+    return -1
+}
+
+# Generate an index file.
+gdb_test_no_output "save gdb-index $dir" \
+    "save gdb-index to tilde based directory"
+gdb_exit
+
+# Confirm that the index file exists.
+set index_filename "${full_dir}/${gdb_test_file_name}.gdb-index"
+gdb_assert { [remote_file host exists $index_filename] } \
+    "confirm the index file exists"

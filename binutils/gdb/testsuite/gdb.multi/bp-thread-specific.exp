@@ -1,0 +1,107 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check that GDB uses the correct thread-id when describing multiple
+# thread specific breakpoints at the same location.
+#
+# Also check that the correct thread-ids are used in the saved
+# breakpoints file.
+
+# The plain remote target can't do multiple inferiors.
+require !use_gdb_stub
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile]} {
+    return -1
+}
+
+if {![runto_main]} {
+    return -1
+}
+
+gdb_test "add-inferior -exec ${binfile}" "Added inferior 2.*" "add inferior 2"
+gdb_test "inferior 2"
+
+if {![runto_main]} {
+    return -1
+}
+
+gdb_test "info threads" \
+    [multi_line \
+	 "  Id\\s+Target Id\\s+Frame\\s*" \
+	 "  1\\.1\\s+\[^\r\n\]+" \
+	 "\\* 2\\.1\\s+\[^\r\n\]+"] \
+    "check we have the expected threads"
+
+# Set the first breakpoint.  Currently this is going to insert at two
+# locations ('foo' in both inferiors) even though only one of those
+# locations will ever trigger ('foo' in inferior 2).
+gdb_test "break foo thread 2.1" \
+    "Breakpoint $decimal at $hex: foo\\. \\(2 locations\\)"
+
+set bpnum [get_integer_valueof "\$bpnum" "INVALID"]
+
+# Now set another breakpoint that will be at the same location as the
+# earlier breakpoint.  Check that the thread-id used when describing
+# the earlier breakpoints is correct.
+gdb_test "break foo thread 1.1" \
+    [multi_line \
+	 "Note: breakpoint $bpnum \\(thread 2.1\\) also set at pc $hex\\." \
+	 "Note: breakpoint $bpnum \\(thread 2.1\\) also set at pc $hex\\." \
+	 "Breakpoint $decimal at $hex: foo\\. \\(2 locations\\)"]
+
+# Save the breakpoints into a file.
+if {[is_remote host]} {
+    set bps bps
+} else {
+    set bps [standard_output_file bps]
+}
+
+remote_file host delete "$bps"
+gdb_test "save breakpoints $bps" "" "save breakpoint to bps"
+
+if {[is_remote host]} {
+    set bps [remote_upload host bps [standard_output_file bps]]
+}
+
+# Now dig through the saved breakpoints file and check that the
+# thread-ids were written out correctly.  First open the saved
+# breakpoints and read them into a list.
+set fh [open $bps]
+set lines [split [read $fh] "\n"]
+close $fh
+
+# Except the list created from the saved breakpoints file will have a
+# blank line entry at the end, so remove it now.
+gdb_assert {[string equal [lindex $lines end] ""]} \
+    "check last item was an empty line"
+set lines [lrange $lines 0 end-1]
+
+# These are the lines we expect in the saved breakpoints file, in the
+# order that we expect them.  These are strings, not regexps.
+set expected_results \
+    [list \
+	 "break -qualified main" \
+	 "break foo thread 2.1" \
+	 "break foo thread 1.1"]
+
+# Now check that the files contents (in LINES) matches the
+# EXPECTED_RESULTS.
+gdb_assert {[llength $lines] == [llength $expected_results]} \
+    "correct number of lines in saved breakpoints file"
+foreach a $lines b $expected_results {
+    gdb_assert {[string equal $a $b]} "line '$b'"
+}

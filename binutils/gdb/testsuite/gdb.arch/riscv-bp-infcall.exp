@@ -1,0 +1,52 @@
+# Copyright 2019-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test GDB for RISC-V always uses an uncompressed breakpoint when
+# setting up for an inferior call.
+
+require {istarget "riscv*-*-*"}
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+if {![runto_main]} {
+   return 0
+}
+
+# Figure out where the breakpoint will be placed taking account for
+# stack alignment, and allocation of the dummy code area.
+set bp_addr [get_valueof "/x" "\$sp" 0]
+set bp_addr [format 0x%x [expr ($bp_addr & ~0xf) - 0x20]]
+
+# Fill the region we know will be used as the scratch area with the
+# compressed nop instruction.  If GDB fails to overwrite this with an
+# uncompressed nop then a compressed breakpoint will be used in the
+# following inferior call.
+for {set i 0} {$i < 16} {incr i 2} {
+    gdb_test_no_output "set *((unsigned short *) (${bp_addr} + $i))=0x1" \
+	"place compressed nop in scratch area at offset $i"
+}
+
+# Make an inferior call.  GDB should write an uncompressed nop into
+# the scratch area and so force the use of an uncompressed breakpoint,
+# however, if this mechanism fails and GDB uses a compressed
+# breakpoint, and the target doesn't support compressed instructions,
+# then we would expect weird things to happen here.
+gdb_test_no_output "set debug riscv breakpoints 1"
+gdb_test "call dummy_call ()" \
+    ".*Using EBREAK for breakpoint at $bp_addr \\(instruction length 4\\).*"

@@ -1,0 +1,75 @@
+# Copyright (C) 2012-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile .c
+
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+gdb_breakpoint [gdb_get_line_number "test-next"] temporary
+gdb_continue_to_breakpoint "test-next" ".* test-next .*"
+gdb_breakpoint [gdb_get_line_number "test-fail"]
+gdb_test_no_output {set $test_fail_bpnum=$bpnum}
+
+set test "test system longjmp tracking support"
+gdb_test_multiple "next" $test {
+    -re " test-pass .*\r\n$gdb_prompt $" {
+	pass $test
+    }
+    -re "( test-fail .*|\r\nCannot insert breakpoint 0\\.\r\n.*)\r\n$gdb_prompt $" {
+	xfail $test
+	untested "system lacks support for tracking longjmps"
+	return -1
+    }
+}
+gdb_test_no_output {delete $test_fail_bpnum}
+
+gdb_breakpoint [gdb_get_line_number "break-run1"]
+gdb_breakpoint [gdb_get_line_number "break-run2"]
+gdb_breakpoint [gdb_get_line_number "break-exit"]
+gdb_breakpoint [gdb_get_line_number "break-fail"]
+
+gdb_continue_to_breakpoint "break-run1" ".* break-run1 .*"
+
+gdb_test "print infcall ()" " break-run2 .*The program being debugged stopped while in a function called from GDB\\..*When the function is done executing, GDB will silently stop\\."
+
+set test "stack corrupted"
+gdb_test_multiple "continue" $test {
+    -re " break-exit .*\r\n$gdb_prompt $" {
+	pass $test
+    }
+    -re " break-fail .*\r\n$gdb_prompt $" {
+	fail $test
+    }
+}
+
+gdb_test "bt" "#0 \[^\r\n\]* main \[^\r\n\]*"
+
+# Verify there are no remains of the dummy frame.
+gdb_test_no_output "maintenance print dummy-frames"
+set test "maintenance info breakpoints"
+gdb_test_multiple $test $test {
+    -re " call dummy .*\r\n$gdb_prompt $" {
+	fail $test
+    }
+    -re "\r\n$gdb_prompt $" {
+	pass $test
+    }
+}

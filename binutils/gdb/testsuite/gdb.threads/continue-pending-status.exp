@@ -1,0 +1,125 @@
+# Copyright (C) 2015-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test exercises the case of stopping for a breakpoint hit of one
+# thread, then switching to a thread that has a status pending and
+# continuing.
+
+require {!target_info exists gdb,nointerrupts}
+
+standard_testfile
+
+if [prepare_for_testing "failed to prepare" $testfile $srcfile {debug pthreads}] {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+set break_line [gdb_get_line_number "break here"]
+
+# Return current thread's number.
+
+proc get_current_thread {} {
+    global gdb_prompt
+
+    set thread ""
+    set msg "get thread number"
+    gdb_test_multiple "print /x \$_thread" $msg {
+	-re "\\$\[0-9\]* = (0x\[0-9a-zA-Z\]+).*$gdb_prompt $" {
+	    set thread $expect_out(1,string)
+	    pass "$msg"
+	}
+    }
+    return ${thread}
+}
+
+# There are two threads in the program that are running the same tight
+# loop, where we place a breakpoint.  Sometimes we'll get a breakpoint
+# trigger for thread 2, with the breakpoint event of thread 3 pending,
+# other times the opposite.  The original bug that motivated this test
+# depended on the event thread being the highest numbered thread.  We
+# try the same multiple times, which should cover both threads
+# reporting the event.
+
+set attempts 20
+
+# These track whether we saw events for both threads 2 and 3.  If the
+# backend always returns the breakpoint hit for the same thread, then
+# it fails to make sure threads aren't starved, and we'll fail the
+# assert after the loop.
+set saw_thread_2 0
+set saw_thread_3 0
+
+for {set i 0} {$i < $attempts} {incr i} {
+    with_test_prefix "attempt $i" {
+	gdb_test "b $srcfile:$break_line" \
+	    "Breakpoint .* at .*$srcfile, line $break_line.*" \
+	    "set break in tight loop"
+	gdb_test "continue" \
+	    "$srcfile:$break_line.*" \
+	    "continue to tight loop"
+
+	# Switch to the thread that did _not_ report the event (and
+	# thus may have a pending status).  At the time this test was
+	# written this was necessary to make linux-nat.c short-circuit
+	# the resume and go straight to consuming the pending event.
+	set thread [get_current_thread]
+	if {$thread == 2} {
+	    incr saw_thread_2
+	    set thread 3
+	} else {
+	    incr saw_thread_3
+	    set thread 2
+	}
+	gdb_test "thread $thread" \
+	    "Switching to thread $thread .*" \
+	    "switch to non-event thread"
+
+	# Delete all breakpoints so that continuing doesn't switch
+	# back to the event thread to do a step-over, which would mask
+	# away the original bug, which depended on the event thread
+	# still having TARGET_STOPPED_BY_SW_BREAKPOINT stop_reason.
+	delete_breakpoints
+
+	# In the original bug, continuing would trigger an internal
+	# error in the linux-nat.c backend.
+
+	set msg "continue for ctrl-c"
+	gdb_test_multiple "continue" $msg {
+	    -re "Continuing" {
+		pass $msg
+	    }
+	}
+
+	# Wait a bit for GDB to give the terminal to the inferior,
+	# otherwise ctrl-c too soon can result in a "Quit".
+	sleep 1
+	send_gdb "\003"
+
+	set msg "caught interrupt"
+	gdb_test_multiple "" $msg {
+	    -re "Thread .* received signal SIGINT.*$gdb_prompt $" {
+		pass $msg
+	    }
+	}
+    }
+}
+
+verbose -log "saw_thread_2=$saw_thread_2"
+verbose -log "saw_thread_3=$saw_thread_3"
+
+gdb_assert {$saw_thread_2 > 0 && $saw_thread_3 > 0} "no thread starvation"

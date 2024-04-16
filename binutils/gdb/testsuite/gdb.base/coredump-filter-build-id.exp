@@ -1,0 +1,66 @@
+# Copyright 2019-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test whether GDB's gcore/generate-core-file command can dump memory
+# mappings with ELF headers, containing a build-id note.
+#
+# Due to the fact that we don't have an easy way to process a corefile
+# and look for specific notes using GDB/dejagnu, we rely on an
+# external tool, eu-unstrip, to verify if the corefile contains
+# build-ids.
+
+standard_testfile "normal.c"
+
+# This test is Linux x86_64 only.
+if { ![istarget *-*-linux*] } {
+    untested "$testfile.exp"
+    return -1
+}
+require is_x86_64_m64_target
+
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile debug] } {
+    return -1
+}
+
+if { ![runto_main] } {
+    return -1
+}
+
+# First we need to generate a corefile.
+set corefilename "[standard_output_file gcore.test]"
+if { ![gdb_gcore_cmd "$corefilename" "save corefile"] } {
+    verbose -log "Could not save corefile"
+    untested "$testfile.exp"
+    return -1
+}
+
+# Determine if GDB dumped the mapping containing the build-id.  This
+# is done by invoking an external program (eu-unstrip).
+if { [catch "exec [gdb_find_eu-unstrip] -n --core $corefilename" output] == 0 } {
+    set line [lindex [split $output "\n"] 0]
+    set test "gcore dumped mapping with build-id"
+
+    verbose -log "First line of eu-unstrip: $line"
+
+    set binfile_re (?:[string_to_regexp $binfile]|\\\[(?:exe|pie)\\\])
+    if { [regexp "^${hex}\\+${hex} \[a-f0-9\]+@${hex}.*$binfile_re$" $line] } {
+	pass "$test"
+    } else {
+	fail "$test"
+    }
+} else {
+    verbose -log "Could not execute eu-unstrip program"
+    untested "$testfile.exp"
+}

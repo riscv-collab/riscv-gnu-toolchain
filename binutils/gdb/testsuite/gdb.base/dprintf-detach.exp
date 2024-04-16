@@ -1,0 +1,92 @@
+#   Copyright 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+# This test checks that inserting a dprintf and detaching does not crash
+# the program.
+#
+# Related bug: https://sourceware.org/bugzilla/show_bug.cgi?id=17012
+
+load_lib gdbserver-support.exp
+
+# The test relies on "detach/attach".
+require !use_gdb_stub
+
+standard_testfile
+set escapedbinfile [string_to_regexp ${binfile}]
+
+if [build_executable "failed to prepare for dprintf-detach" \
+    ${testfile} ${srcfile} {debug}] {
+    return -1
+}
+
+proc dprintf_detach_test { breakpoint_always_inserted dprintf_style disconnected_dprintf } {
+    set test_prefix "bai=${breakpoint_always_inserted} ds=${dprintf_style} dd=${disconnected_dprintf}"
+    global binfile decimal gdb_prompt escapedbinfile
+
+    with_test_prefix "$test_prefix" {
+	# Start with a clean gdb
+	clean_restart ${binfile}
+
+	gdb_test_no_output "set breakpoint always-inserted ${breakpoint_always_inserted}"
+	gdb_test_no_output "set dprintf-style ${dprintf_style}"
+	gdb_test_no_output "set disconnected-dprintf ${disconnected_dprintf}"
+
+	if ![runto_main] {
+	    return -1
+	}
+
+	# Get PID of test program.
+	set inferior_pid -1
+	set test "get inferior process ID"
+	gdb_test_multiple "call ((int (*) (void)) getpid) ()" $test {
+	    -re ".* = ($decimal).*$gdb_prompt $" {
+		set inferior_pid $expect_out(1,string)
+		pass $test
+	    }
+	}
+
+	if {$inferior_pid == -1} {
+	    return
+	}
+
+	# Add a dprintf and detach.
+	gdb_test "dprintf function, \"hello\"" "Dprintf .*" "dprintf insertion"
+	gdb_test "detach" "Detaching from program: .*$escapedbinfile, .*" "detach program"
+
+	gdb_exit
+
+	# Check that the process still exists by attaching a new gdb to it.
+	clean_restart ${binfile}
+	set test "re-attach to inferior"
+	set is_gdbserver [target_is_gdbserver]
+
+	if { $is_gdbserver == 1 } {
+		setup_kfail "*-*-*" "server/17302"
+	} else {
+		# Give some time for the ex-inferior to run and hopefully not crash.
+		sleep 1
+	}
+
+	gdb_test "attach $inferior_pid" "Attaching to program: $escapedbinfile, process $inferior_pid.*Reading symbols from.*" "$test"
+    }
+}
+
+foreach breakpoint_always_inserted { "on" "off" } {
+    foreach dprintf_style { "gdb" "call" "agent" } {
+	foreach disconnected_dprintf { "on" "off" } {
+	    dprintf_detach_test $breakpoint_always_inserted $dprintf_style $disconnected_dprintf
+	}
+    }
+}

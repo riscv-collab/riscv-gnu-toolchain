@@ -1,0 +1,291 @@
+# Copyright (C) 2011-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile .s
+set opts {nopie}
+
+if [info exists COMPILE] {
+    # make check RUNTESTFLAGS="gdb.arch/amd64-entry-value.exp COMPILE=1"
+    set srcfile ${testfile}.cc
+    lappend opts debug optimize=-O2
+} else {
+    require is_x86_64_m64_target
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile} $opts] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+gdb_breakpoint "breakhere"
+gdb_breakpoint "breakhere_locexpr"
+gdb_breakpoint "stacktest"
+gdb_breakpoint "breakhere_stacktest"
+gdb_breakpoint "different"
+gdb_breakpoint "breakhere_different"
+gdb_breakpoint "breakhere_validity"
+gdb_breakpoint "breakhere_invalid"
+gdb_breakpoint "reference"
+gdb_breakpoint "breakhere_reference"
+
+
+# Test @entry values for register passed parameters.
+
+gdb_continue_to_breakpoint "entry: breakhere"
+
+gdb_test "bt" \
+    [multi_line \
+	 "^#0 +d *\\(i=31, i@entry=30, j=31\\.5, j@entry=30\\.5\\) \[^\r\n\]*" \
+	 "#1 +0x\[0-9a-f\]+ in main .*"] \
+    "entry: bt"
+gdb_test "p i" " = 31" "entry: p i"
+gdb_test "p i@entry" " = 30" "entry: p i@entry"
+gdb_test "p j" { = 31\.5} "entry: p j"
+gdb_test "p j@entry" { = 30\.5} "entry: p j@entry"
+
+
+# Test @entry values when parameter in function is locexpr (and not loclist).
+
+gdb_continue_to_breakpoint "entry_locexpr: breakhere_locexpr"
+gdb_test "p i" " = 30" "entry_locexpr: p i"
+gdb_test_no_output "set variable i = 0" "entry_locexpr: set variable i = 0"
+gdb_test "bt" \
+    [multi_line \
+	 "^#0 +locexpr *\\(i=0, i@entry=30\\) \[^\r\n\]*" \
+	 "#1 +0x\[0-9a-f\]+ in main .*"] \
+    "entry_locexpr: bt"
+
+
+# Test @entry values for stack passed parameters.
+
+gdb_continue_to_breakpoint "entry_stack: stacktest"
+
+gdb_test "bt" \
+    [multi_line \
+	 "^#0 +stacktest *\\(r1=r1@entry=1, r2=r2@entry=2, \[^\r\n\]+, s1=3, s1@entry=11, s2=4, s2@entry=12, \[^\r\n\]+, d9=3\\.5, d9@entry=11\\.5, da=4\\.5, da@entry=12\\.5\\) \[^\r\n\]*" \
+	 "#1 +0x\[0-9a-f\]+ in main .*"] \
+    "entry_stack: bt at entry"
+
+gdb_continue_to_breakpoint "entry_stack: breakhere_stacktest"
+
+gdb_test "bt" \
+    [multi_line \
+	 "^#0 +stacktest *\\(r1=r1@entry=1, r2=r2@entry=2, \[^\r\n\]+, s1=3, s1@entry=11, s2=4, s2@entry=12, \[^\r\n\]+, d9=3\\.5, d9@entry=11\\.5, da=4\\.5, da@entry=12\\.5\\) \[^\r\n\]*" \
+	 "#1 +0x\[0-9a-f\]+ in main .*"] \
+    "entry_stack: bt"
+
+gdb_test "p s1" " = 3" "entry_stack: p s1"
+gdb_test "p s1@entry" " = 11" "entry_stack: p s1@entry"
+gdb_test "p s2" " = 4" "entry_stack: p s2"
+gdb_test "p s2@entry" " = 12" "entry_stack: p s2@entry"
+gdb_test "p d9" " = 3\\.5" "entry_stack: p d9"
+gdb_test "p d9@entry" " = 11\\.5" "entry_stack: p d9@entry"
+gdb_test "p da" " = 4\\.5" "entry_stack: p da"
+gdb_test "p da@entry" " = 12\\.5" "entry_stack: p da@entry"
+
+# Test @entry values for a static file scoped variable, and for an
+# unknown symbol.  Both of these should give an error.
+gdb_test "p v@entry" \
+    "@entry can be used only for function parameters, not for \"v\"" \
+    "attempt to print global v@entry"
+gdb_test "p unknown@entry" \
+    "@entry can be used only for function parameters, not for \"unknown\"" \
+    "attempt to print unknown@entry"
+
+# Test various kinds of `set print entry-values'.
+
+gdb_continue_to_breakpoint "entry_equal: breakhere"
+
+gdb_test_no_output "set print entry-values no" "entry_equal: set print entry-values no"
+gdb_test "frame" {\(val=5\).*} "entry_equal: frame: no"
+gdb_test_no_output "set print entry-values only" "entry_equal: set print entry-values only"
+gdb_test "frame" {\(val@entry=5\).*} "entry_equal: frame: only"
+gdb_test_no_output "set print entry-values preferred" "entry_equal: set print entry-values preferred"
+gdb_test "frame" {\(val@entry=5\).*} "entry_equal: frame: preferred"
+gdb_test_no_output "set print entry-values if-needed" "entry_equal: set print entry-values if-needed"
+gdb_test "frame" {\(val=5\).*} "entry_equal: frame: if-needed"
+gdb_test_no_output "set print entry-values both" "entry_equal: set print entry-values both"
+gdb_test "frame" {\(val=5, val@entry=5\).*} "entry_equal: frame: both"
+gdb_test_no_output "set print entry-values compact" "entry_equal: set print entry-values compact"
+gdb_test "frame" {\(val=val@entry=5\).*} "entry_equal: frame: compact"
+gdb_test_no_output "set print entry-values default" "entry_equal: set print entry-values default"
+gdb_test "frame" {\(val=val@entry=5\).*} "entry_equal: frame: default"
+
+gdb_continue_to_breakpoint "entry_different: breakhere"
+
+gdb_test_no_output "set print entry-values no" "entry_different: set print entry-values no"
+gdb_test "frame" {\(val=6\).*} "entry_different: frame: no"
+gdb_test_no_output "set print entry-values only" "entry_different: set print entry-values only"
+gdb_test "frame" {\(val@entry=5\).*} "entry_different: frame: only"
+gdb_test_no_output "set print entry-values preferred" "entry_different: set print entry-values preferred"
+gdb_test "frame" {\(val@entry=5\).*} "entry_different: frame: preferred"
+gdb_test_no_output "set print entry-values if-needed" "entry_different: set print entry-values if-needed"
+gdb_test "frame" {\(val=6\).*} "entry_different: frame: if-needed"
+gdb_test_no_output "set print entry-values both" "entry_different: set print entry-values both"
+gdb_test "frame" {\(val=6, val@entry=5\).*} "entry_different: frame: both"
+gdb_test_no_output "set print entry-values compact" "entry_different: set print entry-values compact"
+gdb_test "frame" {\(val=6, val@entry=5\).*} "entry_different: frame: compact"
+gdb_test_no_output "set print entry-values default" "entry_different: set print entry-values default"
+gdb_test "frame" {\(val=6, val@entry=5\).*} "entry_different: frame: default"
+
+gdb_continue_to_breakpoint "entry_validity: breakhere"
+
+gdb_test_no_output "set print entry-values no" "entry_validity: set print entry-values no"
+gdb_test "frame" {\(lost=<optimized out>, born=10\).*} "entry_validity: frame: no"
+gdb_test_no_output "set print entry-values only" "entry_validity: set print entry-values only"
+gdb_test "frame" {\(lost@entry=5, born@entry=<optimized out>\).*} "entry_validity: frame: only"
+gdb_test_no_output "set print entry-values preferred" "entry_validity: set print entry-values preferred"
+gdb_test "frame" {\(lost@entry=5, born=10\).*} "entry_validity: frame: preferred"
+gdb_test_no_output "set print entry-values if-needed" "entry_validity: set print entry-values if-needed"
+gdb_test "frame" {\(lost@entry=5, born=10\).*} "entry_validity: frame: if-needed"
+gdb_test_no_output "set print entry-values both" "entry_validity: set print entry-values both"
+gdb_test "frame" {\(lost=<optimized out>, lost@entry=5, born=10, born@entry=<optimized out>\).*} "entry_validity: frame: both"
+gdb_test_no_output "set print entry-values compact" "entry_validity: set print entry-values compact"
+gdb_test "frame" {\(lost@entry=5, born=10\).*} "entry_validity: frame: compact"
+gdb_test_no_output "set print entry-values default" "entry_validity: set print entry-values default"
+gdb_test "frame" {\(lost=<optimized out>, lost@entry=5, born=10\).*} "entry_validity: frame: default"
+
+gdb_continue_to_breakpoint "entry_invalid: breakhere"
+
+gdb_test_no_output "set print entry-values no" "entry_invalid: set print entry-values no"
+gdb_test "frame" {\(inv=<optimized out>\).*} "entry_invalid: frame: no"
+gdb_test_no_output "set print entry-values only" "entry_invalid: set print entry-values only"
+gdb_test "frame" {\(inv@entry=<optimized out>\).*} "entry_invalid: frame: only"
+gdb_test_no_output "set print entry-values preferred" "entry_invalid: set print entry-values preferred"
+gdb_test "frame" {\(inv@entry=<optimized out>\).*} "entry_invalid: frame: preferred"
+gdb_test_no_output "set print entry-values if-needed" "entry_invalid: set print entry-values if-needed"
+gdb_test "frame" {\(inv=<optimized out>\).*} "entry_invalid: frame: if-needed"
+gdb_test_no_output "set print entry-values both" "entry_invalid: set print entry-values both"
+gdb_test "frame" {\(inv=<optimized out>, inv@entry=<optimized out>\).*} "entry_invalid: frame: both"
+gdb_test_no_output "set print entry-values compact" "entry_invalid: set print entry-values compact"
+gdb_test "frame" {\(inv=<optimized out>\).*} "entry_invalid: frame: compact"
+gdb_test_no_output "set print entry-values default" "entry_invalid: set print entry-values default"
+gdb_test "frame" {\(inv=<optimized out>\).*} "entry_invalid: frame: default"
+
+
+# Test @entry values for DW_AT_call_data_value parameters.
+
+gdb_continue_to_breakpoint "entry_reference: reference"
+
+# GCC PR debug/49980: Missing stackparam1@entry and stackparam2@entry.
+gdb_test "bt" "#0 +reference \\(regparam=regparam@entry=@0x\[0-9a-f\]+: 1, nodataparam=@0x\[0-9a-f\]+: 2, \[^\r\n\]+, stackparam1=@0x\[0-9a-f\]+: 11, stackparam2=@0x\[0-9a-f\]+: 12\\) \[^\r\n\]*\r\n#1 +0x\[0-9a-f\]+ in main \\(\\) \[^\r\n\]*" \
+	 "entry_reference: bt at entry"
+
+gdb_continue_to_breakpoint "entry_reference: breakhere_reference"
+
+# GCC PR debug/49980: Missing stackparam1@entry and stackparam2@entry.
+gdb_test "bt" "#0 +reference \\(regparam=@0x\[0-9a-f\]+: 21, regparam@entry=@0x\[0-9a-f\]+: 1, nodataparam=@0x\[0-9a-f\]+: 22, \[^\r\n\]+, stackparam1=@0x\[0-9a-f\]+: 31, stackparam2=@0x\[0-9a-f\]+: 32\\) \[^\r\n\]*\r\n#1 +0x\[0-9a-f\]+ in main \\(\\) \[^\r\n\]*" \
+	 "entry_reference: bt"
+gdb_test "ptype regparam" " = int &" "entry_reference: ptype regparam"
+
+set test "entry_reference: p regparam"
+set addr ""
+gdb_test_multiple "p regparam" $test {
+    -re " = \\(int &\\) @(0x\[0-9a-f\]+): 21\r\n$gdb_prompt $" {
+	set addr $expect_out(1,string)
+	pass $test
+    }
+}
+
+gdb_test "ptype regparam@entry" " = int &" "entry_reference: ptype regparam@entry"
+gdb_test "p regparam@entry" " = \\(int &\\) @$addr: 1" "entry_reference: p regparam@entry"
+gdb_test "p &regparam@entry" " = \\(int \\*\\) $addr" "entry_reference: p &regparam@entry"
+gdb_test "p regcopy" " = 1" "entry_reference: p regcopy"
+gdb_test "p nodataparam" " = \\(int &\\) @0x\[0-9a-f\]+: 22" "entry_reference: p nodataparam"
+gdb_test "p nodataparam@entry" "Cannot resolve DW_AT_call_data_value" "entry_reference: p nodataparam@entry"
+
+
+# Test virtual tail call frames.
+
+gdb_continue_to_breakpoint "tailcall: breakhere"
+
+gdb_test "bt" \
+    [multi_line \
+	 "^#0 +d *\\(i=71, i@entry=70, j=73\\.5, j@entry=72\\.5\\) \[^\r\n\]*" \
+	 "#1 +0x\[0-9a-f\]+ in c \\(i=i@entry=7, j=j@entry=7\\.25\\) \[^\r\n\]*" \
+	 "#2 +0x\[0-9a-f\]+ in b \\(i=i@entry=5, j=j@entry=5\\.25\\) \[^\r\n\]*" \
+	 "#3 +0x\[0-9a-f\]+ in main \[^\r\n\]*"] \
+    "tailcall: bt"
+gdb_test "p i" " = 71" "tailcall: p i"
+gdb_test "p i@entry" " = 70" "tailcall: p i@entry"
+gdb_test "p j" " = 73\\.5" "tailcall: p j"
+gdb_test "p j@entry" " = 72\\.5" "tailcall: p j@entry"
+
+# Test $sp simulation for tail call frames.
+#gdb_test {p/x $sp} " = 0x.*"
+#gdb_test {p/x $pc} " = 0x.*"
+gdb_test_no_output {set $sp0=$sp}
+gdb_test "up" "\r\n#1 .*"
+#gdb_test {p/x $sp} " = 0x.*"
+gdb_test {p $sp0 == $sp} " = true"
+gdb_test "frame 3" "\r\n#3 .*"
+gdb_test {p $sp0 + sizeof (void *) == $sp} " = true"
+
+# Test $pc adjustment which is now right after the function end.
+# Also verify the current PC indicator "=> " is not displayed anywhere.
+gdb_test "down" "\r\n#2 .*"
+set test "disassemble"
+gdb_test_multiple $test $test {
+    -re "^$test\r\n" {
+	exp_continue
+    }
+    -re "^Dump of assembler code for function b\\(int, double\\):\r\n" {
+	exp_continue
+    }
+    -re "^   0x\[^\r\n\]*\r\n" {
+	exp_continue
+    }
+    -re "^End of assembler dump\\.\r\n$gdb_prompt $" {
+	pass $test
+    }
+}
+
+
+# Test partial-ambiguous virtual tail call frames chain.
+
+gdb_continue_to_breakpoint "ambiguous: breakhere"
+
+gdb_test "bt" \
+    [multi_line \
+	 "^#0 +d \\(i=<optimized out>, j=<optimized out>\\)\[^\r\n\]*" \
+	 "#1 +0x\[0-9a-f\]+ in amb_z \\(i=<optimized out>\\)\[^\r\n\]*" \
+	 "#2 +0x\[0-9a-f\]+ in amb_y \\(i=<optimized out>\\)\[^\r\n\]*" \
+	 "#3 +0x\[0-9a-f\]+ in amb_x \\(i=<optimized out>\\)\[^\r\n\]*" \
+	 "#4 +0x\[0-9a-f\]+ in amb_b \\(i=i@entry=101\\)\[^\r\n\]*" \
+	 "#5 +0x\[0-9a-f\]+ in amb_a \\(i=i@entry=100\\)\[^\r\n\]*" \
+	 "#6 +0x\[0-9a-f\]+ in main \\(\\)\[^\r\n\]*"] \
+    "ambiguous: bt"
+
+
+# Test self tail calls verification.
+# GDB should not print the real value as it is ambiguous.
+
+gdb_continue_to_breakpoint "self: breakhere"
+
+gdb_test "bt" \
+    [multi_line \
+	 "^#0 +d \\(i=<optimized out>, j=<optimized out>\\)\[^\r\n\]*" \
+	 "#1 +0x\[0-9a-f\]+ in self \\(i=<optimized out>\\)\[^\r\n\]*" \
+	 "#2 +0x\[0-9a-f\]+ in self2 \\(i=<optimized out>\\)\[^\r\n\]*" \
+	 "#3 +0x\[0-9a-f\]+ in self \\(i=<optimized out>\\)\[^\r\n\]*" \
+	 "#4 +0x\[0-9a-f\]+ in main \\(\\)\[^\r\n\]*"] \
+    "self: bt"
+
+gdb_test_no_output "set debug entry-values 1"
+gdb_test "bt" "DW_OP_entry_value resolving has found function \"self\\(int\\)\" at 0x\[0-9a-f\]+ can call itself via tail calls\r\n.*" \
+	 "self: bt debug entry-values"

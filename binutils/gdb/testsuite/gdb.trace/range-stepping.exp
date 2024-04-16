@@ -1,0 +1,90 @@
+# Copyright 2013-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "trace-support.exp"
+load_lib "range-stepping-support.exp"
+
+standard_testfile
+set executable $testfile
+
+if [prepare_for_testing "failed to prepare" $executable $srcfile \
+	{debug nowarnings}] {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+if ![gdb_target_supports_trace] {
+    unsupported "target does not support trace"
+    return -1
+}
+
+if ![gdb_range_stepping_enabled] {
+    unsupported "range stepping not supported by the target"
+    return -1
+}
+
+# Check that range stepping works well with tracepoints.
+
+proc range_stepping_with_tracepoint { type } {
+    with_test_prefix "${type}" {
+	gdb_breakpoint [gdb_get_line_number "location 1"]
+	gdb_continue_to_breakpoint "location 1"
+	delete_breakpoints
+
+	gdb_test "${type} *set_point" ".*"
+	gdb_test_no_output "tstart"
+
+	# Step a line with a tracepoint in the middle.  The tracepoint
+	# itself shouldn't have any effect on range stepping.  We
+	# should see one vCont;r.
+	exec_cmd_expect_vCont_count "step" 1
+	gdb_test_no_output "tstop"
+	gdb_test "tfind" "Found trace frame .*" "first tfind"
+	gdb_test "tfind" \
+	    "Target failed to find requested trace frame.*" \
+	    "second tfind"
+
+	delete_breakpoints
+    }
+}
+
+range_stepping_with_tracepoint "trace"
+
+require allow_shlib_tests
+
+set libipa [get_in_proc_agent]
+set remote_libipa [gdb_load_shlib $libipa]
+
+if { [gdb_compile "$srcdir/$subdir/$srcfile" $binfile \
+	  executable [list debug nowarnings shlib=$libipa] ] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+clean_restart ${executable}
+
+if ![runto_main] {
+    return 0
+}
+
+gdb_reinitialize_dir $srcdir/$subdir
+if { [gdb_test "info sharedlibrary" ".*${remote_libipa}.*" "IPA loaded"] != 0 } {
+    untested "could not find IPA lib loaded"
+} else {
+    range_stepping_with_tracepoint "ftrace"
+}

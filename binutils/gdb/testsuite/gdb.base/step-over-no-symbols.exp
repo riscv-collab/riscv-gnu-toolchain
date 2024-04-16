@@ -1,0 +1,92 @@
+# Copyright (C) 2015-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that GDB can step past a breakpoint even if GDB doesn't have
+# symbols for the main binary.  PR gdb/13858.
+
+standard_testfile start.c
+
+if { [build_executable "failed to build" ${testfile} $srcfile] } {
+    return -1
+}
+
+# Get the current PC.  MSG is used as test message.
+
+proc get_pc { msg } {
+    global hex gdb_prompt
+
+    set addr ""
+    gdb_test_multiple "p /x \$pc" "$msg" {
+	-re " = ($hex).*$gdb_prompt $" {
+	    set addr $expect_out(1,string)
+	    pass "$msg"
+	}
+    }
+
+    return $addr
+}
+
+# Test stepping past a breakpoint with no symbols.  DISPLACED is one
+# of the "set displaced-stepping" options.  If GDB can't find where to
+# put the scratch pad, GDB should be able to fall back to stepping
+# past the breakpoint using an in-line step-over.
+
+proc test_step_over { displaced } {
+    global hex
+    global binfile
+
+    clean_restart $binfile
+
+    if ![runto_main] {
+	return -1
+    }
+
+    delete_breakpoints
+
+    set msg "purging symbols"
+    gdb_test_multiple "file" "$msg" {
+	-re "Are you sure you want to change the file.*y or n. $" {
+	    send_gdb "y\n"
+	    exp_continue
+	}
+	-re "Discard symbol table.*y or n. $" {
+	    gdb_test "y" "No symbol file now." "$msg"
+	}
+    }
+
+    set before_addr [get_pc "get before PC"]
+
+    gdb_test "break *\$pc" "Breakpoint .* at $hex"
+
+    gdb_test_no_output "set displaced-stepping $displaced"
+
+    gdb_test "stepi" "$hex in \?\? .*"
+
+    set after_addr [get_pc "get after PC"]
+
+    gdb_assert {[regexp "^${hex}$" $before_addr] \
+		    && [regexp "^${hex}$" $after_addr] \
+		    && $before_addr != $after_addr} "advanced"
+}
+
+foreach displaced { "off" "on" "auto" } {
+    if { $displaced != "off" && ![support_displaced_stepping] } {
+	continue
+    }
+
+    with_test_prefix "displaced=$displaced" {
+	test_step_over $displaced
+    }
+}

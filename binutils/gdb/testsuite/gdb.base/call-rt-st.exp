@@ -1,0 +1,177 @@
+# Copyright 1998-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file was written by Elena Zannoni (ezannoni@cygnus.com)
+
+# this file tests command line calls with functions returning structures
+# corresponding source file: call_return_struct.c
+
+
+# Some targets can't do function calls, so don't even bother with this
+# test.
+require {!target_info exists gdb,cannot_call_functions}
+
+standard_testfile .c
+
+set flags {}
+lappend flags debug
+lappend flags nowarnings
+lappend_include_file flags $srcdir/lib/unbuffer_output.c
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable $flags] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+set allow_float_test [allow_float_test]
+
+# Start with a fresh gdb.
+
+clean_restart ${binfile}
+gdb_test_no_output "set print sevenbit-strings"
+gdb_test_no_output "set print address off"
+gdb_test_no_output "set width 0"
+
+
+if {![runto_main]} {
+    return
+}
+
+
+set stop_line [gdb_get_line_number "-break1-"]
+gdb_test "break loop_count" \
+    "Breakpoint.* file .*call-rt-st.c, line $stop_line\\." \
+    "breakpoint loop_count"
+
+gdb_test "continue" \
+    "Continuing\\..*Breakpoint.*loop_count \\(\\) at.*call-rt-st.c:$stop_line\[ \t\r\n\]+$stop_line\[\t \]+for \\(index=0; index.4; index..\\);.*" \
+    "continue to loop_count"
+
+gdb_test_multiple "finish" "finish out from loop count" {
+    -re "Run till exit from .0  loop_count \\(\\) at.*call-rt-st.c:$stop_line\[ \t\r\n\]+main \\(\\) at.*call-rt-st.c:${decimal}\[ \t\r\n\]+${decimal}\[\t \]+return 0;.*-finish1-.*$gdb_prompt $" {
+	pass "finish out from loop_count (finish1)"
+    }
+    -re  "Run till exit from .0  loop_count \\(\\) at.*call-rt-st.c:$stop_line\[ \t\r\n\]+main \\(\\) at.*call-rt-st.c:${decimal}\[ \t\r\n\]+${decimal}\[\t \]+loop_count.*-finish2-.*$gdb_prompt $" {
+	pass "finish out from loop_count (line 775)"
+    }
+}
+
+# Ask GDB to print the value of EXPR, and expect to see the regexp
+# RESULT in the output.  If we get back the error message "Function
+# return value unknown", call that an `unsupported' test; on some
+# architectures, it's impossible to find structs returned by value
+# reliably.
+proc print_struct_call { expr inf_result gdb_result } {
+    global gdb_prompt
+    global inferior_spawn_id gdb_spawn_id
+
+    set inferior_matched 0
+    set gdb_matched 0
+
+    set command "print $expr"
+    gdb_test_multiple "${command}" "${command}" {
+	-i $inferior_spawn_id
+	-re "$inf_result" {
+	    set inferior_matched 1
+	    if {!$gdb_matched} {
+		exp_continue
+	    }
+	}
+
+	-i $gdb_spawn_id
+	-re "$gdb_result\r\n$gdb_prompt $" {
+	    set gdb_matched 1
+	    if {!$inferior_matched} {
+		exp_continue
+	    }
+	}
+        -re "Function return value unknown.\[\r\n\]+$gdb_prompt $" {
+            unsupported "$command"
+	    return
+        }
+    }
+
+    verbose -log "inferior_matched=$inferior_matched, gdb_matched=$gdb_matched"
+    gdb_assert {$inferior_matched && $gdb_matched} $command
+}
+
+
+if ![gdb_skip_stdio_test "print print_struct_rep(*struct1)"] {
+    print_struct_call "print_struct_rep(*struct1)" \
+	".*Contents of struct1:\[ \t\n\r\]+22\[ \t\]+0\[ \t\n\r\]+" \
+	".\[0-9\]+ = \\{value = 5, head = 0\\}"
+}
+
+if ![gdb_skip_stdio_test "print print_one_large_struct(...)"] {
+    print_struct_call "print_one_large_struct(*list1)" \
+	".*\[ \t\]+4\[ \t\]+1\[ \r\n\]+" \
+	".\[0-9\]+ = \\{next_index = \\{1, 2, 3, 4, 5, 6, 7, 8, 9, 10\\}, values = \\{4, 6, 8, 10, 12, 14, 16, 18, 20, 22\\}, head = 0\\}"
+}
+
+if {$allow_float_test && \
+        ![gdb_skip_stdio_test "print print_one_double(*d1)"] } {
+    print_struct_call "print_one_double(*d1)" \
+	".*Contents of one_double_t:\[ \r\n\]+1\\.111110\[ \r\n\]+" \
+	".\[0-9\]+ = \\{double1 = 1\\.111\[0-9\]*\\}"
+}
+
+if {$allow_float_test && \
+        ![gdb_skip_stdio_test "print print_two_floats(*f3)"] } {
+    print_struct_call "print_two_floats(*f3)" \
+	".*Contents of two_floats_t:\[ \r\n\]+-2\\.345000\[ \t]+1\\.000000\[ \r\n\]+" \
+	".\[0-9\]+ = \\{float1 = -2\\.34500003, float2 = 1\\}"
+}
+
+if ![gdb_skip_stdio_test "print print_bit_flags_char(*cflags)"] {
+    print_struct_call "print_bit_flags_char(*cflags)" \
+	".*alpha\[ \r\n\]+gamma\[ \r\n\]+epsilon\[ \r\n\]+" \
+	".\[0-9\]+ = \\{alpha = 1 '\\\\001', beta = 0 '\\\\000', gamma = 1 '\\\\001', delta = 0 '\\\\000', epsilon = 1 '\\\\001', omega = 0 '\\\\000'\\}"
+}
+
+if ![gdb_skip_stdio_test "print print_bit_flags_short(*sflags)"] {
+    print_struct_call "print_bit_flags_short(*sflags)" \
+	".*alpha\[ \r\n\]+gamma\[ \r\n\]+epsilon\[ \r\n\]+" \
+	".\[0-9\]+ = \\{alpha = 1, beta = 0, gamma = 1, delta = 0, epsilon = 1, omega = 0\\}"
+}
+
+if ![gdb_skip_stdio_test "print print_bit_flags(*flags)"] {
+    print_struct_call "print_bit_flags(*flags)" \
+	".*alpha\[ \r\n\]+gamma\[ \r\n\]+epsilon\[ \r\n\]+" \
+	".\[0-9\]+ = \\{alpha = 1, beta = 0, gamma = 1, delta = 0, epsilon = 1, omega = 0\\}"
+}
+
+if ![gdb_skip_stdio_test "print print_bit_flags_combo(*flags_combo)"] {
+    print_struct_call "print_bit_flags_combo(*flags_combo)" \
+	".*alpha\[ \r\n\]+gamma\[ \r\n\]+epsilon\[ \r\n\]+ch1: y\[ \t\]+ch2: n\[ \r\n\]+" \
+	".\[0-9\]+ = \\{alpha = 1, beta = 0, ch1 = 121 'y', gamma = 1, delta = 0, ch2 = 110 'n', epsilon = 1, omega = 0\\}"
+}
+
+if ![gdb_skip_stdio_test "print print_three_chars(*three_chars)"] {
+    print_struct_call "print_three_chars(*three_char)" \
+	".*Contents of three_char_t:\[ \r\n\]+x\[ \t\]+y\[ \t\]+z\[ \r\n\]+" \
+	".\[0-9\]+ = \\{ch1 = 120 'x', ch2 = 121 'y', ch3 = 122 'z'\\}"
+}
+
+if ![gdb_skip_stdio_test "print print_five_chars(*five_chars)"] {
+    print_struct_call "print_five_chars(*five_char)" \
+	".*Contents of five_char_t:\[ \r\n\]+h\[ \t\]+e\[ \t\]+l\[ \t\]+l\[ \t\]+o\[ \r\n\]+" \
+	".\[0-9\]+ = \\{ch1 = 104 'h', ch2 = 101 'e', ch3 = 108 'l', ch4 = 108 'l', ch5 = 111 'o'\\}"
+}
+
+if ![gdb_skip_stdio_test "print print_int_char_combo(*int_char_combo)"] {
+    print_struct_call "print_int_char_combo(*int_char_combo)" \
+	".*Contents of int_char_combo_t:\[ \r\n\]+13\[ \t\]+!\[ \r\n\]+" \
+	".\[0-9\]+ = \\{int1 = 13, ch1 = 33 '!'\\}"
+}

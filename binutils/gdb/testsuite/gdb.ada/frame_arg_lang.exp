@@ -1,0 +1,86 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "ada.exp"
+
+require allow_ada_tests
+
+standard_ada_testfile bla
+set cfile "foo"
+set csrcfile ${srcdir}/${subdir}/${testdir}/${cfile}.c
+set cobject [standard_output_file ${cfile}.o]
+
+gdb_compile "${csrcfile}" "${cobject}" object [list debug]
+
+# Note we don't test the "none" (no -fgnat-encodings option) scenario
+# here, because "all" and "minimal" cover the cases, and this way we
+# don't have to update the test when gnat changes its default.
+foreach_with_prefix scenario {all minimal} {
+    set flags [list debug additional_flags=-largs \
+		   additional_flags=${cobject} \
+		   additional_flags=-margs \
+		   additional_flags=-fgnat-encodings=$scenario]
+
+    if {[gdb_compile_ada "${srcfile}" "${binfile}-${scenario}" executable $flags] != ""} {
+	return -1
+    }
+
+    clean_restart ${testfile}-${scenario}
+
+    set bp_location [gdb_get_line_number "STOP" ${testdir}/foo.c]
+    runto "foo.c:$bp_location"
+
+    gdb_test_no_output "set print frame-arguments all"
+
+    # Here is the scenario:
+    #  - Once stopped in a C function, with language_mode set to auto, print
+    #    backtrace, we should see the Ada frame arguments printed using Ada
+    #    syntax.
+    #  - Set language to C, then check that printing backtrace shows the Ada
+    #    frame arguments using C syntax.
+    #  - Set language back to auto, check language mode value, then print
+    #    backtrace, we should see Ada frame arguments printed using Ada C
+    #    syntax.
+
+    gdb_test "show lang" \
+	"The current source language is \"auto; currently c\"." \
+	"show language when set to 'auto; c'"
+
+    gdb_test "bt" \
+	"#1  $hex in pck\\.call_me \\(s=\"test\"\\).*" \
+	"backtrace with auto: c"
+
+    gdb_test_no_output "set language c" \
+	"Set current source language to \"manual; currently c\"."
+
+    gdb_test "show lang" \
+	"The current source language is \"c\"." \
+	"show language when set to 'c'"
+
+    gdb_test "bt" \
+	"#1  $hex in pck\\.call_me \\(s={P_ARRAY = $hex, P_BOUNDS = $hex}\\).*" \
+	"backtrace with language forced to 'c'"
+
+    gdb_test_no_output "set language auto" \
+	"Set current source language to \"auto; currently c\"."
+
+    gdb_test "show lang" \
+	"The current source language is \"auto; currently c\"." \
+	"show language when set back to 'auto; c'"
+
+    gdb_test "bt" \
+	"#1  $hex in pck\\.call_me \\(s=\"test\"\\).*" \
+	"backtrace with language back to 'auto; c'"
+}

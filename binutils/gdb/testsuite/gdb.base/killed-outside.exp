@@ -1,0 +1,130 @@
+# Copyright 2015-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that GDB doesn't get badly wedged if the inferior is killed
+# from outside GDB (with SIGKILL) while the program is stopped.
+
+standard_testfile
+
+# Get the value of variable VAR in the inferior.  MSG is used as the
+# test message.
+
+proc get_value {var msg} {
+    global expect_out
+    global gdb_prompt
+    global decimal
+
+    set value -1
+    gdb_test_multiple "print $var" "$msg" {
+	-re ".*= ($decimal).*\r\n$gdb_prompt $" {
+	    set value $expect_out(1,string)
+	    pass "$msg"
+        }
+    }
+    return ${value}
+}
+
+# Runs the program until a breakpoint, deletes all breakpoints, and
+# then kills the inferior from _outside_ GDB, with SIGKILL.  Runs CMDS
+# afterwards, to make sure GDB copes with the inferior disappearing,
+# and then quits GDB.
+
+proc test {cmds_after_kill} {
+    global binfile
+    global gdb_prompt
+    global decimal
+
+    clean_restart ${binfile}
+
+    if ![runto done] {
+	return
+    }
+
+    # So that "continue" doesn't try a step over, etc.
+    delete_breakpoints
+
+    set testpid [get_value "pid" "get pid of inferior"]
+    if { $testpid == -1 } {
+	return -1
+    }
+
+    remote_exec target "kill -9 ${testpid}"
+
+    # Give it some time to die.
+    sleep 2
+
+    uplevel 1 $cmds_after_kill
+
+    # Make sure we can quit.
+    set msg "quit GDB"
+    gdb_test_multiple "quit" $msg {
+	-re "Quit anyway\\? \\(y or n\\) $" {
+	    send_gdb "y\n"
+	    exp_continue
+	}
+	eof {
+	    pass $msg
+	}
+    }
+}
+
+if {[build_executable "failed to prepare" $testfile $srcfile] == -1} {
+    return -1
+}
+
+# The actual output GDB prints in response to commands after the
+# inferior is gone isn't very well defined, and will depend on target.
+# What we're trying to make sure is that GDB doesn't internal error or
+# get wedged.
+
+# Try simply continuing.
+with_test_prefix "continue" {
+    test {
+	# Try stepping the program.  Stepping may need to read/write
+	# registers, unlike continue.
+	gdb_test "continue" ".*"
+
+	# Try listing threads afterwards.  It's probably what the user
+	# will do after an error.
+	gdb_test "info threads" ".*"
+    }
+}
+
+# Try stepping the program.  Stepping may go through diferent code
+# paths in the target backends.
+with_test_prefix "stepi" {
+    test {
+	gdb_test "si" ".*"
+	gdb_test "info threads" ".*"
+    }
+}
+
+# Try fetching registers explicitly, which should cover the error many
+# other commands would trigger.
+with_test_prefix "registers" {
+    test {
+	gdb_test "maint flush register-cache" ".*"
+	gdb_test "info threads" ".*"
+    }
+}
+
+# Try only listing threads explicitly, first thing, which is another
+# operation GDB may or not decide to do itself and is likely to be
+# what a user would try after error too.
+with_test_prefix "info threads" {
+    test {
+	gdb_test "info threads" ".*"
+    }
+}

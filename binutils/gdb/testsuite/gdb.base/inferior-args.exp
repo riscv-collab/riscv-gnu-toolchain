@@ -1,0 +1,127 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test running an inferior with arguments.
+
+# This does not work on boards that don't support inferior arguments.
+require {!target_info exists noargs}
+
+standard_testfile .c
+
+if {[build_executable "failed to prepare" $testfile $srcfile \
+	 {debug additional_flags=-std=c99}] == -1} {
+    return
+}
+
+proc do_test { method } {
+    global binfile hex
+
+    # The second arg is an empty string on purpose.  The last argument
+    # must be the empty argument -- we once had a bug where that
+    # wouldn't work!
+    set inferior_args { "first arg" "" "third-arg" "'" "\"" " " "" }
+
+    clean_restart $binfile
+
+    if { $method == "start" } {
+	# The start command does not make sense for a stub.
+	if { [use_gdb_stub] } {
+	    return;
+	}
+
+	if { [gdb_start_cmd $inferior_args] < 0 } {
+	    fail "could not issue start command"
+	    return -1
+	}
+
+	# Consume up to the GDB prompt after the stop.
+	gdb_test "" ".*main.*" "stop at main"
+
+    } elseif { $method == "starti" } {
+	# The starti command does not make sense for a stub.
+	if { [use_gdb_stub] } {
+	    return;
+	}
+
+	if { [gdb_starti_cmd $inferior_args] < 0 } {
+	    fail "could not issue start command"
+	    return -1
+	}
+
+	# Consume up to the GDB prompt after the stop.
+	gdb_test "" "" "stop at first instruction"
+
+	# Put a breakpoint and continue until main.
+	if { ![gdb_breakpoint "main" message] } {
+	    fail "could not set breakpoint on main"
+	    return -1
+	}
+
+	if { [gdb_continue "main"] != 0 } {
+	    fail "could not continue to main"
+	    return -1
+	}
+
+    } elseif { $method == "run" } {
+	if { ![gdb_breakpoint "main" message] } {
+	    fail "could not set breakpoint on main"
+	    return -1
+	}
+
+	# The run command does not make sense for a stub, but GDB_RUN_CMD
+	# does the right thing when the target is a stub (start the stub,
+	# connect to it, and "continue").
+	#
+	# This allows us to test arguments passed on the gdbserver command
+	# line.
+	if { [gdb_run_cmd $inferior_args] < 0 } {
+	    fail "could not run"
+	    return -1
+	}
+
+	# Consume up to the GDB prompt after the stop.
+	gdb_test "" ".*main.*" "stop at main"
+
+    } elseif { $method == "set args" } {
+	# Using "set args" does not make sense with a stub.
+	if { [use_gdb_stub] } {
+	    return;
+	}
+
+	gdb_test_no_output "set args $inferior_args"
+
+	if { ![runto_main] } {
+	    return -1
+	}
+
+    } else {
+	error "invalid method $method"
+    }
+
+    # Now that we are stopped at main, inspect argc/argv.
+    gdb_test "print argc" " = 8"
+    gdb_test "print argv\[0\]" " = $hex \".*\""
+    gdb_test "print argv\[1\]" " = $hex \"first arg\""
+    gdb_test "print argv\[2\]" " = $hex \"\""
+    gdb_test "print argv\[3\]" " = $hex \"third-arg\""
+    gdb_test "print argv\[4\]" " = $hex \"'\""
+    gdb_test "print argv\[5\]" " = $hex \"\\\\\"\""
+    gdb_test "print argv\[6\]" " = $hex \" \""
+    gdb_test "print argv\[7\]" " = $hex \"\""
+}
+
+foreach_with_prefix method { "start" "starti" "run" "set args" } {
+    do_test $method
+}

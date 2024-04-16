@@ -1,0 +1,116 @@
+# Copyright 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+# Verify that GDB waits for the "attach" command to finish before
+# processing the following command.
+#
+# GDB used to have a race where on async targets, in the small window
+# between the attach request and the initial stop for the attach, GDB
+# was still processing user input.
+#
+# The issue was originally detected with:
+#
+#  echo -e "attach PID\nset xxx=1" | gdb
+#
+# In that scenario, stdin is not a tty, which disables readline.
+# Explicitly turning off editing exercises the same code path, and is
+# simpler to do, so we test with both editing on and off.
+
+# The test uses the "attach" command.
+require !use_gdb_stub
+
+standard_testfile
+
+if {[build_executable "failed to build" $testfile $srcfile debug]} {
+    return -1
+}
+
+# Start the program running, and return its PID, ready for attaching.
+
+proc start_program {binfile} {
+    global gdb_prompt
+    global decimal
+
+    clean_restart $binfile
+
+    if {![runto setup_done]} {
+	return 0
+    }
+
+    # Get the PID of the test process.
+    set testpid ""
+    set test "get inferior process ID"
+    gdb_test_multiple "p mypid" $test {
+	-re " = ($decimal)\r\n$gdb_prompt $" {
+	    set testpid $expect_out(1,string)
+	    pass $test
+	}
+    }
+
+    gdb_test "detach" "Detaching from program: .*"
+
+    if {$testpid == ""} {
+	return
+    }
+
+    return $testpid
+}
+
+# Do test proper.  EDITING indicates whether "set editing" is on or
+# off.
+
+proc test { editing } {
+    global gdb_prompt
+    global binfile
+    global decimal
+
+    with_test_prefix "editing $editing" {
+
+	set testpid [start_program $binfile]
+	if {$testpid == ""} {
+	    return
+	}
+
+	# Enable/disable readline.
+	gdb_test_no_output "set editing $editing"
+
+	# Send both commands at once.
+	send_gdb "attach $testpid\nprint should_exit = 1\n"
+
+	# Use gdb_expect directly instead of gdb_test_multiple to
+	# avoid races with the double prompt.
+	set test "attach and print"
+	gdb_expect {
+	    -re "Attaching to program.*process $testpid\r\n.*$gdb_prompt.*$decimal = 1\r\n$gdb_prompt $" {
+		pass "$test"
+	    }
+	    timeout {
+		fail "$test (timeout)"
+	    }
+	}
+
+	# As we've used attach, on quit, we'll detach from the
+	# program.  Explicitly kill it in case we failed above.
+	gdb_test "kill" \
+	    "" \
+	    "after attach, exit" \
+	    "Kill the program being debugged.*y or n. $" \
+	    "y"
+    }
+}
+
+foreach editing {"on" "off"} {
+    test $editing
+}

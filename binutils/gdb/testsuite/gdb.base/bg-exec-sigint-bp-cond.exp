@@ -1,0 +1,98 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check that sending GDB a SIGINT while handling execution control
+# does not interrupt the execution control.
+
+standard_testfile
+
+if {[build_executable "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+# Run the test.  Sets a breakpoint with a condition that sends a
+# SIGINT to GDB, and ensures that that doesn't make the breakpoint hit
+# cause a premature stop.  This emulates pressing Ctrl-C just while
+# GDB is evaluating the breakpoint condition.
+#
+# AFTER_KILL_COND is appended to the breakpoint condition, after "kill
+# -SIGINT $gdb_pid".
+proc test { {after_kill_cond ""} } {
+    clean_restart $::binfile
+
+    if {![runto_main]} {
+	return
+    }
+
+    delete_breakpoints
+
+    set gdb_pid [exp_pid -i [board_info host fileid]]
+
+    # Number of times the breakpoint should be hit before stopping.
+    set num_hits 10
+
+    # A counter used in the breakpoint's condition to ensure that it
+    # causes a stop after NUM_HITS hits.
+    gdb_test "p \$hit_count = 0" " = 0" "reset hit counter"
+
+    # Set a breakpoint with a condition that sends a SIGINT to GDB.  This
+    # emulates pressing Ctrl-C just while GDB is evaluating the breakpoint
+    # condition.
+    gdb_test \
+	"break foo if \$hit_count\+\+ == $num_hits || \$_shell(\"kill -INT $gdb_pid\") != 0 $after_kill_cond" \
+	"Breakpoint .*" \
+	"break foo if <condition>"
+
+    # Number of times we've seen GDB print "Quit" followed by the
+    # prompt.  We should see that exactly $NUM_HITS times.
+    set quit_count 0
+
+    gdb_test_multiple "c&" "SIGINT does not interrupt background execution" {
+	-re "^c&\r\nContinuing\\.\r\n$::gdb_prompt " {
+	    exp_continue
+	}
+	-re "^Quit\r\n$::gdb_prompt " {
+	    incr quit_count
+	    verbose -log "quit_count=$quit_count"
+	    exp_continue
+	}
+	-re "^\r\nBreakpoint .*return 0;" {
+	    gdb_assert {$quit_count == $num_hits} $gdb_test_name
+	}
+	-re ".*Asynchronous execution not supported on this target\..*" {
+	    unsupported "$gdb_test_name (asynchronous execution not supported)"
+	}
+    }
+}
+
+# Test without writing to memory after killing GDB.  This does not
+# take any Python path at the time of writing.
+with_test_prefix "no force memory write" {
+    test
+}
+
+# Writing to memory from the condition makes GDB enter Python for
+# reporting a memory changed event.  Thus this tests that GDB doesn't
+# forward the SIGINT to Python, interrupting Python, causing the
+# breakpoint to prematurely stop like:
+#
+#  c&
+#  Continuing.
+#  (gdb) Error in testing breakpoint condition:
+#  Quit
+#
+with_test_prefix "force memory write" {
+    test " || (global = 0)"
+}

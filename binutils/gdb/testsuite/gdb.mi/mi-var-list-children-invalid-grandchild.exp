@@ -1,0 +1,58 @@
+# Copyright 2015-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This is a regression test for bug 17416
+# https://sourceware.org/bugzilla/show_bug.cgi?id=17416
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+standard_testfile
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+if {[mi_clean_restart $binfile]} {
+    return
+}
+
+set line_invalid_pointer_value [gdb_get_line_number "p_outer set to invalid value"]
+set line_valid_pointer_value [gdb_get_line_number "p_outer set to valid value"]
+
+# set print object on
+mi_gdb_test "-interpreter-exec console \"set print object on\"" \
+    "(.*=cmd-param-changed,param=\"print object\",value=\"on\".*|)\\^done" \
+    "set print object on"
+
+mi_runto_main
+
+mi_continue_to_line $line_invalid_pointer_value "continue to invalid pointer value"
+
+# Create variable object
+mi_gdb_test "-var-create var1 * p_outer" "\\^done,name=\"var1\",numchild=\"1\",value=\"0x0\",type=\"struct outer \\*\",thread-id=\"1\",has_more=\"0\"" "create variable object"
+
+# List children while the pointer is uninitialized.
+# Note: if you remove this -var-list-children, the second one will work.
+mi_gdb_test "-var-list-children var1" "\\^done,numchild=\"1\",children=\\\[child={name=\"var1.inner\",exp=\"inner\",numchild=\"1\",type=\"struct inner \\*\",thread-id=\"1\"}\\\],has_more=\"0\"" "list children #1"
+
+mi_continue_to_line $line_valid_pointer_value "continue to valid pointer value"
+
+# Update and list children again
+mi_gdb_test "-var-update var1" "\\^done,changelist=\\\[{name=\"var1\",in_scope=\"true\",type_changed=\"false\",has_more=\"0\"},{name=\"var1.inner\",in_scope=\"true\",type_changed=\"false\",has_more=\"0\"}\\\]" "update variable object"
+
+mi_gdb_test "-var-list-children var1" "\\^done,numchild=\"1\",children=\\\[child={name=\"var1.inner\",exp=\"inner\",numchild=\"1\",type=\"struct inner \\*\",thread-id=\"1\"}\\\],has_more=\"0\"" "list children #2"
+

@@ -1,0 +1,130 @@
+# Copyright 2004-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file was written by Daniel Jacobowitz <drow@mvista.com>.
+# It tests that the correct breakpoint is reported when we hit a
+# thread-specific breakpoint inserted for several threads.
+
+
+standard_testfile
+
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable debug] != "" } {
+    return -1
+}
+
+# Return a list of the valid thread IDs, with the initial thread first.
+proc get_thread_list { } {
+  global gdb_prompt
+  global expect_out
+
+  set thr_list ""
+
+  gdb_test_multiple "info threads" "get threads list" {
+    -re "info threads\r\n" {
+      exp_continue
+    }
+    -re "New Thread \[^\n\]*\n" {
+      exp_continue
+    }
+    -re "^ *Id *Target Id\[^\n\]*\n" {
+      exp_continue
+    }
+    -re "^\\*  *(\[0-9\]*) *Thread \[^\n\]*main\[^\n\]*\n" {
+      set thr_list "$expect_out(1,string) $thr_list"
+      exp_continue
+    }
+    -re "^  *(\[0-9\]*) *Thread \[^\n\]*\n" {
+      lappend thr_list $expect_out(1,string)
+      exp_continue
+    }
+    -re ".*$gdb_prompt $" {
+      if { [llength $thr_list] != 0 } {
+	pass "get threads list"
+      } else {
+	fail "get threads list (no threads)"
+      }
+    }
+  }
+
+  return $thr_list
+}
+
+clean_restart ${binfile}
+
+gdb_test_no_output "set print sevenbit-strings"
+gdb_test_no_output "set width 0"
+
+# As this test only runs a single inferior, $_thread and $_gthread
+# should match throughout.
+gdb_test {print $_thread} ".* = 0" "thread var when not running"
+gdb_test {print $_gthread} ".* = 0" "gthread var when not running"
+
+runto_main
+
+gdb_breakpoint [gdb_get_line_number "thread-specific.exp: last thread start"]
+gdb_continue_to_breakpoint "all threads started"
+
+set line [gdb_get_line_number "thread-specific.exp: thread loop"]
+set threads [get_thread_list]
+
+if {[llength $threads] == 0} {
+  # We have already issued a FAIL above.
+  return 1
+}
+
+gdb_test {print $_thread} ".* = [lindex $threads 0]" "thread var in main"
+gdb_test {print $_gthread} ".* = [lindex $threads 0]" "gthread var in main"
+
+gdb_test_multiple "break $line thread [lindex $threads 0]" \
+  "breakpoint $line main thread" {
+    -re "Breakpoint (\[0-9\]*) at.* file .*$srcfile, line.*$gdb_prompt $" {
+      set main_breakpoint $expect_out(1,string)
+      pass "breakpoint $line main thread"
+    }
+}
+
+foreach thread [lrange $threads 1 end] {
+  gdb_breakpoint "$line thread $thread"
+}
+
+set this_breakpoint -1
+gdb_test_multiple "continue" "continue to thread-specific breakpoint" {
+	-re "Breakpoint $main_breakpoint, .* at .*\r\n$gdb_prompt $" {
+	    fail "continue to thread-specific breakpoint (wrong breakpoint)"
+	}
+	-re "Breakpoint (\[0-9\]*), .* at .*\r\n$gdb_prompt $" {
+	    set this_breakpoint $expect_out(1,string)
+	    pass "continue to thread-specific breakpoint"
+	}
+}
+
+set this_thread -1
+if { $this_breakpoint != -1 } {
+    gdb_test_multiple "info breakpoint $this_breakpoint" "info on bp" {
+	-re ".*stop only in thread (\[0-9\]*).*$gdb_prompt $" {
+	    set this_thread $expect_out(1,string)
+	    pass "found breakpoint for thread number"
+	}
+    }
+} else {
+    untested "info on bp"
+}
+
+if { $this_thread != -1 } {
+    gdb_test {print $_thread} ".* = $this_thread" "thread var at break"
+    gdb_test {print $_gthread} ".* = $this_thread" "gthread var at break"
+} else {
+    untested "thread var at break"
+}

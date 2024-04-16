@@ -1,0 +1,120 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+standard_testfile main.c -dw.S
+
+# Make some DWARF for the test.
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    upvar cu_lang cu_lang
+
+    declare_labels uinteger_label discr_1_label
+    declare_labels one_label two_label simple_label
+
+    cu { addr_size 4 } {
+	compile_unit {
+	    {name file1.txt}
+	    {language @DW_LANG_Rust}
+	} {
+	    uinteger_label: DW_TAG_base_type {
+		{DW_AT_byte_size 1 DW_FORM_sdata}
+		{DW_AT_encoding	 @DW_ATE_unsigned}
+		{DW_AT_name	 {unsigned integer}}
+	    }
+
+	    one_label: structure_type {
+		{name One}
+		{byte_size 1 DW_FORM_sdata}
+	    } {
+		member {
+		    {name __0}
+		    {type :$uinteger_label}
+		    {data_member_location 0 data1}
+		}
+	    }
+
+	    two_label: structure_type {
+		{name Two}
+		{byte_size 1 DW_FORM_sdata}
+	    } {
+		member {
+		    {name __0}
+		    {type :$uinteger_label}
+		    {data_member_location 0 data1}
+		}
+	    }
+
+	    simple_label: structure_type {
+		{name Simple}
+		{byte_size 2 DW_FORM_sdata}
+	    } {
+		variant_part {
+		    {discr :$discr_1_label DW_FORM_ref4}
+		} {
+		    discr_1_label: member {
+			{type :$uinteger_label}
+			{data_member_location 0 data1}
+			{artificial 1 DW_FORM_flag_present}
+		    }
+
+		    variant {
+			{discr_value 65 udata}
+		    } {
+			member {
+			    {type :$one_label}
+			    {data_member_location 1 data1}
+			}
+		    }
+
+		    variant {
+		    } {
+			member {
+			    {type :$two_label}
+			    {data_member_location 1 data1}
+			}
+		    }
+		}
+	    }
+
+	    # In PR rust/31005, a constant Rust enum value could not
+	    # be correctly resolved.
+	    DW_TAG_variable {
+		{name constant_variable}
+		{const_value 0x4141 udata}
+		{type :$simple_label}
+	    }
+	    DW_TAG_variable {
+		{name constant_variable2}
+		{const_value "AA" DW_FORM_block1}
+		{type :$simple_label}
+	    }
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	  [list $srcfile $asm_file] {nodebug}] } {
+    return -1
+}
+
+gdb_test_no_output "set language rust"
+
+gdb_test "print constant_variable" [string_to_regexp "One(65)"]
+gdb_test "print constant_variable2" [string_to_regexp "One(65)"]

@@ -1,0 +1,89 @@
+# Copyright 2008-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "ada.exp"
+
+require allow_ada_tests
+
+standard_ada_testfile comp_bug
+
+# Note we don't test the "none" (no -fgnat-encodings option) scenario
+# here, because "all" and "minimal" cover the cases, and this way we
+# don't have to update the test when gnat changes its default.
+foreach_with_prefix scenario {all minimal} {
+    set flags {debug}
+    if {$scenario != "none"} {
+	lappend flags additional_flags=-fgnat-encodings=$scenario
+    }
+
+    if {[gdb_compile_ada "${srcfile}" "${binfile}-${scenario}" executable $flags] != ""} {
+	return -1
+    }
+
+    clean_restart ${testfile}-${scenario}
+
+    set bp_location [gdb_get_line_number "STOP" ${testdir}/comp_bug.adb]
+    runto "comp_bug.adb:$bp_location"
+
+    set pass_re \
+	"= \\(exists => true, value => 10\\)"
+    # There is a compiler bug that causes this output.
+    set kfail_re \
+	"= \\(exists => true\\)"
+
+    gdb_test_multiple "print x" "" {
+	-re -wrap $pass_re {
+	    pass $gdb_test_name
+	}
+	-re -wrap $kfail_re {
+	    if {$scenario == "minimal"} {
+		setup_xfail "gnat compiler bug" *-*-*
+	    }
+	    fail $gdb_test_name
+	}
+    }
+
+    set pass_re \
+	[multi_line "type = record" \
+	     "    exists: (boolean|range false \\.\\. true);" \
+	     "    case exists is" \
+	     "        when true =>" \
+	     "            value: range 0 \\.\\. 255;" \
+	     "        when others => null;" \
+	     "    end case;" \
+	     "end record" ]
+    # There is a compiler bug that causes this output.
+    set kfail_re \
+	[multi_line "type = record" \
+	     "    exists: (boolean|range false \\.\\. true);" \
+	     "    case \\? is" \
+	     "        when others =>" \
+	     "            value: range 0 \\.\\. 255;" \
+	     "        when others => null;" \
+	     "    end case;" \
+	     "end record" ]
+
+    gdb_test_multiple "ptype x" "" {
+	-re -wrap $pass_re {
+	    pass $gdb_test_name
+	}
+	-re -wrap $kfail_re {
+	    if {$scenario == "minimal"} {
+		setup_xfail "gnat compiler bug" *-*-*
+	    }
+	    fail $gdb_test_name
+	}
+    }
+}

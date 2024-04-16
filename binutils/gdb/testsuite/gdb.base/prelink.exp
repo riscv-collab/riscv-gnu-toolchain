@@ -1,0 +1,103 @@
+# Copyright 2006-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Please email any bugs, comments, and/or additions to this file to:
+# bug-gdb@gnu.org
+
+# This file was written by Alexandre Oliva <aoliva@redhat.com>
+
+
+require isnative allow_shlib_tests is_c_compiler_gcc
+require {!is_remote host}
+
+load_lib prelink-support.exp
+
+set testfile "prelink"
+
+set libsrcfile ${testfile}-lib.c
+set libfile [standard_output_file ${testfile}.so]
+
+# Use -soname so that the new library gets copied by build_executable_own_libs.
+
+if { [gdb_compile_shlib "${srcdir}/${subdir}/${libsrcfile}" "${libfile}" [list debug "ldflags=-Wl,-soname,[file tail ${libfile}]"]] != ""} {
+    # If creating the shared library fails, maybe we don't have the right tools
+    return -1
+}
+
+set srcfile ${testfile}.c
+set executable ${testfile}t
+set binfile [standard_output_file ${executable}]
+set prelink_args [build_executable_own_libs ${testfile}.exp $executable $srcfile [list debug "ldflags=-Wl,${libfile},-rpath,[file dirname ${libfile}]"]]
+if {$prelink_args == ""} {
+    return -1
+}
+
+set test "split debug of executable"
+if [gdb_gnu_strip_debug $binfile] {
+    fail $test
+} else {
+    pass $test
+}
+
+if ![prelink_yes $prelink_args] {
+    # Maybe we don't have prelink.
+    return -1
+}
+
+set found 0
+set coredir "[standard_output_file coredir.[getpid]]"
+file mkdir $coredir
+catch "system \"(cd ${coredir}; ulimit -c unlimited; ${binfile}; true) >/dev/null 2>&1\""
+
+foreach i "${coredir}/core ${coredir}/core.coremaker.c ${binfile}.core" {
+    if [remote_file build exists $i] {
+	remote_exec build "mv $i [standard_output_file prelink.core]"
+	set found 1
+    }
+}
+# Check for "core.PID".
+if { $found == 0 } {
+    set names [glob -nocomplain -directory $coredir core.*]
+    if {[llength $names] == 1} {
+        set corefile [file join $coredir [lindex $names 0]]
+        remote_exec build "mv $corefile [standard_output_file prelink.core]"
+        set found 1
+    }
+}
+
+# Try to clean up after ourselves.
+remote_file build delete [file join $coredir coremmap.data]
+remote_exec build "rmdir $coredir"
+
+if { $found == 0  } {
+    warning "can't generate a core file - prelink tests suppressed - check ulimit -c"
+    return 0
+}
+
+# Relink $libfile to a different address.
+if ![prelink_yes $prelink_args] {
+    return -1
+}
+
+# Start with a fresh gdb
+
+clean_restart $executable
+
+# Print the "adjusting expectations" message.
+gdb_test_no_output "set verbose on"
+
+gdb_test "core-file [standard_output_file prelink.core]" "Using PIC \\(Position Independent Code\\) prelink displacement 0x\[^0\]\[0-9a-f\]* for \[^\r\n\]*[file tail ${libfile}].*" "seen displacement message"
+
+gdb_test "p &bssvar == bssvarp" " = 1" ".dynbss vs. .bss address shift"

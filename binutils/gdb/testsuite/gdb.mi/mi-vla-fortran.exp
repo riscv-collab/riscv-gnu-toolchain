@@ -1,0 +1,206 @@
+# Copyright 2015-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Verify that, using the MI, we can evaluate a simple Fortran Variable
+# Length Array (VLA).
+
+require allow_fortran_tests
+
+load_lib mi-support.exp
+load_lib fortran.exp
+set MIFLAGS "-i=mi"
+
+standard_testfile vla.f90
+
+if { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable \
+     {debug f90}] != "" } {
+     untested "failed to compile"
+     return -1
+}
+
+# Depending on the compiler being used,
+# the type names can be printed differently.
+set real [fortran_real4]
+
+if {[mi_clean_restart $binfile]} {
+    return
+}
+
+set bp_lineno [gdb_get_line_number "vla1-not-allocated"]
+mi_create_breakpoint "-t vla.f90:$bp_lineno" \
+    "insert breakpoint at line $bp_lineno (vla not allocated)" \
+    -number 1 -disp del -func vla ".*vla.f90" $bp_lineno $hex
+mi_run_cmd
+mi_expect_stop "breakpoint-hit" "vla" "" ".*vla.f90" "$bp_lineno" \
+  { "" "disp=\"del\"" } "run to breakpoint at line $bp_lineno"
+mi_gdb_test "500-data-evaluate-expression vla1" \
+  "500\\^done,value=\"<not allocated>\"" "evaluate not allocated vla, before allocation"
+
+mi_create_varobj_checked vla1_not_allocated vla1 "$real, allocatable \\(:\\)" \
+  "create local variable vla1_not_allocated"
+mi_gdb_test "501-var-info-type vla1_not_allocated" \
+  "501\\^done,type=\"$real, allocatable \\(:\\)\"" \
+  "info type variable vla1_not_allocated"
+mi_gdb_test "502-var-show-format vla1_not_allocated" \
+  "502\\^done,format=\"natural\"" \
+  "show format variable vla1_not_allocated"
+mi_gdb_test "503-var-evaluate-expression vla1_not_allocated" \
+  "503\\^done,value=\"\\\[0\\\]\"" \
+  "eval variable vla1_not_allocated"
+mi_list_array_varobj_children_with_index "vla1_not_allocated" "0" "1" \
+    "$real" "get children of vla1_not_allocated"
+
+
+
+set bp_lineno [gdb_get_line_number "vla1-allocated"]
+mi_create_breakpoint "-t vla.f90:$bp_lineno" \
+    "insert breakpoint at line $bp_lineno (vla allocated)" \
+    -number 2 -disp del -func vla ".*vla.f90" $bp_lineno $hex
+mi_run_cmd
+mi_expect_stop "breakpoint-hit" "vla" "" ".*vla.f90" "$bp_lineno" \
+  { "" "disp=\"del\"" } "run to breakpoint at line $bp_lineno"
+mi_gdb_test "510-data-evaluate-expression vla1" \
+  "510\\^done,value=\"\\(.*\\)\"" "evaluate allocated vla"
+
+mi_create_varobj_checked vla1_allocated vla1 "$real, allocatable \\\(5\\\)" \
+  "create local variable vla1_allocated"
+mi_gdb_test "511-var-info-type vla1_allocated" \
+  "511\\^done,type=\"$real, allocatable \\\(5\\\)\"" \
+  "info type variable vla1_allocated"
+mi_gdb_test "512-var-show-format vla1_allocated" \
+  "512\\^done,format=\"natural\"" \
+  "show format variable vla1_allocated"
+mi_gdb_test "513-var-evaluate-expression vla1_allocated" \
+  "513\\^done,value=\"\\\[5\\\]\"" \
+  "eval variable vla1_allocated"
+mi_list_array_varobj_children_with_index "vla1_allocated" "5" "1" \
+    "$real" "get children of vla1_allocated"
+
+
+set bp_lineno [gdb_get_line_number "vla1-filled"]
+mi_create_breakpoint "-t vla.f90:$bp_lineno" \
+    "insert breakpoint at line $bp_lineno" \
+    -number 3 -disp del -func vla ".*vla.f90" $bp_lineno $hex
+mi_run_cmd
+mi_expect_stop "breakpoint-hit" "vla" "" ".*vla.f90" "$bp_lineno" \
+  { "" "disp=\"del\"" } "run to breakpoint at line $bp_lineno"
+mi_gdb_test "520-data-evaluate-expression vla1" \
+  "520\\^done,value=\"\\(1, 1, 1, 1, 1\\)\"" "evaluate filled vla, filled all 1s"
+
+
+set bp_lineno [gdb_get_line_number "vla1-modified"]
+mi_create_breakpoint "-t vla.f90:$bp_lineno" \
+    "insert breakpoint at line $bp_lineno" \
+    -number 4 -disp del -func vla ".*vla.f90" $bp_lineno $hex
+mi_run_cmd
+mi_expect_stop "breakpoint-hit" "vla" "" ".*vla.f90" "$bp_lineno" \
+  { "" "disp=\"del\"" } "run to breakpoint at line $bp_lineno"
+mi_gdb_test "530-data-evaluate-expression vla1" \
+  "530\\^done,value=\"\\(1, 42, 1, 24, 1\\)\"" "evaluate filled vla, contents modified"
+mi_gdb_test "540-data-evaluate-expression vla1(1)" \
+  "540\\^done,value=\"1\"" "evaluate filled vla(1)"
+mi_gdb_test "550-data-evaluate-expression vla1(2)" \
+  "550\\^done,value=\"42\"" "evaluate filled vla(2)"
+mi_gdb_test "560-data-evaluate-expression vla1(4)" \
+  "560\\^done,value=\"24\"" "evaluate filled vla(4)"
+
+
+set bp_lineno [gdb_get_line_number "vla1-deallocated"]
+mi_create_breakpoint "-t vla.f90:$bp_lineno" \
+    "insert breakpoint at line $bp_lineno" \
+    -number 5 -disp del -func vla ".*vla.f90" $bp_lineno $hex
+mi_run_cmd
+mi_expect_stop "breakpoint-hit" "vla" "" ".*vla.f90" "$bp_lineno" \
+  { "" "disp=\"del\"" } "run to breakpoint at line $bp_lineno"
+mi_gdb_test "570-data-evaluate-expression vla1" \
+  "570\\^done,value=\"<not allocated>\"" "evaluate not allocated vla, after deallocation"
+
+
+set bp_lineno [gdb_get_line_number "pvla2-not-associated"]
+mi_create_breakpoint "-t vla.f90:$bp_lineno" \
+    "insert breakpoint at line $bp_lineno" \
+    -number 6 -disp "del" -func "vla" ".*vla.f90" $bp_lineno $hex
+mi_run_cmd
+mi_expect_stop "breakpoint-hit" "vla" "" ".*vla.f90" "$bp_lineno" \
+  { "" "disp=\"del\"" } "run to breakpoint at line $bp_lineno"
+
+
+set test "evaluate not associated vla"
+send_gdb "580-data-evaluate-expression pvla2\n"
+gdb_expect {
+    -re "580\\^done,value=\"<not associated>\".*${mi_gdb_prompt}$" {
+	pass $test
+
+	mi_create_varobj_checked pvla2_not_associated pvla2 "$real \\(:,:\\)" \
+	    "create local variable pvla2_not_associated"
+	mi_gdb_test "581-var-info-type pvla2_not_associated" \
+	    "581\\^done,type=\"$real \\(:,:\\)\"" \
+	    "info type variable pvla2_not_associated"
+	mi_gdb_test "582-var-show-format pvla2_not_associated" \
+	    "582\\^done,format=\"natural\"" \
+	    "show format variable pvla2_not_associated"
+	mi_gdb_test "583-var-evaluate-expression pvla2_not_associated" \
+	    "583\\^done,value=\"\\\[0\\\]\"" \
+	    "eval variable pvla2_not_associated"
+	mi_list_array_varobj_children_with_index "pvla2_not_associated" "0" "1" \
+	    "$real" "get children of pvla2_not_associated"
+    }
+    -re "580\\^error,msg=\"value contents too large \\(\[0-9\]+ bytes\\).*${mi_gdb_prompt}$" {
+	# Undefined behaviour in gfortran.
+	xfail $test
+    }
+    -re "${mi_gdb_prompt}$" {
+	fail $test
+    }
+    timeout {
+	fail "$test (timeout)"
+    }
+}
+
+set bp_lineno [gdb_get_line_number "pvla2-associated"]
+mi_create_breakpoint "-t vla.f90:$bp_lineno" \
+    "insert breakpoint at line $bp_lineno" \
+    -number 7 -disp del -func vla ".*vla.f90" $bp_lineno $hex
+mi_run_cmd
+mi_expect_stop "breakpoint-hit" "vla" "" ".*vla.f90" "$bp_lineno" \
+  { "" "disp=\"del\"" } "run to breakpoint at line $bp_lineno"
+mi_gdb_test "590-data-evaluate-expression pvla2" \
+  "590\\^done,value=\"\\(\\(2, 2, 2, 2, 2\\) \\(2, 2, 2, 2, 2\\)\\)\"" \
+  "evaluate associated vla"
+
+mi_create_varobj_checked pvla2_associated pvla2 \
+  "$real \\\(5,2\\\)" "create local variable pvla2_associated"
+mi_gdb_test "591-var-info-type pvla2_associated" \
+  "591\\^done,type=\"$real \\\(5,2\\\)\"" \
+  "info type variable pvla2_associated"
+mi_gdb_test "592-var-show-format pvla2_associated" \
+  "592\\^done,format=\"natural\"" \
+  "show format variable pvla2_associated"
+mi_gdb_test "593-var-evaluate-expression pvla2_associated" \
+  "593\\^done,value=\"\\\[2\\\]\"" \
+  "eval variable pvla2_associated"
+
+
+set bp_lineno [gdb_get_line_number "pvla2-set-to-null"]
+mi_create_breakpoint "-t vla.f90:$bp_lineno" \
+    "insert breakpoint at line $bp_lineno" \
+    -number 8 -disp del -func vla ".*vla.f90" $bp_lineno $hex
+mi_run_cmd
+mi_expect_stop "breakpoint-hit" "vla" "" ".*vla.f90" "$bp_lineno" \
+  { "" "disp=\"del\"" } "run to breakpoint at line $bp_lineno"
+mi_gdb_test "600-data-evaluate-expression pvla2" \
+  "600\\^done,value=\"<not associated>\"" "evaluate vla pointer set to null"
+
+mi_gdb_exit

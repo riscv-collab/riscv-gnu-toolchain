@@ -1,0 +1,233 @@
+# Copyright 2013-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+standard_testfile .c entry-values-dw.S
+
+if  {[gdb_compile ${srcdir}/${subdir}/${srcfile} ${binfile}1.o \
+	  object {nodebug}] != ""} {
+    return -1
+}
+
+if  {[gdb_compile [list ${binfile}1.o] \
+	  "${binfile}1" executable {}] != ""} {
+    return -1
+}
+
+clean_restart ${binfile}1
+
+set returned_from_foo ""
+
+if { [istarget "arm*-*-*"] || [istarget "aarch64*-*-*"] } {
+    set call_insn "bl"
+} elseif { [istarget "s390*-*-*"] } {
+    set call_insn "brasl"
+} elseif { [istarget "powerpc*-*-*"] } {
+    set call_insn "bl"
+} elseif { [istarget "mips*-*-*"] } {
+    # Skip the delay slot after the instruction used to make a call
+    # (which can be a jump or a branch) if it has one.
+    #
+    #  JUMP (or BRANCH) foo
+    #  insn1
+    #  insn2
+    #
+    # Most MIPS instructions used to make calls have a delay slot.
+    # These include JAL, JALS, JALX, JALR, JALRS, BAL and BALS.
+    # In this case the program continues from `insn2' when `foo'
+    # returns.  The only exception is JALRC, in which case execution
+    # resumes from `insn1' instead.
+    set call_insn {jalrc|[jb]al[sxr]*[ \t][^\r\n]+\r\n}
+} else {
+    set call_insn "call"
+}
+
+# Calculate the offset of the instruction in bar returned from foo.
+set test "disassemble bar"
+gdb_test_multiple $test $test {
+    -re ".*$hex <\\+$decimal>:\[ \t\]+\\y$call_insn\\y\[^\r\n\]+\r\n\[ \]+$hex <\\+($decimal)>:.*$gdb_prompt $" {
+	set returned_from_foo $expect_out(1,string)
+    }
+    -re ".*$gdb_prompt $" {
+	fail $test
+    }
+}
+
+if { [string equal $returned_from_foo ""] } {
+    fail "find the call or branch instruction offset in bar"
+    # The following test makes no sense if the offset is unknown.  We need
+    # to update the pattern above to match call or branch instruction for
+    # the target architecture.
+    return -1
+}
+
+# Make some DWARF for the test.
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    declare_labels int_label foo_label
+    global returned_from_foo
+    global srcdir subdir srcfile
+
+    set bar_result [function_range bar ${srcdir}/${subdir}/${srcfile}]
+    set bar_start [lindex $bar_result 0]
+    set bar_length [lindex $bar_result 1]
+
+    cu {} {
+	compile_unit {{language @DW_LANG_C}} {
+	    int_label: base_type {
+		{name int}
+		{encoding @DW_ATE_signed}
+		{byte_size 4 DW_FORM_sdata}
+	    }
+
+	    foo_label: subprogram {
+		{decl_file 0 udata}
+		{MACRO_AT_func { foo }}
+	    } {
+		formal_parameter {
+		    {type :$int_label}
+		    {name i}
+		    {location {DW_OP_reg0} SPECIAL_expr}
+		}
+		formal_parameter {
+		    {type :$int_label}
+		    {name j}
+		    {location {DW_OP_reg1} SPECIAL_expr}
+		}
+	    }
+
+	    subprogram {
+		{name bar}
+		{decl_file 0 udata}
+		{low_pc $bar_start addr}
+		{high_pc "$bar_start + $bar_length" addr}
+		{GNU_all_call_sites 1 sdata}
+	    } {
+		formal_parameter {
+		    {type :$int_label}
+		    {name i}
+		}
+
+		GNU_call_site {
+		    {low_pc "$bar_start + $returned_from_foo" addr}
+		    {abstract_origin :$foo_label}
+		} {
+		    # Faked entry values are reference to variables 'global1'
+		    # and 'global2' and faked locations are register 0 and
+		    # register 1.
+		    GNU_call_site_parameter {
+			{location {DW_OP_reg0} SPECIAL_expr}
+			{GNU_call_site_value {
+			    addr global1
+			    deref_size 4
+			} SPECIAL_expr}
+		    }
+		    GNU_call_site_parameter {
+			{location {DW_OP_reg1} SPECIAL_expr}
+			{GNU_call_site_value {
+			    addr global2
+			    deref_size 4
+			} SPECIAL_expr}
+		    }
+		}
+	    }
+	}
+    }
+}
+
+if  {[gdb_compile $asm_file ${binfile}2.o object {nodebug}] != ""} {
+    return -1
+}
+
+if  {[gdb_compile [list ${binfile}1.o ${binfile}2.o] \
+	  "${binfile}" executable {}] != ""} {
+    return -1
+}
+
+clean_restart ${testfile}
+
+if ![runto_main] {
+    return -1
+}
+
+gdb_breakpoint "foo"
+
+gdb_continue_to_breakpoint "foo"
+
+gdb_test_no_output "set print entry-values both"
+
+gdb_test_sequence "bt" "bt (1)" {
+    "\[\r\n\]#0 .* foo \\(i=[-]?[0-9]+, i@entry=2, j=[-]?[0-9]+, j@entry=3\\)"
+    "\[\r\n\]#1 .* bar \\(i=<optimized out>, i@entry=<optimized out>\\)"
+    "\[\r\n\]#2 .* \.?main \\(\\)"
+}
+
+# Update global variables 'global1' and 'global2' and test that the
+# entry values are updated too.
+
+gdb_test_no_output "set var *(int *) &global1=10"
+gdb_test_no_output "set var *(int *) &global2=11"
+
+gdb_test_sequence "bt" "bt (2)" {
+    "\[\r\n\]#0 .* foo \\(i=[-]?[0-9]+, i@entry=10, j=[-]?[0-9]+, j@entry=11\\)"
+    "\[\r\n\]#1 .* bar \\(i=<optimized out>, i@entry=<optimized out>\\)"
+    "\[\r\n\]#2 .* \.?main \\(\\)"
+}
+
+# Restart GDB and trace.
+
+clean_restart $binfile
+
+load_lib "trace-support.exp"
+
+if ![runto_main] {
+    return -1
+}
+
+if ![gdb_target_supports_trace] {
+    unsupported "target does not support trace"
+    return -1
+}
+
+gdb_test "trace foo" "Tracepoint $decimal at .*"
+
+# Collect arguments i and j.  Collect 'global1' which is entry value
+# of argument i.  Don't collect 'global2' to test the entry value of
+# argument j.
+
+gdb_trace_setactions "set action for tracepoint 1" "" \
+    "collect i, j, (int) global1, \(\*\(void \*\*\) \(\$$spreg\)\) @ 128" "^$"
+
+gdb_test_no_output "tstart"
+
+gdb_breakpoint "end"
+gdb_continue_to_breakpoint "end"
+
+gdb_test_no_output "tstop"
+
+gdb_test "tfind" "Found trace frame 0, .*" "tfind start"
+
+# Since 'global2' is not collected, j@entry is expected to be 'unavailable'.
+gdb_test "bt 1" "#0 .* foo \\(i=\[-\]?$decimal, i@entry=2, j=\[-\]?$decimal, j@entry=<unavailable>\\).*"
+
+# Test that unavailable "j@entry" is not shown when command option
+# --skip-unavailable is used.
+gdb_test "interpreter-exec mi \"-stack-list-arguments --skip-unavailable --simple-values\"" \
+    "\r\n\\^done,stack-args=\\\[frame={level=\"0\",args=\\\[{name=\"i\",type=\"int\",value=\".*\"},{name=\"i@entry\",type=\"int\",value=\"2\"},{name=\"j\",type=\"int\",value=\".*\"}\\\]},frame=.*\\\].*"
+
+gdb_test "tfind" "Target failed to find requested trace frame\..*"

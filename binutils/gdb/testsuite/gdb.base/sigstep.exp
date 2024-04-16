@@ -1,0 +1,595 @@
+# Copyright 2004-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+
+# The program sigstep.c creates a very simple backtrace containing one
+# signal handler and signal trampoline.  A flag is set and then the
+# handler returns.  This is repeated at infinitum.
+
+# This test runs the program up to the signal handler, and then
+# attempts to step/next out of the handler and back into main.
+
+require {!target_info exists gdb,nosignals}
+
+
+standard_testfile
+
+if {[build_executable $testfile.exp $testfile $srcfile debug]} {
+    untested "failed to compile"
+    return -1
+}
+
+set clear_done [gdb_get_line_number {done = 0}]
+set infinite_loop [gdb_get_line_number {while (!done)}]
+set other_handler_location [gdb_get_line_number "other handler location"]
+
+# Restart GDB, set a display showing $PC, and run to main.
+
+proc restart {} {
+    global binfile
+
+    clean_restart $binfile
+
+    gdb_test "display/i \$pc"
+
+    runto_main
+}
+
+# Pass all the alarms straight through (but verbosely)
+# gdb_test "handle SIGALRM print pass nostop"
+# gdb_test "handle SIGVTALRM print pass nostop"
+# gdb_test "handle SIGPROF print pass nostop"
+
+# Run to the signal handler, validate the backtrace.
+
+proc validate_backtrace {} {
+    with_test_prefix "validate backtrace" {
+	restart
+
+	gdb_test "break handler"
+	gdb_test "continue" ".* handler .*" "continue to stepi handler"
+	gdb_test_sequence "bt" "backtrace for nexti" {
+	    "\[\r\n\]+.0 \[^\r\n\]* handler "
+	    "\[\r\n\]+.1  .signal handler called."
+	    "\[\r\n\]+.2 \[^\r\n\]* main "
+	}
+    }
+}
+
+validate_backtrace
+
+# Goes to handler using ENTER_CMD, runs IN_HANDLER while in the signal
+# hander, and then steps out of the signal handler using EXIT_CMD.
+
+proc advance { enter_cmd in_handler_prefix in_handler exit_cmd } {
+    global gdb_prompt inferior_exited_re
+    global clear_done other_handler_location
+    global decimal
+
+    set prefix "$enter_cmd to handler, $in_handler_prefix in handler, $exit_cmd from handler"
+
+    with_test_prefix $prefix {
+	restart
+
+	# Get us into the handler
+	if { $enter_cmd == "continue" } {
+	    gdb_test "break handler"
+	} else {
+	    gdb_test "handle SIGALRM print pass stop"
+	    gdb_test "handle SIGVTALRM print pass stop"
+	    gdb_test "continue" "Program received signal.*" "continue to signal"
+	}
+
+	gdb_test_multiple "$enter_cmd" "$enter_cmd to handler" {
+	    -re -wrap "\r\n<signal handler called>.*" {
+		send_gdb "$enter_cmd\n"
+		exp_continue
+	    }
+	    -re -wrap "\r\n(Breakpoint $decimal, )?handler \\(sig=.*" {
+		pass $gdb_test_name
+	    }
+	}
+
+	delete_breakpoints
+
+	uplevel 1 $in_handler
+
+	if { $exit_cmd == "continue" } {
+	    gdb_test "break $clear_done" ".*" "break clear done"
+	}
+
+	set test "leave handler"
+	gdb_test_multiple "$exit_cmd" "${test}" {
+	    -re "Could not insert single-step breakpoint.*$gdb_prompt $" {
+		setup_kfail gdb/8841 "sparc*-*-openbsd*"
+		fail "$test (could not insert single-step breakpoint)"
+	    }
+	    -re "Cannot insert breakpoint.*Cannot access memory.*$gdb_prompt $" {
+		setup_kfail gdb/8841 "nios2*-*-linux*"
+		fail "$test (could not insert single-step breakpoint)"
+	    }
+	    -re "done = 1;.*${gdb_prompt} $" {
+		send_gdb "$exit_cmd\n"
+		exp_continue -continue_timer
+	    }
+	    -re "\} .. handler .*${gdb_prompt} $" {
+		send_gdb "$exit_cmd\n"
+		exp_continue -continue_timer
+	    }
+	    -re "$inferior_exited_re normally.*${gdb_prompt} $" {
+		setup_kfail gdb/8744 powerpc-*-*bsd*
+		fail "$test (program exited)"
+	    }
+	    -re "(while ..done|done = 0).*${gdb_prompt} $" {
+		# After stepping out of a function /r signal-handler, GDB will
+		# advance the inferior until it is at the first instruction of
+		# a code-line.  While typically things return to the middle of
+		# the "while..." (and hence GDB advances the inferior to the
+		# "return..." line) it is also possible for the return to land
+		# on the first instruction of "while...".  Accept both cases.
+		pass "$test"
+	    }
+	}
+    }
+}
+
+# Map of PREFIX => "things to do within the signal handler", for the
+# advance tests.
+
+set in_handler_map {
+    "nothing" {
+    }
+    "si+advance" {
+	# Advance to the second location in handler.
+	gdb_test "si" "handler.*" "si in handler"
+
+	set test "advance in handler"
+	gdb_test_multiple "advance $other_handler_location" $test {
+	    -re "Program received signal SIGTRAP.*$gdb_prompt $" {
+		# On some versions of Linux (observed on
+		# 3.16.4-200.fc20.x86_64), using PTRACE_SINGLESTEP+sig
+		# to step into a signal handler, and then issuing
+		# another PTRACE_SINGLESTEP within the handler ends up
+		# with $eflags.TF mistakenly set, which results in
+		# subsequent PTRACE_CONTINUEs trapping after each
+		# insn.
+		if {$enter_cmd != "continue"} {
+		    setup_xfail "i?86-*-linux*" gdb/17511
+		    setup_xfail "x86_64-*-linux*" gdb/17511
+		}
+		fail "$test (spurious SIGTRAP)"
+		return
+	    }
+	    -re "other handler location.*$gdb_prompt $" {
+		pass $test
+	    }
+	}
+    }
+}
+
+# Check that we can step/next/continue, etc. our way in and out of a
+# signal handler.  Also test that we can step, and run to a breakpoint
+# within the handler.
+
+foreach enter_cmd { "stepi" "nexti" "step" "next" "continue" } {
+    if { $enter_cmd != "continue" && ![can_single_step_to_signal_handler] } {
+	continue
+    }
+
+    foreach exit_cmd { "step" "next" "continue" } {
+	foreach {in_handler_prefix in_handler} $in_handler_map {
+	    advance $enter_cmd $in_handler_prefix $in_handler $exit_cmd
+	}
+    }
+}
+
+proc advancei { cmd } {
+    global gdb_prompt inferior_exited_re
+
+    with_test_prefix "$cmd from handleri" {
+	restart
+
+	# Get us into the handler.
+	gdb_test "break handler"
+	gdb_test "continue" ".* handler .*" "continue to handler"
+
+	set program_exited 0
+	set test "leave handler"
+	gdb_test_multiple "$cmd" "${test}" {
+	    -re "Cannot insert breakpoint 0.*${gdb_prompt} $" {
+		# Some platforms use a special read-only page for signal
+		# trampolines.  We can't set a breakpoint there, and we
+		# don't gracefully fall back to single-stepping.
+		setup_kfail gdb/8841 "i?86-*-linux*"
+		setup_kfail gdb/8841 "*-*-openbsd*"
+		setup_kfail gdb/8841 "nios2-*-linux*"
+		fail "$test (could not set breakpoint)"
+		return
+	    }
+	    -re "Could not insert single-step breakpoint.*$gdb_prompt $" {
+		setup_kfail gdb/8841 "sparc*-*-openbsd*"
+		fail "$test (could not insert single-step breakpoint)"
+	    }
+	    -re "Breakpoint \[0-9\]*, handler .*${gdb_prompt} $" {
+		fail "$test (hit breakpoint again)"
+	    }
+	    -re "done = 1;.*${gdb_prompt} $" {
+		send_gdb "$cmd\n"
+		exp_continue -continue_timer
+	    }
+	    -re "\} .. handler .*${gdb_prompt} $" {
+		send_gdb "$cmd\n"
+		exp_continue -continue_timer
+	    }
+	    -re "signal handler called.*${gdb_prompt} $" {
+		pass "$test"
+	    }
+	    -re "main .*${gdb_prompt} $" {
+		fail "$test (in main)"
+	    }
+	    -re "$inferior_exited_re normally.*${gdb_prompt} $" {
+		fail "$test (program exited)"
+		set program_exited 1
+	    }
+	    -re "Make handler return now.*y or n. $" {
+		send_gdb "y\n"
+		exp_continue -continue_timer
+	    }
+	}
+
+	set test "leave signal trampoline"
+	gdb_test_multiple "$cmd" "${test}" {
+	    -re "while .*${gdb_prompt} $" {
+		pass "$test (in main)"
+	    }
+	    -re "signal handler called.*${gdb_prompt} $" {
+		send_gdb "$cmd\n"
+		exp_continue -continue_timer
+	    }
+	    -re "return .*${gdb_prompt} $" {
+		fail "$test (stepped)"
+	    }
+	    -re "Make .*frame return now.*y or n. $" {
+		send_gdb "y\n"
+		exp_continue -continue_timer
+	    }
+	    -re "$inferior_exited_re normally.*${gdb_prompt} $" {
+		kfail gdb/8744 "$test (program exited)"
+		set program_exited 1
+	    }
+	    -re "The program is not being run.*${gdb_prompt} $" {
+		if { $program_exited } {
+		    # Previously kfailed with an exit
+		    pass "$test (the program is not being run)"
+		} else {
+		    fail "$test (the program is not being run)"
+		}
+	    }
+	}
+    }
+}
+
+# Check that we can step our way out of a signal handler, using
+# commands that first step out to the signal trampoline, and then out
+# to the mainline code.
+
+foreach cmd {"stepi" "nexti" "finish" "return"} {
+    advancei $cmd
+}
+
+# Check that we can step/next our way into / over a signal handler.
+
+# There are at least the following cases: breakpoint @pc VS breakpoint
+# in handler VS step / next / continue.
+
+
+# Try stepping when there's a signal pending, and a breakpoint at the
+# handler.  Should step into the signal handler.
+
+proc skip_to_handler { cmd } {
+    global infinite_loop
+
+    with_test_prefix "$cmd to handler" {
+	restart
+	# Use the real-time itimer, as otherwize the process never gets
+	# enough time to expire the timer.
+	gdb_test_no_output "set itimer = itimer_real"
+
+	# Advance to the infinite loop.
+	gdb_test "advance $infinite_loop" ".*" "advance to infinite loop"
+
+	# Make the signal pending.
+	sleep 1
+
+	# Insert the handler breakpoint.
+	gdb_test "break handler" ".*"
+
+	# Step into the handler.
+	gdb_test "$cmd" " handler .*" "performing $cmd"
+    }
+}
+
+foreach cmd {"step" "next" "continue"} {
+    skip_to_handler $cmd
+}
+
+# Try stepping when there's a signal pending, and a breakpoint at the
+# handler's entry-point.  Should step into the signal handler stopping
+# at the entry-point.
+
+# Some systems (e.x., GNU/Linux as of 2004-08-30), when delivering a
+# signal, resume the process at the first instruction of the signal
+# handler and not the first instruction of the signal trampoline.  The
+# stack is constructed such that the signal handler still appears to
+# have been called by the trampoline code.  This test checks that it
+# is possible to stop the inferior, even at that first instruction.
+
+proc skip_to_handler_entry { cmd } {
+    global infinite_loop
+
+    with_test_prefix "$cmd to handler entry" {
+	restart
+	# Use the real-time itimer, as otherwize the process never gets
+	# enough time to expire the timer.
+	gdb_test_no_output "set itimer = itimer_real"
+
+	# Advance to the infinite loop.
+	gdb_test "advance $infinite_loop" ".*" "advance to infinite loop"
+
+	# Make the signal pending.
+	sleep 1
+
+	# Insert / remove the handler breakpoint.
+	gdb_test "break *handler" ".*" "break handler"
+	gdb_test "$cmd" " handler .*" "performing $cmd"
+    }
+}
+
+foreach cmd {"stepi" "nexti" "step" "next" "continue"} {
+    skip_to_handler_entry $cmd
+}
+
+# Get the address of where a single-step should land.
+
+proc get_next_pc {test} {
+    global gdb_prompt
+    global hex
+
+    set next ""
+    gdb_test_multiple "x/2i \$pc" $test {
+	-re "$hex .*:\[^\r\n\]+\r\n\[ \]+($hex).*\.\r\n$gdb_prompt $" {
+	    set next $expect_out(1,string)
+	    pass $test
+	}
+    }
+
+    return $next
+}
+
+# Test that the command skipped over the handler.
+
+proc test_skip_handler {cmd} {
+    if {$cmd == "stepi" || $cmd == "nexti"} {
+	set next_pc [get_next_pc "get next PC"]
+	gdb_test "$cmd" "dummy = 0.*" "performing $cmd"
+	gdb_test "p /x \$pc" " = $next_pc" "advanced"
+    } else {
+	gdb_test "$cmd" "done = 0.*" "performing $cmd"
+    }
+}
+
+# Try stepping when there's a signal pending but no breakpoints.
+# Should skip the handler advancing to the next line.
+
+proc skip_over_handler { cmd } {
+    global infinite_loop
+    global clear_done
+
+    with_test_prefix "$cmd over handler" {
+	restart
+	# Use the real-time itimer, as otherwize the process never gets
+	# enough time to expire the timer.
+	gdb_test_no_output "set itimer = itimer_real"
+
+	gdb_test "break $clear_done" ".*" "break clear done"
+
+	# Advance to the infinite loop.
+	gdb_test "advance $infinite_loop" ".*" "advance to infinite loop"
+
+	# Make the signal pending.
+	sleep 1
+
+	test_skip_handler $cmd
+    }
+}
+
+foreach cmd {"stepi" "nexti" "step" "next" "continue"} {
+    skip_over_handler $cmd
+}
+
+# Try stepping when there's a signal pending, a pre-existing
+# breakpoint at the current instruction, and a breakpoint in the
+# handler.  Should advance to the signal handler.  DISPLACED indicates
+# whether to try with or without displaced stepping (to exercise the
+# different techniques of stepping over the breakpoint at the current
+# instruction).
+
+proc breakpoint_to_handler { displaced cmd } {
+    global infinite_loop
+
+    with_test_prefix "displaced=$displaced: $cmd on breakpoint, to handler" {
+	restart
+
+	gdb_test_no_output "set displaced-stepping $displaced"
+
+	# Use the real-time itimer, as otherwize the process never gets
+	# enough time to expire the timer.
+	gdb_test_no_output "set itimer = itimer_real"
+
+	gdb_test "break $infinite_loop" ".*" "break infinite loop"
+	gdb_test "break handler" ".*"
+
+	# Continue to the infinite loop.
+	gdb_test "continue" "while ..done.*" "continue to infinite loop"
+
+	# Make the signal pending.
+	sleep 1
+
+	gdb_test "$cmd" " handler .*" "performing $cmd"
+
+	# Make sure we the displaced stepping scratch pad isn't in the
+	# backtrace.
+	gdb_test_sequence "bt" "backtrace" {
+	    "\[\r\n\]+.0 \[^\r\n\]* handler "
+	    "\[\r\n\]+.1  .signal handler called."
+	    "\[\r\n\]+.2 \[^\r\n\]* main "
+	}
+    }
+}
+
+foreach displaced {"off" "on"} {
+    foreach cmd {"step" "next" "continue"} {
+	breakpoint_to_handler $displaced $cmd
+    }
+}
+
+# Try stepping when there's a signal pending, and a breakpoint at the
+# handler's entry instruction and a breakpoint at the current
+# instruction.  Should step into the signal handler and breakpoint at
+# that entry instruction.
+
+# Some systems (e.x., GNU/Linux as of 2004-08-30), when delivering a
+# signal, resume the process at the first instruction of the signal
+# handler and not the first instruction of the signal trampoline.  The
+# stack is constructed such that the signal handler still appears to
+# have been called by the trampoline code.  This test checks that it
+# is possible to stop the inferior, even at that first instruction.
+
+# DISPLACED indicates whether to try with or without displaced
+# stepping (to exercise the different techniques of stepping over the
+# breakpoint at the current instruction).
+proc breakpoint_to_handler_entry { displaced cmd } {
+    global infinite_loop
+
+    with_test_prefix "displaced=$displaced: $cmd on breakpoint, to handler entry" {
+	restart
+
+	gdb_test_no_output "set displaced-stepping $displaced"
+
+	# Use the real-time itimer, as otherwize the process never gets
+	# enough time to expire the timer.
+	gdb_test_no_output "set itimer = itimer_real"
+
+	gdb_test "break $infinite_loop" ".*" "break infinite loop"
+	gdb_test "break *handler" ".*" "break handler"
+
+	# Continue to the infinite loop.
+	gdb_test "continue" "while ..done.*" "continue to infinite loop"
+
+	# Make the signal pending.
+	sleep 1
+
+	gdb_test "$cmd" " handler .*" "performing $cmd"
+
+	# Make sure we the displaced stepping scratch pad isn't in the
+	# backtrace.
+	gdb_test_sequence "bt" "backtrace" {
+	    "\[\r\n\]+.0 \[^\r\n\]* handler "
+	    "\[\r\n\]+.1  .signal handler called."
+	    "\[\r\n\]+.2 \[^\r\n\]* main "
+	}
+    }
+}
+
+foreach displaced {"off" "on"} {
+    foreach cmd {"step" "next" "continue"} {
+	breakpoint_to_handler_entry $displaced $cmd
+    }
+}
+
+# Try stepping when there's a signal pending, and a pre-existing
+# breakpoint at the current instruction, and no breakpoint in the
+# handler.  Should advance to the next line/instruction.  DISPLACED
+# indicates whether to try with or without displaced stepping (to
+# exercise the different techniques of stepping over the breakpoint at
+# the current instruction).  If SW_WATCH is true, set a software
+# watchpoint, which exercises stepping the breakpoint instruction
+# while delivering a signal at the same time.  If NO_HANDLER, arrange
+# for the signal's handler be SIG_IGN, thus when the software
+# watchpoint is also set, testing stepping a breakpoint instruction
+# and immediately triggering the breakpoint (exercises
+# adjust_pc_after_break logic).
+
+proc breakpoint_over_handler { displaced cmd with_sw_watch no_handler } {
+    global infinite_loop
+    global clear_done
+
+    set prefix "$cmd on breakpoint, skip handler"
+    if { $with_sw_watch } {
+	append prefix ", with sw-watchpoint"
+    }
+    if { $no_handler } {
+	append prefix ", no handler"
+    }
+
+    with_test_prefix "displaced=$displaced: $prefix" {
+	restart
+
+	gdb_test_no_output "set displaced-stepping $displaced"
+
+	# Use the real-time itimer, as otherwize the process never gets
+	# enough time to expire the timer.
+	gdb_test_no_output "set itimer = itimer_real"
+
+	if {$no_handler} {
+	    gdb_test "print no_handler = 1" " = 1" \
+		"set no_handler"
+	}
+
+	gdb_test "break $infinite_loop" ".*" "break infinite loop"
+
+	gdb_test "break $clear_done" ".*" "break clear done"
+
+	# Continue to the infinite loop
+	gdb_test "continue" "while ..done.*" "continue to infinite loop"
+
+	# Make the signal pending
+	sleep 1
+
+	if { $with_sw_watch } {
+	    # A watchpoint on a convenience variable is always a
+	    # software watchpoint.
+	    gdb_test "watch \$convenience" "Watchpoint .*: \\\$convenience"
+	}
+
+	if {$no_handler} {
+	    # With no handler, we need to set the global ourselves
+	    # manually.
+	    gdb_test "print done = 1" " = 1" "set done"
+	}
+
+	test_skip_handler $cmd
+    }
+}
+
+foreach displaced {"off" "on"} {
+    foreach cmd {"stepi" "nexti" "step" "next" "continue"} {
+	foreach with_sw_watch {0 1} {
+	    foreach no_handler {0 1} {
+		breakpoint_over_handler $displaced $cmd $with_sw_watch $no_handler
+	    }
+	}
+    }
+}

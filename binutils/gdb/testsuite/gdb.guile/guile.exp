@@ -1,0 +1,103 @@
+# Copyright (C) 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.
+# It tests basic Guile features.
+
+load_lib gdb-guile.exp
+
+clean_restart
+
+set host_source2_scm [gdb_remote_download host $srcdir/$subdir/source2.scm]
+
+# Do this instead of the skip_guile_check.
+# We want to do some tests when Guile is not present.
+gdb_test_multiple "guile (display 23) (newline)" "verify guile support" {
+    -re "Undefined command.*$gdb_prompt $" {
+	unsupported "guile not supported."
+	return
+    }
+    -re "not supported.*$gdb_prompt $"	{
+      unsupported "guile support is disabled"
+
+      # If Guile is not supported, verify that sourcing a guile script
+      # causes an error.
+      gdb_test "source $host_source2_scm" \
+	  "Error in sourced command file:.*" \
+	  "source source2.scm when guile disabled"
+
+      # Verify multi-line guile commands cause an error.
+      gdb_test_multiline "multi-line guile command" \
+	  "guile" "" \
+	  "(print 23)" "" \
+	  "end" "not supported.*"
+
+      return
+    }
+    -re "$gdb_prompt $"	{}
+}
+
+gdb_install_guile_utils
+gdb_install_guile_module
+
+gdb_test_multiline "multi-line guile command" \
+  "guile" "" \
+  "(print 23)" "" \
+  "end" "= 23"
+
+gdb_test_multiline "show guile command" \
+  "define zzq" "Type commands for definition of .* just \"end\"\\.*" \
+  "guile" "" \
+  "(print 23)" "" \
+  "end" "" \
+  "end" "" \
+  "show user zzq" "User command \"zzq\":.*  guile.*\\(print 23\\).*  end\r\n"
+
+gdb_test "source $host_source2_scm" "yes" "source source2.scm"
+
+gdb_test "source -s source2.scm" "yes"
+
+gdb_test "guile (print (current-objfile))" "= #f"
+gdb_test "guile (print (objfiles))" "= \\(\\)"
+
+gdb_test_no_output \
+    {guile (define x (execute "printf \"%d\", 23" #:to-string #t))}
+gdb_test "guile (print x)" "= 23"
+
+gdb_test_no_output "guile (define a (execute \"help\" #:to-string #t))" \
+    "collect help from uiout"
+
+gdb_test "guile (print a)" "= .*aliases -- User-defined aliases of other commands.*" \
+    "verify help to uiout"
+
+# Verify that we can source a guile script using ~ for the HOME directory.
+if { ![is_remote host ] } {
+    save_vars { env(HOME) } {
+	# Create a new directory to act as a temporary HOME directory.
+	set tmp_home [standard_output_file tmp_home]
+	file mkdir $tmp_home
+
+	# Copy the file we want to source into the new HOME directory.
+	gdb_remote_download host ${srcdir}/${subdir}/source2.scm \
+	    ${tmp_home}/source2.scm
+
+	# Arrange to use the new HOME directory.
+	set env(HOME) $tmp_home
+	clean_restart
+
+	# Finally, source the file out of our new HOME directory.
+	gdb_test "source ~/source2.scm" "yes"
+    }
+}

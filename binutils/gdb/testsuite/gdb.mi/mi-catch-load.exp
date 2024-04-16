@@ -1,0 +1,88 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+load_lib mi-support.exp
+
+require allow_shlib_tests
+
+standard_testfile mi-catch-load.c
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug shlib_load}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+set testfile2 mi-catch-load-so
+set srcfile2 ${testfile2}.c
+set binfile2 [standard_output_file ${testfile2}.so]
+set binfile2_dlopen [shlib_target_file ${testfile2}.so]
+if { [gdb_compile_shlib "${srcdir}/${subdir}/${srcfile2}" ${binfile2} {debug}] != "" } {
+    untested "failed to compile shared library"
+    return -1
+}
+
+gdb_download_shlib $binfile2
+
+# test -catch-load
+with_test_prefix "catch-load" {
+    mi_clean_restart $binfile
+    mi_locate_shlib $binfile2
+    mi_runto_main
+
+    mi_gdb_test "111-gdb-set auto-solib-add on" "111\\^done" \
+		"auto-solib-add on"
+    mi_gdb_test "222-catch-load -t mi-catch-load-so.so*" \
+		"222\\^done,bkpt=\{number=\"2\",type=\"catchpoint\",disp=\"del\",enabled=\"y\",what=\"load of library matching mi-catch-load-so\.so\\*\",catch-type=\"load\",thread-groups=\\\[\"i1\"\\\],times=\"0\"\}" \
+		"catch load"
+    mi_send_resuming_command "exec-continue" "continue"
+
+    gdb_expect {
+	-re "\\*stopped.*reason=\"solib-event\".*added=.*\r\n.*\r\n$mi_gdb_prompt$" {
+	    pass "solib-event stop"
+	}
+	-re ".*$mi_gdb_prompt$" {
+	    setup_kfail mi/15945 *-*-*mingw*
+	    fail "solib-event stop"
+	}
+	timeout {
+	    fail "solib-event stop (timeout)"
+	}
+    }
+}
+
+# test -catch-unload
+with_test_prefix "catch-unload" {
+    mi_clean_restart $binfile
+    mi_locate_shlib $binfile2
+    mi_runto_main
+
+    mi_gdb_test "111-gdb-set auto-solib-add on" "111\\^done" "auto-solib-add on"
+    mi_gdb_test "222-catch-unload -t mi-catch-load-so.so*" \
+		"222\\^done,bkpt=\{number=\"2\",type=\"catchpoint\",disp=\"del\",enabled=\"y\",what=\"unload of library matching mi-catch-load-so\.so\\*\",catch-type=\"unload\",thread-groups=\\\[\"i1\"\\\],times=\"0\"\}" \
+		"catch unload"
+    mi_send_resuming_command "exec-continue" "continue"
+
+    gdb_expect {
+	-re "\\*stopped.*reason=\"solib-event\".*removed=.*\r\n.*\r\n$mi_gdb_prompt$" {
+	    pass "solib-event stop"
+	}
+	-re ".*$mi_gdb_prompt$" {
+	    setup_kfail mi/15945 *-*-*mingw*
+	    fail "solib-event stop"
+	}
+	timeout {
+	    fail "solib-event stop (timeout)"
+	}
+    }
+}

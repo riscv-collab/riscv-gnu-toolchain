@@ -1,0 +1,222 @@
+#   Copyright 1997-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# display.exp   Test display commands
+#               Also do some printing stuff for coverage's sake.
+#
+
+# The allow_hw_watchpoint_tests checks if watchpoints are supported by the
+# processor.  On PowerPC, the check runs a small test program under gdb
+# to determine if the Power processor supports HW watchpoints.  The check
+# must be done before starting the test so as to not disrupt the execution
+# of the actual test.
+
+set allow_hw_watchpoint_tests_p [allow_hw_watchpoint_tests]
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile \
+	 {debug nowarnings}]} {
+    return -1
+}
+
+# Preserve the old timeout, and set a new one that should be
+# sufficient to avoid timing out during this test.
+set oldtimeout $timeout
+set timeout [expr "$timeout + 60"]
+verbose "Timeout is now $timeout seconds" 2
+
+# use this to debug:
+#log_user 1
+
+# Some coverage stuff
+#
+if !$use_gdb_stub {
+    gdb_test "kill" ".*The program is not being run.*"
+    gdb_test "detach" ".*"
+    gdb_test "run" ".*"
+
+    gdb_load ${binfile}
+    gdb_test "kill" ".*" "kill again"
+    gdb_test "detach" ".*" "detach again"
+
+    clean_restart $binfile
+}
+
+# Ok, on to real life
+#
+if {![runto_main]} {
+    return
+}
+
+# Disable hardware watchpoints if necessary.
+if {!$allow_hw_watchpoint_tests_p} {
+    gdb_test_no_output "set can-use-hw-watchpoints 0" ""
+}
+
+set bp_location1 [gdb_get_line_number "set breakpoint 1 here"]
+gdb_test "break $bp_location1" ".*Breakpoint 2.*"           "break  do_loops"
+gdb_test "cont"     ".*Breakpoint 2, do_loops.*" "get to do_loops"
+
+# Create stopping points.
+#
+gdb_test "watch sum"    ".*\[Ww\]atchpoint 3: sum.*" "set watch"
+set bp_location2 [gdb_get_line_number "set breakpoint 2 here"]
+gdb_test "break $bp_location2"     ".*Breakpoint 4.*" "break loop end"
+
+# Create displays for those points
+#
+gdb_test "info disp" ".*There are no auto-display expressions now..*" "inf disp"
+gdb_test "disp i" ".*1: i = 0.*" "display i"
+gdb_test "disp/x j" ".*2: /x j = 0x0.*" "display j"
+gdb_test "disp/i &k" ".*3: x/i &k(\r\n|  )   $hex:.*" "display &k"
+gdb_test "disp/f f" ".*4: /f f = 3.1415*" "display/f f"
+gdb_test "disp/s &sum" ".*5: x/s &sum  $hex.*sum.:.*" "display/s &sum"
+
+# Hit the displays
+#
+gdb_test "cont" [multi_line \
+		     ".*\[Ww\]atchpoint 3: sum.*" \
+		     "\[1-9\]*: i = 0.*" \
+		     "\[1-9\]*: /x j = 0x0" \
+		     "\[1-9\]*: x/i &k.*" \
+		     "\[1-9\]*: /f f = 3.1415" \
+		     "\[1-9\]*: x/s &sum.*" \
+		    ] "first disp"
+
+gdb_test "cont" [multi_line \
+		     ".*\[Ww\]atchpoint 3: sum.*" \
+		     "\[1-9\]*: i = 0.*" \
+		     "\[1-9\]*: /x j = 0x0.*" \
+		     "\[1-9\]*: x/i &k.*" \
+		     "\[1-9\]*: /f f = 4.1415" \
+		     "\[1-9\]*: x/s &sum.*" \
+		    ] "second disp"
+
+gdb_test "enab  disp 6" ".*No display number 6..*" "catch err"
+gdb_test_no_output "disab disp 1" "disab disp 1"
+gdb_test_no_output "disab disp 2" "disab disp 2"
+gdb_test_no_output "enab disp 1"  "re-enab"
+gdb_test_no_output "enab disp 1"  "re-enab of enab"
+gdb_test_no_output "undisp 5"     "undisp"
+gdb_test "info disp" [multi_line \
+			  "Auto-display expressions now in effect.*" \
+			  ".*y  i" \
+			  ".*n  /x j" \
+			  ".*y  /1bi &k" \
+			  ".*y  /f f" \
+			 ]
+
+gdb_test "cont" [multi_line \
+		     ".*\[Ww\]atch.*" \
+		     ".*i = 0" \
+		     ".*5.1415" \
+		    ] "next hit"
+
+gdb_test "undisp" \
+    "" \
+    "undisp all" \
+    ".*Delete all auto-display expressions.*y or n. $" \
+    "y"
+
+
+# Test displaying a variable that is temporarily at a bad address.
+# But if we can examine what's at memory address 0, then we'll also be
+# able to display it without error.  Don't run the test in that case.
+set can_read_0 [is_address_zero_readable]
+
+if { !$can_read_0 } {
+    gdb_test "disp *p_i" ".*: \\*p_i = 0"
+    gdb_test "p p_i = 0x0" " = \\(int \\*\\) 0x0"
+    gdb_test "display" ".*: \\*p_i = <error: .*>" "display bad address"
+    gdb_test "p p_i = &i" " = \\(int \\*\\) $hex"
+    gdb_test "display" ".*: \\*p_i = 0" "display good address"
+
+    gdb_test "undisp" \
+	"" \
+	"undisp all again" \
+	".*Delete all auto-display expressions.*y or n. $" \
+	"y"
+}
+
+gdb_test "disab 3" ".*.*"
+gdb_test "cont" ".*Breakpoint 4.*" "watch off"
+
+# Now the printf tests
+#
+# The "finish" command may leave us mid-line in the caller on some
+# targets, including but not limited to the m68k, i386 & PA.  So we
+# have to arrange to step until we hit the line with the call to
+# "do_vars".
+gdb_test_multiple "finish" "finish" {
+    -re ".*do_loops\\(\\);.*$gdb_prompt $" {
+	send_gdb "step\n"
+	exp_continue
+    }
+    -re ".*do_vars.*$gdb_prompt $" {
+	pass "finish"
+    }
+}
+
+gdb_test "step"      ".*do_vars.*.*i = 9.*"
+set bp_location3 [gdb_get_line_number "set breakpoint 3 here"]
+gdb_test "tbreak $bp_location3" ".*breakpoint 5 a.*" "tbreak in do_vars"
+gdb_test "cont"      ".*do_vars.*$bp_location3.*$bp_location3.*"
+
+# Beat on printf a bit
+#
+gdb_test "printf" ".*Argument required.*"
+gdb_test "printf %d" ".*Bad format string, missing.*"
+gdb_test "printf \"%d" ".*Bad format string, non-terminated.*"
+gdb_test "printf \"%d%d\",i" ".*Wrong number of arguments.*"
+gdb_test "printf \"\\\\!\\a\\f\\r\\t\\v\\b\\n\"" ".*!.*"
+gdb_test_no_output "printf \"\"" "re-set term"
+gdb_test "printf \"\\w\"" ".*Unrecognized escape character.*"
+gdb_test "printf \"%d\" j" ".*Invalid argument syntax.*"
+gdb_test "printf \"%p\\n\", 0" "\\(nil\\)"
+gdb_test "printf \"%p\\n\", 1" "0x1"
+
+# play with "print", too
+#
+gdb_test "print/k j" ".*Undefined output format.*"
+gdb_test "print/d j" " = 0"   "debug test output 1"
+gdb_test "print/r j" " = 0"   "debug test output 1a"
+gdb_test "print/x j" " = 0x0" "debug test output 2"
+gdb_test "print/r j" " = 0x0" "debug test output 2a"
+gdb_test "print j"   " = 0"   "debug test output 3"
+
+# x/0 j doesn't produce any output and terminates PA64 process when testing
+gdb_test_no_output "x/0 j"
+
+# For when the test is built in C++ mode.
+gdb_test_no_output "set print asm-demangle on"
+
+gdb_test "print/0 j" ".*Item count other than 1 is meaningless.*"
+gdb_test "print/s sum" " = 1000" "ignored s"
+gdb_test "print/i sum" ".*Format letter.*is meaningless.*.*" "no i"
+gdb_test "print/a &sum" ".*= $hex.*<sum>.*"
+# If the constant below is larger than the length of main, then
+# this test will (incorrectly) fail.  So use a small number.
+gdb_test "print/a main+4" ".*= $hex.*<.*>.*"
+gdb_test "print/a \$pc" ".*= $hex.*<do_vars+.*>.*"
+gdb_test "print/a &&j" ".*A .* error in expression.*"
+
+# Done!
+#
+gdb_exit
+
+# Restore the preserved old timeout value.
+set timeout $oldtimeout
+verbose "Timeout is now $timeout seconds" 2

@@ -1,0 +1,171 @@
+# Copyright (C) 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+# Test that "signal FOO" behaves correctly when we have multiple
+# threads that have stopped for a signal.
+
+standard_testfile
+
+require {!target_info exists gdb,nosignals}
+
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" \
+	 executable { debug }] != "" } {
+    return -1
+}
+
+# Run the test proper.  SCHEDLOCK indicates which variant (around
+# scheduler-locking) of the test to perform.
+
+proc test { schedlock } {
+    global srcfile binfile
+
+    with_test_prefix "schedlock $schedlock" {
+	clean_restart ${binfile}
+
+	if {![runto_main]} {
+	    return 0
+	}
+
+	gdb_test "handle SIGUSR1 stop print pass"
+	gdb_test "handle SIGUSR2 stop print pass"
+
+	gdb_test "break all_threads_started" "Breakpoint .* at .*$srcfile.*"
+
+	# Create threads one at a time, to insure stable thread
+	# numbers between runs and targets.
+	gdb_test "break thread_function" "Breakpoint .* at .*$srcfile.*"
+	gdb_test "continue" "thread_function.*" "thread 2 created"
+	gdb_test "continue" "thread_function.*" "thread 3 created"
+
+	gdb_test "continue" "all_threads_started.*" \
+	    "continue to all_threads_started"
+
+	# Using schedlock, let the main thread queue a signal for each
+	# non-main thread.
+	gdb_test_no_output "set scheduler-locking on"
+
+	gdb_test "break all_threads_signalled" "Breakpoint .* at .*$srcfile.*"
+	gdb_test "continue" "all_threads_signalled.*" \
+	    "continue to all_threads signalled"
+
+	gdb_test "info threads" "\\\* 1\[ \t\]+Thread.*" "thread 1 selected"
+
+	# With schedlock still enabled, let each thread report its
+	# signal.
+
+	gdb_test "thread 3" "Switching to thread 3.*"
+	gdb_test "continue" "Thread 3 .*received signal SIGUSR2.*" "stop with SIGUSR2"
+	gdb_test "thread 2" "Switching to thread 2.*"
+	gdb_test "continue" "Thread 2 .*received signal SIGUSR1.*" "stop with SIGUSR1"
+
+	gdb_test "break handler_sigusr1" "Breakpoint .* at .*$srcfile.*"
+	gdb_test "break handler_sigusr2" "Breakpoint .* at .*$srcfile.*"
+
+	set handler_re "Breakpoint .*, handler_sigusr. \\(sig=.*\\) at .*"
+
+	# Now test the "signal" command with either scheduler locking
+	# enabled or disabled.
+
+	if { $schedlock == "off" } {
+	    # With scheduler locking off, switch to the main thread
+	    # and issue "signal 0".  "signal 0" should then warn that
+	    # two threads have signals that will be delivered.  When
+	    # we let the command proceed, a signal should be
+	    # delivered, and thus the corresponding breakpoint in the
+	    # signal handler should trigger.
+
+	    gdb_test_no_output "set scheduler-locking off"
+	    gdb_test "thread 1" "Switching to thread 1.*"
+
+	    set queried 0
+	    set test "signal command queries"
+	    gdb_test_multiple "signal 0" $test {
+		-re "stopped with.*stopped with.*stopped with.*Continue anyway.*y or n. $" {
+		    fail "$test (too many threads noted)"
+		    set queried 1
+		}
+		-re "stopped with signal SIGUSR.*\r\nContinuing .*still deliver .*Continue anyway.*y or n. $" {
+		    pass $test
+		    set queried 1
+		}
+		-re "Continue anyway.*y or n. $" {
+		    fail "$test (no threads noted)"
+		    set queried 1
+		}
+	    }
+
+	    # Continuing should stop in one of the signal handlers.
+	    # Which thread runs first is not determinate.
+	    if {$queried} {
+		gdb_test "y" "$handler_re" "one signal delivered"
+	    }
+
+	    # Continuing a second time should stop in the other
+	    # handler.
+	    with_test_prefix "second signal" {
+		gdb_test "continue" "$handler_re" "signal delivered"
+	    }
+	} else {
+	    # With scheduler locking on, stay with thread 2 selected,
+	    # and try to deliver its signal explicitly.  The "signal"
+	    # command should then warn that one other thread has a
+	    # signal that will be delivered.  When we let the command
+	    # proceed, the current thread's signal should be
+	    # delivered, and thus the corresponding breakpoint in the
+	    # signal handler should trigger.
+	    gdb_test "signal SIGUSR1" \
+		"Breakpoint .*, handler_sigusr1 \\(sig=.*\\) at .*" \
+		"signal command does not query, signal delivered"
+
+	    with_test_prefix "second signal" {
+		# The other thread had stopped for a signal too, and
+		# it wasn't resumed yet.  Disabling schedlock and
+		# trying "signal 0" from the main thread should warn
+		# again.
+		gdb_test_no_output "set scheduler-locking off"
+
+		set queried 0
+		set test "signal command queries"
+		gdb_test_multiple "signal 0" $test {
+		    -re "stopped with.*stopped with.*Continue anyway.*y or n. $" {
+			fail "$test (too many threads noted)"
+			set queried 1
+		    }
+		    -re "stopped with signal SIGUSR.*\r\nContinuing .*still deliver .*Continue anyway.*y or n. $" {
+			pass $test
+			set queried 1
+		    }
+		    -re "Continue anyway.*y or n. $" {
+			fail "$test (no threads noted)"
+			set queried 1
+		    }
+		}
+
+		if {$queried} {
+		    gdb_test "y" "Breakpoint .*, handler_sigusr2 \\(sig=.*\\) at .*" "signal delivered"
+		}
+	    }
+	}
+
+	# Both threads got their signal.  Continuing again should
+	# neither intercept nor deliver any other signal.
+	gdb_test "b end" "Breakpoint .* at .*$srcfile.*"
+	gdb_test "continue" "end .*" "no more signals"
+    }
+}
+
+foreach schedlock {"off" "on"} {
+    test $schedlock
+}

@@ -1,0 +1,166 @@
+# Copyright 2013-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib trace-support.exp
+
+standard_testfile actions.c
+
+require gdb_trace_common_supports_arch
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile} {debug}] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+if ![gdb_target_supports_trace] {
+    unsupported "current target does not support trace"
+    return -1
+}
+
+gdb_exit
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+mi_clean_restart $binfile
+mi_runto_main
+
+mi_gdb_test "-break-insert end" \
+    "\\^done,bkpt=\{number=\"${decimal}\",type=\"breakpoint\".*\"\}" \
+    "insert tracepoint on end"
+mi_gdb_test "-break-insert -a gdb_recursion_test" \
+    "\\^done,bkpt=\{number=\"${decimal}\",type=\"tracepoint\".*\"\}" \
+    "insert tracepoint on gdb_recursion_test"
+
+mi_gdb_test "-trace-define-variable \$tsv 1" {.*\^done} \
+    "-trace-define-variable"
+
+mi_gdb_test "-break-commands 3 \"collect gdb_char_test\" \"collect gdb_union1_test\" \"collect gdb_struct1_test.l\" \"collect gdb_arr_test\[0\]\" \"collect $${pcreg}\" \"teval \$tsv += 1\" \"collect \$tsv\" \"end\" " \
+    {\^done} "set action"
+
+mi_gdb_test "-break-insert -a gdb_c_test" \
+    "\\^done,bkpt=\{number=\"${decimal}\",type=\"tracepoint\".*\"\}" \
+    "insert tracepoint on gdb_c_test"
+
+# Define an action.
+# Collect a global variable to be sure no registers are collected
+# except PC.
+mi_gdb_test "-break-commands 4 \"collect gdb_char_test\" \"end\" " \
+    {\^done} "set action on tracepoint 4"
+
+mi_gdb_test "-trace-start" {.*\^done} "trace start"
+mi_send_resuming_command "exec-continue" "continuing to end"
+mi_expect_stop \
+    "breakpoint-hit" "end" ".*" ".*" ".*" {"" "disp=\"keep\""} \
+    "stop at end"
+mi_gdb_test "-trace-stop" {.*\^done,stop-reason=.*} "trace stop"
+
+# Save trace frames to tfile.
+set tracefile [standard_output_file ${testfile}]
+mi_gdb_test "-trace-save ${tracefile}.tf" ".*\\^done" \
+    "save tfile trace file"
+# Save trace frames to ctf.
+mi_gdb_test "-trace-save -ctf ${tracefile}.ctf" ".*\\^done" \
+    "save ctf trace file"
+
+# Test the MI command '-trace-frame-collected' with DATA_SOURCE as
+# trace data source.
+
+proc test_trace_frame_collected { data_source } {
+    global decimal hex
+    global mi_gdb_prompt
+
+    with_test_prefix "$data_source" {
+	mi_gdb_test "-trace-find frame-number 0" \
+	    ".*\\^done,found=\"1\",tracepoint=\"${decimal}\",traceframe=\"0\",frame=\{.*" \
+	    "-trace-find frame-number 0"
+
+	set reg_pattern "\{number=\"$decimal\",value=\"$hex\"\}"
+
+	# Test MI command '-trace-frame-collected' dumps only
+	# collected registers.
+
+	# While the tracepoint has no explicit action that causes
+	# collection of registers other than the PC, some
+	# architectures manage to collect or guess more than that.
+	if { [istarget "s390*-*-*"] } {
+	    # On s390 PC is a pseudo-register - collecting it also
+	    # collects the underlying PSWA register.
+	    if { "$data_source" != "tfile" } {
+		set reg_pattern "$reg_pattern,$reg_pattern"
+	    } else {
+		# For tfile, PSWM and CC are also guessed.
+		set reg_pattern "$reg_pattern,$reg_pattern,$reg_pattern,$reg_pattern"
+	    }
+	} elseif {[is_amd64_regs_target] && [is_ilp32_target]} {
+	    # x32.  While on the 64-bit ABI gdb only exposes 64-bit
+	    # $pc/$rip, on x32, GDB exposes 32-bit $eip as well, as a
+	    # pseudo-register.  Thus, collecting $pc/$rip
+	    # automatically always collects $eip as well.
+	    set reg_pattern "$reg_pattern,$reg_pattern"
+	}
+
+	mi_gdb_test "-trace-frame-collected" \
+	    "\\^done,explicit-variables=\\\[\{name=\"gdb_char_test\",value=\".*\"\}\\\],computed-expressions=\\\[\\\],registers=\\\[$reg_pattern\\\],tvars=\\\[\\\],memory=\\\[\{address=\"$hex\",length=\"1\"\}\\\]"\
+	    "-trace-frame-collected (register)"
+
+	mi_gdb_test "-trace-find frame-number 1" \
+	    ".*\\^done,found=\"1\",tracepoint=\"${decimal}\",traceframe=\"1\",frame=\{.*" \
+	    "-trace-find frame-number 1"
+
+	# Test MI command '-trace-frame-collected'
+	mi_gdb_test "-trace-frame-collected" \
+	    "\\^done,explicit-variables=\\\[\{name=\"gdb_char_test\",value=\".*\"\},\{name=\"gdb_union1_test\",value=\".*\"\}\\\],computed-expressions=\\\[\{name=\"gdb_struct1_test\.l\",.*\},\{name=\"gdb_arr_test\\\[0\\\]\",.*\}\\\],registers=\\\[.*\\\],tvars=\\\[\{name=\"\\\$tsv\",current=\"2\"\}\\\],memory=\\\[\{address=\"$hex\",length=\"1\"\},.*\\\]"\
+	    "-trace-frame-collected"
+	mi_gdb_test "-trace-frame-collected --var-print-values 2 --comp-print-values --simple-values --registers-format x --memory-contents" \
+	    "\\^done,explicit-variables=\\\[\{name=\"gdb_char_test\",type=\"char\",value=\".*\"\},\{name=\"gdb_union1_test\",type=\"union GDB_UNION_TEST\"\}\\\],computed-expressions=\\\[.*\\\],registers=\\\[.*\\\],tvars=\\\[\{name=\"\\\$tsv\",current=\"2\"\}\\\],memory=\\\[\{address=\"$hex\",length=\"1\",contents=\".*\"\},.*\\\]" \
+	    "-trace-frame-collected --var-print-values 2 --comp-print-values --simple-values --registers-format x --memory-contents"
+
+	mi_gdb_test "-trace-find none" ".*\\^done,found=\"0\".*" \
+	    "-trace-find none"
+    }
+}
+
+test_trace_frame_collected "live"
+
+# Change target to ctf if GDB supports it.
+set msg "-target-select ctf"
+send_gdb "-target-select ctf ${tracefile}.ctf\n"
+gdb_expect {
+    -re ".*\\^connected.*${mi_gdb_prompt}$" {
+	# GDB supports ctf, do the test.
+	test_trace_frame_collected "ctf"
+    }
+    -re ".*\\^error,msg=\"Undefined target command.*${mi_gdb_prompt}$" {
+	# GDB doesn't support ctf, skip the test.
+	unsupported "gdb does not support ctf target"
+    }
+    -re ".*$mi_gdb_prompt$" {
+	fail "$msg"
+    }
+    timeout {
+	fail "$msg (timeout)"
+    }
+}
+
+# Change target to tfile.
+mi_gdb_test "-target-select tfile ${tracefile}.tf" ".*\\^connected.*" \
+    "-target-select tfile"
+test_trace_frame_collected "tfile"
+
+mi_gdb_exit

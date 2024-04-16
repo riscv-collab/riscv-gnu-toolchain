@@ -1,0 +1,122 @@
+# Copyright 2006-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require allow_cplus_tests
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+standard_testfile .cc
+
+if {[gdb_compile $srcdir/$subdir/$srcfile $binfile executable {debug c++}] != ""} {
+  untested "failed to compile"
+  return -1
+}
+
+if {[mi_clean_restart $binfile]} {
+    return
+}
+
+mi_prepare_inline_tests $srcfile
+
+set inline_tests {
+    reference_update
+    base_in_reference
+    reference_to_pointer
+    reference_to_struct
+    path_expression
+}
+
+foreach_with_prefix inline_test $inline_tests {
+    if { [mi_run_inline_test $inline_test] < 0 } {
+	return -1
+    }
+}
+
+set lineno [gdb_get_line_number "/* anonymous_structs_and_unions */"]
+mi_create_breakpoint "$srcfile:$lineno" \
+    "break in anonymous_structs_and_unions" \
+    -func {anonymous_structs_and_unions\(\)} -file ".*mi-var-cp.cc" \
+    -line $lineno
+mi_execute_to "exec-continue" "breakpoint-hit" \
+    "anonymous_structs_and_unions" "" ".*" ".*" {"" "disp=\"keep\""} \
+    "continue to anonymous_structs breakpoint"
+
+set tree {
+  Anonymous a {
+    {} public {
+      anonymous struct {
+        {} public {
+          int b {}
+        }
+      }
+      anonymous struct {
+        {} public {
+          int c {}
+        }
+      }
+      anonymous struct {
+        {} public {
+          int d {}
+          anonymous struct {
+            {} public {
+              int e {}
+              anonymous struct {
+                {} public {
+                  int f {}
+                  anonymous union {
+                    {} public {
+                      int g {}
+                      char h {}
+                    }
+                  }
+                }
+              }
+	      anonymous union {
+		{} public {
+		  int i {}
+		  char j {}
+		}
+	      }
+	    }
+	  }
+	}
+      }
+    }
+  }
+}
+
+proc verify_everything {variable_name} {
+  # Test -var-list-children
+  mi_varobj_tree_test_children_callback $variable_name
+
+  # Bring the variable named by VARIABLE_NAME into the current scope
+  # in VAROBJ.
+  upvar #0 $variable_name varobj
+
+  # Test -var-info-path-expression
+  mi_gdb_test "-var-info-path-expression $varobj(obj_name)" \
+      "\\^done,path_expr=\"[string_to_regexp $varobj(path_expr)]\"" \
+      "path expression for $varobj(obj_name)"
+
+  # Test -var-info-expression
+  mi_gdb_test "-var-info-expression $varobj(obj_name)" \
+      "\\^done,lang=\"C\\+\\+\",exp=\"[string_to_regexp $varobj(display_name)]\"" \
+      "expression for $varobj(obj_name)"
+}
+
+mi_walk_varobj_tree c++ $tree verify_everything
+
+mi_gdb_exit

@@ -1,0 +1,127 @@
+# Copyright 2016-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Regression test for PR 20494 (User input stops being echoed in CLI).
+# Before that bug was fixed, starting an inferior in a non-main UI
+# would result in GDB saving readline's prepped terminal state as
+# gdb's "own" terminal state (i.e., target_terminal_ours state),
+# resulting in subsequent synchronous execution commands in the main
+# UI disabling input echo.
+
+standard_testfile
+
+set compile_options "debug"
+if {[build_executable $testfile.exp $testfile ${srcfile} ${compile_options}] == -1} {
+    untested "failed to compile"
+    return -1
+}
+
+# Start gdb and create an extra console UI.  Start the inferior in the
+# DRIVER console (either "main" or "extra"), and then enter a
+# synchronous execution command in the extra console.  Before PR 20494
+# was fixed, if DRIVER was a secondary UI, GDB would lose input echo
+# on the main UI after the synchronous execution command.  We test
+# with both main and extra UIs as driver consoles for completeness.
+
+proc echo_test {driver} {
+    global srcfile testfile
+    global gdb_prompt
+    global gdb_spawn_id
+    global gdb_main_spawn_id extra_spawn_id
+    global decimal
+
+    clean_restart $testfile
+
+    # Save the main UI's spawn ID.
+    set gdb_main_spawn_id $gdb_spawn_id
+
+    # Create the new PTY for the secondary console UI.
+    spawn -pty
+    set extra_spawn_id $spawn_id
+    set extra_tty_name $spawn_out(slave,name)
+    gdb_test_multiple "new-ui console $extra_tty_name" "new-ui" {
+	-re "New UI allocated\r\n$gdb_prompt $" {
+	}
+    }
+
+    with_spawn_id $extra_spawn_id {
+	set test "initial prompt on extra console"
+	gdb_test_multiple "" $test {
+	    -re "$gdb_prompt $" {
+		pass $test
+	    }
+	}
+    }
+
+    set main_console [list $gdb_main_spawn_id "main console"]
+    set extra_console [list $extra_spawn_id "extra console"]
+
+    if {$driver == "main"} {
+	set con1 $main_console
+	set con2 $extra_console
+    } else {
+	set con1 $extra_console
+	set con2 $main_console
+    }
+
+    set con1_spawn_id [lindex $con1 0]
+    set con2_spawn_id [lindex $con2 0]
+    set con1_name [lindex $con1 1]
+    set con2_name [lindex $con2 1]
+
+    set bp_lineno [gdb_get_line_number "set break $con1_name here"]
+
+    with_spawn_id $con1_spawn_id {
+	gdb_test "break $srcfile:$bp_lineno" \
+	    "Breakpoint $decimal .*$srcfile, line $bp_lineno\\." \
+	    "set breakpoint using $con1_name"
+	gdb_run_cmd
+	gdb_test "" "set break $con1_name here .*" "run to breakpoint on $con1_name"
+    }
+
+    with_spawn_id $con2_spawn_id {
+	set test "breakpoint hit reported on $con2_name too"
+	gdb_test_multiple "" $test {
+	    -re "Breakpoint $decimal, .* set break $con1_name here " {
+		pass $test
+	    }
+	}
+	gdb_test "next" "global = 1;" "next on $con2_name"
+    }
+
+    # Ensure echo remains enabled in both consoles.
+    with_spawn_id $con1_spawn_id {
+	gdb_test "print 1" "\\\$1 = 1" "print on $con1_name echoes"
+    }
+    with_spawn_id $con2_spawn_id {
+	gdb_test "print 2" "\\\$2 = 2" "print on $con2_name echoes"
+    }
+}
+
+# The test driver.
+
+proc test_driver {} {
+
+    with_test_prefix "extra console as driver" {
+	echo_test "extra"
+    }
+
+    with_test_prefix "main console as driver" {
+	echo_test "main"
+    }
+
+}
+
+test_driver

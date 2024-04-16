@@ -1,0 +1,34 @@
+# Five bit immediate must be an absolute value in range [0, 31]
+target:
+	cv.addn t4,t2,t0,-1
+	cv.addun t4,t2,t0,-1
+	cv.addrn t6,t0,t3,-1
+	cv.addurn t6,t0,t3,-1
+	cv.subn t6,t0,t3,-1
+	cv.subun t6,t0,t3,-1
+	cv.subrn t6,t0,t3,-1
+	cv.suburn t6,t0,t3,-1
+	cv.addn t4,t2,t0,-34
+	cv.addun t4,t2,t0,-3556
+	cv.addrn t6,t0,t3,-212
+	cv.addurn t6,t0,t3,-6584
+	cv.subn t6,t0,t3,-89
+	cv.subun t6,t0,t3,-9034
+	cv.subrn t6,t0,t3,-234
+	cv.suburn t6,t0,t3,-284
+	cv.addn t4,t2,t0,32
+	cv.addun t4,t2,t0,32
+	cv.addrn t6,t0,t3,32
+	cv.addurn t6,t0,t3,32
+	cv.subn t6,t0,t3,32
+	cv.subun t6,t0,t3,32
+	cv.subrn t6,t0,t3,32
+	cv.suburn t6,t0,t3,32
+	cv.addn t4,t2,t0,320
+	cv.addun t4,t2,t0,34534
+	cv.addrn t6,t0,t3,254
+	cv.addurn t6,t0,t3,398
+	cv.subn t6,t0,t3,89
+	cv.subun t6,t0,t3,3489
+	cv.subrn t6,t0,t3,143
+	cv.suburn t6,t0,t3,234

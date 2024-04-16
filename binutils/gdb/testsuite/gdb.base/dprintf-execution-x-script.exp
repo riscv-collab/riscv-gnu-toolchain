@@ -1,0 +1,104 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+# Test that commands in a GDB script file run via GDB's -x flag work
+# as expected.  Specifically, the script creates a dprintf breakpoint
+# as well as a normal breakpoint that has "continue" in its command
+# list, and then does "run".  Correct output from GDB is checked as
+# part of this test.
+
+# Bail out if the target can't use the 'run' command.
+require target_can_use_run_cmd
+
+standard_testfile
+
+if {[build_executable "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+# This is the name of the GDB script to load.
+set x_file ${srcdir}/${subdir}/$testfile.gdb
+
+# Create context in which the global, GDBFLAGS, will be restored at
+# the end of the block.  All commands run within the block are
+# actually run in the outer context.  (This is why 'res' is available
+# outside of the save_vars block.)
+save_vars { GDBFLAGS } {
+    # Set flags with which to start GDB.
+    append GDBFLAGS " -ex \"set height unlimited\""
+    append GDBFLAGS " -x \"$x_file\""
+    append GDBFLAGS " --args \"$binfile\""
+
+    # Start GDB with above flags.
+    set res [gdb_spawn]
+}
+
+set test "load and run script with -x"
+if { $res != 0} {
+    fail $test
+    return -1
+}
+
+# The script loaded via -x contains a run command; while running, GDB
+# is expected to print three messages from dprintf breakpoints along
+# with three interspersed messages from an ordinary breakpoint (which
+# was set up with a continue command).  Set up pattern D to match
+# output from hitting the dprintf breakpoint and B for the ordinary
+# breakpoint.  Then set PAT to contain the entire pattern of expected
+# output from the interspersed dprintf and ordinary breakpoints along
+# with some (additional) expected output from the dprintf breakpoints,
+# i.e. 0, 1, and 2.
+set d "dprintf in increment.., vi="
+set b "Breakpoint ., inc_vi"
+set pat "${d}0.*?$b.*?${d}1.*?$b.*?${d}2.*?$b.*?"
+
+proc do_test {cmd test} {
+    gdb_test_multiple $cmd $test {
+	-re "$::pat$::inferior_exited_re normally.*$::gdb_prompt $" {
+	    pass $test
+	}
+	-re "Don't know how to run.*$::gdb_prompt $" {
+	    # Even though we bailed out at the beginning of this test case
+	    # for targets which can't use the "run" command, there are
+	    # still targets, e.g. native-extended-gdbserver, which can
+	    # run, but will still print the "Don't know how to run"
+	    # message.  In the case of native-extended-gdbserver, it would
+	    # first need to connect to the target in order to run.  For
+	    # that particular target, the very first test which attempts
+	    # to use the "run" command from a command line script is
+	    # the one that is unsupported.  The other two tests will
+	    # pass because, after reaching the (gdb) prompt, a gdbserver
+	    # is spawned and then connected to.  (The command line which
+	    # spawns GDB for this target has a "-iex set
+	    # auto-connect-native-target off" which prevents it from
+	    # attempting to "run" using the native target.)
+	    unsupported $test
+	}
+    }
+}
+
+# Check output from running script with -x
+do_test "" $test
+
+# Restart GDB and 'source' the script; this will (still) run the program
+# due to the 'run' command in the script.
+clean_restart $binfile
+do_test "source $x_file" "load and run script using source command"
+
+# This should leave us at the gdb prompt; Run program again using
+# already established breakpoints, i.e. those loaded from the
+# script.  Prior to fixing PR 28308, this was the only test that
+# would pass.
+do_test "run" "run again"

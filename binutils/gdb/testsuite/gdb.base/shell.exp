@@ -1,0 +1,197 @@
+# Copyright 2011-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that the "shell", "!", "|" and "pipe" commands work.
+
+load_lib completion-support.exp
+
+gdb_exit
+gdb_start
+
+gdb_test "shell echo foo" "foo"
+
+gdb_test "! echo foo" "foo"
+gdb_test "!echo foo" "foo"
+
+# Convenience variables with shell command.
+gdb_test_no_output "! exit 0"
+gdb_test "p \$_shell_exitcode" " = 0" "shell success exitcode"
+gdb_test "p \$_shell_exitsignal" " = void" "shell success exitsignal"
+
+gdb_test_no_output "! exit 1"
+gdb_test "p \$_shell_exitcode" " = 1" "shell fail exitcode"
+gdb_test "p \$_shell_exitsignal" " = void" "shell fail exitsignal"
+
+# This test will not work when the shell is CMD.EXE.
+if { ! [ishost *-*-mingw*] } {
+    gdb_test_no_output "! kill -2 $$"
+    gdb_test "p \$_shell_exitcode" " = void" "shell interrupt exitcode"
+    gdb_test "p \$_shell_exitsignal" " = 2" "shell interrupt exitsignal"
+}
+
+# Test the $_shell convenience function.
+
+with_test_prefix "\$_shell convenience function" {
+    # Simple commands, check the result code.
+    gdb_test "p \$_shell(\"true\")" " = 0"
+    gdb_test "p \$_shell(\"false\")" " = 1"
+
+    # Test command with arguments.
+    gdb_test "p \$_shell(\"echo foo\")" "foo\r\n\\$${decimal} = 0"
+
+    # Check the type of the result.
+    gdb_test "ptype \$_shell(\"true\")" "type = int"
+
+    # Test passing a non-literal string as command name.
+    gdb_test "p \$cmd = \"echo bar\"" " = \"echo bar\""
+    gdb_test "p \$_shell(\$cmd)" "bar\r\n\\$${decimal} = 0"
+
+    # Test executing a non-existing command.  The result is
+    # shell-dependent, but most (all?) POSIX-like shells return 127 in
+    # this case.
+    gdb_test "p \$_shell(\"non-existing-command-foo-bar-qux\")" " = 127"
+
+    gdb_test "p \$_shell" \
+	" = <internal function _shell>"
+    gdb_test "ptype \$_shell" \
+	"type = <internal function>"
+
+    # Test error scenarios.
+    gdb_test "p \$_shell()" \
+	"You must provide one argument for \\\$_shell\\\."
+    gdb_test "p \$_shell(\"a\", \"b\")" \
+	"You must provide one argument for \\\$_shell\\\."
+    gdb_test "p \$_shell(1)" \
+	"Argument must be a string\\\."
+}
+
+# Define the user command "foo", used to test "pipe" command.
+gdb_test_multiple "define foo" "define foo" {
+    -re "End with"  {
+	pass "define foo"
+    }
+}
+gdb_test \
+    [multi_line_input \
+	 { echo coucou\n }\
+	 { echo truc\n }\
+	 { echo machin\n }\
+	 { if $argc > 0 }\
+	 { echo $arg0\n}\
+	 {end}\
+	 {end}] \
+    "" \
+    "enter commands"
+
+
+gdb_test "pipe foo | wc -l" "3" "simple pipe"
+gdb_test "pipe foo brol| wc -l" "4" "simple pipe with arg"
+gdb_test "pipe foo truc2 | grep truc | wc -l" "2" "double pipe"
+
+gdb_test "| foo truc2 | grep truc | wc -l" "2" "double pipe, pipe char"
+gdb_test "|foo|grep truc|wc -l" "1" "no space around pipe char"
+
+gdb_test "echo coucou\\n" "coucou" "echo coucou"
+gdb_test "||wc -l" "1" "repeat previous command"
+
+gdb_test "| -d ! echo this contains a | character\\n ! sed -e \"s/|/PIPE/\"" \
+    "this contains a PIPE character" "alternate 1char delim"
+
+gdb_test "|-d ! echo this contains a | character\\n!sed -e \"s/|/PIPE/\"" \
+    "this contains a PIPE character" "alternate 1char delim, no space"
+
+gdb_test "| -d !!! echo this contains a | character\\n !!! sed -e \"s/|/PIPE/\"" \
+    "this contains a PIPE character" "alternate 3char delim"
+
+gdb_test "|-d !!! echo this contains a | character\\n!!!sed -e \"s/|/PIPE/\"" \
+    "this contains a PIPE character" "alternate 3char delim, no space"
+
+# Convenience variables with pipe command.
+gdb_test "|p 123| exit 0" ""
+gdb_test "p \$_shell_exitcode" " = 0" "pipe success exitcode"
+gdb_test "p \$_shell_exitsignal" " = void" "pipe success exitsignal"
+
+gdb_test "|p 123| exit 1" ""
+gdb_test "p \$_shell_exitcode" " = 1" "pipe fail exitcode"
+gdb_test "p \$_shell_exitsignal" " = void" "pipe fail exitsignal"
+
+# This test will not work when the shell is CMD.EXE.
+if { ! [ishost *-*-mingw*] } {
+    gdb_test "|p 123| kill -2 $$" ""
+    gdb_test "p \$_shell_exitcode" " = void" "pipe interrupt exitcode"
+    gdb_test "p \$_shell_exitsignal" " = 2" "pipe interrupt exitsignal"
+}
+
+# Error handling verifications.
+gdb_test "|" "Missing COMMAND" "all missing"
+gdb_test "|-d" "-d requires an argument" "-d value missing"
+gdb_test "|-d    " "-d requires an argument" "-d spaces value missing"
+gdb_test "| echo coucou" \
+    "Missing delimiter before SHELL_COMMAND" \
+    "| delimiter missing"
+gdb_test "|-d DELIM echo coucou" \
+    "Missing delimiter before SHELL_COMMAND" \
+    "DELIM delimiter missing"
+gdb_test "|echo coucou|" \
+    "Missing SHELL_COMMAND" \
+    "SHELL_COMMAND missing"
+gdb_test "|-d ! echo coucou !" \
+    "Missing SHELL_COMMAND" \
+    "SHELL_COMMAND missing with delimiter"
+gdb_test "|-d! echo coucou ! wc" \
+    "Missing delimiter before SHELL_COMMAND" \
+    "delimiter missing due to missing space"
+
+# Completion tests.
+
+test_gdb_complete_unique \
+    "pipe" \
+    "pipe"
+
+# Note that unlike "pipe", "|" doesn't require a space.  This checks
+# that completion behaves that way too.
+foreach cmd {"pipe " "| " "|"} {
+    test_gdb_completion_offers_commands "$cmd"
+
+    # There's only one option.
+    test_gdb_complete_unique \
+	"${cmd}-" \
+	"${cmd}-d"
+
+    # Cannot complete "-d"'s argument.
+    test_gdb_complete_none "${cmd}-d "
+    test_gdb_complete_none "${cmd}-d main"
+
+    # Check completing a GDB command, with and without -d.
+    test_gdb_complete_unique \
+	"${cmd}maint set test-se" \
+	"${cmd}maint set test-settings"
+    test_gdb_complete_unique \
+	"${cmd}-d XXX maint set test-se" \
+	"${cmd}-d XXX maint set test-settings"
+
+    # Check that GDB doesn't try to complete the shell command.
+    test_gdb_complete_none \
+	"${cmd}print 1 | "
+
+    # Same, while making sure that the completer understands "-d".
+    test_gdb_complete_unique \
+	"${cmd}-d XXX maint set" \
+	"${cmd}-d XXX maint set"
+    test_gdb_complete_none \
+	"${cmd}-d set maint set"
+    test_gdb_complete_none \
+	"${cmd}-d set maint set "
+}

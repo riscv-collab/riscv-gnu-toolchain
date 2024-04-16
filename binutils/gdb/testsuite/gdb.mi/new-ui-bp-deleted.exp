@@ -1,0 +1,108 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check for the delivery of '=breakpoint-deleted' notifications when
+# breakpoints are deleted.  Right now this test only covers
+# inferior-specific breakpoints, but it could be extended to cover
+# other cases too.
+
+# Multiple inferiors are needed, therefore only native gdb and
+# extended gdbserver modes are supported.
+require !use_gdb_stub
+
+# Separate UI doesn't work with GDB debug.
+require !gdb_debug_enabled
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+standard_testfile
+
+if { [build_executable "failed to prepare" $testfile $srcfile] } {
+    return -1
+}
+
+# Helper proc to create a breakpoint location regexp.  NUM is the
+# regexp to match the number field of this location.
+proc make_bp_loc { num } {
+    return [mi_make_breakpoint_loc \
+		-number "$num" \
+		-enabled "y" \
+		-func "foo" \
+		-inferior "2"]
+}
+
+foreach_mi_ui_mode mode {
+    mi_gdb_exit
+
+    if {$mode eq "separate"} {
+	set start_ops "separate-mi-tty"
+    } else {
+	set start_ops ""
+    }
+
+    if [mi_gdb_start $start_ops] {
+	return
+    }
+
+    # Load a test binary into inferior 1.
+    mi_gdb_load ${binfile}
+
+    # Setup inferior 2, including loading an exec file.
+    mi_gdb_test "-add-inferior" \
+	[multi_line "=thread-group-added,id=\"\[^\"\]+\"" \
+	     "~\"\\\[New inferior 2\\\]\\\\n\"" \
+	     "\~\"Added inferior 2\[^\r\n\]*\\\\n\"" \
+	     "\\^done,inferior=\"\[^\"\]+\"(?:,connection={.*})?" ] \
+	"mi add inferior 2"
+    mi_gdb_test "-file-exec-and-symbols --thread-group i2 $::binfile" \
+	"\\^done" \
+	"set executable of inferior 2"
+
+    # Build regexp for the two locations.
+    set loc1 [make_bp_loc "$::decimal\\.1"]
+    set loc2 [make_bp_loc "$::decimal\\.2"]
+
+    # Create the inferior-specific breakpoint.
+    mi_create_breakpoint_multi "-g i2 foo" "create breakpoint in inferior 2" \
+	-inferior "2" -locations "\\\[$loc1,$loc2\\\]"
+    set bpnum [mi_get_valueof "/d" "\$bpnum" "INVALID"]
+
+    if {$mode eq "separate"} {
+	# In 'separate' mode we delete the inferior from the CLI, and
+	# then look for the breakpoint-deleted notification on the MI.
+	with_spawn_id $gdb_main_spawn_id {
+	    gdb_test "inferior 1" ".*"
+	    gdb_test "remove-inferiors 2" \
+		"Inferior-specific breakpoint $bpnum deleted - inferior 2 has been removed\\."
+	}
+
+	gdb_test_multiple "" "check for b/p deleted notification on MI" {
+	    -re "=breakpoint-deleted,id=\"$bpnum\"" {
+		pass $gdb_test_name
+	    }
+	}
+    } else {
+	# In the non-separate mode we delete the inferior from the MI
+	# and expect to immediately see a breakpoint-deleted
+	# notification.
+	mi_gdb_test "-remove-inferior i2" \
+	    [multi_line \
+		 "=thread-group-removed,id=\"i2\"" \
+		 "~\"Inferior-specific breakpoint $bpnum deleted - inferior 2 has been removed\\.\\\\n\"" \
+		 "=breakpoint-deleted,id=\"$bpnum\"" \
+		 "\\^done"]
+    }
+}

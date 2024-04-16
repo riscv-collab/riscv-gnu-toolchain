@@ -1,0 +1,187 @@
+# Copyright (C) 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# A collection of tests related to pagination resulting from running
+# execution commands directly from the command line, with "-ex".
+
+standard_testfile
+
+if {[build_executable "failed to prepare" $testfile $srcfile debug] == -1} {
+    return -1
+}
+
+set file_arg $binfile
+if [is_remote host] {
+  set file_arg [remote_download host $file_arg]
+}
+
+global GDBFLAGS
+set saved_gdbflags $GDBFLAGS
+
+# Returns true if the board can 'gdb -ex "start"', false otherwise.
+
+proc probe_can_run_cmdline  {} {
+    global srcfile file_arg
+    global saved_gdbflags GDBFLAGS
+    global gdb_prompt
+
+    set GDBFLAGS $saved_gdbflags
+    append GDBFLAGS " -ex \"set height 0\""
+    append GDBFLAGS " -ex \"start\""
+    append GDBFLAGS " --args \"$file_arg\""
+
+    with_test_prefix "probe support" {
+	set test "run to main"
+
+	gdb_exit
+	set res [gdb_spawn]
+	if { $res != 0} {
+	    fail $test
+	    return -1
+	}
+
+	set res -1
+	gdb_test_multiple "" $test {
+	    -re "main .* at .*$srcfile.*$gdb_prompt $" {
+		set res 1
+		pass $test
+	    }
+	    -re "Don't know how to run.*$gdb_prompt $" {
+		set res 0
+		unsupported $test
+	    }
+	}
+
+	# In case the board file wants to send further commands.
+	gdb_test_no_output "set height unlimited"
+	return $res
+    }
+}
+
+# Check that we handle pagination correctly when it triggers due to an
+# execution command entered directly on the command line.
+
+proc test_fg_execution_pagination_return {} {
+    global file_arg
+    global saved_gdbflags GDBFLAGS
+    global gdb_prompt pagination_prompt
+
+    set GDBFLAGS $saved_gdbflags
+    append GDBFLAGS " -ex \"set height 2\""
+    append GDBFLAGS " -ex \"start\""
+    append GDBFLAGS " --args \"$file_arg\""
+
+    with_test_prefix "return" {
+	set test "run to pagination"
+
+	gdb_exit
+	set res [gdb_spawn]
+	if { $res != 0} {
+	    fail $test
+	    return $res
+	}
+	gdb_test_multiple "" $test {
+	    -re "$pagination_prompt$" {
+		pass $test
+	    }
+	    -re "$gdb_prompt $" {
+		fail $test
+	    }
+	}
+
+	send_gdb "\n"
+
+	set saw_pagination_prompt 0
+	set test "send \\n to GDB"
+	gdb_test_multiple "" $test {
+	    -re "$pagination_prompt$" {
+		set saw_pagination_prompt 1
+		send_gdb "\n"
+		exp_continue
+	    }
+	    -re "$gdb_prompt $" {
+		gdb_assert $saw_pagination_prompt $test
+	    }
+	}
+
+	gdb_test "p 1" " = 1" "GDB accepts further input"
+
+	# In case the board file wants to send further commands.
+	gdb_test_no_output "set height unlimited"
+    }
+}
+
+# Check that we handle canceling pagination correctly when it triggers
+# due to an execution command entered directly on the command line.
+
+proc test_fg_execution_pagination_cancel { how } {
+    global file_arg
+    global saved_gdbflags GDBFLAGS
+    global gdb_prompt pagination_prompt
+
+    set GDBFLAGS $saved_gdbflags
+
+    append GDBFLAGS " -ex \"set height 2\""
+    append GDBFLAGS " -ex \"start\""
+    append GDBFLAGS " --args \"$file_arg\""
+
+    with_test_prefix "cancel with $how" {
+	set test "run to pagination"
+
+	gdb_exit
+	set res [gdb_spawn]
+	if { $res != 0} {
+	    fail $test
+	    return $res
+	}
+	gdb_test_multiple "" $test {
+	    -re "$pagination_prompt$" {
+		pass $test
+	    }
+	}
+
+	set test "cancel pagination"
+	if { $how == "ctrl-c" } {
+	    send_gdb "\003"
+	} else {
+	    send_gdb "q\n"
+
+	}
+	gdb_test_multiple "" $test {
+	    -re "Quit\r\n$gdb_prompt $" {
+		pass $test
+	    }
+	}
+
+	gdb_test "p 1" " = 1" "GDB accepts further input"
+
+	# In case the board file wants to send further commands.
+	gdb_test_no_output "set height unlimited"
+    }
+}
+
+save_vars { INTERNAL_GDBFLAGS } {
+    set INTERNAL_GDBFLAGS [string map {"-q" ""} $INTERNAL_GDBFLAGS]
+
+    if {[probe_can_run_cmdline] > 0} {
+	test_fg_execution_pagination_return
+	if ![target_info exists gdb,nointerrupts] {
+	    test_fg_execution_pagination_cancel "ctrl-c"
+	}
+	test_fg_execution_pagination_cancel "quit"
+    }
+}
+
+set GDBFLAGS $saved_gdbflags

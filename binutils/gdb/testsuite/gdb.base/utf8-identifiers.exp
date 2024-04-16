@@ -1,0 +1,90 @@
+# -*- coding: utf-8 -*- */
+
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test GDB's support for UTF-8 C/C++ identifiers.
+
+load_lib completion-support.exp
+
+if { [is_c_compiler_gcc] } {
+    # Gcc fully supports fextended-identifiers starting GCC 5.
+    require {expr [gcc_major_version] >= 5}
+}
+require {have_host_locale C.UTF-8}
+
+standard_testfile
+
+# Enable basic use of UTF-8.  LC_ALL gets reset for each testfile.
+setenv LC_ALL C.UTF-8
+
+if { [prepare_for_testing "failed to prepare" ${testfile} [list $srcfile]] } {
+    return -1
+}
+
+if ![runto done] {
+    return
+}
+
+# Test expressions.
+gdb_test "print g_s.num_€" " = 1000"
+gdb_test "print num_€" " = 2000"
+
+# Test linespecs/breakpoints.
+gdb_test "break função2" "Breakpoint $decimal at .*$srcfile.*"
+
+set test "info breakpoints"
+gdb_test_multiple $test $test {
+    -re "in função2 at .*$srcfile.*$gdb_prompt $" {
+	pass $test
+    }
+}
+
+gdb_test "continue" \
+    "Breakpoint $decimal, função2 \\(\\) at .*$srcfile.*"
+
+# Unload symbols from shared libraries to avoid random symbol and file
+# names getting in the way of completion.
+gdb_test_no_output "nosharedlibrary"
+
+# Tests below are about tab-completion, which doesn't work if readline
+# library isn't used.  Check it first.
+
+if { ![readline_is_used] } {
+    untested "no tab completion support without readline"
+    return -1
+}
+
+# Test linespec completion.
+
+# A unique completion.
+test_gdb_complete_unique "break my_fun" "break my_função"
+
+# A multiple-matches completion:
+
+# kfailed because gdb/readline display the completion match list like
+# this, with no separating space:
+#
+#  (gdb) break função[TAB]
+#  função1função2
+#
+# ... which is bogus.
+setup_kfail "gdb/23211" "*-*-*"
+test_gdb_complete_multiple "break " "fun" "ção" {"função1" "função2"}
+
+# Test expression completion.
+test_gdb_complete_unique "print g_s.num" "print g_s.num_€"

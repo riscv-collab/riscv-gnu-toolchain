@@ -1,0 +1,111 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This tests some non-standard DWARF spotted in an Intel C Compiler
+# generated binary.
+#
+# The DWARF standard (V5 3.3.2) says that a void C function should not
+# have a DW_AT_type attribute, however, an ICC compiled binary was
+# found to have a DW_AT_type that referenced a signed integer type, of
+# size 0, with the name 'void'.
+#
+# This 'void' integer type would cause GDB to crash in some cases, one
+# that was seen was when using 'finish' to leave the void function.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+standard_testfile .c .S
+
+# Make some DWARF for the test.
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    global srcfile
+
+    cu {} {
+	DW_TAG_compile_unit {
+	        {DW_AT_producer "Intel(R) C Intel(R) 64 Compiler XE for applications running on Intel(R) 64, Version 14.0.5.212 Build 20150212"}
+                {DW_AT_language @DW_LANG_C}
+                {DW_AT_name     $srcfile}
+                {DW_AT_comp_dir /tmp}
+        } {
+	    declare_labels int_type void_type ptr_type
+
+	    int_type: DW_TAG_base_type {
+		{DW_AT_byte_size 4 DW_FORM_sdata}
+		{DW_AT_encoding  @DW_ATE_signed}
+		{DW_AT_name      int}
+	    }
+
+	    void_type: DW_TAG_base_type {
+		{DW_AT_byte_size 0 DW_FORM_sdata}
+		{DW_AT_encoding  @DW_ATE_signed}
+		{DW_AT_name      void}
+	    }
+
+	    ptr_type: DW_TAG_pointer_type {
+		{DW_AT_type :$void_type}
+	    }
+
+            DW_TAG_subprogram {
+		{MACRO_AT_func {func}}
+                {type :$void_type}
+	    }
+            DW_TAG_subprogram {
+		{MACRO_AT_func {main}}
+                {type :$int_type}
+	    }
+
+	    DW_TAG_variable {
+		{DW_AT_name "var_a"}
+		{DW_AT_type :$int_type}
+		{DW_AT_external 1 DW_FORM_flag}
+		{DW_AT_location {DW_OP_addr [gdb_target_symbol "var_a"]} SPECIAL_expr}
+	    }
+
+	    DW_TAG_variable {
+		{DW_AT_name "var_ptr"}
+		{DW_AT_type :$ptr_type}
+		{DW_AT_external 1 DW_FORM_flag}
+		{DW_AT_location {DW_OP_addr [gdb_target_symbol "var_ptr"]} SPECIAL_expr}
+	    }
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	  [list $srcfile $asm_file] {nodebug}] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+# Place a breakpoint in 'func' and continue to there.
+gdb_breakpoint func
+gdb_continue_to_breakpoint "func"
+
+# Check how GDB handles the void* variable.
+gdb_test "p *var_ptr" "Attempt to dereference a generic pointer." \
+    "check that dereferencing a void* gives a suitable message"
+
+# Now finish, returning to main.
+gdb_test "finish" [multi_line \
+		       "Run till exit from #0  $hex in func \\\(\\\)" \
+		       "$hex in main \\\(\\\)"] \
+    "check that finish completes"

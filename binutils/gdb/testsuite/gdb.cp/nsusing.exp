@@ -1,0 +1,157 @@
+# Copyright 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile .cc
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile {debug c++}]} {
+    return -1
+}
+
+############################################
+# Test printing of namespace imported within the function.
+
+if {![runto_main]} {
+    continue
+}
+
+gdb_test "print _a" "= 1"
+
+############################################
+# Test printing of namespace imported into a scope containing the pc.
+
+gdb_breakpoint [gdb_get_line_number "marker1 stop"]
+gdb_continue_to_breakpoint "marker1 stop"
+
+gdb_test "print _a" "= 1" "print _a in a nested scope"
+
+############################################
+# Test printing of namespace aliases.
+
+gdb_breakpoint marker2
+gdb_continue_to_breakpoint "marker2"
+
+gdb_test "print B::_a" "= 1"
+
+gdb_test "print _a" "No symbol \"_a\" in current context." \
+    "print _a in namespace alias scope"
+
+gdb_test "print x" "No symbol \"x\" in current context." \
+    "print x in namespace alias scope"
+
+############################################
+# Test that names are not printed when they
+# are not imported.
+
+gdb_breakpoint marker3
+gdb_continue_to_breakpoint "marker3"
+
+# gcc-4-3 puts import statements for aliases in
+# the global scope instead of the corresponding
+# function scope. These wrong import statements throw
+# this test off. This is fixed in gcc-4-4.
+if {[test_compiler_info gcc-4-3-*]} { setup_xfail *-*-* }
+
+gdb_test "print _a" "No symbol \"_a\" in current context." \
+    "Print _a without import at marker3"
+
+############################################
+# Test printing of individually imported elements.
+
+gdb_breakpoint marker4
+gdb_continue_to_breakpoint "marker4"
+
+gdb_test "print dx" "= 4"
+
+############################################
+# Test printing of namespace imported into file scope.
+
+gdb_breakpoint marker5
+gdb_continue_to_breakpoint "marker5"
+
+gdb_test "print cc" "= 3"
+
+# Also test printing of namespace aliases
+
+gdb_test "print efx" "= 5"
+
+############################################
+# Test printing of variables imported from nested namespaces.
+
+gdb_breakpoint I::marker7
+gdb_continue_to_breakpoint "I::marker7"
+
+gdb_test "print ghx" "= 6"
+
+############################################
+# Test that variables are not printed in a namespace that is sibling
+# to the namespace containing an import.
+
+gdb_breakpoint L::marker8
+gdb_continue_to_breakpoint "L::marker8"
+
+gdb_test "print jx" "= 44" \
+    "print jx when the symbol is available"
+
+gdb_breakpoint "K::marker9"
+gdb_continue_to_breakpoint "K::marker9"
+
+gdb_test "print jx" "No symbol \"jx\" in current context." \
+    "print jx when the symbol is not available"
+
+############################################
+# Test that variables are only printed after the line containing the
+# import.
+
+gdb_breakpoint [gdb_get_line_number "marker10 stop"]
+gdb_continue_to_breakpoint "marker10 stop"
+
+if { [test_compiler_info {gcc-[0-3]-*}] ||
+     [test_compiler_info {gcc-4-[0-3]-*}]} {
+    return
+}
+
+# Xfail for incorrect decl_line on DW_TAG_imported_module,
+# gcc PR debug/108716.
+set have_gcc108716_xfail \
+    [expr [test_compiler_info gcc-*] && [gcc_major_version] < 13]
+
+gdb_test_multiple "print x" "print x, before using statement" {
+    -re -wrap "No symbol .x. in current context.*" {
+	pass $gdb_test_name
+    }
+    -re -wrap "Reference to .x. is ambiguous.*" {
+	if { $have_gcc108716_xfail } {
+	    # GCC doesn't properly set the decl_line for namespaces, so GDB
+	    # believes that the "using namespace M" line has already passed at
+	    # this point.
+	    setup_xfail *-*-* gcc/108716
+	}
+	fail $gdb_test_name
+    }
+}
+gdb_test "next" ".*" "using namespace M"
+gdb_test_multiple "print x" "print x, only using M" {
+    -re -wrap "= 911.*" {
+	pass $gdb_test_name
+    }
+    -re -wrap "Reference to .x. is ambiguous.*" {
+	if { $have_gcc108716_xfail } {
+	    setup_xfail *-*-* gcc/108716
+	}
+	fail $gdb_test_name
+    }
+}
+gdb_test "next" ".*" "using namespace N"
+gdb_test "print x"  "Reference to .x. is ambiguous.*" "print x, with M and N"

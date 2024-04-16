@@ -1,0 +1,98 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that -list-thread-groups --available works.
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+standard_testfile
+
+# Support for XML is needed to run this test.
+require allow_xml_test
+require can_spawn_for_attach
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+if [mi_gdb_start] {
+    return
+}
+
+set string_re {(?:[^\\"]|\\.)*}
+
+set id_re "id=\"$decimal\""
+set type_re "type=\"process\""
+set description_re "description=\"$string_re\""
+set user_re "user=\"$string_re\""
+
+# The CORES_RE regexp allows a process to be running on zero or more
+# cores.  The former can happen if a process exits while GDB is
+# reading information out of /proc.
+set cores_re "cores=\\\[(\"$decimal\"(,\"$decimal\")*)?\\\]"
+
+# List all available processes.
+set process_entry_re "{${id_re},${type_re}(,$description_re)?(,$user_re)?(,$cores_re)?}"
+
+# The list can be long, so read entries one by one to avoid hitting the
+# timeout (especially when running with check-read1).
+set cmd "-list-thread-groups --available"
+set test "list available thread groups"
+gdb_test_multiple $cmd $test -prompt "$mi_gdb_prompt" {
+    -re "\\^done,groups=\\\[" {
+	# The beginning of the response.
+	exp_continue
+    }
+
+    -re "${process_entry_re}," {
+	# All entries except the last one.
+	exp_continue
+    }
+
+    -re "${process_entry_re}\\\]\r\n${mi_gdb_prompt}" {
+	# The last entry.
+	pass $gdb_test_name
+    }
+}
+
+# List specific processes, make sure there are two entries.
+set spawn_id_1 [remote_spawn target $binfile]
+set pid_1 [spawn_id_get_pid $spawn_id_1]
+set id_re_1 "id=\"$pid_1\""
+
+set spawn_id_2 [remote_spawn target $binfile]
+set pid_2 [spawn_id_get_pid $spawn_id_2]
+set id_re_2 "id=\"$pid_2\""
+
+# Unlike the earlier CORES_RE this list must contain at least one
+# core.  Given that we know these processes will not exit while GDB is
+# reading their information from /proc we can expect at least one core
+# for each process.
+set cores_re "cores=\\\[\"$decimal\"(,\"$decimal\")*\\\]"
+
+set process_entry_re_1 "{${id_re_1},${type_re}(,$description_re)?(,$user_re)?(,$cores_re)?}"
+set process_entry_re_2 "{${id_re_2},${type_re}(,$description_re)?(,$user_re)?(,$cores_re)?}"
+
+set process_list_re "(${process_entry_re_1},${process_entry_re_2}|${process_entry_re_2},${process_entry_re_1})"
+
+mi_gdb_test \
+    "-list-thread-groups --available i${pid_1} i${pid_2}" \
+    "\\^done,groups=\\\[${process_list_re}\\\]" \
+    "list available thread groups with filter"
+
+kill_wait_spawned_process $spawn_id_1
+kill_wait_spawned_process $spawn_id_2

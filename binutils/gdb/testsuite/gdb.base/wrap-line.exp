@@ -1,0 +1,162 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test prompt edit wrapping in CLI.
+
+# We set TERM on build, but we need to set it on host.  That only works if
+# build == host.
+require {!is_remote host}
+
+# Test both ansi (no auto-wrap) and xterm (auto-wrap).
+set terms {ansi xterm}
+
+# Fill line, assuming we start after the gdb prompt.
+proc fill_line { width } {
+    set res ""
+
+    # Take into account that the prompt also takes space.
+    set prefix [string length "(gdb) "]
+    set start [expr $prefix + 1]
+
+    # Print chars.
+    for { set i $start } { $i <= $width } { incr i } {
+	set c [expr $i % 10]
+	send_gdb $c
+	append res $c
+    }
+
+    return $res
+}
+
+proc get_screen_width { } {
+    upvar gdb_width gdb_width
+    upvar readline_width readline_width
+    upvar env_width env_width
+    set gdb_width 0
+    set readline_width 0
+    set env_width 0
+    set re1 "Number of characters gdb thinks are in a line is ($::decimal)\[^\r\n\]*\\."
+    set re2 \
+	"Number of characters readline reports are in a line is ($::decimal)\[^\r\n\]*\\."
+    set re3 \
+	"Number of characters curses thinks are in a line is $::decimal\\."
+    set re4 \
+	"Number of characters environment thinks are in a line is ($::decimal) \\(COLUMNS\\)."
+    set cmd "maint info screen"
+    set re \
+	[multi_line \
+	     ^$re1 \
+	     $re2 \
+	     "(?:$re3" \
+	     ")?$re4" \
+	     .*]
+    gdb_test_multiple $cmd  "" {
+	-re -wrap $re {
+	    set gdb_width $expect_out(1,string)
+	    set readline_width $expect_out(2,string)
+	    set env_width $expect_out(3,string)
+	    pass $gdb_test_name
+	}
+    }
+}
+
+proc test_wrap { width_auto_detected } {
+    if { ! [readline_is_used] } {
+	return
+    }
+
+    get_screen_width
+
+    if { $::term == "xterm" } {
+	gdb_assert { $gdb_width == $readline_width }
+    } else {
+	gdb_assert { $gdb_width == [expr $readline_width + 1] }
+    }
+
+    gdb_assert { $gdb_width == $env_width } "width"
+
+    # New prompt, but avoid emitting a pass in order to avoid ending the line
+    # after the prompt in gdb.log.  This make it a bit easier in gdb.log to
+    # understand where wrapping occurred.
+    gdb_test_multiple "print 1" "" {
+	-re -wrap " = 1" {
+	}
+    }
+
+    # Fill the line to just before wrapping.
+    set str [fill_line $readline_width]
+
+    # Now print the first char we expect to wrap.
+    send_gdb "W"
+
+    # Note the difference between autowrap and no autowrap.  In the autowrap
+    # case, readline doesn't emit a '\n', the terminal takes care of that.
+    if { $::term == "xterm" } {
+	# xterm, autowrap.
+	set re "^${str}( |W)\rW"
+    } else {
+	# ansi, no autowrap.
+	set re "^$str\r\n\rW"
+    }
+
+    gdb_test_multiple "" "wrap" {
+	-re $re {
+	    pass $gdb_test_name
+	}
+    }
+
+    # Generate a prompt.
+    send_gdb "\003"
+    gdb_test "" "Quit" "prompt after wrap"
+}
+
+foreach_with_prefix term $terms  {
+    save_vars { env(TERM) INTERNAL_GDBFLAGS } {
+
+	setenv TERM $term
+
+	with_test_prefix width-hard-coded {
+	    clean_restart
+
+	    # Env_width should match whatever was set in default_gdb_init
+	    # using stty_init.
+	    with_test_prefix initial {
+		get_screen_width
+	    }
+	    gdb_test_no_output "set width $env_width"
+
+	    test_wrap 0
+	}
+
+	with_test_prefix width-auto-detected {
+	    # Avoid "set width 0" argument.
+	    set INTERNAL_GDBFLAGS \
+		[string map {{-iex "set width 0"} ""} $INTERNAL_GDBFLAGS]
+
+	    # Avoid "set width 0" in default_gdb_start.
+	    gdb_exit
+	    gdb_spawn
+
+	    set test "initial prompt"
+	    gdb_test_multiple "" $test {
+		-re "^$gdb_prompt $" {
+		    pass "$test"
+		}
+	    }
+
+	    test_wrap 1
+	}
+    }
+}

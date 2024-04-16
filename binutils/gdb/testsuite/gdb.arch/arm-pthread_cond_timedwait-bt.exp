@@ -1,0 +1,119 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# GDB expected PC should point right after the SVC instruction when the
+# syscall is active. But some active syscalls keep PC pointing to the SVC
+# instruction itself.
+
+# Require an architecture with the SVC instruction.
+require {is_any_target "aarch64*-*-*" "arm*-*-*"}
+
+# See if we have target board readnow.exp or similar.  We're using
+# --readnever, which is not allowed in combination with --readnow.
+require !readnow
+
+standard_testfile
+
+if { [build_executable "failed to prepare" ${testfile} ${srcfile} \
+	  {debug pthreads}] } {
+    return
+}
+
+save_vars { GDBFLAGS } {
+    append GDBFLAGS " --readnever"
+    if { [clean_restart ${binfile}] == -1 } {
+	return -1
+    }
+}
+
+if { ![runto_main] } {
+    return
+}
+
+gdb_test "advance breakhere" " in breakhere .*"
+
+gdb_test "thread 2" "Switching to thread 2 .*" "thread 2 for svc check"
+
+# GDB expected PC should point right after the SVC instruction when the syscall is active.
+# But some active syscalls keep PC pointing to the SVC instruction itself.
+set test "pc points to svc"
+gdb_test_multiple {x/i $pc} $test {
+    -re ":\tsvc\t(0x00000000|0)\r\n$gdb_prompt $" {
+	pass $test
+    }
+    -re "\r\n$gdb_prompt $" {
+	untested $test
+	return
+    }
+}
+
+gdb_test "thread 1" "Switching to thread 1 .*"
+gdb_test_no_output "set debug frame 1"
+
+# PASS:
+#  [frame] frame_unwind_try_unwinder: trying unwinder "arm exidx"
+#  [frame] frame_unwind_register_value: enter
+#...
+#  [frame] frame_unwind_register_value: exit
+#  [frame] frame_unwind_try_unwinder: yes
+#...
+#  [frame] get_prev_frame_always_1:   -> {level=0,type=NORMAL_FRAME,unwinder="arm exidx",pc=0xb6f8681c,id=<not computed>,func=<unknown>} // cached
+
+# FAIL:
+#  [frame] frame_unwind_try_unwinder: trying unwinder "arm exidx"
+#  [frame] frame_unwind_register_value: enter
+#...
+#  [frame] frame_unwind_register_value: exit
+#  [frame] frame_unwind_try_unwinder: no
+#  [frame] frame_unwind_try_unwinder: trying unwinder "arm epilogue"
+#  [frame] frame_unwind_register_value: enter
+#...
+#  [frame] frame_unwind_register_value: exit
+#  [frame] frame_unwind_try_unwinder: no
+#  [frame] frame_unwind_try_unwinder: trying unwinder "arm prologue"
+#  [frame] frame_unwind_try_unwinder: yes
+#...
+#  [frame] get_prev_frame_always_1:   -> {level=0,type=NORMAL_FRAME,unwinder="arm prologue",pc=0xb6f8681c,id=<not computed>,func=<unknown>} // cached
+
+set test "unwinder is arm exidx"
+# Switch the threads to reset frame cache.
+gdb_test_multiple {thread 2} $test {
+    -re "\{level=0,type=NORMAL_FRAME,unwinder=\"arm exidx\",pc=.*\r\n$gdb_prompt $" {
+	pass $test
+    }
+    -re "\{level=0,type=NORMAL_FRAME,unwinder=\"arm prologue\",pc=.*\r\n$gdb_prompt $" {
+	fail $test
+    }
+    -re "\r\n$gdb_prompt $" {
+	untested $test
+	return
+    }
+}
+
+gdb_test "thread 2" "Switching to thread 2 .*" "thread 2 for debug frame check"
+
+gdb_test_no_output "set debug frame 0"
+
+# PASS:
+# #0  0xb6f8681c in pthread_cond_timedwait@@GLIBC_2.4 () from /lib/arm-linux-gnueabihf/libpthread.so.0
+# #1  0x00010648 in fun (arg=0x0) at .../gdb/testsuite/gdb.arch/arm-pthread_cond_timedwait-bt.c:38
+# ...
+
+# FAIL:
+# #0  0xb6f8681c in pthread_cond_timedwait@@GLIBC_2.4 () from /lib/arm-linux-gnueabihf/libpthread.so.0
+# #1  0xb6e21f80 in ?? ()
+# Backtrace stopped: previous frame identical to this frame (corrupt stack?)
+
+gdb_test "bt" { in fun \(\).*} "unwind of pthread_cond_timedwait"

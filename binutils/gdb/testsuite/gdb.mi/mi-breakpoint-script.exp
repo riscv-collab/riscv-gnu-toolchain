@@ -1,0 +1,98 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Tests the breakpoint script field, including the wrong syntax that GDB
+# emitted before version 13.1.
+
+load_lib mi-support.exp
+standard_testfile .c
+
+if {[gdb_compile "$srcdir/$subdir/$srcfile" $binfile executable {debug}] != "" } {
+    return -1
+}
+
+# Generate the regexp pattern used to match the breakpoint description emitted
+# in the various breakpoint command results/events.
+#
+# - EXPECT_FIXED_OUTPUT: If true, expect GDB to output the fixed output for the
+#   script field, else expect it to output the broken pre-mi4 format.
+
+proc make_pattern { expect_fixed_output } {
+    if $expect_fixed_output {
+	return "bkpt=\{number=\"${::decimal}\",type=\"breakpoint\",.*,script=\\\[\"abc\",\"def\"\\\],.*"
+    } else {
+	return "bkpt=\{number=\"${::decimal}\",type=\"breakpoint\",.*,script=\\\{\"abc\",\"def\"\\\},.*"
+    }
+}
+
+# Run the test with the following parameters:
+#
+# - MI_VERSION: the version of the MI interpreter to use (e.g. "2")
+# - USE_FIX_FLAG: Whether to issue the -fix-breakpoint-script-output
+#   command after starting GDB
+# - EXPECT_FIXED_OUTPUT: If true, expect GDB to output the fixed output for the
+#   script field, else expect it to output the broken pre-mi4 format.
+
+proc do_test { mi_version use_fix_flag expect_fixed_output } {
+    with_test_prefix "mi_version=${mi_version}" {
+	with_test_prefix "use_fix_flag=${use_fix_flag}" {
+	    save_vars { ::MIFLAGS } {
+		set ::MIFLAGS "-i=mi${mi_version}"
+
+		mi_clean_restart $::binfile
+	    }
+
+	    if $use_fix_flag {
+		mi_gdb_test "-fix-breakpoint-script-output" "\\^done" \
+		    "send -fix-multi-location-breakpoint-output"
+	    }
+
+            # Create a breakpoint.
+	    mi_gdb_test "-break-insert main" ".*" "add breakpoint on main"
+
+            set pattern [make_pattern $expect_fixed_output]
+
+            # Add commands.  Use the CLI command, so we can verify the
+            # =breakpoint-modified output.
+            mi_gdb_test "commands\nabc\ndef\nend" ".*=breakpoint-modified,$pattern\r\n\\^done" "add breakpoint commands"
+
+	    # Check the -break-info output.
+	    mi_gdb_test "-break-info" \
+		"\\^done,BreakpointTable=.*${pattern}" \
+		"-break-info"
+
+	    mi_gdb_exit
+	}
+    }
+}
+
+# Vanilla mi3
+do_test 3 0 0
+
+# mi3 with -fix-breakpoint-script-output
+do_test 3 1 1
+
+# Vanilla mi4
+do_test 4 0 1
+
+# mi4 with -fix-breakpoint-script-output
+do_test 4 1 1
+
+# Whatever MI version is currently the default one, vanilla
+do_test "" 0 1
+
+# Whatever MI version is currently the default one, with
+# -fix-breakpoint-script-output
+do_test "" 1 1

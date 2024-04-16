@@ -1,0 +1,274 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Tests for function local static variables, both C and C++.
+
+# This file is part of the gdb testsuite.
+
+standard_testfile .c
+
+# A few expected errors.
+set syntax_re "A syntax error in expression, near.*"
+set cannot_resolve_re "Cannot resolve method S::method to any overloaded instance"
+
+# Build an "Cannot resolve method ..." expected error string for
+# method METH.
+#
+proc cannot_resolve {meth} {
+    return "Cannot resolve method $meth to any overloaded instance"
+}
+
+# A list of scopes that have the static variables that we want to
+# print.  Each entry has, in order, the scope/function name, and the
+# prefix used by the static variables.  The prefix exists both to make
+# it easier to debug the test if something goes wrong, and, to make
+# sure that printing the static local of one method overload doesn't
+# find the variables of the wrong overload.
+#
+# While at it, we also try printing each scope without the static
+# local, to check that the parse copes with cv overloads without
+# quoting.  That's what the third and forth columns are for.  Note
+# that printing "func()" is different from "func(void)".  The former
+# is an inferior function call, while the latter is a reference to the
+# function.
+
+     #SCOPE				#PREFIX         #PRINT-SCOPE-QUOTED
+							#PRINT-SCOPE-UNQUOTED (opt)
+set cxx_scopes_list {
+    {"S::method()"			"S_M"		{= \\{void \\(S \\* const\\)\\} $hex <S::method\\(\\)>}
+							{[cannot_resolve "S::method"]}}
+
+    {"S::method() const"		"S_M_C"		{= \\{void \\(const S \\* const\\)\\} $hex <S::method\\(\\) const>}
+							$syntax_re}
+
+    {"S::method() volatile"		"S_M_V"		{= \\{void \\(volatile S \\* const\\)\\} $hex <S::method\\(\\) volatile>}
+							$syntax_re}
+
+    {"S::method() const volatile"	"S_M_CV"	{= \\{void \\(const volatile S \\* const\\)\\} $hex <S::method\\(\\) const volatile>}
+							$syntax_re}
+
+    {"S::method() volatile const"	"S_M_CV"	{= \\{void \\(const volatile S \\* const\\)\\} $hex <S::method\\(\\) const volatile>}
+							$syntax_re}
+
+    {"S::method(void)"			"S_M"		{= \\{void \\(S \\* const\\)\\} $hex <S::method\\(\\)>}}
+    {"S::method(void) const"		"S_M_C"		{= \\{void \\(const S \\* const\\)\\} $hex <S::method\\(\\) const>}}
+    {"S::method(void) volatile"		"S_M_V"		{= \\{void \\(volatile S \\* const\\)\\} $hex <S::method\\(\\) volatile>}}
+    {"S::method(void) const volatile"	"S_M_CV"	{= \\{void \\(const volatile S \\* const\\)\\} $hex <S::method\\(\\) const volatile>}}
+    {"S::method(void) volatile const"	"S_M_CV"	{= \\{void \\(const volatile S \\* const\\)\\} $hex <S::method\\(\\) const volatile>}}
+
+    {"S::static_method()"		"S_SM"		{= \\{void \\(void\\)\\} $hex <S::static_method\\(\\)>}
+							"void"}
+
+    {"S::static_method(void)"		"S_SM"		{= \\{void \\(void\\)\\} $hex <S::static_method\\(\\)>}}
+
+    {"S::inline_method()"		"S_IM"		{= \\{void \\(S \\* const\\)\\} $hex <S::inline_method\\(\\)>}
+							{[cannot_resolve "S::inline_method"]}}
+
+    {"S::inline_method(void)"		"S_IM"		{= \\{void \\(S \\* const\\)\\} $hex <S::inline_method\\(\\)>}}
+
+    {"S::static_inline_method()"	"S_SIM"		{= \\{void \\(void\\)\\} $hex <S::static_inline_method\\(\\)>}
+							"void"}
+
+    {"S::static_inline_method(void)"	"S_SIM"		{= \\{void \\(void\\)\\} $hex <S::static_inline_method\\(\\)>}}
+
+    {"S2<int>::method()"		"S2_M"		{= \\{void \\(S2<int> \\* const\\)\\} $hex <S2<int>::method\\(\\)>}
+							{[cannot_resolve "S2<int>::method"]}}
+
+    {"S2<int>::static_method()"		"S2_SM"		{= \\{void \\(void\\)\\} $hex <S2<int>::static_method\\(\\)>}
+							"void"}
+
+    {"S2<int>::inline_method()"		"S2_IM"		{= \\{void \\(S2<int> \\* const\\)\\} $hex <S2<int>::inline_method\\(\\)>}
+							{[cannot_resolve "S2<int>::inline_method"]}}
+
+    {"S2<int>::static_inline_method()"	"S2_SIM"	{= \\{void \\(void\\)\\} $hex <S2<int>::static_inline_method\\(\\)>}
+							"void"}
+
+    {"free_func"			"FF"		{= \\{void \\(void\\)\\} $hex <free_func\\(\\)>}}
+
+    {"free_func()"			"FF"		{= \\{void \\(void\\)\\} $hex <free_func\\(\\)>}
+							"void"}
+
+    {"free_func(void)"			"FF"		{= \\{void \\(void\\)\\} $hex <free_func\\(\\)>}}
+
+    {"free_inline_func()"		"FIF"		{= \\{void \\(void\\)\\} $hex <free_inline_func\\(\\)>}
+							"void"}
+
+    {"free_inline_func(void)"		"FIF"		{= \\{void \\(void\\)\\} $hex <free_inline_func\\(\\)>}}
+}
+
+set c_scopes_list {
+    {"free_func"			"FF"		{= \\{void \\(void\\)\\} $hex <free_func>}}
+    {"free_inline_func"			"FIF"		{= \\{void \\(void\\)\\} $hex <free_inline_func>}}
+}
+
+# A list of all the static varibles defined in each scope.  The first
+# column is the name of the variable, without the prefix, and the
+# second column is a regex matching what printing the variable should
+# output.
+
+     #VAR		#PRINT
+set vars_list {
+    {"s_var_int"	" = 4"}
+    {"s_var_float"	" = 3.14.*"}
+    {"s_var_aggregate"	" = \\{i1 = 1, i2 = 2, i3 = 3\\}"}
+}
+
+proc do_test {lang} {
+    global c_scopes_list
+    global cxx_scopes_list
+    global vars_list
+    global srcfile testfile
+    global gdb_prompt
+
+    set options {debug}
+
+    if {$lang == "c++"} {
+	if { ![allow_cplus_tests] } {
+	    return
+	}
+	lappend options $lang
+	set src ${srcfile}c
+    } else {
+	set src ${srcfile}
+    }
+
+    if {[prepare_for_testing "failed to prepare" $testfile-$lang \
+	     [list $src] $options]} {
+	return -1
+    }
+
+    if {![runto_main]} {
+	return
+    }
+
+    gdb_test "show language" " currently [string_to_regexp $lang]\"\\."
+
+    if {$lang == "c"} {
+	set scopes_list $c_scopes_list
+    } else {
+	set scopes_list $cxx_scopes_list
+    }
+
+    # Print each scope/function using these syntaxes:
+    #
+    #  "(gdb) p 'S::method() const'"    # quoted
+    #  "(gdb) p S::method() const"      # unquoted
+    #
+    foreach scope_line $scopes_list  {
+	set scope [lindex $scope_line 0]
+
+	set print_quoted_re [lindex $scope_line 2]
+	set print_quoted_re [uplevel 1 "subst -nobackslashes -nocommands \"$print_quoted_re\""]
+
+	set print_unquoted_re [lindex $scope_line 3]
+	set print_unquoted_re [uplevel 1 "subst -nobackslashes -nocommands \"$print_unquoted_re\""]
+
+	gdb_test "print '${scope}'" $print_quoted_re
+
+	if {$print_unquoted_re != ""} {
+	    gdb_test "print ${scope}" $print_unquoted_re
+	} else {
+	    gdb_test "print ${scope}" $print_quoted_re
+	}
+    }
+
+    # Print each variable using these syntaxes:
+    #
+    #  'func()'::var
+    #  func()::var
+    #  'func()::var'
+    #
+    # In C++, the latter case makes sure that symbol lookup finds the
+    # debug symbol instead of the minimal symbol with that exact same
+    # name.
+
+    foreach scope_line $scopes_list  {
+	set scope [lindex $scope_line 0]
+	set var_prefix [lindex $scope_line 1]
+	foreach var_line $vars_list {
+	    set var [lindex $var_line 0]
+	    set print_re [lindex $var_line 1]
+
+	    # The gcc PR debug/55541 has the effect that local statics are
+	    # wrapped in a DW_TAG_lexical_block, making them unaddressable from
+	    # outside the function.  XFAIL the relevant tests.
+	    set test "print '${scope}'::${var_prefix}_${var}"
+	    set xfail_pattern "No symbol \".*\" in specified context."
+	    gdb_test_multiple $test $test {
+		-re "\[\r\n\]*(?:$print_re)\[\r\n\]+$gdb_prompt $" {
+		    pass $test
+		}
+		-re "\[\r\n\]*(?:$xfail_pattern)\[\r\n\]+$gdb_prompt $" {
+		    xfail $test
+		}
+	    }
+	    set test "print ${scope}::${var_prefix}_${var}"
+	    gdb_test_multiple $test $test {
+		-re "\[\r\n\]*(?:$print_re)\[\r\n\]+$gdb_prompt $" {
+		    pass $test
+		}
+		-re "\[\r\n\]*(?:$xfail_pattern)\[\r\n\]+$gdb_prompt $" {
+		    xfail $test
+		}
+	    }
+
+	    set sym "${scope}::${var_prefix}_${var}"
+	    if {$lang == "c++"} {
+		set test "print '${sym}'"
+		set xfail_pattern "No symbol .* in current context."
+		set xfail_pattern2 "has unknown type; cast it to its declared type"
+		gdb_test_multiple $test $test {
+		    -re "\[\r\n\]*(?:$print_re)\[\r\n\]+$gdb_prompt $" {
+			pass $test
+		    }
+		    -re "\[\r\n\]*(?:$xfail_pattern)\[\r\n\]+$gdb_prompt $" {
+			xfail $test
+		    }
+		    -re "\[\r\n\]*(?:$xfail_pattern2)\[\r\n\]+$gdb_prompt $" {
+			xfail $test
+		    }
+		}
+	    } else {
+		gdb_test "print '${sym}'" "No symbol \"$sym\" in current context\\."
+	    }
+	}
+    }
+
+    # Now run to each function, and print its variables using the
+    # localy-visible name.
+    foreach scope_line $scopes_list {
+	set scope [lindex $scope_line 0]
+	set var_prefix [lindex $scope_line 1]
+
+	with_test_prefix "$scope" {
+	    delete_breakpoints
+	    gdb_breakpoint "$scope"
+	    gdb_continue_to_breakpoint "$scope"
+
+	    foreach var_line $vars_list {
+		set var [lindex $var_line 0]
+		set print_re [lindex $var_line 1]
+
+		gdb_test "print ${var_prefix}_${var}" $print_re
+	    }
+	}
+    }
+}
+
+foreach lang {"c" "c++"} {
+    with_test_prefix $lang {
+	do_test $lang
+    }
+}

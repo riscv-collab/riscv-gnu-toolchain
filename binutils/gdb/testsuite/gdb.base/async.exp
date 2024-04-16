@@ -1,0 +1,145 @@
+#   Copyright 1999-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+
+#
+# test running programs
+#
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+#
+# set it up at a breakpoint so we can play with it
+#
+if {![runto_main]} {
+    return
+}
+
+gdb_test "break baz" ".*" ""
+
+#
+# Make sure we get a 'completed' message when the target is done.
+#
+gdb_test_no_output "set exec-done-display on"
+
+# Test a background execution command.  COMMAND is the command to
+# send.  BEFORE_PROMPT is the pattern expected before the GDB prompt
+# is output.  AFTER_PROMPT is the pattern expected after the prompt
+# and before "completed".  MESSAGE is optional, and is the pass/fail
+# message to br printed.  If omitted, then the command string is used
+# as message.
+proc test_background {command before_prompt after_prompt {message ""}} {
+    global gdb_prompt
+
+    if {$message eq ""} {
+        set message $command
+    }
+
+    send_gdb "$command\n"
+    gdb_expect {
+	-re "^$command\r\n${before_prompt}${gdb_prompt}${after_prompt}completed\.\r\n" {
+	    pass "$message"
+	    return 0
+	}
+	-re "$gdb_prompt.*completed\.\r\n" {
+	    fail "$message"
+	}
+	-re ".*Asynchronous execution not supported on this target\..*" {
+	    unsupported "asynchronous execution not supported: $message"
+	}
+	timeout  {
+	    fail "$message (timeout)"
+	}
+    }
+    return -1
+}
+
+if {[test_background "next&" "" ".*z = 9.*"] < 0} {
+    return
+}
+
+test_background "step&" "" ".*y = foo \\(\\).*" "step& #1"
+
+test_background "step&" "" " foo \\(\\) at .*async.c.*x = 5.*" "step& #2"
+
+set is_stmt [is_stmt_addresses $srcfile]
+
+# Get the next instruction address.
+set next_insn_addr ""
+set test "get next insn"
+gdb_test_multiple {x/2i $pc} "$test" {
+    -re "=> $hex .* 0x(\[0-9a-f\]*) .*$gdb_prompt $" {
+	set next_insn_addr $expect_out(1,string)
+	pass $gdb_test_name
+    }
+}
+set next_insn_is_stmt [hex_in_list $next_insn_addr $is_stmt]
+
+if { $next_insn_is_stmt } {
+    set prefix ""
+} else {
+    # The current PC is printed out.
+    set prefix "0x0*$next_insn_addr.*"
+}
+test_background "stepi&" "" ".*$prefix x = 5; .*"
+
+# Get the next instruction address.
+set next_insn_addr ""
+set test "get next insn, 2nd"
+gdb_test_multiple {x/2i $pc} "$test" {
+    -re "=> $hex .* 0x(\[0-9a-f\]*) .*$gdb_prompt $" {
+	set next_insn_addr $expect_out(1,string)
+	pass $gdb_test_name
+    }
+}
+set next_insn_is_stmt \
+    [expr [lsearch -regexp $is_stmt 0x0*$next_insn_addr] != -1]
+
+if { $next_insn_is_stmt } {
+    set prefix ""
+} else {
+    # The current PC is printed out.
+    set prefix "0x0*$next_insn_addr.*"
+}
+# We nexti into the same source line.
+test_background "nexti&" "" ".*$prefix x = 5; .*"
+
+if { $next_insn_is_stmt } {
+    set prefix ""
+} else {
+    # PC is in the middle of a source line, so the PC address is displayed.
+    set prefix "0x0*$next_insn_addr in "
+}
+test_background "finish&" \
+    "Run till exit from #0  ${prefix}foo \\(\\) at.*async.c.*\r\n" \
+    ".*$hex in main \\(\\) at.*async.c.*y = foo \\(\\).*Value returned is.*= 8.*"
+
+set jump_here [gdb_get_line_number "jump here"]
+test_background "jump $jump_here&" \
+    ".*Continuing at $hex.*" \
+    ".*Breakpoint 2, baz \\(\\) at.*async.c.*return 5.*" \
+    "jump&"
+
+set until_here [gdb_get_line_number "until here"]
+test_background "until $until_here&" \
+    ".*" \
+    ".*$hex in main \\(\\) at.*async.c.*y = baz \\(\\).*" \
+    "until&"
+
+gdb_test_no_output "set exec-done-display off"

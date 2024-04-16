@@ -1,0 +1,208 @@
+#    Copyright 1997-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This is a test of gdb's follow-exec-mode.
+#
+# It first checks that exec events are supported by using a catchpoint,
+# then tests multiple scenarios for follow-exec-mode using parameters
+# that test:
+# - each mode
+# - different commands to execute past the exec
+# - re-running both the original and new inferiors.
+#
+# Note that we can't single-step past an exec call.  There has to
+# be a breakpoint in order to stop after the exec, even if we use
+# a single-step command to execute past the exec.
+
+# Remote mode doesn't support the 'run' command, which is
+# required for follow-exec-mode testing.
+if { [target_info exists gdb_protocol]
+     && [target_info gdb_protocol] == "remote" } {
+    return
+}
+
+# Until "catch exec" is implemented on other targets...
+#
+require {istarget "*-linux*"}
+
+standard_testfile foll-exec-mode.c
+
+set testfile2 "execd-prog"
+set srcfile2 ${testfile2}.c
+set binfile2 [standard_output_file ${testfile2}]
+
+set compile_options debug
+
+# build the first test case
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile2}" "${binfile2}" executable $compile_options] != "" } {
+      untested "failed to compile"
+      return -1
+}
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable $compile_options] != "" } {
+      untested "failed to compile"
+      return -1
+}
+
+#  Test exec catchpoints to ensure exec events are supported.
+#
+proc do_catch_exec_test { } {
+    global testfile
+    global gdb_prompt
+
+    clean_restart $testfile
+
+    # Start the program running, and stop at main.
+    #
+    if {![runto_main]} {
+	return
+    }
+
+    # Verify that the system supports "catch exec".
+    gdb_test "catch exec" "Catchpoint \[0-9\]* \\(exec\\)" "insert first exec catchpoint"
+    set has_exec_catchpoints 0
+    gdb_test_multiple "continue" "continue to first exec catchpoint" {
+	-re ".*Your system does not support this type\r\nof catchpoint.*$gdb_prompt $" {
+	    unsupported "continue to first exec catchpoint"
+	}
+	-re ".*Catchpoint.*$gdb_prompt $" {
+	    set has_exec_catchpoints 1
+	    pass "continue to first exec catchpoint"
+	}
+    }
+
+    if {$has_exec_catchpoints == 0} {
+	unsupported "exec catchpoints"
+	return
+    }
+}
+
+# Test follow-exec-mode in the specified scenario.
+# MODE determines whether follow-exec-mode is "same" or "new".
+# CMD determines the command used to execute past the exec call.
+# INFSWITCH is ignored for MODE == "same", and for "new" it is
+# used to determine whether to switch to the original inferior
+# before re-running.
+
+proc do_follow_exec_mode_tests { mode cmd infswitch } {
+    global binfile srcfile srcfile2 testfile testfile2 bkptno_numopt_re
+    global gdb_prompt
+
+    with_test_prefix "$mode,$cmd,$infswitch" {
+	clean_restart $testfile
+
+	# Start the program running, and stop at main.
+	#
+	if {![runto_main]} {
+	    return
+	}
+
+	set target_is_native [gdb_is_target_native]
+
+	# Set the follow-exec mode.
+	#
+	gdb_test_no_output "set follow-exec-mode $mode"
+
+	# Run to the line of the exec call.
+	#
+	gdb_breakpoint [gdb_get_line_number "Set breakpoint here"]
+	gdb_continue_to_breakpoint "continue to line of exec call"
+
+	# Set up the output we expect to see after we execute past the exec.
+	#
+	set execd_line [gdb_get_line_number "after-exec" $srcfile2]
+	set expected_re ".*xecuting new program: .*${testfile2}.*Breakpoint ${bkptno_numopt_re},.*${srcfile2}:${execd_line}.*$gdb_prompt $"
+
+	# Set a breakpoint after the exec call if we aren't single-stepping
+	# past it.
+	#
+	if {$cmd == "continue"} {
+	    gdb_breakpoint "$execd_line"
+	}
+
+	# Execute past the exec call.
+	#
+	set test "$cmd past exec"
+	gdb_test_multiple $cmd $test {
+	    -re "$expected_re" {
+		pass $test
+	    }
+	}
+
+	# Set expected output, given the test parameters.
+	#
+	if {$mode == "same"} {
+	    set expected_re "\\* 1.*process.*"
+	} elseif { $mode == "new" } {
+	    # If using the native target, we want to specifically check that the
+	    # process target, which was automatically pushed when running, was
+	    # automatically unpushed from inferior 1 on exec.  Use a
+	    # different regexp that verifies the Connection field is empty.
+	    if { $target_is_native } {
+		set expected_re "  1.*<null> +[string_to_regexp $binfile].*\r\n\\* 2.*process.*$testfile2 .*"
+	    } else {
+		set expected_re "  1.*null.*$testfile.*\r\n\\* 2.*process.*$testfile2 .*"
+	    }
+	} else {
+	    error "Invalid mode: $mode"
+	}
+
+	# Check that the inferior list is correct:
+	# - one inferior for MODE == "same"
+	# - two inferiors for MODE == "new", current is execd program
+	#
+	gdb_test "info inferiors" $expected_re "Check inferior list"
+
+	set expected_inf ""
+	if {$mode == "same"} {
+	    # One inferior, the execd program.
+	    set expected_inf $testfile2
+	} elseif {$infswitch == "infswitch"} {
+	    # Two inferiors, we have switched to the original program.
+	    set expected_inf $testfile
+	    gdb_test "inferior 1" "Switching to inferior 1.*$testfile.*" "switch inferiors"
+	} else {
+	    # Two inferiors, run the execd program
+	    set expected_inf $testfile2
+	}
+
+	# Now check that a 'run' command will run the correct inferior.
+	#
+	set test "use correct executable ($expected_inf) for run after follow exec"
+	gdb_run_cmd
+	gdb_test_multiple "" $test {
+	    -re {Start it from the beginning\? \(y or n\) $} {
+		send_gdb "y\n"
+		exp_continue
+	    }
+	    -re "Starting program: .*$expected_inf.*Breakpoint $bkptno_numopt_re,.*\r\n$gdb_prompt $" {
+		pass $test
+	    }
+	}
+    }
+}
+
+do_catch_exec_test
+
+foreach cmd {"next" "continue"} {
+    foreach mode {"same" "new"} {
+	# Test basic follow-exec-mode.
+	do_follow_exec_mode_tests $mode $cmd "no_infswitch"
+	if {$mode == "new"} {
+	    # Test that when we do 'run' we get the correct executable.
+	    do_follow_exec_mode_tests $mode $cmd "infswitch"
+	}
+    }
+}

@@ -1,0 +1,111 @@
+#   Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test checks that loading a file with different methods (partial symtabs,
+# index, readnow) does not crash.
+
+standard_testfile
+
+if { [build_executable "failed to prepare" $testfile $srcfile \
+	  {debug ldflags=-Wl,--build-id}] == -1 } {
+    return
+}
+set host_binfile [gdb_remote_download host $binfile]
+
+set has_index_section [exec_has_index_section $binfile]
+set uses_readnow [expr [string first "-readnow" $GDBFLAGS] != -1]
+set expecting_index_cache_use [expr !$has_index_section && !$uses_readnow]
+
+lassign [remote_exec host mktemp -d] ret cache_dir
+
+# The output of mktemp contains an end of line, remove it.
+set cache_dir [string trimright $cache_dir \r\n]
+
+if { $ret != 0 } {
+    fail "couldn't create temporary cache dir"
+    return
+}
+
+verbose -log "Index cache dir: $cache_dir"
+
+# Populate the index-cache.
+with_test_prefix "populate index cache" {
+    clean_restart
+
+    gdb_test_no_output "set index-cache directory $cache_dir" \
+	"set index-cache directory"
+    gdb_test_no_output "set index-cache enabled on"
+    gdb_test "file $host_binfile" "Reading symbols from .*" "file"
+    gdb_test_no_output "maint wait-for-index-cache"
+}
+
+proc load_binary { method } {
+    global binfile
+    global hex
+
+    if { $method == "standard" } {
+	gdb_test "file $::host_binfile" "Reading symbols from .*" "file"
+    } elseif { $method == "index" } {
+	gdb_test_no_output "set index-cache enabled on"
+	gdb_test "file $::host_binfile" "Reading symbols from .*" "file index"
+	gdb_test_no_output "set index-cache enabled off"
+    } elseif { $method == "readnow" } {
+	gdb_test "file -readnow $::host_binfile" \
+	    "Reading symbols from .*Expanding full symbols from .*" \
+	    "file readnow"
+    } else {
+	error "unknown method"
+    }
+
+    # Print a static function: seeing it and its signature confirms GDB
+    # sees some symbols.
+    gdb_test "print foo" " = {int \\(int, int\\)} $hex <foo>"
+}
+
+set methods {standard index readnow}
+
+foreach_with_prefix first $methods {
+    foreach_with_prefix second $methods {
+	foreach_with_prefix third $methods {
+	    # Start with a clean GDB.
+	    clean_restart
+
+	    # Set the index cache dir, but don't enable the index-cache, it will
+	    # be enabled only when needed, when loading a file with the "index"
+	    # method.
+	    gdb_test_no_output "set index-cache directory $cache_dir" \
+		"set index-cache directory"
+
+	    # Avoid GDB asking whether we really want to load a new binary.
+	    gdb_test_no_output "set confirm off"
+
+	    with_test_prefix "load first" { load_binary $first }
+	    with_test_prefix "load second" { load_binary $second }
+	    with_test_prefix "load third" { load_binary $third }
+	}
+    }
+}
+
+lassign [remote_exec host "sh -c" [quote_for_host rm $cache_dir/*.gdb-index]] ret
+if { $ret != 0 && $expecting_index_cache_use } {
+    fail "couldn't remove files in temporary cache dir"
+    return
+}
+
+lassign [remote_exec host rmdir "$cache_dir"] ret
+if { $ret != 0 } {
+    fail "couldn't remove temporary cache dir"
+    return
+}

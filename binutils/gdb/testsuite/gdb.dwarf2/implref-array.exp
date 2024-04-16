@@ -1,0 +1,166 @@
+# Copyright 2016-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test a C++ reference marked with DW_OP_GNU_implicit_pointer.
+# The referenced value is a global array whose location is a DW_OP_addr.
+
+require allow_cplus_tests
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+# We'll place the output of Dwarf::assemble in implref-array.S.
+standard_testfile .c .S
+
+# ${testfile} is now "implref-array".  srcfile2 is "implref-array.S".
+set executable ${testfile}
+set asm_file [standard_output_file ${srcfile2}]
+
+# We need to know the size of integer and address types in order
+# to write some of the debugging info we'd like to generate.
+#
+# For that, we ask GDB by debugging our implref-array program.
+# Any program would do, but since we already have implref-array
+# specifically for this testcase, might as well use that.
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+    return -1
+}
+
+set array_length [get_valueof "/u" "sizeof(array) / sizeof(array\[0\])" -1]
+
+# Create the DWARF.  We need a regular variable which represents the array, and
+# a reference to it that'll be marked with DW_OP_GNU_implicit_pointer.
+# The variable must be global so that its name is an exported symbol that we
+# can reference from the DWARF using gdb_target_symbol.
+Dwarf::assemble ${asm_file} {
+    global array_length
+
+    cu {} {
+	DW_TAG_compile_unit {
+	    {DW_AT_language @DW_LANG_C_plus_plus}
+	} {
+	    declare_labels int_label sizetype_label array_label variable_label ref_label
+	    set int_size [get_sizeof "int" -1]
+	    set upper_bound [expr ${array_length} - 1]
+
+	    # gdb always assumes references are implemented as pointers.
+	    set addr_size [get_sizeof "void *" -1]
+
+	    int_label: DW_TAG_base_type {
+		{DW_AT_byte_size ${int_size} DW_FORM_udata}
+		{DW_AT_encoding @DW_ATE_signed}
+		{DW_AT_name "int"}
+	    }
+
+	    sizetype_label: DW_TAG_base_type {
+		{DW_AT_byte_size ${int_size} DW_FORM_udata}
+		{DW_AT_encoding @DW_ATE_unsigned}
+		{DW_AT_name "sizetype"}
+	    }
+
+	    array_label: DW_TAG_array_type {
+		    {DW_AT_type :${int_label}}
+	    } {
+		DW_TAG_subrange_type {
+		    {DW_AT_type :${sizetype_label}}
+		    {DW_AT_lower_bound 0 DW_FORM_udata}
+		    {DW_AT_upper_bound ${upper_bound} DW_FORM_udata}
+		}
+	    }
+
+	    ref_label: DW_TAG_reference_type {
+		{DW_AT_byte_size ${addr_size} DW_FORM_udata}
+		{DW_AT_type :${array_label}}
+	    }
+
+	    variable_label: DW_TAG_variable {
+		{DW_AT_name "array"}
+		{DW_AT_type :${array_label}}
+		{DW_AT_external 1 DW_FORM_flag}
+		{DW_AT_location {DW_OP_addr [gdb_target_symbol "array"]} SPECIAL_expr}
+	    }
+
+	    DW_TAG_subprogram {
+		{MACRO_AT_func { "main" }}
+		{DW_AT_type :${int_label}}
+		{DW_AT_external 1 DW_FORM_flag}
+	    } {
+		DW_TAG_variable {
+		    {DW_AT_name "ref"}
+		    {DW_AT_type :${ref_label}}
+		    {DW_AT_location {DW_OP_GNU_implicit_pointer ${variable_label} 0} SPECIAL_expr}
+		}
+	    }
+	}
+    }
+}
+
+if [prepare_for_testing "failed to prepare" ${executable} [list ${asm_file} ${srcfile}] {}] {
+    return -1
+}
+
+# DW_OP_GNU_implicit_pointer implementation requires a valid frame.
+if ![runto_main] {
+    return -1
+}
+
+# This matches e.g. '(int (&)[5])'
+set ref_type [format {\(int \(&\)\[%d\]\)} ${array_length}]
+
+# This matches e.g. '(int (*)[5])'
+set ptr_type [format {\(int \(\*\)\[%d\]\)} ${array_length}]
+
+# Contents of the array.  Trim leading/trailing whitespace, '{' and '}'
+# since they confuse TCL to no end.
+set contents [get_valueof "" "array" ""]
+set contents [string trim ${contents}]
+set contents [string trim ${contents} "{}"]
+
+# Address of the referenced value.
+set address [get_hexadecimal_valueof "&array" ""]
+
+# Doing 'print ref' should show us e.g. '(int (&)[5]) 0xdeadbeef: {0, 1, 2, 3, 4}'.
+gdb_test "print ref" " = ${ref_type} @${address}: \\{${contents}\\}"
+
+# Doing 'print &ref' should show us e.g. '(int (*)[5]) 0xdeadbeef <array>'.
+gdb_test "print &ref" " = ${ptr_type} ${address} <array>"
+
+# gdb assumes C++ references are implemented as pointers, and print &(&ref)
+# shows us the underlying pointer's address.  Since in this case there's no
+# physical pointer, gdb should tell us so.
+gdb_test "print &(&ref)" "Attempt to take address of value not located in memory."
+
+# Test assignment through the synthetic reference.
+set first_value 10
+gdb_test_no_output "set (ref\[0\] = ${first_value})"
+
+# This matches '{10, 1, 2, 3, 4}'.
+set new_contents [format {\{%d, 1, 2, 3, 4\}} ${first_value}]
+
+# Doing 'print ref' should now show us e.g.
+# '(int (&)[5]) <synthetic pointer>: {10, 1, 2, 3, 4}'.
+gdb_test "print ref" " = ${ref_type} @${address}: ${new_contents}" "print ref after assignment"
+gdb_test "print array" " = ${new_contents}" "print array after assignment"
+
+# Test treating the array as a pointer.
+set second_value 20
+set new_contents [format {\{%d, %d, 2, 3, 4\}} ${first_value} ${second_value}]
+
+gdb_test "print *ref" " = ${first_value}"
+gdb_test_no_output "set (*(ref + 1) = ${second_value})"
+gdb_test "print ref\[1\]" " = ${second_value}"
+gdb_test "print array" " = ${new_contents}" "print array after second assignment"

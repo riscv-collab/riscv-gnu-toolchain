@@ -1,0 +1,10 @@
+[^:]*: Assembler messages:
+[^:]*:[0-9]+: Error: selected processor does not support `trcit x1'
+.*: Error: selected processor does not support system register name 'trcitecr_el1'
+.*: Error: selected processor does not support system register name 'trcitecr_el12'
+.*: Error: selected processor does not support system register name 'trcitecr_el2'
+.*: Error: selected processor does not support system register name 'trciteedcr'
+.*: Error: selected processor does not support system register name 'trcitecr_el1'
+.*: Error: selected processor does not support system register name 'trcitecr_el12'
+.*: Error: selected processor does not support system register name 'trcitecr_el2'
+.*: Error: selected processor does not support system register name 'trciteedcr'

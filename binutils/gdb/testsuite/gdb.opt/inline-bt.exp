@@ -1,0 +1,67 @@
+# Copyright 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile .c inline-markers.c
+
+if {[prepare_for_testing "failed to prepare" $testfile \
+	 [list $srcfile $srcfile2] \
+	 {debug additional_flags=-Winline}]} {
+    return -1
+}
+
+runto_main
+
+get_debug_format
+if { [skip_inline_frame_tests] } {
+    untested "skipping inline frame tests"
+    return
+}
+
+set line1 [gdb_get_line_number "set breakpoint 1 here" ${srcfile2}]
+gdb_breakpoint $srcfile2:$line1
+
+gdb_test "continue" ".*set breakpoint 1 here.*" "continue to bar (1)"
+gdb_test "backtrace" "#0  bar.*#1  .*main.*" "backtrace from bar (1)"
+gdb_test "info frame" ".*called by frame.*" "bar not inlined"
+
+gdb_test "continue" ".*set breakpoint 1 here.*" "continue to bar (2)"
+gdb_test "backtrace" "#0  bar.*#1  .*func1.*#2  .*main.*" \
+    "backtrace from bar (2)"
+gdb_test "up" "#1  .*func1.*" "up from bar (2)"
+gdb_test "info frame" ".*inlined into frame.*" "func1 inlined (2)"
+
+gdb_test "continue" ".*set breakpoint 1 here.*" "continue to bar (3)"
+gdb_test "backtrace" "#0  bar.*#1  .*func1.*#2  .*func2.*#3  .*main.*" \
+    "backtrace from bar (3)"
+gdb_test "up" "#1  .*func1.*" "up from bar (3)"
+gdb_test "info frame" ".*inlined into frame.*" "func1 inlined (3)"
+gdb_test "up" "#2  .*func2.*" "up from func1 (3)"
+gdb_test "info frame" ".*inlined into frame.*" "func2 inlined (3)"
+
+# A regression test for having a backtrace limit that forces unwinding
+# to stop after an inline frame.  GDB needs to compute the frame_id of
+# the inline frame, which requires unwinding past all the inline
+# frames to the real stack frame, even if that means bypassing the
+# user visible backtrace limit.  See PR backtrace/15558.
+#
+# Set a backtrace limit that forces an unwind stop after an inline
+# function.
+gdb_test_no_output "set backtrace limit 2"
+# Force flushing the frame cache.
+gdb_test "maint flush register-cache" "Register cache flushed."
+gdb_test "up" "#1  .*func1.*" "up from bar (4)"
+gdb_test "info frame" ".*in func1.*" "info frame still works"
+# Verify the user visible limit works as expected.
+gdb_test "up" "Initial frame selected; you cannot go up." "up hits limit"

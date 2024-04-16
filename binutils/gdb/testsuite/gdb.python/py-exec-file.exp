@@ -1,0 +1,195 @@
+# Copyright (C) 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require allow_python_tests
+
+load_lib gdb-python.exp
+
+standard_testfile
+
+set binfile1 ${binfile}-a
+set binfile2 ${binfile}-b
+
+if {[build_executable "failed to prepare first executable" \
+	 $binfile1 $srcfile]} {
+    return -1
+}
+
+if {[build_executable "failed to prepare second executable" \
+	 $binfile2 $srcfile]} {
+    return -1
+}
+
+set binfile1 [gdb_remote_download host $binfile1]
+set binfile2 [gdb_remote_download host $binfile2]
+
+# Setup a Python function to listen for the executable changed event.
+proc setup_exec_change_handler {} {
+    gdb_py_test_silent_cmd \
+	[multi_line \
+	     "python" \
+	     "def reset_state():" \
+	     "   global exec_changed_state" \
+	     "   exec_changed_state = \[0, None, None\]" \
+	     "end" ] \
+	"build reset_state function" 0
+
+    gdb_py_test_silent_cmd \
+	[multi_line \
+	     "python" \
+	     "def executable_changed(event):" \
+	     "   global exec_changed_state" \
+	     "   exec_changed_state\[0\] += 1" \
+	     "   exec_changed_state\[1\] = event.progspace.executable_filename" \
+	     "   exec_changed_state\[2\] = event.reload" \
+	     "end" ] \
+	"build executable_changed function" 0
+
+    gdb_test_no_output -nopass "python reset_state()"
+    gdb_test_no_output "python gdb.events.executable_changed.connect(executable_changed)"
+}
+
+# Check the global Python state that is updated when the
+# executable_changed event occurs, and then reset the global state.
+# FILENAME is a string, the name of the new executable file.  RELOAD
+# is a string, which should be 'True' or 'False', and represents if
+# the executable file was reloaded, or changed.
+proc check_exec_change { filename_re reload testname } {
+    if { $filename_re ne "None" } {
+	set filename_re "'$filename_re'"
+    }
+    if { $filename_re eq "None" && $reload eq "None" } {
+	set count 0
+    } else {
+	set count 1
+    }
+    gdb_test "python print(exec_changed_state)" \
+	"\\\[$count, $filename_re, $reload\\\]" \
+	$testname
+    gdb_test_no_output -nopass "python reset_state()"
+}
+
+# Check that the executable_filename is set correctly after using the
+# 'file' command.
+with_test_prefix "using 'file' command" {
+    clean_restart
+
+    setup_exec_change_handler
+
+    gdb_test "python print(gdb.current_progspace().executable_filename)" \
+	"None" \
+	"check executable_filename when no file is loaded"
+
+    gdb_test "file $binfile1" \
+	"Reading symbols from [string_to_regexp $binfile1]\\.\\.\\..*" \
+	"load first executable"
+    gdb_test "python print(gdb.current_progspace().executable_filename)" \
+	"[string_to_regexp $binfile1]" \
+	"check executable_filename when first executable is loaded"
+
+    check_exec_change [string_to_regexp $binfile1] False \
+	"check executable_changed state after first executable was loaded"
+
+    gdb_test "file $binfile2" \
+	"Reading symbols from [string_to_regexp $binfile2]\\.\\.\\..*" \
+	"load second executable" \
+	"Load new symbol table from .*\? .y or n. " "y"
+    gdb_test "python print(gdb.current_progspace().executable_filename)" \
+	"[string_to_regexp $binfile2]" \
+	"check executable_filename when second executable is loaded"
+
+    check_exec_change [string_to_regexp $binfile2] False \
+	"check executable_changed state after second executable was loaded"
+
+    gdb_unload
+    gdb_test "python print(gdb.current_progspace().executable_filename)" \
+	"None" \
+	"check executable_filename after unloading file"
+
+    check_exec_change None False \
+	"check executable_changed state after unloading the executable"
+}
+
+# Check that the executable_filename is correctly set when we only set
+# the exec-file.
+with_test_prefix "using 'exec-file' command" {
+    clean_restart
+
+    setup_exec_change_handler
+
+    gdb_test_no_output "exec-file $binfile1" \
+	"load first executable"
+    gdb_test "python print(gdb.current_progspace().executable_filename)" \
+	"[string_to_regexp $binfile1]" \
+	"check executable_filename when first executable is loaded"
+
+    check_exec_change [string_to_regexp $binfile1] False \
+	"check executable_changed state after first executable was loaded"
+
+    gdb_test_no_output "exec-file $binfile2" \
+	"load second executable"
+    gdb_test "python print(gdb.current_progspace().executable_filename)" \
+	"[string_to_regexp $binfile2]" \
+	"check executable_filename when second executable is loaded"
+
+    check_exec_change [string_to_regexp $binfile2] False \
+	"check executable_changed state after second executable was loaded"
+
+    gdb_test "exec-file" "No executable file now\\."
+    gdb_test "python print(gdb.current_progspace().executable_filename)" \
+	"None" \
+	"check executable_filename after unloading file"
+
+    check_exec_change None False \
+	"check executable_changed state after unloading the executable"
+}
+
+# Check that setting the symbol-file doesn't cause the
+# executable_filename to be set.
+with_test_prefix "using 'symbol-file' command" {
+    clean_restart
+
+    setup_exec_change_handler
+
+    gdb_test "symbol-file $binfile1" \
+	"Reading symbols from [string_to_regexp $binfile1]\\.\\.\\..*" \
+	"load first executable"
+    gdb_test "python print(gdb.current_progspace().executable_filename)" \
+	"None" \
+	"check executable_filename after setting symbol-file"
+
+    check_exec_change None None \
+	"check executable_changed state after setting symbol-file"
+}
+
+# Check the executable_changed event when the executable changes on disk.
+with_test_prefix "exec changes on disk" {
+    clean_restart $binfile1
+
+    setup_exec_change_handler
+
+    runto_main
+
+    gdb_test_no_output "shell sleep 1" \
+	"ensure executable is at least 1 second old"
+
+    gdb_test "shell touch ${binfile1}" "" \
+	"update the executable on disk"
+
+    runto_main
+
+    check_exec_change [string_to_regexp $binfile1] True \
+	"check executable_changed state after exec changed on disk"
+}

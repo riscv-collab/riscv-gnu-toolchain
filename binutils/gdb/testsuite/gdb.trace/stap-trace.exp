@@ -1,0 +1,130 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "trace-support.exp"
+
+standard_testfile
+set executable ""
+
+set ws "\[\r\n\t \]+"
+
+# Only x86 and x86_64 targets are supported for now.
+
+require {is_any_target "x86_64-*" "i?86-*"}
+
+proc compile_stap_bin {exec_name {arg ""}} {
+    global srcfile
+    global srcdir
+    global subdir
+    global executable
+
+    if { $arg != "" } {
+	set arg "additional_flags=$arg"
+    }
+
+    set executable ${exec_name}
+
+    if { [gdb_compile "$srcdir/$subdir/$srcfile" \
+	      [standard_output_file $exec_name] \
+	      executable [concat $arg debug nowarnings]] != "" } {
+	untested "failed to compile"
+	return 0
+    }
+
+    return 1
+}
+
+proc prepare_for_trace_test {} {
+    global executable
+
+    clean_restart $executable
+
+    if { ![runto_main] } {
+	perror "Could not run to `main'."
+	return
+    }
+
+    gdb_breakpoint [gdb_get_line_number "end-here"]
+}
+
+proc run_trace_experiment { test_probe msg } {
+    global gdb_prompt
+
+    set test "collect $msg: start trace experiment"
+    gdb_test_multiple "tstart" "$test" {
+	-re "^tstart\r\n$gdb_prompt $" {
+	    pass "$test"
+	}
+    }
+
+    gdb_test "continue" \
+	    "Continuing.*Breakpoint \[0-9\]+.*" \
+	    "collect $msg: run trace experiment"
+    gdb_test_no_output "tstop" \
+	    "collect $msg: stop trace experiment"
+    gdb_test "tfind start" \
+	    "#0 .*" \
+	    "collect $msg: tfind test frame"
+}
+
+proc gdb_collect_probe_arg { msg probe val_arg0 } {
+    global gdb_prompt
+
+    prepare_for_trace_test
+
+    gdb_test "trace $probe" \
+	    "Tracepoint \[0-9\]+ at .*" \
+	    "collect $msg: set tracepoint"
+    gdb_trace_setactions "collect $msg: define actions" \
+	    "" \
+	    "collect \$_probe_arg0" "^$"
+
+    # Begin the test.
+    run_trace_experiment $msg $probe
+
+    gdb_test "print \$_probe_arg0" \
+	    "\\$\[0-9\]+ = $val_arg0" \
+	    "collect $msg: collected probe arg0"
+}
+
+if {![compile_stap_bin "stap-probe-nosem"]} {
+    # An appropriate failure message has already been output
+    return -1
+}
+
+clean_restart $executable
+if { ![runto_main] } {
+    perror "Could not run to `main'."
+    return
+}
+
+if { ![gdb_target_supports_trace] } {
+    # Test cannot run on this target.
+    unsupported "test requires trace"
+    return 1
+}
+
+gdb_collect_probe_arg "probe args without semaphore" "-probe-stap user" "23"
+gdb_exit
+
+if {![compile_stap_bin "stap-probe-sem" "-DUSE_PROBES"]} {
+    # An appropriate failure message has already been output
+    return -1
+}
+
+gdb_collect_probe_arg "probe args with semaphore" "-probe-stap two" "46"
+
+# Finished!
+gdb_test "tfind none" ".*" ""

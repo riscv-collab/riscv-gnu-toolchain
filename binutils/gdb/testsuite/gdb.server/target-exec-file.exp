@@ -1,0 +1,244 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test GDB's handling of using a file with a 'target:' prefix as the
+# executable file.  This test includes checking what happens when the
+# file on the target system changes and GDB needs to reload it.
+
+load_lib gdbserver-support.exp
+
+require allow_gdbserver_tests !use_gdb_stub
+
+standard_testfile
+
+if { [build_executable "failed to prepare" $testfile $srcfile debug] } {
+    return -1
+}
+
+clean_restart
+
+# Some boards specifically set the sysroot to the empty string to
+# avoid copying files from the target.  But for this test we do want
+# to copy files from the target, so set the sysroot back to 'target:'.
+#
+# This is fine so long as we're not using a board file that sets the
+# sysroot to something else -- but none of the standard boards do
+# this, and plenty of other tests mess with the sysroot, so I guess we
+# don't worry about that too much.
+gdb_test "set sysroot target:" ".*"
+
+# Make sure we're disconnected, in case we're testing with an
+# extended-remote board, therefore already connected.
+gdb_test "disconnect" ".*"
+
+# Ensure the executable is on the target.
+set target_exec [gdb_remote_download target $binfile]
+
+# We're going to be restarting the inferior.  Lets ask GDB not to
+# prompt us if this is the right thing to do.
+gdb_test_no_output "set confirm off"
+
+if { [allow_python_tests] } {
+    # Register an event handler for the executable changed event.
+    # This handler just copies the event into a global Python object.
+    gdb_test_multiline "Add connection_removed event" \
+	"python" "" \
+	"global_exec_changed_event = None" "" \
+	"def executable_changed(event):" "" \
+	"   global global_exec_changed_event" "" \
+	"   global_exec_changed_event = event" "" \
+	"gdb.events.executable_changed.connect (executable_changed)" "" \
+	"end" ""
+}
+
+# Start gdbserver, but always in extended-remote mode, and then
+# connect to it from GDB.
+set res [gdbserver_start "--multi" $target_exec]
+set gdbserver_protocol "extended-remote"
+set gdbserver_gdbport [lindex $res 1]
+gdb_target_cmd $gdbserver_protocol $gdbserver_gdbport
+
+if { [allow_python_tests] } {
+    # When connecting to a remote target, if the user has not told GDB
+    # which executable to use, then GDB will figure out an executable
+    # from the remote target.
+    #
+    # As a result we expect to have seen an executable changed event.
+    with_test_prefix "after connecting" {
+	gdb_test "python print(global_exec_changed_event)" \
+	    "<gdb.ExecutableChangedEvent object at $hex>"
+	gdb_test "python print(global_exec_changed_event.progspace.executable_filename)" \
+	    [string_to_regexp target:$target_exec]
+	gdb_test "python print(global_exec_changed_event.reload)" "False"
+	gdb_test_no_output "python global_exec_changed_event = None"
+    }
+}
+
+# Issue a 'file' command and parse the output.  We look for a couple
+# of specific things to ensure that we are correctly reading the exec
+# from the remote target.
+set saw_read_of_remote_exec false
+set saw_read_of_syms_from_exec false
+gdb_test_multiple "file target:$target_exec" "run file command" {
+    -re "^file target:\[^\r\n\]+\r\n" {
+	exp_continue
+    }
+
+    -re "^Reading (\[^\r\n\]+) from remote target\\.\\.\\.\r\n" {
+	set filename $expect_out(1,string)
+	if { $filename eq $target_exec } {
+	    set saw_read_of_remote_exec true
+	}
+	exp_continue
+    }
+
+    -re "^warning: File transfers from remote targets can be slow\[^\r\n\]+\r\n" {
+	exp_continue
+    }
+
+    -re "^Reading symbols from target:(\[^\r\n\]+)\\.\\.\\.\r\n" {
+	set filename $expect_out(1,string)
+	if { $filename eq $target_exec } {
+	    set saw_read_of_syms_from_exec true
+	}
+	exp_continue
+    }
+
+    -re "^Expanding full symbols from \[^\r\n\]+\r\n" {
+	exp_continue
+    }
+
+    -re "^$gdb_prompt $" {
+	pass $gdb_test_name
+    }
+}
+
+gdb_assert { $saw_read_of_remote_exec } \
+    "exec was read from the remote target"
+
+gdb_assert { $saw_read_of_syms_from_exec } \
+    "symbols were read from remote exec file"
+
+if { [allow_python_tests] } {
+    # The 'file' command forces GDB to always load the executable,
+    # even if the same filename is used.  In this case, as the
+    # filename is the same, this will show as a reload event.
+    with_test_prefix "after 'file' command" {
+	gdb_test "python print(global_exec_changed_event)" \
+	    "<gdb.ExecutableChangedEvent object at $hex>"
+	gdb_test "python print(global_exec_changed_event.progspace.executable_filename)" \
+	    [string_to_regexp target:$target_exec]
+	gdb_test "python print(global_exec_changed_event.reload)" "True"
+	gdb_test_no_output "python global_exec_changed_event = None"
+    }
+}
+
+# Start the inferior (with the 'start' command), use TESTNAME for any
+# pass/fail calls.  EXPECT_REREAD should be true or false and
+# indicates if we expect to too a line like:
+#
+#  `FILE' has changed; re-reading symbols.
+proc start_inferior { testname expect_reread } {
+    with_test_prefix $testname {
+	if { [gdb_start_cmd] < 0 } {
+	    fail "start command"
+	    return -1
+	}
+
+	set saw_reread false
+	gdb_test_multiple "" "stopped at main" {
+	    -re "^start\\s*\r\n" {
+		exp_continue
+	    }
+	    -re "^`\[^\r\n\]+' has changed; re-reading symbols\\.\r\n" {
+		set saw_reread true
+		exp_continue
+	    }
+	    -re "^Reading \[^\r\n\]+ from remote target\\.\\.\\.\r\n" {
+		exp_continue
+	    }
+	    -re "^Expanding full symbols from \[^\r\n\]+\\.\\.\\.\r\n" {
+		exp_continue
+	    }
+	    -re "^Temporary breakpoint $::decimal at $::hex: \[^\r\n\]+\r\n" {
+		exp_continue
+	    }
+	    -re "^Starting program: \[^\r\n\]+\r\n" {
+		exp_continue
+	    }
+	    -re "^\\s*\r\n" {
+		exp_continue
+	    }
+	    -re "^Temporary breakpoint $::decimal, main \\(\\) at .*$::gdb_prompt $" {
+		pass $testname
+	    }
+	}
+
+	gdb_assert { $expect_reread == $saw_reread } \
+	    "check symbol re-read behaviour"
+    }
+}
+
+# Start the inferior for the first time.  The symbols were already
+# read from the file when the 'file' command was used, we should not
+# see the symbols re-read now.
+start_inferior "start inferior the first time" false
+
+if { [allow_python_tests] } {
+    # The executable hasn't changed.
+    with_test_prefix "after starting inferior for the first time" {
+	gdb_test "python print(global_exec_changed_event)" "None"
+    }
+}
+
+# Re-start the inferior.  The executable is unchanged so we should not
+# see the symbol file being re-read.
+start_inferior "start inferior a second time" false
+
+if { [allow_python_tests] } {
+    # The executable still hasn't changed.
+    with_test_prefix "after starting inferior for the second time" {
+	gdb_test "python print(global_exec_changed_event)" "None"
+    }
+}
+
+# Delay for a short while so, when we touch the exec, we know the
+# timestamp will change.
+sleep 1
+set res [remote_exec target "touch $target_exec"]
+set status [lindex $res 0]
+if { $status != 0 } {
+    fail "touching executable on target"
+    return -1
+}
+
+# Start the inferior again, we expect to see the symbols being re-read
+# from the remote file.
+start_inferior "start inferior a third time" true
+
+if { [allow_python_tests] } {
+    # The executable has now changed on disk.  This will be a reload
+    # event.
+    with_test_prefix "after starting inferior for the third time" {
+	gdb_test "python print(global_exec_changed_event)" \
+	    "<gdb.ExecutableChangedEvent object at $hex>"
+	gdb_test "python print(global_exec_changed_event.progspace.executable_filename)" \
+	    [string_to_regexp target:$target_exec]
+	gdb_test "python print(global_exec_changed_event.reload)" "True"
+	gdb_test_no_output "python global_exec_changed_event = None"
+    }
+}

@@ -1,0 +1,115 @@
+# Copyright 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+# Test that trying to inserting a hw breakpoint in a shared library
+# when the target doesn't support hw breakpoints doesn't silently
+# error out without informing the user.
+
+require allow_shlib_tests
+
+set main_src hbreak-in-shr-unsupported.c
+set lib_src hbreak-in-shr-unsupported-shr.c
+standard_testfile ${main_src} ${lib_src}
+set lib_basename hbreak-in-shr-unsupported-shr.so
+set lib_so [standard_output_file ${lib_basename}]
+
+set lib_opts "debug"
+set exec_opts [list debug shlib=${lib_so}]
+
+if { [gdb_compile_shlib ${srcdir}/${subdir}/${lib_src} ${lib_so} $lib_opts] != ""
+     || [gdb_compile ${srcdir}/${subdir}/${main_src} ${binfile} executable $exec_opts] != ""} {
+    untested "failed to compile"
+    return -1
+}
+
+clean_restart $binfile
+gdb_load_shlib $lib_so
+
+if {![runto_main]} {
+    return -1
+}
+
+set is_target_remote [gdb_is_target_remote]
+
+# Get main breakpoint out of the way.
+delete_breakpoints
+
+# Easier to test if GDB inserts breakpoints immediately.
+gdb_test_no_output "set breakpoint always-inserted on"
+
+# Force-disable Z1 packets, in case the target actually supports
+# these.
+if {$is_target_remote} {
+    gdb_test \
+	"set remote Z-packet off" \
+	"Use of Z packets on the current remote target is set to \"off\"."
+}
+
+# Probe for hw breakpoints support.  With Z packets disabled, this
+# should always fail with remote targets.  For other targets, with no
+# way to force-disable hw breakpoints support, best we can do is skip
+# the remainder of the test if hardware breakpoint insertion in a
+# function in the main executable succeeds.
+set cant_insert_hbreak 0
+set supports_hbreak 0
+set test "probe hbreak support"
+gdb_test_multiple "hbreak -q main" $test {
+    -re "No hardware breakpoint support in the target.*$gdb_prompt $" {
+	pass $test
+    }
+    -re "Hardware breakpoints used exceeds limit.*$gdb_prompt $" {
+	pass $test
+    }
+    -re "Cannot insert hardware breakpoint.*$gdb_prompt $" {
+	set cant_insert_hbreak 1
+	set supports_hbreak 1
+	pass $test
+    }
+    -re "Hardware assisted breakpoint.*at.* file .*$srcfile, line.*$gdb_prompt $" {
+	set supports_hbreak 1
+	if {$is_target_remote} {
+	    # Z-packets have been force-disabled, so this shouldn't
+	    # happen.
+	    fail $test
+	} else {
+	    pass $test
+	}
+    }
+}
+
+if {!$supports_hbreak} {
+    unsupported "no hbreak support"
+    return
+}
+
+if {!$cant_insert_hbreak} {
+    unsupported "can't disable hw breakpoint support"
+    return
+}
+
+# Get previous hw breakpoint out of the way.
+delete_breakpoints
+
+# Without target support, this should always complain.  GDB used to
+# suppress the error if the breakpoint was set in a shared library.
+# While that makes sense for software breakpoints (the memory might be
+# unmapped), it doesn't for hardware breakpoints, as those by
+# definition are implemented using a mechanism that is not dependent
+# on being able to modify the target's memory.
+gdb_test "hbreak shrfunc" "Cannot insert hardware breakpoint.*" \
+    "hbreak shrfunc complains"
+
+gdb_test "info break" "hw breakpoint.*y.*$hex.*in shrfunc at.*" \
+    "breakpoint not pending"

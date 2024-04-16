@@ -1,0 +1,86 @@
+# Copyright 2016-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Make sure that if an inferior exits or is detached/killed, its
+# watchpoints don't end up with stale locations, preventing resumption
+# of other inferiors.
+
+standard_testfile
+
+if {[build_executable "failed to build" $testfile $srcfile {debug}]} {
+    return -1
+}
+
+# The test proper.  DISPOSE indicates how to dispose of the fork
+# child.  Can be either "kill", "detach", or "exit" (to continue it to
+# normal exit).
+proc do_test {dispose} {
+    global binfile bkptno_numopt_re
+
+    clean_restart $binfile
+
+    gdb_test_no_output "set follow-fork child"
+    gdb_test_no_output "set detach-on-fork off"
+
+    if ![runto "child_function"] {
+	return
+    }
+
+    gdb_test "watch globalvar" "atchpoint \[0-9\]+: globalvar" \
+	"set watchpoint on inferior 2"
+
+    # Dispose of the inferior.  This should get rid of this inferior's
+    # watchpoint locations.
+    if {$dispose == "kill"} {
+	gdb_test "kill" "" "kill inferior 2" \
+	    "Kill the program being debugged.*y or n. $" "y"
+    } elseif {$dispose == "detach"} {
+	gdb_test "detach" ".*" "detach inferior 2"
+    } elseif {$dispose == "exit"} {
+	gdb_test "continue" ".*exited normally.*" "run to exit inferior 2"
+    } else {
+	perror "unhandled dispose: $dispose"
+    }
+
+    gdb_test "inferior 1" "witching to inferior 1 .*" \
+	"switch back to inferior 1"
+
+    if {$dispose == "kill"} {
+	gdb_test "print expect_signaled = 1" " = 1"
+    }
+
+    gdb_breakpoint "marker"
+
+    # Now continue inferior 1.  Before GDB was fixed, watchpoints for
+    # inferior 2 managed to be left behind.  When GDB realized that
+    # they hadn't been inserted, the continue command was aborted:
+    #
+    #  (gdb) continue
+    #  Continuing.
+    #  Warning:
+    #  Could not insert hardware watchpoint 2.
+    #  Could not insert hardware breakpoints:
+    #  You may have requested too many hardware breakpoints/watchpoints.
+    #
+    #  Command aborted.
+    #  (gdb)
+    #
+    gdb_test "continue" "Breakpoint $bkptno_numopt_re, marker .*" \
+	"continue in inferior 1"
+}
+
+foreach_with_prefix dispose {"kill" "detach" "exit"} {
+    do_test $dispose
+}

@@ -1,0 +1,388 @@
+// -*- C -*-
+
+// Simulator definition for the MIPS 32/64 revision 2 instructions.
+// Copyright (C) 2004-2024 Free Software Foundation, Inc.
+// Contributed by David Ung, of MIPS Technologies.
+//
+// This file is part of the MIPS sim.
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+:function:::void:do_dsbh:int rd, int rt
+{
+  union { uint64_t d; uint16_t h[4]; } u;
+  TRACE_ALU_INPUT1 (GPR[rt]);
+  u.d = GPR[rt];
+  u.h[0] = SWAP_2 (u.h[0]);
+  u.h[1] = SWAP_2 (u.h[1]);
+  u.h[2] = SWAP_2 (u.h[2]);
+  u.h[3] = SWAP_2 (u.h[3]);
+  GPR[rd] = u.d;
+  TRACE_ALU_RESULT1 (GPR[rd]);
+}
+
+:function:::void:do_dshd:int rd, int rt
+{
+  uint64_t d;
+  TRACE_ALU_INPUT1 (GPR[rt]);
+  d = GPR[rt];
+  GPR[rd] = ((d >> 48)
+	     | (d << 48)
+	     | ((d & 0x0000ffff00000000ULL) >> 16)
+	     | ((d & 0x00000000ffff0000ULL) << 16));
+  TRACE_ALU_RESULT1 (GPR[rd]);
+}
+
+:function:::void:do_dext:int rt, int rs, int lsb, int size
+{
+  TRACE_ALU_INPUT3 (GPR[rs], lsb, size);
+  GPR[rt] = EXTRACTED64 (GPR[rs], lsb + size, lsb);
+  TRACE_ALU_RESULT1 (GPR[rt]);
+}
+
+:function:::void:do_dextm:int rt, int rs, int lsb, int size
+{
+  TRACE_ALU_INPUT3 (GPR[rs], lsb, size);
+  GPR[rt] = EXTRACTED64 (GPR[rs], lsb + size + 32, lsb);
+  TRACE_ALU_RESULT1 (GPR[rt]);
+}
+
+:function:::void:do_dextu:int rt, int rs, int lsb, int size
+{
+  TRACE_ALU_INPUT3 (GPR[rs], lsb, size);
+  GPR[rt] = EXTRACTED64 (GPR[rs], lsb + 32 + size, lsb + 32);
+  TRACE_ALU_RESULT1 (GPR[rt]);
+}
+
+:function:::void:do_di:int rt
+{
+  TRACE_ALU_INPUT0 ();
+  GPR[rt] = EXTEND32 (SR);
+  SR &= ~status_IE;
+  TRACE_ALU_RESULT1 (GPR[rt]);
+}
+
+:function:::void:do_dins:int rt, int rs, int lsb, int msb
+{
+  TRACE_ALU_INPUT4 (GPR[rt], GPR[rs], lsb, msb);
+  if (lsb <= msb)
+    GPR[rt] ^= (GPR[rt] ^ (GPR[rs] << lsb)) & MASK64 (msb, lsb);
+  TRACE_ALU_RESULT1 (GPR[rt]);
+}
+
+:function:::void:do_dinsm:int rt, int rs, int lsb, int msb
+{
+  TRACE_ALU_INPUT4 (GPR[rt], GPR[rs], lsb, msb);
+  if (lsb <= msb + 32)
+    GPR[rt] ^= (GPR[rt] ^ (GPR[rs] << lsb)) & MASK64 (msb + 32, lsb);
+  TRACE_ALU_RESULT1 (GPR[rt]);
+}
+
+:function:::void:do_ei:int rt
+{
+  TRACE_ALU_INPUT0 ();
+  GPR[rt] = EXTEND32 (SR);
+  SR |= status_IE;
+  TRACE_ALU_RESULT1 (GPR[rt]);
+}
+
+:function:::void:do_ext:int rt, int rs, int lsb, int size
+{
+  TRACE_ALU_INPUT3 (GPR[rs], lsb, size);
+  GPR[rt] = EXTEND32 (EXTRACTED32 (GPR[rs], lsb + size, lsb));
+  TRACE_ALU_RESULT1 (GPR[rt]);
+}
+
+:function:::void:do_mfhc1:int rt, int fs
+{
+  check_fpu (SD_);
+  if (SizeFGR() == 64)
+    GPR[rt] = EXTEND32 (WORD64HI (FGR[fs]));
+  else if ((fs & 0x1) == 0)
+    GPR[rt] = EXTEND32 (FGR[fs + 1]);
+  else
+    {
+      if (STATE_VERBOSE_P(SD))
+	sim_io_eprintf (SD,
+	         "Warning: PC 0x%lx: MFHC1 32-bit use of odd FPR number\n",
+			(long) CIA);
+      GPR[rt] = EXTEND32 (0xBADF00D);
+    }
+  TRACE_ALU_RESULT (GPR[rt]);
+}
+
+:function:::void:do_mthc1:int rt, int fs
+{
+  check_fpu (SD_);
+  if (SizeFGR() == 64)
+    StoreFPR (fs, fmt_uninterpreted_64, SET64HI (GPR[rt]) | VL4_8 (FGR[fs]));
+  else if ((fs & 0x1) == 0)
+    StoreFPR (fs + 1, fmt_uninterpreted_32, VL4_8 (GPR[rt]));
+  else
+    {
+      if (STATE_VERBOSE_P(SD))
+	sim_io_eprintf (SD,
+	         "Warning: PC 0x%lx: MTHC1 32-bit use of odd FPR number\n",
+			(long) CIA);
+      StoreFPR (fs, fmt_uninterpreted_32, 0xDEADC0DE);
+    }
+  TRACE_FP_RESULT (GPR[rt]);
+}
+
+:function:::void:do_ins:int rt, int rs, int lsb, int msb
+{
+  TRACE_ALU_INPUT4 (GPR[rt], GPR[rs], lsb, msb);
+  if (lsb <= msb)
+    GPR[rt] = EXTEND32 (GPR[rt] ^
+			((GPR[rt] ^ (GPR[rs] << lsb)) & MASK32 (msb, lsb)));
+  TRACE_ALU_RESULT1 (GPR[rt]);
+}
+
+:function:::void:do_dinsu:int rt, int rs, int lsb, int msb
+{
+  TRACE_ALU_INPUT4 (GPR[rt], GPR[rs], lsb, msb);
+  if (lsb <= msb)
+    GPR[rt] ^= (GPR[rt] ^ (GPR[rs] << (lsb + 32)))
+      & MASK64 (msb + 32, lsb + 32);
+  TRACE_ALU_RESULT1 (GPR[rt]);
+}
+
+:function:::void:do_seb:int rd, int rt
+{
+  TRACE_ALU_INPUT1 (GPR[rt]);
+  GPR[rd] = EXTEND8 (GPR[rt]);
+  TRACE_ALU_RESULT1 (GPR[rd]);
+}
+
+:function:::void:do_seh:int rd, int rt
+{
+  TRACE_ALU_INPUT1 (GPR[rt]);
+  GPR[rd] = EXTEND16 (GPR[rt]);
+  TRACE_ALU_RESULT1 (GPR[rd]);
+}
+
+:function:::void:do_rdhwr:int rt, int rd
+{
+  // Return 0 for all hardware registers currently
+  GPR[rt] = EXTEND32 (0);
+  TRACE_ALU_RESULT1 (GPR[rt]);
+}
+
+:function:::void:do_wsbh:int rd, int rt
+{
+  union { uint32_t w; uint16_t h[2]; } u;
+  TRACE_ALU_INPUT1 (GPR[rt]);
+  u.w = GPR[rt];
+  u.h[0] = SWAP_2 (u.h[0]);
+  u.h[1] = SWAP_2 (u.h[1]);
+  GPR[rd] = EXTEND32 (u.w);
+  TRACE_ALU_RESULT1 (GPR[rd]);
+}
+
+011111,5.RS,5.RT,5.SIZE,5.LSB,000011::64::DEXT
+"dext r<RT>, r<RS>, <LSB>, <SIZE+1>"
+*mips64r2:
+*mips64r6:
+{
+  check_u64 (SD_, instruction_0);
+  do_dext (SD_, RT, RS, LSB, SIZE);
+}
+
+011111,5.RS,5.RT,5.SIZE,5.LSB,000001::64::DEXTM
+"dextm r<RT>, r<RS>, <LSB>, <SIZE+33>"
+*mips64r2:
+*mips64r6:
+{
+  check_u64 (SD_, instruction_0);
+  do_dextm (SD_, RT, RS, LSB, SIZE);
+}
+
+011111,5.RS,5.RT,5.SIZE,5.LSB,000010::64::DEXTU
+"dextu r<RT>, r<RS>, <LSB+32>, <SIZE+1>"
+*mips64r2:
+*mips64r6:
+{
+  check_u64 (SD_, instruction_0);
+  do_dextu (SD_, RT, RS, LSB, SIZE);
+}
+
+
+010000,01011,5.RT,01100,00000,0,00,000::32::DI
+"di":RT == 0
+"di r<RT>"
+*mips32r2:
+*mips32r6:
+*mips64r2:
+*mips64r6:
+{
+  do_di (SD_, RT);
+}
+
+
+011111,5.RS,5.RT,5.MSB,5.LSB,000111::64::DINS
+"dins r<RT>, r<RS>, <LSB>, <MSB-LSB+1>"
+*mips64r2:
+*mips64r6:
+{
+  check_u64 (SD_, instruction_0);
+  do_dins (SD_, RT, RS, LSB, MSB);
+}
+
+011111,5.RS,5.RT,5.MSB,5.LSB,000101::64::DINSM
+"dinsm r<RT>, r<RS>, <LSB>, <MSB+32-LSB+1>"
+*mips64r2:
+*mips64r6:
+{
+  check_u64 (SD_, instruction_0);
+  do_dinsm (SD_, RT, RS, LSB, MSB);
+}
+
+011111,5.RS,5.RT,5.MSB,5.LSB,000110::64::DINSU
+"dinsu r<RT>, r<RS>, <LSB+32>, <MSB-LSB+1>"
+*mips64r2:
+*mips64r6:
+{
+  check_u64 (SD_, instruction_0);
+  do_dinsu (SD_, RT, RS, LSB, MSB);
+}
+
+
+011111,00000,5.RT,5.RD,00010,100100::64::DSBH
+"dsbh r<RD>, r<RT>"
+*mips64r2:
+*mips64r6:
+{
+  check_u64 (SD_, instruction_0);
+  do_dsbh (SD_, RD, RT);
+}
+
+011111,00000,5.RT,5.RD,00101,100100::64::DSHD
+"dshd r<RD>, r<RT>"
+*mips64r2:
+*mips64r6:
+{
+  check_u64 (SD_, instruction_0);
+  do_dshd (SD_, RD, RT);
+}
+
+010000,01011,5.RT,01100,00000,1,00,000::32::EI
+"ei":RT == 0
+"ei r<RT>"
+*mips32r2:
+*mips32r6:
+*mips64r2:
+*mips64r6:
+{
+  do_ei (SD_, RT);
+}
+
+
+011111,5.RS,5.RT,5.SIZE,5.LSB,000000::32::EXT
+"ext r<RT>, r<RS>, <LSB>, <SIZE+1>"
+*mips32r2:
+*mips32r6:
+*mips64r2:
+*mips64r6:
+{
+  do_ext (SD_, RT, RS, LSB, SIZE);
+}
+
+
+010001,00011,5.RT,5.FS,00000000000:COP1Sa:32,f::MFHC1
+"mfhc1 r<RT>, f<FS>"
+*mips32r2:
+*mips32r6:
+*mips64r2:
+*mips64r6:
+{
+  do_mfhc1 (SD_, RT, FS);
+}
+
+010001,00111,5.RT,5.FS,00000000000:COP1Sa:32,f::MTHC1
+"mthc1 r<RT>, f<FS>"
+*mips32r2:
+*mips32r6:
+*mips64r2:
+*mips64r6:
+{
+  do_mthc1 (SD_, RT, FS);
+}
+
+
+011111,5.RS,5.RT,5.MSB,5.LSB,000100::32::INS
+"ins r<RT>, r<RS>, <LSB>, <MSB-LSB+1>"
+*mips32r2:
+*mips32r6:
+*mips64r2:
+*mips64r6:
+{
+  do_ins (SD_, RT, RS, LSB, MSB);
+}
+
+
+011111,00000,5.RT,5.RD,10000,100000::32::SEB
+"seb r<RD>, r<RT>"
+*mips32r2:
+*mips32r6:
+*mips64r2:
+*mips64r6:
+{
+  do_seb (SD_, RD, RT);
+}
+
+011111,00000,5.RT,5.RD,11000,100000::32::SEH
+"seh r<RD>, r<RT>"
+*mips32r2:
+*mips32r6:
+*mips64r2:
+*mips64r6:
+{
+  do_seh (SD_, RD, RT);
+}
+
+
+000001,5.BASE,11111,16.OFFSET::32::SYNCI
+"synci <OFFSET>(r<BASE>)"
+*mips32r2:
+*mips32r6:
+*mips64r2:
+*mips64r6:
+{
+  // sync i-cache - nothing to do currently
+}
+
+
+011111,00000,5.RT,5.RD,00000,111011::32::RDHWR
+"rdhwr r<RT>, r<RD>"
+*mips32r2:
+*mips32r6:
+*mips64r2:
+*mips64r6:
+{
+  do_rdhwr (SD_, RT, RD);
+}
+
+
+011111,00000,5.RT,5.RD,00010,100000::32::WSBH
+"wsbh r<RD>, r<RT>"
+*mips32r2:
+*mips32r6:
+*mips64r2:
+*mips64r6:
+{
+  do_wsbh (SD_, RD, RT);
+}
+
+
+

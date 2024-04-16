@@ -1,0 +1,139 @@
+# Copyright 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "fortran.exp"
+
+require allow_fortran_tests
+
+standard_testfile .f90
+
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile {debug f90}] } {
+    return -1
+}
+
+# Test automatic language detection before the inferior starts.  It tests the
+# effect of expected:
+# (gdb) show language 
+# The current source language is "auto; currently fortran".
+gdb_test "p modmany::var_i" " = 14" "stopped language detection"
+
+gdb_test "print mod1::var_const" " = 20" "fully qualified name of DW_TAG_constant"
+
+# Avoid shared lib symbols.
+gdb_test_no_output "set auto-solib-add off"
+
+if {![fortran_runto_main]} {
+    return
+}
+
+# Avoid libc symbols.
+gdb_test "nosharedlibrary"
+
+set int_type [fortran_int4]
+
+# Test 'info variables' can find module variables.
+set mod_re \
+    [multi_line \
+	 "18:\[ \t\]+${int_type} mod1::var_const;" \
+	 "17:\[ \t\]+${int_type} mod1::var_i;" \
+	 "23:\[ \t\]+${int_type} mod2::var_i;" \
+	 "28:\[ \t\]+${int_type} mod3::mod1;" \
+	 "27:\[ \t\]+${int_type} mod3::mod2;" \
+	 "29:\[ \t\]+${int_type} mod3::var_i;" \
+	 "33:\[ \t\]+${int_type} modmany::var_a;" \
+	 "33:\[ \t\]+${int_type} modmany::var_b;" \
+	 "33:\[ \t\]+${int_type} modmany::var_c;" \
+	 "33:\[ \t\]+${int_type} modmany::var_i;" \
+	 "37:\[ \t\]+${int_type} moduse::var_x;" \
+	 "37:\[ \t\]+${int_type} moduse::var_y;"]
+
+set state 0
+gdb_test_multiple "info variables -n" "" {
+    -re "\r\nAll defined variables:" {
+	if { $state == 0 } { set state 1 }
+	exp_continue
+    }
+    -re "\r\n\r\nFile .*[string_to_regexp $srcfile]:" {
+	if { $state == 1 } { set state 2 }
+	exp_continue
+    }
+    -re $mod_re	{
+	if { $state == 2 } { set state 3 }
+	exp_continue
+    }
+    -re "\r\n\r\nFile \[^\r\n\]*:" {
+	exp_continue
+    }
+    -re -wrap "" {
+	if { $state == 3} {
+	    pass $gdb_test_name
+	} else {
+	    fail $gdb_test_name
+	}
+    }
+}
+
+# Do not use simple single-letter names as GDB would pick up for expectedly
+# nonexisting symbols some static variables from system libraries debuginfos.
+
+gdb_breakpoint [gdb_get_line_number "i-is-1"]
+gdb_continue_to_breakpoint "i-is-1" ".*i-is-1.*"
+gdb_test "print var_i" " = 1" "print var_i value 1"
+
+gdb_breakpoint [gdb_get_line_number "i-is-2"]
+gdb_continue_to_breakpoint "i-is-2" ".*i-is-2.*"
+gdb_test "print var_i" " = 2" "print var_i value 2"
+
+gdb_breakpoint [gdb_get_line_number "i-is-3"]
+gdb_continue_to_breakpoint "i-is-3" ".*i-is-3.*"
+# Ensure that the scope is correctly resolved.
+gdb_test "p mod3" "Attempt to use a type name as an expression" "print mod3"
+gdb_test "p mod2" " = 3" "print mod2"
+gdb_test "p mod1" " = 3" "print mod1"
+
+gdb_breakpoint [gdb_get_line_number "a-b-c-d"]
+gdb_continue_to_breakpoint "a-b-c-d" ".*a-b-c-d.*"
+gdb_test "print var_a" "No symbol \"var_a\" in current context\\."
+gdb_test "print var_b" " = 11"
+gdb_test "print var_c" "No symbol \"var_c\" in current context\\."
+gdb_test "print var_d" " = 12"
+gdb_test "print var_i" " = 14" "print var_i value 14"
+gdb_test "print var_x" " = 30" "print var_x value 30"
+gdb_test "print var_y" "No symbol \"var_y\" in current context\\."
+gdb_test "print var_z" " = 31" "print var_x value 31"
+
+gdb_test "ptype modmany" "type = module modmany"
+
+proc complete {expr list} {
+    set n_lines "\(?:\\r\\n.*\)*"
+    set cmd "complete p $expr"
+    set expect [join [concat [list $cmd] $list] $n_lines]
+    gdb_test $cmd "$expect$n_lines" "complete $expr"
+}
+set modmany_list {modmany::var_a modmany::var_b modmany::var_c modmany::var_i}
+complete "modm" "modmany $modmany_list"
+complete "modmany" "modmany $modmany_list"
+complete "modmany::" $modmany_list
+complete "modmany::var" $modmany_list
+
+# Breakpoint would work in language "c".
+gdb_test "show language" {The current source language is "(auto; currently )?fortran".}
+
+# gcc-4.4.2: The main program is always $fmain in .symtab so "runto" above
+# works.  But DWARF DW_TAG_subprogram contains the name specified by
+# the "program" Fortran statement.
+if [gdb_breakpoint "module"] {
+    pass "setting breakpoint at module"
+}

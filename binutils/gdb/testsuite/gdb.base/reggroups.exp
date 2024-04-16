@@ -1,0 +1,112 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test listing reggroups and the registers in each group.
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+if {![runto_main]} {
+    return 0
+}
+
+set invalid_register_re "Invalid register .*"
+
+# Fetch all reggroups from 'maint print reggroups'.
+
+proc fetch_reggroups {test} {
+    global gdb_prompt
+
+    set reggroups {}
+    gdb_test_multiple "maint print reggroups" $test {
+	-re "maint print reggroups\r\n" {
+	    exp_continue
+	}
+	-re "^ Group\[ \t\]+Type\[ \t\]+\r\n" {
+	    exp_continue
+	}
+	-re "^ (\[_0-9a-zA-Z-\]+)\[ \t\]+(user|internal)\[ \t\]+\r\n" {
+	    lappend reggroups $expect_out(1,string)
+	    exp_continue
+	}
+	-re "$gdb_prompt $" {
+	    gdb_assert "[llength $reggroups] != 0" $test
+	}
+    }
+
+    return $reggroups
+}
+
+# Fetch all registers for a reggroup from 'info reg <reggroup>'.
+
+proc fetch_reggroup_regs {reggroup test} {
+    global gdb_prompt
+    global invalid_register_re
+
+    # The command info reg <reggroup> will return something like the following:
+    #
+    # r0             0x0      0^M
+    # r1             0x7fdffc 0x7fdffc^M
+    # r2             0x7fe000 0x7fe000^M
+    # npc            0x23a8   0x23a8 <main+12>^M
+    # sr             0x8401   [ SM CY FO CID=0 ]^M
+    #
+    # We parse out and return the reg names, this is done by detecting
+    # that for each line we have a register name followed by a $hex number.
+    #
+    # Note: we will not return vector registers, but I think this is ok because
+    # for testing purposes we just want to ensure we get some registers and dont
+    # fail.  Example vector register:
+    #
+    # xmm0           {v4_float = {0x0, 0x0, 0x0, 0x0}, v2_double = {0x0, ... }}
+    #
+    set regs {}
+    gdb_test_multiple "info reg $reggroup" $test {
+	-re "info reg $reggroup\r\n" {
+	    exp_continue
+	}
+	-re "^(\[0-9a-zA-Z-\]+)\[ \t\]+(0x\[0-9a-f\]+)\[ \t\]+(\[^\n\r\]+)\r\n" {
+	    lappend regs $expect_out(1,string)
+	    exp_continue
+	}
+	-re $invalid_register_re {
+	    fail "$test (unexpected invalid register response)"
+	}
+	-re "$gdb_prompt $" {
+	    pass $test
+	}
+    }
+    return $regs
+}
+
+set reggroups [fetch_reggroups "fetch reggroups"]
+set regcount 0
+foreach reggroup $reggroups {
+    set regs [fetch_reggroup_regs $reggroup "fetch reggroup regs $reggroup"]
+    set regcount [expr $regcount + [llength $regs]]
+}
+
+gdb_assert "[llength $regcount] != 0" "system has reggroup registers"
+
+# If this fails it means that probably someone changed the error text returned
+# for an invalid register argument.  If that happens we should fix the pattern
+# here and in the fetch_reggroup_regs procedure above.
+gdb_test "info reg invalid-reggroup" $invalid_register_re \
+    "info reg invalid-reggroup should report 'Invalid register'"

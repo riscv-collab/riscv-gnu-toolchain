@@ -1,0 +1,83 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test the "list" command with linespecs that expand to multiple
+# locations.
+
+standard_testfile list-ambiguous0.c list-ambiguous1.c
+
+# Set EDITOR to true to prevent that GDB's edit command starts an actual
+# editor.
+setenv EDITOR true
+
+if {[prepare_for_testing "failed to prepare" $testfile [list $srcfile $srcfile2] \
+	 {debug}]} {
+    return -1
+}
+
+# Build source listing pattern based on an inclusive line range.
+
+proc line_range_pattern { range_start range_end } {
+    global line_re
+
+    for {set i $range_start} {$i <= $range_end} {incr i} {
+	append pattern "\r\n$i\[ \t\]\[^\r\n\]*"
+    }
+
+    verbose -log "pattern $pattern"
+    return $pattern
+}
+
+# Test the "list" command with linespecs that expand to multiple
+# locations.
+
+proc test_list_ambiguous_symbol {symbol_line symbol} {
+    global srcfile srcfile2
+
+    set lineno0 [gdb_get_line_number $symbol_line $srcfile]
+    set lineno1 [gdb_get_line_number $symbol_line $srcfile2]
+    set lines0_re [line_range_pattern [expr $lineno0 - 5] [expr $lineno0 + 4]]
+    set lines1_re [line_range_pattern [expr $lineno1 - 5] [expr $lineno1 + 4]]
+
+    set any "\[^\r\n\]*"
+    set h0_re "file: \"${any}list-ambiguous0.c\", line number: $lineno0, symbol: \"$symbol\""
+    set h1_re "file: \"${any}list-ambiguous1.c\", line number: $lineno1, symbol: \"$symbol\""
+    gdb_test "list $symbol" "${h0_re}${lines0_re}\r\n${h1_re}${lines1_re}"
+
+    gdb_test "list main,$symbol" \
+	"Specified last line '$symbol' is ambiguous:\r\n${h0_re}\r\n${h1_re}"
+    gdb_test "list ,$symbol" \
+	"Specified last line '$symbol' is ambiguous:\r\n${h0_re}\r\n${h1_re}"
+    gdb_test "list $symbol,main" \
+	"Specified first line '$symbol' is ambiguous:\r\n${h0_re}\r\n${h1_re}"
+    gdb_test "list $symbol,$symbol" \
+	"Specified first line '$symbol' is ambiguous:\r\n${h0_re}\r\n${h1_re}"
+    gdb_test "list $symbol," \
+	"Specified first line '$symbol' is ambiguous:\r\n${h0_re}\r\n${h1_re}"
+
+    # While at it, test the "edit" command as well, since it shares
+    # code with "list".
+    gdb_test "edit $symbol" \
+	"Specified line is ambiguous:\r\n${h0_re}\r\n${h1_re}"
+}
+
+proc test_list_ambiguous_function {} {
+    test_list_ambiguous_symbol "ambiguous_fun (void)" "ambiguous_fun"
+    test_list_ambiguous_symbol "ambiguous_var" "ambiguous_var"
+}
+
+gdb_test_no_output "set listsize 10"
+
+test_list_ambiguous_function

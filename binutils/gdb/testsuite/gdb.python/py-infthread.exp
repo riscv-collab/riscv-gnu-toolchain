@@ -1,0 +1,103 @@
+# Copyright (C) 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It tests the mechanism
+# exposing inferior threads to Python.
+
+load_lib gdb-python.exp
+
+require allow_python_tests
+
+standard_testfile
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+    return -1
+}
+
+gdb_test_multiline "install new_thread event handler" \
+    "python" "" \
+    "seen_a_thread = False" "" \
+    "def thread_handler(evt):" "" \
+    "  if (evt.inferior_thread is not None" "" \
+    "      and isinstance (evt.inferior_thread, gdb.InferiorThread)):" "" \
+    "    global seen_a_thread" "" \
+    "    seen_a_thread = True" "" \
+    "gdb.events.new_thread.connect(thread_handler)" "" \
+    "end" ""
+
+# The following tests require execution.
+
+if {![runto_main]} {
+    return 0
+}
+
+gdb_test "python print(seen_a_thread)" "True"
+
+# Test basic gdb.Inferior attributes and methods.
+
+# Make sure that InferiorThread.inferior returns a new reference (see PR 21213).
+
+gdb_py_test_silent_cmd "python gdb.selected_thread ().inferior" "test InferiorThread.inferior 1" 1
+gdb_py_test_silent_cmd "python gdb.selected_thread ().inferior" "test InferiorThread.inferior 2" 1
+gdb_test_no_output "python import gc; gc.collect()" "call Python garbage collection"
+gdb_py_test_silent_cmd "python gdb.selected_thread ().inferior" "test InferiorThread.inferior 3" 1
+gdb_py_test_silent_cmd "python gdb.selected_thread ().inferior" "test InferiorThread.inferior 4" 1
+
+
+gdb_py_test_silent_cmd "python t0 = gdb.selected_thread ()" "test gdb.selected_thread" 1
+gdb_test "python print (t0)" \
+    "<gdb.InferiorThread id=${decimal}\\.${decimal} target-id=\"\[^\r\n\]*\">"
+gdb_test "python print ('result = %s' % t0.num)" " = 1" "test InferiorThread.num"
+gdb_test "python print ('result = %s' % t0.global_num)" " = 1" "test InferiorThread.global_num"
+gdb_test "python print ('result = %s' % str (t0.ptid))" " = \\(\[0-9\]+, \[0-9\]+, \[0-9\]+\\)" "test InferiorThread.ptid"
+
+# Test the InferiorThread.ptid_string attribute.  We don't test the
+# actual string contents as they vary based on target, but we check
+# that we get back a non-empty string.
+gdb_test "python print(type(t0.ptid_string))" "<class 'str'>" \
+    "check that InferiorThread.ptid_string is a string"
+gdb_test "python print(t0.ptid_string)" ".+" \
+    "check that InferiorThread.ptid_string is non-empty"
+
+gdb_py_test_silent_cmd "python i0 = t0.inferior" "test InferiorThread.inferior" 1
+gdb_test "python print ('result = %s' % i0.num)" " = 1" "test Inferior.num"
+
+gdb_py_test_silent_cmd "python name = gdb.selected_thread().name" \
+    "get supplied name of current thread" 1
+gdb_py_test_silent_cmd "python gdb.selected_thread().name = 'hibob'" \
+    "set name of current thread" 1
+gdb_test "python print (gdb.selected_thread().name)" "hibob" \
+    "check name of current thread"
+gdb_py_test_silent_cmd "python gdb.selected_thread().name = None" \
+    "reset name of current thread" 1
+gdb_test "python print (gdb.selected_thread().name == name)" "True" \
+    "check name of current thread again"
+
+gdb_test_no_output "python details = gdb.selected_thread().details" \
+    "record the thread details string"
+gdb_test "python print(details is None or isinstance(details, str))" "True" \
+    "check that the details has an acceptable type"
+
+gdb_test "python print ('result = %s' % t0.is_stopped ())" " = True" "test InferiorThread.is_stopped"
+gdb_test "python print ('result = %s' % t0.is_running ())" " = False" "test InferiorThread.is_running"
+gdb_test "python print ('result = %s' % t0.is_exited ())" " = False" "test InferiorThread.is_exited"
+
+# Test InferiorThread is_valid.  This must always be the last test in
+# this testcase as it kills the inferior.
+
+gdb_test "python print ('result = %s' % t0.is_valid ())" " = True" "test InferiorThread.is_valid"
+gdb_test_no_output "kill inferior 1" "kill inferior 1"
+gdb_test "python print ('result = %s' % t0.is_valid ())" " = False" \
+    "test InferiorThread.is_valid after thread has been killed"

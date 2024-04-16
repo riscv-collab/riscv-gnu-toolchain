@@ -1,0 +1,153 @@
+# Copyright 2009-2024 Free Software Foundation, Inc.
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# Contributed by Paul Pluzhnikov <ppluzhnikov@google.com>
+#
+
+# This test case verifies that if a display is active on a variable
+# which belongs in a shared library, and that shared library is
+# reloaded (e.g. due to re-execution of the program), GDB will continue
+# to display it (gdb-6.8 crashed under this scenario).
+
+# Also test that a display of variable which is currently present in
+# a shared library, but disappears before re-run, doesn't cause GDB
+# difficulties, and that it continues to display other variables.
+
+# Finally, test that displays which refer to main executable
+# (and thus aren't affected by shared library unloading) are not
+# disabled prematurely.
+
+require allow_shlib_tests
+
+# This test is currently not supported for stub targets, because it uses the
+# start command (through gdb_start_cmd).  In theory, it could be changed to
+# use something else (kill + gdb_run_cmd with a manual breakpoint at main).
+# However, when we try that with the native-gdbserver board, we see that the
+# test fails and gdb outputs this upon connection:
+#
+#   warning: Unable to display "a_global": No symbol "a_global" in current context.
+#   warning: Unable to display "b_global": No symbol "b_global" in current context.
+#   warning: Unable to display "c_global": No symbol "c_global" in current context.
+#
+# This is because the initial stop is done before the shared libraries are
+# loaded.
+
+require !use_gdb_stub
+
+# Library file.
+set libname "solib-display-lib"
+set srcfile_lib ${srcdir}/${subdir}/${libname}.c
+set binfile_lib [standard_output_file ${libname}.so]
+set lib_flags {}
+# Binary file.
+set testfile "solib-display-main"
+set srcfile ${srcdir}/${subdir}/${testfile}.c
+set executable ${testfile}
+set binfile [standard_output_file ${executable}]
+set bin_flags [list debug shlib=${binfile_lib}]
+
+# SEP must be last for the possible `unsupported' error path.
+foreach libsepdebug {NO IN SEP} { with_test_prefix "$libsepdebug" {
+
+    set sep_lib_flags $lib_flags
+    if {$libsepdebug != "NO"} {
+	lappend sep_lib_flags {debug}
+    }
+    if { [gdb_compile_shlib ${srcfile_lib} ${binfile_lib} $sep_lib_flags] != ""
+	 || [gdb_compile ${srcfile} ${binfile} executable $bin_flags] != "" } {
+      untested "failed to compile"
+      return -1
+    }
+
+    if {$libsepdebug == "SEP"} {
+	if {[gdb_gnu_strip_debug $binfile_lib] != 0} {
+	    unsupported "could not split debug of $binfile_lib."
+	    return
+	} else {
+	    pass "split solib"
+	}
+    }
+
+    clean_restart $executable
+
+    if {![runto_main]} {
+      return 0
+    }
+
+    gdb_test "display (int) a_global" "1: \\(int\\) a_global = 41"
+    gdb_test "display (int) b_global" "2: \\(int\\) b_global = 42"
+    gdb_test "display (int) c_global" "3: \\(int\\) c_global = 43"
+
+    if { [gdb_start_cmd] < 0 } {
+	fail "can't run to main (2)"
+	continue
+    }
+
+    gdb_test "" [multi_line \
+		     "1: \\(int\\) a_global = 41" \
+		     "2: \\(int\\) b_global = 42"  \
+		     "3: \\(int\\) c_global = 43" \
+		    ] "after rerun"
+
+    # Now rebuild the library without b_global
+    if { [gdb_compile_shlib ${srcfile_lib} ${binfile_lib} \
+	      "$sep_lib_flags additional_flags=-DNO_B_GLOBAL"] != ""} {
+	fail "can't rebuild $binfile_lib"
+    }
+
+    if {$libsepdebug == "SEP"} {
+	set test "split solib second time"
+	if {[gdb_gnu_strip_debug $binfile_lib] != 0} {
+	    fail $test
+	    continue
+	} else {
+	    pass $test
+	}
+    }
+
+    if { [gdb_start_cmd] < 0 } {
+	fail "can't run to main (3)"
+	continue
+    }
+
+
+    gdb_test "" [multi_line \
+		     "1: \\(int\\) a_global = 41" \
+		     "warning: .*b_global.*"  \
+		     "3: \\(int\\) c_global = 43" \
+		    ] "after rerun (2)"
+
+    # Now verify that displays which are not in the shared library
+    # are not cleared permaturely.
+
+    gdb_test "break [gdb_get_line_number "break here" ${testfile}.c]" \
+	    ".*Breakpoint.* at .*"
+
+    gdb_test "continue"
+    gdb_test "display main_global" "4: main_global = 44"
+    gdb_test "display a_local" "5: a_local = 45"
+    gdb_test "display a_static" "6: a_static = 46"
+
+    if { [gdb_start_cmd] < 0 } {
+	fail "can't run to main (4)"
+	continue
+    }
+
+    gdb_test "" "6: a_static = 46\\r\\n4: main_global = 44\\r\\n.*"
+    gdb_test "continue" [multi_line \
+			     "4: main_global = 44" \
+			     "5: a_local = 45" \
+			     "6: a_static = 46" \
+			    ] "continue two"
+}}

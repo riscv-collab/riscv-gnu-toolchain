@@ -1,0 +1,168 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This tests GDB's handling of DW_TAG_template_type_parameter and
+# DW_TAG_template_value_parameter tags that do not have a DW_AT_name attribute.
+# The attribute is optional for the tags and a bug about GDB not recording
+# the respective symbols (because of the missing name) was reported in PR
+# gdb/28396.
+
+load_lib dwarf.exp
+
+require dwarf2_support
+
+standard_testfile .cc .S
+
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    cu {} {
+	DW_TAG_compile_unit {
+	    {DW_AT_language @DW_LANG_C_plus_plus}
+	} {
+	    declare_labels int float template_var1 template_var2 template_var3
+
+	    int: DW_TAG_base_type {
+		{DW_AT_name "int"}
+		{DW_AT_byte_size 4 DW_FORM_data1}
+		{DW_AT_encoding @DW_ATE_signed}
+	    }
+
+	    float: base_type {
+		{DW_AT_name float}
+		{DW_AT_byte_size 4 DW_FORM_sdata}
+		{DW_AT_encoding @DW_ATE_float}
+	    }
+
+	    DW_TAG_subprogram {
+		{DW_AT_name "main"}
+		{MACRO_AT_range "main"}
+		{DW_AT_type :$int}
+		{DW_AT_external 1 DW_FORM_flag}
+	    } {
+		DW_TAG_variable {
+		    {DW_AT_name "var1"}
+		    {DW_AT_type :$template_var1}
+		}
+		DW_TAG_variable {
+		    {DW_AT_name "var2"}
+		    {DW_AT_type :$template_var2}
+		}
+		DW_TAG_variable {
+		    {DW_AT_name "var3"}
+		    {DW_AT_type :$template_var3}
+		}
+	    }
+
+	    # A variable whose type is a template instantiation with two
+	    # template parameters, one unnamed.
+	    template_var1: DW_TAG_structure_type {
+		{DW_AT_name "template_var1<int, float>"}
+	    } {
+		DW_TAG_member {
+		    {DW_AT_name "me"}
+		    {DW_AT_type :$int}
+		}
+		DW_TAG_member {
+		    {DW_AT_name "me2"}
+		    {DW_AT_type :$float}
+		}
+		DW_TAG_template_type_param {
+		    {DW_AT_type :$int}
+		}
+		DW_TAG_template_type_param {
+		    {DW_AT_name "second"}
+		    {DW_AT_type :$float}
+		}
+	    }
+
+	    # A variable whose type is a template instantiation with two
+	    # template parameters, both unnamed.
+	    template_var2: DW_TAG_class_type {
+		{DW_AT_name "template_var2<int, float>"}
+	    } {
+		DW_TAG_member {
+		    {DW_AT_name "me"}
+		    {DW_AT_type :$int}
+		}
+		DW_TAG_member {
+		    {DW_AT_name "me2"}
+		    {DW_AT_type :$float}
+		}
+		DW_TAG_template_type_param {
+		    {DW_AT_type :$int}
+		}
+		DW_TAG_template_type_param {
+		    {DW_AT_type :$float}
+		}
+	    }
+
+	    # A variable whose type is a template instantiation with four
+	    # template arguments, two types, two values, all unnamed.
+	    template_var3: DW_TAG_structure_type {
+		{DW_AT_name "template_var3<0, int, 11, float>"}
+	    } {
+		DW_TAG_member {
+		    {DW_AT_name "me"}
+		    {DW_AT_type :$int}
+		}
+		DW_TAG_member {
+		    {DW_AT_name "me2"}
+		    {DW_AT_type :$float}
+		}
+		DW_TAG_template_value_param {
+		    {DW_AT_type :$int}
+		    {DW_AT_const_value 0 DW_FORM_sdata}
+		}
+		DW_TAG_template_type_param {
+		    {DW_AT_type :$int}
+		}
+		DW_TAG_template_value_param {
+		    {DW_AT_type :$int}
+		    {DW_AT_const_value 11 DW_FORM_sdata}
+		}
+		DW_TAG_template_type_param {
+		    {DW_AT_type :$float}
+		}
+	    }
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	[list $srcfile $asm_file] {nodebug c++}] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+gdb_test "ptype var1" [multi_line \
+    "type = struct template_var1<int, float> \\\[with <unnamed0> = int, second = float\\\] {" \
+    "    <unnamed0> me;" \
+    "    second me2;" \
+    "}"]
+
+gdb_test "ptype var2" [multi_line \
+    "type = class template_var2<int, float> \\\[with <unnamed0> = int, <unnamed1> = float\\\] {" \
+    "    <unnamed0> me;" \
+    "    <unnamed1> me2;" \
+    "}"]
+
+gdb_test "ptype var3" [multi_line \
+    "type = struct template_var3<0, int, 11, float> \\\[with <unnamed1> = int, <unnamed3> = float\\\] {" \
+    "    <unnamed1> me;" \
+    "    <unnamed3> me2;" \
+    "}"]

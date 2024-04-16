@@ -1,0 +1,169 @@
+# Copyright 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Tests to cover DW_AT_count attribute in subranges.
+
+load_lib dwarf.exp
+
+# Only run on targets which support dwarf and gas.
+require dwarf2_support
+
+standard_testfile main.c .S
+
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    cu {} {
+	compile_unit {{language @DW_LANG_C99}} {
+	    declare_labels char_label \
+		array_size_type_label long_unsigned_int_label \
+		array_label array_label2 static_array_label \
+		vla_length_label vla_array_label
+
+	    char_label: base_type {
+		{name char}
+		{encoding @DW_ATE_signed}
+		{byte_size 1 DW_FORM_sdata}
+	    }
+
+	    array_size_type_label: base_type {
+		{byte_size 8 DW_FORM_sdata}
+		{encoding @DW_ATE_unsigned}
+		{name __ARRAY_SIZE_TYPE__}
+	    }
+
+	    long_unsigned_int_label: base_type {
+		{byte_size 8 DW_FORM_sdata}
+		{encoding @DW_ATE_unsigned}
+		{name "long unsigned int"}
+	    }
+
+	    array_label: array_type {
+		{type :$char_label}
+	    } {
+		subrange_type {
+		    {count {DW_OP_lit5} SPECIAL_expr}
+		    {type :$char_label}
+		}
+	    }
+
+	    array_label2: array_type {
+		{type :$char_label}
+	    } {
+		subrange_type {
+		    {count {DW_OP_lit1} SPECIAL_expr}
+		    {type :$char_label}
+		}
+	    }
+
+	    static_array_label: array_type {
+		{type :$char_label}
+	    } {
+		subrange_type {
+		    {count 5 DW_FORM_sdata}
+		    {type :$char_label}
+		}
+	    }
+
+	    vla_length_label:
+	    DW_TAG_variable {
+		{location
+		    {
+			lit6
+			stack_value
+		    } SPECIAL_expr}
+		{name "__vla_array_length"}
+		{type :$long_unsigned_int_label}
+		{artificial 1 DW_FORM_flag_present}
+	    }
+
+	    vla_array_label: array_type {
+		{type :$char_label}
+	    } {
+		subrange_type {
+		    {type :$array_size_type_label}
+		    {count :$vla_length_label}
+		}
+	    }
+
+	    DW_TAG_variable {
+		{name array2}
+		{type :$array_label2}
+		{const_value 65 DW_FORM_udata}
+	    }
+
+	    DW_TAG_variable {
+		{name array}
+		{type :$array_label}
+		{const_value hello DW_FORM_block1}
+	    }
+
+	    DW_TAG_variable {
+		{name static_array}
+		{type :$static_array_label}
+		{const_value world DW_FORM_block1}
+	    }
+
+	    DW_TAG_variable {
+		{name vla_array}
+		{type :$vla_array_label}
+		{const_value saluton DW_FORM_block1}
+	    }
+	}
+    }
+}
+
+if { [gdb_compile ${srcdir}/${subdir}/${srcfile} ${binfile}1.o \
+	  object {nodebug}] != "" } {
+    return -1
+}
+
+if { [gdb_compile $asm_file ${binfile}2.o object {nodebug}] != "" } {
+    return -1
+}
+
+if { [gdb_compile [list ${binfile}1.o ${binfile}2.o] \
+	  "${binfile}" executable {}] != "" } {
+    return -1
+}
+
+global GDBFLAGS
+set saved_gdbflags $GDBFLAGS
+set GDBFLAGS [concat $GDBFLAGS " -readnow"]
+clean_restart ${testfile}
+set GDBFLAGS $saved_gdbflags
+
+if ![runto_main] {
+    return -1
+}
+
+gdb_test "ptype array" "type = char \\\[5\\\]"
+gdb_test "whatis array" "type = char \\\[5\\\]"
+gdb_test "print array" " = \"hello\""
+gdb_test "print sizeof array" " = 5"
+
+gdb_test "ptype array2" "type = char \\\[1\\\]"
+gdb_test "whatis array2" "type = char \\\[1\\\]"
+gdb_test "print array2" " = \"A\""
+gdb_test "print sizeof array2" " = 1"
+
+gdb_test "ptype static_array" "type = char \\\[5\\\]"
+gdb_test "whatis static_array" "type = char \\\[5\\\]"
+gdb_test "print static_array" " = \"world\""
+gdb_test "print sizeof static_array" " = 5"
+
+gdb_test "ptype vla_array" "type = char \\\[6\\\]"
+gdb_test "whatis vla_array" "type = char \\\[6\\\]"
+gdb_test "print vla_array" " = \"saluto\""
+gdb_test "print sizeof vla_array" " = 6"

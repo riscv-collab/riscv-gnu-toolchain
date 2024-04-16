@@ -1,0 +1,118 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check that prologue analysis in foo is correct in the presence of a
+# prologue_end marker in immediately following function bar.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+standard_testfile .c .S
+
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    global srcdir subdir srcfile srcfile2
+    declare_labels lines_label
+
+    cu {} {
+	compile_unit {
+	    {language @DW_LANG_C}
+	    {name dw2-prologue-end.c}
+	    {stmt_list ${lines_label} DW_FORM_sec_offset}
+	} {
+	    subprogram {
+		{external 1 flag}
+		{name foo}
+		{low_pc foo_label addr}
+		{high_pc foo_end addr}
+	    }
+	    subprogram {
+		{external 1 flag}
+		{name bar}
+		{low_pc bar_label addr}
+		{high_pc bar_end addr}
+	    }
+	}
+    }
+
+    lines {version 5} lines_label {
+	set diridx [include_dir "${srcdir}/${subdir}"]
+	file_name "$srcfile" $diridx
+
+	program {
+	    DW_LNS_set_file $diridx
+
+	    DW_LNE_set_address foo_label
+	    line [gdb_get_line_number "Foo body"]
+	    DW_LNS_copy
+
+	    DW_LNE_set_address bar_label
+	    DW_LNS_set_prologue_end
+	    line [gdb_get_line_number "Bar body"]
+	    DW_LNS_copy
+
+	    DW_LNE_set_address bar_end
+	    DW_LNE_end_sequence
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	  [list $srcfile $asm_file] {nodebug}] } {
+    return -1
+}
+
+# Don't runto main here, otherwise the following doesn't
+# function as regression test for PR30369.
+
+# Get the "break foo" address.
+
+set break_addr ""
+gdb_test_multiple "break foo" "" {
+    -re -wrap "at ($hex):\[^\r\n\]*" {
+	set break_addr $expect_out(1,string)
+	pass $gdb_test_name
+    }
+}
+
+if { $break_addr == "" } {
+    return
+}
+
+# Get the "bar_label" address.
+
+set bar_label_addr ""
+gdb_test_multiple "print /x &bar_label" "" {
+    -re -wrap "= ($hex)" {
+	set bar_label_addr $expect_out(1,string)
+	pass $gdb_test_name
+    }
+}
+
+if { $bar_label_addr == "" } {
+    return
+}
+
+# Check that bar immediately follows foo.  Otherwise the following doesn't
+# function as regression test for PR30369.
+
+gdb_test "print &foo_end == &bar_label" " = 1"
+
+# Check that the breakpoint is set at the expected address.  Regression test
+# for PR30369.
+
+gdb_assert { $break_addr < $bar_label_addr }

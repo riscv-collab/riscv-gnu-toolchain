@@ -1,0 +1,72 @@
+# Copyright (C) 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# Sanity check for AArch64 Scalable Vector/Matrix Extensions functionality.
+
+load_lib aarch64-scalable.exp
+
+#
+# Run a series of basic checks for SVE/SME states.
+#
+proc sanity_check { vl svl } {
+    # Run the program until the point where we start initializing the different
+    # register states.
+    set state_breakpoint "stop here"
+    gdb_breakpoint [gdb_get_line_number $state_breakpoint]
+
+    for {set id 0} {$id < 5} {incr id} {
+	set state [state_id_to_state_string $id]
+
+	with_test_prefix "state=${state} vl=${vl} svl=${svl}" {
+	    gdb_continue_to_breakpoint $state_breakpoint
+	    check_state $state $vl $svl
+	}
+    }
+}
+
+require is_aarch64_target
+require allow_aarch64_sve_tests
+require allow_aarch64_sme_tests
+
+set compile_flags {"debug" "macros" "additional_flags=-march=armv8.5-a+sve"}
+standard_testfile
+if {[prepare_for_testing "failed to prepare" ${testfile} ${srcfile} ${compile_flags}]} {
+    return -1
+}
+
+if {![runto_main]} {
+    return -1
+}
+
+# Check if we are talking to a remote target.  If so, bail out, as right now
+# remote targets can't communicate vector length (vl or svl) changes to gdb
+# via the RSP.  When this restriction is lifted, we can remove this guard.
+if {[gdb_is_target_remote]} {
+    unsupported "aarch64 sve/sme tests not supported for remote targets"
+    return -1
+}
+
+# Adjust the repeat count for the test.
+gdb_test_no_output "set print repeats 1" "adjust repeat count"
+
+# Fetch both the vector length and the streaming vector length the target
+# system is using.  We do not force any vector lengths and do not change
+# it mid-execution.
+set vl [expr [get_valueof "" "\$vg" "0" "fetch value of vl"] * 8]
+set svl [expr [get_valueof "" "\$svg" "0" "fetch value of svl"] * 8]
+
+# Now we are at the point where we can start checking state and moving the
+# testcase forward.
+sanity_check $vl $svl

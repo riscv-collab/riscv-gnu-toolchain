@@ -1,0 +1,172 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Various tests to check which register names are available after
+# loading a new target description file, and which registers show up
+# in the output of the 'info registers' command.
+
+require {istarget "riscv*-*-*"}
+
+standard_testfile
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile} \
+	  {debug quiet}] } {
+    unsupported "failed to compile"
+    return -1
+}
+
+if { ![runto_main] } {
+    return -1
+}
+
+# First, figure out if we are 32-bit or 64-bit.
+set xlen [get_valueof "/d" "sizeof (\$a0)" 0]
+set flen [get_valueof "/d" "sizeof (\$fa0)" 0]
+
+gdb_assert { $xlen != 0 && $flen != 0 } "read xlen and flen"
+
+# We only handle 32-bit or 64-bit x-registers.
+if { $xlen != 4 && $xlen != 8 } {
+    unsupported "unknown x-register size"
+    return -1
+}
+
+# If FLEN is 1 then the target doesn't have floating point support
+# (the register $fa0 was not recognised).  Otherwise, we can only
+# proceed if FLEN equals XLEN, otherwise we'd need more test XML
+# files.
+if { $flen != 1 && $flen != $xlen } {
+    unsupport "unknown xlen/flen combination"
+    return -1
+}
+
+if { $xlen == 4 } {
+    set xml_tdesc "riscv-tdesc-regs-32.xml"
+} else {
+    set xml_tdesc "riscv-tdesc-regs-64.xml"
+}
+set xml_tdesc "${srcdir}/${subdir}/${xml_tdesc}"
+
+# Maybe copy the target over if we're remote testing.
+if {[is_remote host]} {
+    set remote_file [remote_download host $xml_tdesc]
+} else {
+    set remote_file $xml_tdesc
+}
+
+gdb_test_no_output "set tdesc filename $remote_file" \
+    "load the new target description"
+
+# Check that an alias for an unknown CSR will give a suitable error.
+gdb_test "info registers \$csr0" "Invalid register `csr0'"
+
+# Return the number of times REGISTER should appear in GROUP, this
+# will either be 0 or 1.
+proc get_expected_result { register group } {
+
+    # Everything should appear once in the 'all' group.
+    if { $group == "all" || $group == "x_all" } {
+	return 1
+    }
+
+    if { $group == "save" || $group == "restore" } {
+	# Everything is in the save/restore groups except these two.
+	if { $register == "unknown_csr" || $register == "dscratch" } {
+	    return 0
+	}
+	return 1
+    }
+
+    if { $group == "system" || $group == "csr" } {
+	# All the registers we check should be in these groups.
+	return 1
+    }
+
+    return 0
+}
+
+foreach rgroup {x_all all save restore general system csr} {
+    # Now use 'info registers all' to see how many times the floating
+    # point status registers show up in the output.
+    array set reg_counts {}
+    if {$rgroup == "x_all"} {
+	set test "info all-registers"
+    } else {
+	set test "info registers $rgroup"
+    }
+    gdb_test_multiple $test $test {
+	-re ".*info registers all\r\n" {
+	    verbose -log "Skip to first register"
+	    exp_continue
+	}
+	-re "^(\[^ \t\]+)\[ \t\]+\[^\r\n\]+\r\n" {
+	    set reg $expect_out(1,string)
+	    incr reg_counts($reg)
+	exp_continue
+	}
+	-re "^$gdb_prompt $" {
+	    # Done.
+	}
+    }
+
+    foreach reg {fflags frm fcsr unknown_csr dscratch} {
+	if { [info exists reg_counts($reg) ] } {
+	    set count $reg_counts($reg)
+	} else {
+	    set count 0
+	}
+
+	set expected_count [ get_expected_result $reg $rgroup ]
+	gdb_assert {$count == $expected_count} \
+	    "register $reg seen in reggroup $rgroup $expected_count times"
+    }
+    array unset reg_counts
+}
+
+# Next load a target description that contains fcsr, but not fflags or
+# frm.  Then check that GDB provides an fflags and frm registers using
+# the pseudo-register mechanism.
+if { $xlen == 4 } {
+    set xml_tdesc "riscv-tdesc-fcsr-32.xml"
+} else {
+    set xml_tdesc "riscv-tdesc-fcsr-64.xml"
+}
+set xml_tdesc "${srcdir}/${subdir}/${xml_tdesc}"
+
+# Maybe copy the target over if we're remote testing.
+if {[is_remote host]} {
+    set remote_file [remote_download host $xml_tdesc]
+} else {
+    set remote_file $xml_tdesc
+}
+
+gdb_test_no_output "set tdesc filename $remote_file" \
+    "load the target description that lacks fflags and frm"
+
+foreach reg {fflags frm} {
+    gdb_test_multiple "info registers $reg" "" {
+	-re "^info registers $reg\r\n" {
+	    exp_continue
+	}
+
+	-wrap -re "^Invalid register `$reg`" {
+	    fail $gdb_test_name
+	}
+
+	-wrap -re "^$reg\\s+\[^\r\n\]+" {
+	    pass $gdb_test_name
+	}
+    }
+}

@@ -1,0 +1,116 @@
+# Copyright 1992-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file was written by Fred Fish. (fnf@cygnus.com)
+
+require allow_cplus_tests
+
+standard_testfile .cc
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile {debug c++}]} {
+    return -1
+}
+
+#
+# Deduce language of main()
+#
+
+proc deduce_language_of_main {} {
+    global gdb_prompt
+
+    # See what language gdb thinks main() is, prior to reading full symbols.
+    # I think this fails for COFF targets.
+    gdb_test "show language" \
+	"source language is \"auto; currently c\[+\]+\".*" \
+	"deduced language is C++, before full symbols"
+
+    runto_main
+
+    # See if our idea of the language has changed.
+
+    gdb_test "show language" \
+	"source language is \"auto; currently c\[+\]+\".*" \
+	"deduced language is C++, after full symbols"
+}
+
+proc test_expr { args } {
+    if { [llength $args] % 2 } {
+	warning "an even # of arguments should be passed to test_expr"
+    }
+    set last_ent [expr [llength $args] - 1]
+    set testname [lindex $args $last_ent]
+    gdb_test_no_output [lindex $args 0] "$testname (setup)"
+
+    for {set x 1} {$x < $last_ent} {set x [expr $x + 2]} {
+	gdb_test [lindex $args $x] [lindex $args [expr $x + 1]] "$testname ([lindex $args $x])"
+    }
+}
+
+proc do_tests {} {
+    deduce_language_of_main
+    # Check for fixes for PRs 8916 and 8630
+    gdb_test "print s.a" ".* = 0" "print s.a for foo struct (known gcc 2.7.2 and earlier bug)"
+}
+
+do_tests
+
+test_expr "set language c++" \
+    "print 1 == 1" "print.*\\$\[0-9\]* = true" \
+    "print 1 == 2" "print.*\\$\[0-9\]* = false" \
+    "print as bool"
+
+# Test bool type printing, etc.
+# Note: Language is already set to C++ above! 
+gdb_test "print v_bool" "\\$\[0-9\]* = false" "print a bool var"
+
+# set a bool variable
+test_expr "set variable v_bool = true" \
+    "print v_bool" "\\$\[0-9\]* = true" \
+    "set a bool var"
+
+# next print an array of bool
+gdb_test "print v_bool_array" "\\$\[0-9\]* = \\{false, false\\}" "print a bool array"
+
+# set elements of a bool array
+test_expr "set variable v_bool_array\[1\] = true" \
+    "print v_bool_array" "\\$\[0-9\]* = \\{false, true\\}" \
+    "set a bool array elem"
+
+# bool constants
+gdb_test "print true" "\\$\[0-9\]* = true"
+gdb_test "print false" "\\$\[0-9\]* = false"
+
+# arithmetic conversions
+gdb_test "print 1 + true" "\\$\[0-9\]* = 2" "1 + true"
+gdb_test "print 3 + false" "\\$\[0-9\]* = 3" "3 + false"
+gdb_test "print 1 < 2 < 3" "\\$\[0-9\]* = true" "1 < 2 < 3"
+gdb_test "print 2 < 1 > 4" "\\$\[0-9\]* = false" "2 < 1 > 4"
+gdb_test "print (bool)43" "\\$\[0-9\]* = true" "(bool)43"
+gdb_test "print (bool)0" "\\$\[0-9\]* = false" "(bool)0"
+gdb_test "print (bool)17.93" "\\$\[0-9\]* = true" "(bool)17.93"
+gdb_test "print (bool)0.0" "\\$\[0-9\]* = false" "(bool)0.0"
+gdb_test "print (int)true" "\\$\[0-9\]* = 1" "(int)true"
+gdb_test "print (int)false" "\\$\[0-9\]* = 0" "(int)false"
+
+gdb_test "print 'misc.cc'::v_bool" " = true" \
+    "expression using block qualifier"
+
+# pointer arithmetic
+gdb_test "print *(v_bool_array + number_ref)" "\\$\[0-9\]* = false" \
+    "pointer addition with integer reference"
+gdb_test "print *(number_ref + v_bool_array)" "\\$\[0-9\]* = false" \
+    "integer reference addition with pointer"
+gdb_test "print *(v_bool_array - number_ref)" "\\$\[0-9\]* = false" \
+    "pointer subtraction with integer reference"

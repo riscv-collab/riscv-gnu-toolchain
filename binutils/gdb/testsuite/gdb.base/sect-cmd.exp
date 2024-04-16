@@ -1,0 +1,86 @@
+# Copyright 1997-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+# Test the 'section NAME ADDRESS' command.
+
+if { [prepare_for_testing "failed to prepare" "sect-cmd" \
+	  {break.c break1.c} {debug nowarnings}] } {
+    return -1
+}
+set srcfile break.c
+set srcfile1 break1.c
+
+if {![runto_main]} {
+    return
+}
+
+# Get the address of an executable section.  This test was originally
+# written for (and only run on) hppa targets.  For PA32 programs using
+# the SOM file format the code section is (apparently) called $CODE$,
+# hence why the patterns here include that as a choice.
+#
+set address1 ""
+set address2 ""
+set section_name ""
+
+gdb_test_multiple "info files" "" {
+    -re -wrap "\\s+($hex) - ($hex) is (\\\$CODE\\\$|\\.text\\S*) in .*" {
+	set address1 $expect_out(1,string)
+	set address2 $expect_out(2,string)
+	set section_name $expect_out(3,string)
+	pass $gdb_test_name
+    }
+}
+
+# If we don't have the details we need then we can't continue.
+#
+if { $address1 == "" || $address2 == "" || $section_name == "" } {
+    unresolved "failed to find required section details"
+    return
+}
+
+# Reset the section to that same starting address, which should be
+# harmless (i.e., we just want to exercise the section command).
+#
+set saw_section_address_line false
+gdb_test_multiple "section $section_name $address1" \
+    "set section $section_name to original address" {
+	-re ".*$address1 \- $address2 is $section_name in \[^\r\n\]*" {
+	    set saw_section_address_line true
+	    exp_continue
+	}
+	-re "Section \[^\r\n\]+ not found\r\n" {
+	    fail "$gdb_test_name (saw not found marker)"
+	    exp_continue
+	}
+	-re -wrap "" {
+	    gdb_assert { $saw_section_address_line } $gdb_test_name
+	}
+    }
+
+# Verify that GDB responds gracefully to a non-existent section name.
+#
+gdb_test "section FOOBARBAZ 0x1234" "Section FOOBARBAZ not found"
+
+# Check that GDB can still print the error message when the section
+# name is very long.  It used to be the case that GDB could only print
+# (up to) 100 character section names in this error message, but that
+# is no longer the case.
+#
+set long_sect_name \
+    "A234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123"
+gdb_test "section $long_sect_name 0x1234" \
+    "Section $long_sect_name not found" \
+    "non-existent too-long section disallowed"

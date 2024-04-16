@@ -1,0 +1,240 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+
+# This test verifies the TYPEREGEXP and NAMEREGEXP matching logic
+# in the commands
+#   info [args|functions|locals|variables] [-q] [-t TYPEREGEXP] [NAMEREGEXP].
+
+
+standard_testfile
+
+if { [prepare_for_testing "failed to prepare" ${testfile}] } {
+    return -1
+}
+
+if {![runto setup_done]} {
+    return 0
+}
+
+set any "\[^\r\n\]*"
+set ws "\[ \t\]\+"
+set number "\[0-9]\+"
+
+
+############# Test 'info functions'.
+
+with_test_prefix "info functions nameregexp" {
+    foreach cmd {
+	"info functions info_fun"
+	"info functions -- info_fun"
+	"info functions ^info_fun" } {
+	    gdb_test $cmd \
+		[multi_line \
+		     "All functions matching regular expression \".*info_fun.*\":" \
+		     "" \
+		     "File .*info_qt.c:" \
+		     "${number}:	void info_fun1\\\(void\\\);" \
+		     "${number}:	int info_fun2\\\(char\\\);" \
+		     "${number}:	int info_fun2bis\\\(char\\\);" \
+		     "${number}:	entier info_fun2xxx\\\(char, int, int\\\);" \
+		     "${number}:	entier info_fun2yyy\\\(char, int, int\\\);" \
+		    ]
+    }
+}
+
+with_test_prefix "info functions nameregexp quiet" {
+    foreach cmd {
+	"info functions -q info_fun"
+	"info functions -q -- info_fun" } {
+	    gdb_test $cmd \
+		[multi_line \
+		     "" \
+		     "File .*info_qt.c:" \
+		     "${number}:	void info_fun1\\\(void\\\);" \
+		     "${number}:	int info_fun2\\\(char\\\);" \
+		     "${number}:	int info_fun2bis\\\(char\\\);" \
+		     "${number}:	entier info_fun2xxx\\\(char, int, int\\\);" \
+		     "${number}:	entier info_fun2yyy\\\(char, int, int\\\);" \
+		    ]
+	}
+}
+
+with_test_prefix "info functions nameregexp quiet no match" {
+    foreach cmd {
+	"info functions -q nowaythiscanmatch"
+	"info functions -q -- -q" } {
+	    gdb_test_no_output $cmd
+	}
+}
+
+with_test_prefix "info functions typeregexp nameregexp" {
+    foreach cmd {
+	"info functions -t entier -q info_fun"
+	"info functions -q -t 'entier (' -- info_fun"
+	"info functions -q -t '(char, int, int)' -- info_fun"
+	"info functions -q -t 'entier (char, int, int)' -- info_fun" } {
+	    gdb_test $cmd \
+		[multi_line \
+		     "" \
+		     "File .*info_qt.c:" \
+		     "${number}:	entier info_fun2xxx\\\(char, int, int\\\);" \
+		     "${number}:	entier info_fun2yyy\\\(char, int, int\\\);" \
+		    ]
+	}
+}
+
+with_test_prefix "info functions typeregexp nameregexp no match" {
+    gdb_test_no_output "info functions -t ganze_Zahl -q info_fun" \
+	"quiet output info functions no matching type"
+}
+
+############# Test 'info variables'.
+
+with_test_prefix "info variables nameregexp" {
+    foreach cmd {
+	"info variables info_qt"
+	"info variables -- info_qt"
+	"info variables ^info_qt" } {
+	    gdb_test $cmd \
+		[multi_line \
+		     "All variables matching regular expression \".*info_qt.*\":" \
+		     "" \
+		     "File .*info_qt.c:" \
+		     "${number}:	entier info_qt_ent;" \
+		     "${number}:	int info_qt_inc;" \
+		    ]
+	}
+}
+
+with_test_prefix "info variables nameregexp quiet no match" {
+    foreach cmd {
+	"info variables -q nowaythiscanmatch"
+	"info variables -q -- -q" } {
+	    gdb_test_no_output $cmd
+	}
+}
+
+with_test_prefix "info variables typeregexp nameregexp quiet" {
+    foreach cmd {
+	"info variables -t entier -q info_qt"
+	"info variables -q -t entier -- info_qt" } {
+	    gdb_test $cmd \
+		[multi_line \
+		     "" \
+		     "File .*info_qt.c:" \
+		     "${number}:	entier info_qt_ent;" \
+		    ]
+	}
+}
+
+with_test_prefix "info variables typeregexp nameregexp quiet no match" {
+    gdb_test_no_output "info variables -t ganze_Zahl -q info_at" \
+	"quiet output info variables no matching type"
+}
+
+
+
+############# Test 'info args' in function setup.
+
+gdb_test "frame 1" ".* in setup .*" "set frame 1 for info args"
+
+with_test_prefix "info args matching all args" {
+    foreach cmd {
+	"info args"
+	"info args arg_"
+	"info args g"
+	"info args -- .*" } {
+	    gdb_test $cmd \
+		[multi_line \
+		     "arg_c = 100 'd'" \
+		     "arg_i = 3" \
+		     "arg_j = 4" \
+		    ]
+	}
+}
+
+with_test_prefix "info args matching some args" {
+    foreach cmd {
+	"info args -t int"
+	"info args arg_[ij]"} {
+	    gdb_test $cmd \
+		[multi_line \
+		     "arg_i = 3" \
+		     "arg_j = 4" \
+		    ]
+	}
+}
+
+with_test_prefix "info args no match" {
+    gdb_test "info args nowaythiscanmatch" "No matching arguments." "no matching args"
+    gdb_test_no_output "info args -q nowaythiscanmatch" "quiet no matching args"
+    gdb_test_no_output "info args -q -t entier" "quiet no matching args with type"
+}
+
+############# Test 'info locals' in function setup.
+
+gdb_test "frame 1" ".* in setup .*" "set frame 1 for info locals"
+
+with_test_prefix "info locals matching all locals" {
+    foreach cmd {
+	"info locals"
+	"info locals loc_arg_"
+	"info locals g"
+	"info locals -- .*" } {
+	    gdb_test $cmd \
+		[multi_line \
+		     "loc_arg_c = 100 'd'" \
+		     "loc_arg_i = 3" \
+		     "loc_arg_j = 4" \
+		    ]
+	}
+}
+
+with_test_prefix "info locals matching some locals" {
+    foreach cmd {
+	"info locals -t int"
+	"info locals arg_[ij]"
+	"info locals loc_arg_[ij]"} {
+	    gdb_test $cmd \
+		[multi_line \
+		     "loc_arg_i = 3" \
+		     "loc_arg_j = 4" \
+		    ]
+	}
+}
+
+with_test_prefix "info locals no match" {
+    gdb_test "info locals nowaythiscanmatch" "No matching locals." "no matching locals"
+    gdb_test_no_output "info locals -q nowaythiscanmatch" "quiet no matching locals"
+    gdb_test_no_output "info locals -q -t ganze_Zahl loc" "quiet no matching locals with type"
+}
+
+# Verify that the rest of the args is taken as a single regexp.
+with_test_prefix "rest of args as single regexp" {
+    gdb_test "info functions abc def" \
+	"All functions matching regular expression \\\"abc def\\\":" \
+	"single regexp"
+
+    gdb_test "info functions -t uvw abc def" \
+	"All functions matching regular expression \\\"abc def\\\" with type matching regular expression \\\"uvw\\\":" \
+	"-t noquote single regexp"
+
+    gdb_test "info functions -t 'uvw xyz' abc def" \
+	"All functions matching regular expression \\\"abc def\\\" with type matching regular expression \\\"uvw xyz\\\":" \
+	"-t quote single regexp"
+}

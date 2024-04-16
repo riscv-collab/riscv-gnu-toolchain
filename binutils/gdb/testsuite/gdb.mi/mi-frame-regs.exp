@@ -1,0 +1,184 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test essential Machine interface (MI) operations
+#
+# Verify that -var-update will provide the correct values for floating
+# and fixed varobjs that represent the pc register.
+#
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+standard_testfile basics.c
+
+if {[gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" \
+		 executable {debug}] != "" } then {
+     untested "failed to compile"
+     return -1
+}
+
+# Return the address of the specified breakpoint.
+
+proc breakpoint_address {bpnum} {
+    global hex
+    global expect_out
+    global mi_gdb_prompt
+
+    send_gdb "info breakpoint $bpnum\n"
+    gdb_expect {
+	-re ".*($hex).*$mi_gdb_prompt$" {
+	    return $expect_out(1,string)
+	}
+	-re ".*$mi_gdb_prompt$" {
+	    unresolved "get address of breakpoint $bpnum"
+	    return ""
+	}
+	timeout {
+	    unresolved "get address of breakpoint $bpnum (timeout)"
+	    return ""
+	}
+    }
+}
+
+# Test that a floating varobj representing $pc will provide the
+# correct value via -var-update as the program stops at
+# breakpoints in different functions.
+
+proc_with_prefix do_floating_varobj_test {} {
+    global srcfile binfile
+    global hex
+    global expect_out
+
+    if {[mi_clean_restart $binfile]} {
+	fail "couldn't start gdb"
+	return
+    }
+
+    mi_runto_main
+
+    # Create a floating varobj for $pc.
+    mi_gdb_test "-var-create --thread 1 --frame 0 - @ \$pc" \
+	"\\^done,.*value=\"$hex.*" \
+	"create varobj for pc in frame 0"
+
+    set nframes 4
+    for {set i 1} {$i < $nframes} {incr i} {
+
+	# Run to a breakpoint in each callee function in succession.
+	# Note that we can't use mi_runto because we need the
+	# breakpoint to be persistent, so we can use its address.
+	set bpnum [expr $i + 1]
+	mi_create_breakpoint \
+	    "basics.c:callee$i" \
+	    "insert breakpoint at basics.c:callee$i" \
+	    -number $bpnum -func callee$i -file ".*basics.c"
+
+	mi_execute_to "exec-continue" "breakpoint-hit" \
+	    "callee$i" ".*" ".*${srcfile}" ".*" \
+	    { "" "disp=\"keep\"" } "breakpoint hit in callee$i"
+
+	# Get the value of $pc from the floating varobj.
+	mi_gdb_test "-var-update 1 var1" \
+	    "\\^done,.*value=\"($hex) .*" \
+	    "-var-update for frame $i"
+	set pcval $expect_out(3,string)
+
+	# Get the address of the current breakpoint.
+	set bpaddr [breakpoint_address $bpnum]
+	if {$bpaddr == ""} { return }
+
+	# Check that the addresses are the same.
+	gdb_assert [expr $bpaddr == $pcval] "\$pc equals address of breakpoint in callee$i"
+    }
+}
+
+# Test that fixed varobjs representing $pc in different stack frames
+# will provide the correct value via -var-update after the program
+# counter changes (without substantially changing the stack).
+
+proc_with_prefix do_fixed_varobj_test {} {
+    global srcfile binfile
+    global hex
+
+    if {[mi_clean_restart $binfile] != 0} {
+	fail "couldn't start gdb"
+	return
+    }
+
+    mi_runto_main
+
+    # Run to the function 'callee3' so we have several frames.
+    mi_create_breakpoint "basics.c:callee3" \
+	"insert breakpoint at basics.c:callee3" \
+	-number 2 -func callee3 -file ".*basics.c"
+
+    mi_execute_to "exec-continue" "breakpoint-hit" \
+	"callee3" ".*" ".*${srcfile}" ".*" \
+	{ "" "disp=\"keep\"" } "breakpoint hit in callee3"
+
+    # At the breakpoint in callee3 there are 4 frames.
+    #
+    # Create some varobj based on $pc in all frames.  When we single
+    # step we expect the varobj for frame 0 to change, while the
+    # varobj for all other frames should be unchanged.
+    #
+    # Track in FIRST_UNCHANGING_VARNUM the number of the first varobj
+    # that is not in frame 0, varobj with a lower number we expect to
+    # change, while this and later varobj should not change.
+    #
+    # Track the number of the next varobj to be created in VARNUM.
+    set first_unchanging_varnum 0
+    set varnum 1
+
+    for {set i 0} {$i < 4} {incr i} {
+
+	if {$i == 1} { set first_unchanging_varnum $varnum }
+
+	mi_gdb_test "-var-create --thread 1 --frame $i - \* \$pc" \
+	    "\\^done,.*value=\"$hex.*" \
+	    "create varobj for \$pc in frame $i"
+	incr varnum
+
+	mi_gdb_test "-var-create --thread 1 --frame $i - \* \"global_zero + \$pc\"" \
+	    "\\^done,.*value=\"$hex.*" \
+	    "create varobj for 'global_zero + \$pc' in frame $i"
+	incr varnum
+    }
+
+    # Step one instruction to change the program counter.
+    mi_execute_to "exec-next-instruction" "end-stepping-range" \
+	"callee3" ".*" ".*${srcfile}" ".*" "" \
+	"next instruction in callee3"
+
+    # Check that -var-update reports that the values are changed for
+    # varobj in frame 0.
+    for {set i 1} {$i < $first_unchanging_varnum} {incr i} {
+	mi_gdb_test "-var-update 1 var$i" \
+	    "\\^done,(changelist=\\\[\{name=\"var$i\"\[^\\\]\]+\\\])" \
+	    "varobj var$i has changed"
+    }
+
+    # Check that -var-update reports that the values are unchanged for
+    # varobj in frames other than 0.
+    for {set i $first_unchanging_varnum} {$i < $varnum} {incr i} {
+	mi_gdb_test "-var-update 1 var$i" \
+	    "\\^done,(changelist=\\\[\\\])" \
+	    "varobj var$i has not changed"
+    }
+}
+
+do_fixed_varobj_test
+do_floating_varobj_test

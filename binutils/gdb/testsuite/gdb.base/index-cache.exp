@@ -1,0 +1,285 @@
+#   Copyright 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test checks that the index-cache feature generates the expected files at
+# the expected location.
+
+standard_testfile .c -2.c
+
+if { [build_executable "failed to prepare" $testfile [list $srcfile $srcfile2] \
+	  {debug ldflags=-Wl,--build-id}] } {
+    return
+}
+
+# The index cache won't be used in certain circumstances, for which we must
+# account in this test:
+#
+#  - the binary already has an index section
+#  - we use the -readnow switch
+set has_index_section [exec_has_index_section $binfile]
+set uses_readnow [expr [string first "-readnow" $GDBFLAGS] != -1]
+set expecting_index_cache_use [expr !$has_index_section && !$uses_readnow]
+
+# List the files in DIR on the host (where GDB-under-test runs).
+# Return a list of two elements:
+#   - 0 on success, -1 on failure
+#   - the list of files on success, empty on failure
+
+proc ls_host { dir } {
+    lassign [remote_exec host ls "-1 $dir"] ret output
+
+    if { $ret != 0 } {
+	fail "failed to list files on host in $dir"
+	return -1
+    }
+
+    # ls -1 returns a list separated by \r\n.  split will return a bunch of
+    # empty entries (it treats a sequence of split characters as separate
+    # fields, plus there is a \r\n at the end of the result).  Ignore empty
+    # list elements.
+    set filtered {}
+    set files [split $output \r\n]
+
+    foreach file $files {
+	if { $file != "" } {
+	    lappend filtered $file
+	}
+    }
+
+    return [list 0 $filtered]
+}
+
+# Execute "show index-cache stats" and verify the output against expected
+# values.
+
+proc check_cache_stats { expected_hits expected_misses } {
+    # This test wants to check the cache, so make sure it has completed
+    # its work.
+    gdb_test_no_output "maintenance wait-for-index-cache"
+
+    set re [multi_line \
+	"  Cache hits .this session.: $expected_hits" \
+	"Cache misses .this session.: $expected_misses" \
+    ]
+
+    gdb_test "show index-cache stats" $re "check index-cache stats"
+}
+
+# Run CODE using a fresh GDB configured based on the other parameters.
+
+proc run_test_with_flags { cache_dir cache_enabled code } {
+    global GDBFLAGS testfile
+
+    save_vars { GDBFLAGS } {
+	set GDBFLAGS "$GDBFLAGS -iex \"set index-cache directory $cache_dir\""
+	set GDBFLAGS "$GDBFLAGS -iex \"set index-cache enabled $cache_enabled\""
+
+	clean_restart ${testfile}
+
+	uplevel 1 $code
+    }
+}
+
+# Test administrative stuff.
+
+proc_with_prefix test_basic_stuff { } {
+    global testfile
+
+    clean_restart ${testfile}
+
+    # Check that the index cache is disabled by default.
+    gdb_test \
+	"show index-cache enabled" \
+	"The index cache is off." \
+	"index-cache is disabled by default"
+
+    # Test that we can enable it and "show index-cache enabled" reflects that.
+    gdb_test_no_output "set index-cache enabled on" "enable index cache"
+    gdb_test \
+	"show index-cache enabled" \
+	"The index cache is on." \
+	"index-cache is now enabled"
+
+    with_test_prefix "deprecated commands" {
+        gdb_test "set index-cache off" ".*is deprecated.*" "disable index cache"
+	gdb_test \
+	    "show index-cache enabled" \
+	    "The index cache is off." \
+	    "index-cache is now disabled"
+        gdb_test "set index-cache on" ".*is deprecated.*" "enable index cache"
+	gdb_test \
+	    "show index-cache enabled" \
+	    "The index cache is on." \
+	    "index-cache is now enabled"
+    }
+
+    # Test the "set/show index-cache directory" commands.
+    gdb_test "set index-cache directory" "Argument required.*" "set index-cache directory without arg"
+    gdb_test_no_output "set index-cache directory /tmp" "change the index cache directory"
+    gdb_test \
+	"show index-cache directory" \
+	"The directory of the index cache is \"/tmp\"."  \
+	"show index cache directory"
+}
+
+# Test loading a binary with the cache disabled.  No file should be created.
+
+proc_with_prefix test_cache_disabled { cache_dir test_prefix } {
+    with_test_prefix $test_prefix {
+	lassign [ls_host $cache_dir] ret files_before
+
+	run_test_with_flags $cache_dir off {
+	    lassign [ls_host $cache_dir] ret files_after
+
+	    set nfiles_created [expr [llength $files_after] - [llength $files_before]]
+	    gdb_assert "$nfiles_created == 0" "no files were created"
+
+	    # Trigger expansion of symtab containing main, if not already done.
+	    gdb_test "ptype main" "^type = int \\(void\\)"
+
+	    # Trigger expansion of symtab not containing main.
+	    gdb_test "ptype foo" "^type = int \\(void\\)"
+
+	    # Look for non-existent function.
+	    gdb_test "ptype foobar" "^No symbol \"foobar\" in current context\\."
+
+	    check_cache_stats 0 0
+	}
+    }
+}
+
+# Test a cache miss.  We expect to have at least one file in the cache if the
+# index cache is going to be used (see expecting_index_cache_use) and a cache
+# miss in the stats.  If the cache is not going to be used, we expect to have
+# no files and no cache hits nor misses.
+
+proc_with_prefix test_cache_enabled_miss { cache_dir } {
+    global testfile expecting_index_cache_use
+
+    lassign [ls_host $cache_dir] ret files_before
+
+    run_test_with_flags $cache_dir on {
+
+	lassign [ls_host $cache_dir] ret files_after
+	set nfiles_created [expr [llength $files_after] - [llength $files_before]]
+	if { $expecting_index_cache_use } {
+	    gdb_assert "$nfiles_created > 0" "at least one file was created"
+	} else {
+	    gdb_assert "$nfiles_created == 0" "no file was created"
+	}
+
+	set build_id [get_build_id  [standard_output_file ${testfile}]]
+	if { $build_id == "" } {
+	    fail "couldn't get executable build id"
+	    return
+	}
+
+	set expected_created_file [list "${build_id}.gdb-index"]
+	set found_idx [lsearch -exact $files_after $expected_created_file]
+	if { $expecting_index_cache_use } {
+	    gdb_assert "$found_idx >= 0" "expected file is there"
+	} else {
+	    gdb_assert "$found_idx == -1" "no index cache file generated"
+	}
+
+	remote_exec host rm "-f $cache_dir/$expected_created_file"
+
+	# Trigger expansion of symtab containing main, if not already done.
+	gdb_test "ptype main" "^type = int \\(void\\)"
+
+	# Trigger expansion of symtab not containing main.
+	gdb_test "ptype foo" "^type = int \\(void\\)"
+
+	# Look for non-existent function.
+	gdb_test "ptype foobar" "^No symbol \"foobar\" in current context\\."
+
+	if { $expecting_index_cache_use } {
+	    check_cache_stats 0 1
+	} else {
+	    check_cache_stats 0 0
+	}
+    }
+}
+
+
+# Test a cache hit.  We should have at least one file in the cache if the index
+# cache is going to be used (see expecting_index_cache_use) and a cache hit in
+# the stats.  If the cache is not going to be used, we expect to have no files
+# and no cache hits nor misses.
+
+proc_with_prefix test_cache_enabled_hit { cache_dir } {
+    global expecting_index_cache_use
+
+    # Just to populate the cache.
+    with_test_prefix "populate cache" {
+	run_test_with_flags $cache_dir on {}
+    }
+
+    lassign [ls_host $cache_dir] ret files_before
+
+    run_test_with_flags $cache_dir on {
+	lassign [ls_host $cache_dir] ret files_after
+	set nfiles_created [expr [llength $files_after] - [llength $files_before]]
+	gdb_assert "$nfiles_created == 0" "no files were created"
+
+	# Trigger expansion of symtab containing main, if not already done.
+	gdb_test "ptype main" "^type = int \\(void\\)"
+
+	# Trigger expansion of symtab not containing main.
+	gdb_test "ptype foo" "^type = int \\(void\\)"
+
+	# Look for non-existent function.
+	gdb_test "ptype foobar" "^No symbol \"foobar\" in current context\\."
+
+	if { $expecting_index_cache_use } {
+	    check_cache_stats 1 0
+	} else {
+	    check_cache_stats 0 0
+	}
+    }
+}
+
+test_basic_stuff
+
+# The cache dir should be on the host (possibly remote), so we can't use the
+# standard output directory for that (it's on the build machine).
+lassign [remote_exec host mktemp -d] ret cache_dir
+
+if { $ret != 0 } {
+    fail "couldn't create temporary cache dir"
+    return
+}
+
+# The ouput of mktemp contains an end of line, remove it.
+set cache_dir [string trimright $cache_dir \r\n]
+
+test_cache_disabled $cache_dir "before populate"
+test_cache_enabled_miss $cache_dir
+test_cache_enabled_hit $cache_dir
+
+# Test again with the cache disabled, now that it is populated.
+test_cache_disabled $cache_dir "after populate"
+
+lassign [remote_exec host "sh -c" [quote_for_host rm $cache_dir/*.gdb-index]] ret
+if { $ret != 0 && $expecting_index_cache_use } {
+    fail "couldn't remove files in temporary cache dir"
+    return
+}
+
+lassign [remote_exec host rmdir "$cache_dir"] ret
+if { $ret != 0 } {
+    fail "couldn't remove temporary cache dir"
+    return
+}

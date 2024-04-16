@@ -1,0 +1,204 @@
+# Copyright 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+# This file is part of the GDB testsuite.  It tests reverse stepping.
+# Lots of code borrowed from "step-test.exp".
+
+# The reverse finish command should return from a function and stop on
+# the first instruction of the source line where the function call is made.
+# Specifically, the behavior should match doing a reverse next from the
+# first instruction in the function.  GDB should only take one reverse step
+# or next statement to reach the previous source code line.
+
+# This testcase verifies the reverse-finish command stops at the first
+# instruction in the source code line where the function was called.  There
+# are two scenarios that must be checked:
+#   1) gdb is at the entry point instruction for the function
+#   2) gdb is in the body of the function.
+
+# This test verifies the fix for gdb bugzilla:
+#   https://sourceware.org/bugzilla/show_bug.cgi?id=29927
+
+# PowerPC supports two entry points to a function.  The normal entry point
+# is called the local entry point (LEP).  The alternate entry point is called
+# the global entry point (GEP).  A function call via a function pointer
+# will entry via the GEP.  A normal function call will enter via the LEP.
+#
+# This test has been expanded to include tests to verify the reverse-finish
+# command works properly if the function is called via the GEP.  The original
+# test only verified the reverse-finish command for a normal call that used
+# the LEP.
+
+if ![supports_reverse] {
+    return
+}
+
+standard_testfile
+
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile] } {
+    return -1
+}
+
+runto_main
+set target_remote [gdb_is_target_remote]
+
+if [supports_process_record] {
+    # Activate process record/replay.
+    gdb_test_no_output "record" "turn on process record for test1"
+}
+
+
+### TEST 1: reverse finish from the entry point instruction (LEP) in
+### function1 when called using the normal entry point (LEP).
+
+# Set breakpoint at call to function1 in main.
+set bp_LEP_test [gdb_get_line_number "CALL VIA LEP" $srcfile]
+gdb_breakpoint $srcfile:$bp_LEP_test temporary
+
+# Continue to break point at function1 call in main.
+gdb_continue_to_breakpoint \
+    "stopped at function1 entry point instruction to stepi into function" \
+    ".*$srcfile:$bp_LEP_test\r\n.*"
+
+# stepi until we see "{" indicating we entered function1
+repeat_cmd_until "stepi" "CALL VIA LEP" "{" "stepi into function1 call" "100"
+
+# The reverse-finish command should stop on the function call instruction
+# which is the last instruction in the source code line.  Another reverse-next
+# instruction stops at the previous source code line.
+gdb_test "reverse-finish" ".*function1 \\(a, b\\);   // CALL VIA LEP.*" \
+    "reverse-finish function1 LEP call from LEP "
+gdb_test "reverse-next" ".*b = 5;.*" "reverse next 2, at b = 5, call from LEP"
+
+
+gdb_test "reverse-continue" ".*" "setup for test 2"
+
+# Turn off record to clear logs and turn on again
+gdb_test "record stop"  "Process record is stopped.*" \
+    "turn off process record for test1"
+gdb_test_no_output "record" "turn on process record for test2"
+
+
+### TEST 2: reverse finish from the body of function1.
+
+# Set breakpoint at call to function1 in main.
+gdb_breakpoint $srcfile:$bp_LEP_test temporary
+
+# Continue to break point at function1 call in main.
+gdb_continue_to_breakpoint \
+    "at function1 entry point instruction to step to body of function" \
+    ".*$srcfile:$bp_LEP_test\r\n.*"
+
+# do a step instruction to get to the body of the function
+gdb_test "step" ".*int ret = 0;.*" "step test 1"
+
+# The reverse-finish command should stop on the function call instruction
+# which is the last instruction in the source code line.  Another reverse-next
+# instruction stops at the previous source code line.
+gdb_test "reverse-finish" ".*function1 \\(a, b\\);   // CALL VIA LEP.*" \
+    "reverse-finish function1 LEP call from function body"
+gdb_test "reverse-next" ".*b = 5;.*" \
+    "reverse next 2 at b = 5, from function body"
+
+gdb_test "reverse-continue" ".*" "setup for test 3"
+
+# Turn off record to clear logs and turn on again
+gdb_test "record stop"  "Process record is stopped.*" \
+    "turn off process record for test2"
+gdb_test_no_output "record" "turn on process record for test3"
+
+
+### TEST 3: reverse finish from the alternate entry point instruction (GEP) in
+### function1 when called using the alternate entry point (GEP).
+
+# Set breakpoint at call to funp in main.
+set bp_GEP_test  [gdb_get_line_number "CALL VIA GEP" $srcfile]
+gdb_breakpoint $srcfile:$bp_GEP_test temporary
+
+# Continue to break point at funp call in main.
+gdb_continue_to_breakpoint \
+    "stopped at function1 entry point instruction to stepi into funp" \
+    ".*$srcfile:$bp_GEP_test\r\n.*"
+
+# stepi until we see "{" indicating we entered function.
+repeat_cmd_until "stepi" "CALL VIA GEP" "{" "stepi into funp call"
+
+# The reverse-finish command should stop on the function call instruction
+# which is the last instruction in the source code line.  Another reverse-next
+# instruction stops at the previous source code line.
+gdb_test "reverse-finish" ".*funp \\(a, b\\);.*" \
+    "function1 GEP call call from GEP"
+gdb_test "reverse-next" ".*b = 50;.*" "reverse next 2 at b = 50, call from GEP"
+
+gdb_test "reverse-continue" ".*" "setup for test 4"
+
+# Turn off record to clear logs and turn on again
+gdb_test "record stop"  "Process record is stopped.*" \
+    "turn off process record for test3"
+gdb_test_no_output "record" "turn on process record for test4"
+
+### TEST 4: reverse finish from between the GEP and LEP in
+### function1 when called using the alternate entry point (GEP).
+
+# Set breakpoint at call to funp in main.
+set bp_GEP_test  [gdb_get_line_number "CALL VIA GEP" $srcfile]
+gdb_breakpoint $srcfile:$bp_GEP_test temporary
+
+# Continue to break point at funp call in main.
+gdb_continue_to_breakpoint \
+    "stopped at function1 entry point instruction to stepi into funp again" \
+    ".*$srcfile:$bp_GEP_test\r\n.*"
+
+# stepi until we see "{" indicating we entered function.
+repeat_cmd_until "stepi" "CALL VIA GEP" "{" "stepi into funp call again"
+
+# do one more stepi so we are between the GEP and LEP.
+gdb_test "stepi" "{" "stepi to between GEP and LEP"
+
+# The reverse-finish command should stop on the function call instruction
+# which is the last instruction in the source code line.  Another reverse-next
+# instruction stops at the previous source code line.
+gdb_test "reverse-finish" ".*funp \\(a, b\\);.*" \
+    "function1 GEP call call from GEP again"
+gdb_test "reverse-next" ".*b = 50;.*" \
+    "reverse next 2 at b = 50, call from GEP again"
+
+gdb_test "reverse-continue" ".*" "setup for test 5"
+
+# Turn off record to clear logs and turn on again
+gdb_test "record stop"  "Process record is stopped.*" \
+    "turn off process record for test4"
+gdb_test_no_output "record" "turn on process record for test5"
+
+
+### TEST 5: reverse finish from the body of function 1 when calling using the
+### alternate entrypoint (GEP).
+gdb_breakpoint $srcfile:$bp_GEP_test temporary
+
+# Continue to break point at funp call.
+gdb_continue_to_breakpoint \
+    "at function1 entry point instruction to step to body of funp call" \
+    ".*$srcfile:$bp_GEP_test\r\n.*"
+
+# Step into body of funp, called via GEP.
+gdb_test "step" ".*int ret = 0;.*" "step test 2"
+
+# The reverse-finish command should stop on the function call instruction
+# which is the last instruction in the source code line.  Another reverse-next
+# instruction stops at the previous source code line.
+gdb_test "reverse-finish" ".*funp \\(a, b\\);.*" \
+    "reverse-finish function1 GEP call, from function body  "
+gdb_test "reverse-next" ".*b = 50;.*" \
+    "reverse next 2 at b = 50 from function body"

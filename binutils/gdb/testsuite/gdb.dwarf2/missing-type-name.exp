@@ -1,0 +1,109 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This tests some non-standard DWARF that we still expect GDB to be
+# able to handle.
+#
+# The DWARF standard (v5 5.1) says this:
+#
+#     A base type is represented by a debugging information entry with
+#     the tag DW_TAG_base_type.
+#
+#     A base type entry may have a DW_AT_name attribute whose value is
+#     a null-terminated string containing the name of the base type as
+#     recognized by the programming language of the compilation unit
+#     containing the base type entry.
+#
+# So the DW_AT_name field for a DW_TAG_base_type is optional.  This
+# test provides some basic checking that GDB doesn't crash when
+# presented with this situation.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+standard_testfile void-type.c void-type.S
+
+# Make some DWARF for the test.
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    global srcfile
+
+    cu {} {
+	DW_TAG_compile_unit {
+	        {DW_AT_producer "GNU C 8.1"}
+                {DW_AT_language @DW_LANG_C}
+                {DW_AT_name     $srcfile}
+                {DW_AT_comp_dir /tmp}
+        } {
+	    declare_labels main_type int_type ptr_type
+
+	    main_type: DW_TAG_base_type {
+		{DW_AT_byte_size 4 DW_FORM_sdata}
+		{DW_AT_encoding  @DW_ATE_signed}
+	    }
+
+	    int_type: DW_TAG_base_type {
+		{DW_AT_byte_size 0 DW_FORM_sdata}
+		{DW_AT_encoding  @DW_ATE_signed}
+	    }
+
+	    ptr_type: DW_TAG_pointer_type {
+		{DW_AT_type :$int_type}
+	    }
+
+            DW_TAG_subprogram {
+                {MACRO_AT_func func}
+                {type :$int_type}
+	    }
+            DW_TAG_subprogram {
+                {MACRO_AT_func main}
+                {type :$main_type}
+	    }
+
+	    DW_TAG_variable {
+		{DW_AT_name "var_a"}
+		{DW_AT_type :$main_type}
+		{DW_AT_external 1 DW_FORM_flag}
+		{DW_AT_location {DW_OP_addr [gdb_target_symbol "var_a"]} SPECIAL_expr}
+	    }
+
+	    DW_TAG_variable {
+		{DW_AT_name "var_ptr"}
+		{DW_AT_type :$ptr_type}
+		{DW_AT_external 1 DW_FORM_flag}
+		{DW_AT_location {DW_OP_addr [gdb_target_symbol "var_ptr"]} SPECIAL_expr}
+	    }
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	  [list $srcfile $asm_file] {nodebug}] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+# Use 'ptype' on two variables that are using DW_TAG_base_type types
+# with missing DW_AT_name attributes.
+gdb_test "ptype var_ptr" "type = <invalid type code $decimal> \\*" \
+    "ptype of a pointer to a basic type with missing name"
+
+gdb_test "ptype var_a" "type = <invalid type code $decimal>" \
+    "ptype of a variable that is a basic type with a missing name"

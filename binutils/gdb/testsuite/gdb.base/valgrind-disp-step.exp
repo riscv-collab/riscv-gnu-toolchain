@@ -1,0 +1,72 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Step over breakpoints with displaced stepping on, against Valgrind.
+# We can't really use displaced stepping with Valgrind, so what this
+# really tests is that GDB falls back to in-line stepping
+# automatically instead of getting stuck or crashing.
+
+# Valgrind gdbserver requires gdb with xml support.
+require allow_xml_test
+
+load_lib valgrind.exp
+
+require {!is_remote target}
+
+standard_testfile .c
+if {[build_executable "failed to build" $testfile $srcfile {debug}] == -1} {
+    return -1
+}
+
+if { [vgdb_start] == -1 } {
+    return -1
+}
+
+gdb_test_no_output "set displaced-stepping off"
+gdb_breakpoint "main" "breakpoint at main"
+gdb_test "continue" " stop 0 .*" "continue to main"
+delete_breakpoints
+
+set curr_stop 0
+foreach displaced { "off" "on" } {
+    with_test_prefix "displaced $displaced" {
+
+	gdb_test_no_output "set displaced-stepping $displaced"
+
+	foreach go { "once" "twice" } {
+	    with_test_prefix $go {
+		gdb_test "break" "Breakpoint .* at .*" "set breakpoint"
+
+		# Whether we should see a warning.
+		set should_warn [expr {$go == "once" && $displaced == "on"}]
+
+		incr curr_stop
+
+		set msg "step over breakpoint"
+		set pattern " stop $curr_stop .*$gdb_prompt $"
+		gdb_test_multiple "next" $msg {
+		    -re "warning: disabling displaced stepping.*$pattern" {
+			gdb_assert $should_warn $msg
+		    }
+		    -re "$pattern" {
+			gdb_assert !$should_warn $msg
+		    }
+		}
+	    }
+	}
+    }
+}
+
+vgdb_stop

@@ -1,0 +1,96 @@
+# Copyright (C) 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check that "gdb -batch" exits with appropriate status.
+
+standard_testfile
+
+set good_commands "$srcdir/$subdir/batch-exit-status.good-commands"
+set bad_commands "$srcdir/$subdir/batch-exit-status.bad-commands"
+
+proc _test_exit_status {expect_status cmdline_opts {re ""}} {
+    global gdb_spawn_id
+
+    gdb_exit
+    if {[gdb_spawn_with_cmdline_opts $cmdline_opts] != 0} {
+	fail "spawn"
+	return
+    }
+
+    set has_re [expr ![string equal $re ""]]
+    if { ! $has_re } {
+	set re "\$FOOBAR^"
+    }
+    set re_matched 0
+    gdb_test_multiple "" "run til exit" {
+	-re $re {
+	    set re_matched 1
+	    exp_continue
+	}
+	eof {
+	    set result [wait -i $gdb_spawn_id]
+	    verbose $result
+
+	    gdb_assert { [lindex $result 2] == 0 }
+	    gdb_assert { [lindex $result 3] == $expect_status }
+
+	    remote_close host
+	    clear_gdb_spawn_id
+	}
+    }
+    if { $has_re } {
+	gdb_assert { $re_matched } "output matched"
+    }
+}
+
+proc test_exit_status {expect_status cmdline_opts prefix args} {
+    if { $prefix == "" } {
+	set prefix $cmdline_opts
+    }
+
+    with_test_prefix $prefix {
+	_test_exit_status $expect_status $cmdline_opts {*}$args
+    }
+}
+
+# gdb -batch with nothing to do should exit 0.
+test_exit_status 0 "-batch" ""
+
+# Bad command-line options should cause exit 1.
+test_exit_status 1 "-batch -jslkflsdjlkfjlksdjf" ""
+
+# gdb -batch with good commands should exit 0.
+test_exit_status 0 "-batch -ex \"info source\"" ""
+test_exit_status 0 "-batch -x $good_commands" "-batch -x good-commands"
+
+# gdb -batch with bad commands should exit 1.
+test_exit_status 1 "-batch -ex \"set not-a-thing 4\"" ""
+test_exit_status 1 "-batch -x $bad_commands" "-batch -x bad-commands"
+
+# Success or failure of the last thing determines the exit code.
+test_exit_status 0 "-batch -ex \"set not-a-thing 4\" -x $good_commands" \
+    "-batch -ex \"set not-a-thing 4\" -x good-commands"
+test_exit_status 0 "-batch -x $bad_commands -ex \"info source\"" \
+    "-batch -x bad-commands -ex \"info source\""
+test_exit_status 1 "-batch -x $good_commands -x $bad_commands" \
+    "-batch -x good-commands -x bad-commands"
+test_exit_status 1 "-batch -x $good_commands -ex \"set not-a-thing 4\"" \
+    "-batch -x good-commands -ex \"set not-a-thing 4\""
+
+set test "No such file or directory"
+set no_such_re ": $test\\."
+test_exit_status 1 "-batch \"\"" "1x: $test" ^[multi_line $no_such_re ""]$
+test_exit_status 1 "-batch \"\" \"\"" "2x: $test" \
+    ^[multi_line $no_such_re $no_such_re ""]$

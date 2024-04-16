@@ -1,0 +1,243 @@
+# Copyright 2016-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test ensures that with "set print object on", -var-create will
+# return "<optimized out>" for an optimized out pointer to structure,
+# rather than attempting to dereference the pointer to determine its
+# actual type (instead of its declared type).  We want to test that GDB
+# can display such a pointer without throwing an error, while also
+# ensuring that any attempt to dereference the pointer *will* throw an
+# error.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+standard_testfile .c -dw.S
+
+# Generate a test program with dwarf information showing the variable
+# 'ptr', a pointer-to-struct, as optimized out.  The dwarf will also
+# describe the structure as have a scalar, array, and pointer-to-struct
+# members.
+
+proc build_test_program {} {
+    global testfile srcfile srcfile2
+
+    # Make some DWARF for the test.
+    set asm_file [standard_output_file $srcfile2]
+    Dwarf::assemble $asm_file {
+	global srcfile
+
+	# Creating a CU with 4-byte addresses lets this test link on
+	# both 32- and 64-bit machines.
+	cu { addr_size 4 } {
+    
+	    DW_TAG_compile_unit {
+		{DW_AT_language @DW_LANG_C99}
+		{DW_AT_name     $srcfile}
+		{DW_AT_comp_dir /tmp}
+	    } {
+		declare_labels int_label struct_label pointer_label \
+			       array_label
+
+		int_label: DW_TAG_base_type {
+		    {DW_AT_byte_size 4 DW_FORM_sdata}
+		    {DW_AT_encoding  @DW_ATE_signed}
+		    {DW_AT_name      integer}
+		}
+    
+		array_label: DW_TAG_array_type {
+		    {DW_AT_name foo__array_type}
+		    {DW_AT_type :$int_label}
+		} {
+		    DW_TAG_subrange_type {
+			{DW_AT_type	   :$int_label}
+			{DW_AT_lower_bound 0   DW_FORM_data1}
+			{DW_AT_upper_bound 127 DW_FORM_data1}
+		    }   
+		}
+    
+		struct_label: DW_TAG_structure_type {
+		    {DW_AT_name "foo"}
+		    {DW_AT_byte_size 12 DW_FORM_sdata}
+		} {
+		    member {
+			{name a}
+			{type :$int_label}
+			{data_member_location 0 data1}
+		    }
+		    member {
+			{name x}
+			{type :$array_label}
+			{data_member_location 4 data1}
+		    }
+		    member {
+			{name y}
+			{type :$pointer_label}
+			{data_member_location 8 data1}
+		    }
+		}
+    
+		pointer_label: DW_TAG_pointer_type {
+		    {DW_AT_byte_size 4 DW_FORM_sdata}
+		    {DW_AT_type  :$struct_label}
+		}
+    
+		DW_TAG_subprogram {
+		    {DW_AT_name func01}
+		    {DW_AT_type :$int_label}
+		    {external   1 flag}
+		    {MACRO_AT_func {func01}}
+		} {
+		    DW_TAG_variable {
+			{DW_AT_name ptr}
+			{DW_AT_type :$pointer_label}
+			{DW_AT_location {} DW_FORM_block1}
+		    }
+		}
+    
+		DW_TAG_subprogram {
+		    {DW_AT_name main}
+		    {DW_AT_type :$int_label}
+		    {external   1 flag}
+		    {MACRO_AT_func {main}}
+		} {
+		}
+	    }
+	}
+    }
+    
+    set sources "$srcfile $asm_file"
+    if {[build_executable "failed to compile" $testfile $sources {nodebug}]} {
+	return -1
+    }
+}
+
+# Test access to an optimized-out pointer-to-struct using the
+# console interpreter.
+
+proc do_console_test {} {
+    global binfile
+
+    clean_restart $binfile
+
+    with_test_prefix "console" {
+	gdb_test_no_output "set print object on"
+
+	if {![runto_main]} {
+	    return -1
+	}
+
+	if {![runto func01]} {
+	    return -1
+	}
+	
+	gdb_test "info addr ptr" "Symbol \"ptr\" is optimized out."
+	
+	gdb_test "print ptr" "<optimized out>"
+	
+	gdb_test "print *ptr" "value has been optimized out"
+	
+	gdb_test "print ptr->a" "value has been optimized out"
+	
+	gdb_test "print ptr->x" "value has been optimized out"
+	
+	gdb_test "print ptr->y" "value has been optimized out"
+    }
+}
+
+# Test access to an optimized-out pointer-to-struct using the
+# MI interpreter.
+
+proc do_mi_test {} {
+
+    load_lib mi-support.exp
+    set MIFLAGS "-i=mi"
+
+    global mi_gdb_prompt
+    global binfile
+    
+    with_test_prefix "mi" {
+	if {[mi_clean_restart $binfile]} {
+	    return
+	}
+	
+	# This causes GDB to dereference a pointer-to-structure when doing
+	# -var-create.
+	mi_gdb_test "-gdb-set print object on" ".*" "set print object on"
+	
+	mi_gdb_test "-break-insert main" ".*" "insert breakpoint main"
+	mi_gdb_test "-break-insert func01" ".*" "insert breakpoint func01"
+	
+	# Run to main.  Use an explicit expect here since the limited
+	# debug info will result in output that isn't handled by the
+	# MI test utilities.
+	set test "run to main"
+	mi_run_cmd
+	gdb_expect {
+	    -re "\\*stopped,reason=\"breakpoint-hit\".*func=\"main\".*$mi_gdb_prompt$" {
+		pass "$test"
+	    }
+	    timeout {
+		fail "$test (timeout)"
+	    }
+	}
+	
+	# Run to func01.  Use an explicit expect here as above.
+	set test "continue to func01"
+	mi_send_resuming_command "exec-continue" "$test"
+	gdb_expect {
+	    -re "\\*stopped,reason=\"breakpoint-hit\".*func=\"func01\".*$mi_gdb_prompt$" {
+		pass "$test"
+	    }
+	    timeout {
+		fail "$test (timeout)"
+	    }
+	}
+	
+	# Test that -var-create for 'ptr' is successful.
+	mi_create_varobj "var1" "ptr" "create varobj for ptr"
+	
+	# Test that -var-list-children of 'ptr' is successful.
+	mi_list_varobj_children "var1" { \
+	    {var1.a a 0 integer} \
+	    {var1.x x 128 foo__array_type} \
+	    {var1.y y 3 "struct foo \\*"} \
+	} "get children of var1 (ptr)"
+
+	# Test that dereferencing 'ptr' will throw an error.
+	mi_gdb_test "-var-create var2 * &((ptr)->a)" \
+	    "\\^error,msg=\"value has been optimized out\"" \
+	    "throw error, dereference ptr to access integer member "
+
+	# Test that dereferencing 'ptr' will throw an error.
+	mi_gdb_test "-var-create var3 * &((ptr)->x)" \
+	    "\\^error,msg=\"value has been optimized out\"" \
+	    "throw error, dereference ptr to access array member "
+
+	# Test that dereferencing 'ptr' will throw an error.
+	mi_gdb_test "-var-create var4 * &((ptr)->y)" \
+	    "\\^error,msg=\"value has been optimized out\"" \
+	    "throw error, dereference ptr to access pointer member "
+    }
+}
+
+if { [build_test_program] == -1 } {
+    return -1
+}
+
+do_console_test
+do_mi_test

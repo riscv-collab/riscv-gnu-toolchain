@@ -1,0 +1,134 @@
+# Copyright 1998-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Build programs in PIE mode, to reproduce PR 21555.
+foreach_with_prefix opts { "" "pie" } {
+
+	# build the first test case
+
+	set testfile1 "reread1"
+	set srcfile1 ${testfile1}.c
+	# Cygwin needs $EXEEXT.
+	set binfile1 [standard_output_file ${testfile1}$EXEEXT]
+
+	set testfile1_opt [list debug nowarnings $opts]
+	if  { [gdb_compile "${srcdir}/${subdir}/${srcfile1}" "${binfile1}" \
+		   executable ${testfile1_opt}] != "" } {
+	    untested "failed to compile first testcase"
+	    return -1
+	}
+
+	# build the second test case
+
+	set testfile2 "reread2"
+	set srcfile2 ${testfile2}.c
+	set binfile2 [standard_output_file ${testfile2}$EXEEXT]
+
+	set testfile2_opt1 [list debug nowarnings $opts]
+	set testfile2_op2 [list debug nowarnings $opts \
+			       "additional_flags=-DNO_SECTIONS"]
+	if  { [gdb_compile "${srcdir}/${subdir}/${srcfile2}" "${binfile2}" \
+		   executable ${testfile2_opt1}] != ""
+	      && [gdb_compile "${srcdir}/${subdir}/${srcfile2}" "${binfile2}" \
+		      executable ${testfile2_opt2}] != ""} {
+	    untested "failed to compile second testcase"
+	    return -1
+	}
+
+	# Start with a fresh gdb.
+
+	set testfile "reread"
+	set binfile [standard_output_file ${testfile}$EXEEXT]
+
+	gdb_start
+	gdb_reinitialize_dir $srcdir/$subdir
+
+	# Load the first executable.
+
+	gdb_rename_execfile ${binfile1} ${binfile}
+	gdb_load ${binfile}
+
+	# Set a breakpoint at foo
+
+	gdb_test "break foo" \
+	    "Breakpoint.*at.* file .*$srcfile1, line 14.*" \
+	    "breakpoint foo in first file"
+
+
+	# Run, should see "Breakpoint 1, foo () at hello1.c:14"
+
+	gdb_run_cmd
+	gdb_test "" "Breakpoint.* foo .* at .*$srcfile1:14.*" "run to foo()"
+
+	# Restore first executable to its original name, and move
+	# second executable into its place.  Ensure that the new
+	# executable is at least a second newer than the old.
+
+	gdb_rename_execfile ${binfile} ${binfile1}
+	gdb_rename_execfile ${binfile2} ${binfile}
+	gdb_test "shell sleep 1" ".*" ""
+	gdb_touch_execfile ${binfile}
+
+	# Run a second time; GDB should detect that the executable has changed
+	# and reset the breakpoints correctly.
+	# Should see "Breakpoint 1, foo () at reread2.c:9"
+
+	set test "run to foo() second time"
+	if [is_remote target] {
+	    unsupported $test
+	} else {
+	    gdb_run_cmd
+	    gdb_test "" "Breakpoint.* foo .* at .*:9.*" $test
+	}
+
+
+	### Second pass: verify that GDB checks the executable file's
+	### timestamp when the program is *restarted*, not just when it exits.
+
+	if [is_remote target] {
+	    unsupported "second pass: GDB should check for changes before running"
+	} else {
+
+	    # Put the older executable back in place.
+	    gdb_rename_execfile ${binfile} ${binfile2}
+	    gdb_rename_execfile ${binfile1} ${binfile}
+
+	    # Restart GDB entirely.
+	    clean_restart ${binfile}
+
+	    # Set a breakpoint on foo and run to it.
+	    gdb_test "break foo" \
+		"Breakpoint.*at.* file .*$srcfile1, line 14.*" \
+		"second pass: breakpoint foo in first file"
+	    gdb_run_cmd
+	    gdb_test "" "Breakpoint.* foo .* at .*$srcfile1:14.*" \
+		"second pass: run to foo()"
+
+	    # This time, let the program run to completion.  If GDB checks the
+	    # executable file's timestamp now, it won't notice any change.
+	    gdb_continue_to_end "second pass"
+
+	    # Now move the newer executable into place, and re-run.  GDB
+	    # should still notice that the executable file has changed,
+	    # and still re-set the breakpoint appropriately.
+	    gdb_rename_execfile ${binfile} ${binfile1}
+	    gdb_rename_execfile ${binfile2} ${binfile}
+	    gdb_run_cmd
+	    gdb_test "" "Breakpoint.* foo .* at .*:9.*" \
+		"second pass: run to foo() second time"
+	}
+
+    }
+# End of tests.

@@ -1,0 +1,273 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This testcase exercises GDB's terminal ownership management
+# (terminal_ours/terminal_inferior, etc.) when debugging multiple
+# inferiors.  It tests debugging multiple inferiors started with
+# different combinations of 'run'/'run+tty'/'attach', and ensures that
+# the process that is sharing GDB's terminal/session is properly made
+# the GDB terminal's foregound process group (i.e., "given the
+# terminal").
+
+standard_testfile
+
+require can_spawn_for_attach
+
+if [build_executable "failed to prepare" $testfile $srcfile {debug}] {
+    return -1
+}
+
+# Start the programs running and then wait for a bit, to be sure that
+# they can be attached to.  We start these processes upfront in order
+# to reuse them for the different iterations.  This makes the testcase
+# faster, compared to calling spawn_wait_for_attach for each iteration
+# in the testing matrix.
+
+set spawn_id_list [spawn_wait_for_attach [list $binfile $binfile]]
+set attach_spawn_id1 [lindex $spawn_id_list 0]
+set attach_spawn_id2 [lindex $spawn_id_list 1]
+set attach_pid1 [spawn_id_get_pid $attach_spawn_id1]
+set attach_pid2 [spawn_id_get_pid $attach_spawn_id2]
+
+# Create inferior WHICH_INF.  INF_HOW is how to create it.  This can
+# be one of:
+#
+#  - "run" - for "run" command.
+#  - "tty" - for "run" + "tty TTY".
+#  - "attach" - for attaching to an existing process.
+proc create_inferior {which_inf inf_how} {
+    global binfile
+
+    # Run to main and delete breakpoints.
+    proc my_runto_main {} {
+	if ![runto_main] {
+	    return 0
+	} else {
+	    # Delete breakpoints otherwise GDB would try to step over
+	    # the breakpoint at 'main' without resuming the other
+	    # inferior, possibly masking the issue we're trying to
+	    # test.
+	    delete_breakpoints
+	    return 1
+	}
+    }
+
+    if {$inf_how == "run"} {
+	if [my_runto_main] {
+	    global inferior_spawn_id
+	    return $inferior_spawn_id
+	}
+    } elseif {$inf_how == "tty"} {
+	# Create the new PTY for the inferior.
+	spawn -pty
+	set inf_spawn_id $spawn_id
+	set inf_tty_name $spawn_out(slave,name)
+	gdb_test_no_output "tty $inf_tty_name" "tty TTY"
+
+	if [my_runto_main] {
+	    return $inf_spawn_id
+	}
+    } elseif {$inf_how == "attach"} {
+
+	# Reuse the inferiors spawned at the start of the testcase (to
+	# avoid having to wait the delay imposed by
+	# spawn_wait_for_attach).
+	global attach_spawn_id$which_inf
+	set test_spawn_id [set attach_spawn_id$which_inf]
+	set testpid [spawn_id_get_pid $test_spawn_id]
+	if {[gdb_test "attach $testpid" \
+		 "Attaching to program: .*, process $testpid.*(in|at).*" \
+		 "attach"] == 0} {
+
+	    # The program is now stopped, but if testing against
+	    # gdbserver, then the inferior's output emmitted before it
+	    # stopped isn't flushed unless we explicitly do so,
+	    # because it is on a different spawn_id.  Do it now, to
+	    # avoid confusing tests further below.
+	    gdb_test_multiple "" "flush inferior output" {
+		-timeout 1
+		-i $test_spawn_id -re "pid=" {
+		    exp_continue
+		}
+		timeout {
+		    pass $gdb_test_name
+		}
+	    }
+
+	    return $test_spawn_id
+	}
+    } else {
+	error "unhandled inf_how: $inf_how"
+    }
+
+    return ""
+}
+
+# Print debug output.
+
+proc send_debug {str} {
+    # Uncomment for debugging.
+    #send_user $str
+}
+
+# The core of the testcase.  See intro.  Creates two inferiors that
+# both loop changing their terminal's settings and printing output,
+# and checks whether they receive SIGTTOU.  INF1_HOW and INF2_HOW
+# indicate how inferiors 1 and 2 should be created, respectively.  See
+# 'create_inferior' above for what arguments these parameters accept.
+
+proc coretest {inf1_how inf2_how} {
+    global binfile
+    global inferior_spawn_id
+    global gdb_spawn_id
+    global decimal
+
+    clean_restart $binfile
+
+    with_test_prefix "inf1" {
+	set inf1_spawn_id [create_inferior 1 $inf1_how]
+    }
+
+    set num 2
+    gdb_test "add-inferior" "Added inferior $num.*" \
+	"add empty inferior $num"
+    gdb_test "inferior $num" "Switching to inferior $num.*" \
+	"switch to inferior $num"
+    gdb_file_cmd ${binfile}
+
+    with_test_prefix "inf2" {
+	set inf2_spawn_id [create_inferior 2 $inf2_how]
+    }
+
+    gdb_test_no_output "set schedule-multiple on"
+
+    # "run" makes each inferior be a process group leader.  When we
+    # run both inferiors in GDB's terminal/session, only one can end
+    # up as the terminal's foreground process group, so it's expected
+    # that the other receives a SIGTTOU.
+    set expect_ttou [expr {$inf1_how == "run" && $inf2_how == "run"}]
+
+    global gdb_prompt
+
+    set any "\[^\r\n\]*"
+
+    set pid1 -1
+    set pid2 -1
+
+    set test "info inferiors"
+    gdb_test_multiple $test $test {
+	-re "1${any}process ($decimal)${any}\r\n" {
+	    set pid1 $expect_out(1,string)
+	    send_debug "pid1=$pid1\n"
+	    exp_continue
+	}
+	-re "2${any}process ($decimal)${any}\r\n" {
+	    set pid2 $expect_out(1,string)
+	    send_debug "pid2=$pid2\n"
+	    exp_continue
+	}
+	-re "$gdb_prompt $" {
+	    pass $test
+	}
+    }
+
+    # Helper for the gdb_test_multiple call below.  Issues a PASS if
+    # we've seen each inferior print at least 3 times, otherwise
+    # continues waiting for inferior output.
+    proc pass_or_exp_continue {} {
+	uplevel 1 {
+	    if {$count1 >= 3 && $count2 >= 3} {
+		if $expect_ttou {
+		    fail "$gdb_test_name (expected SIGTTOU)"
+		} else {
+		    pass $gdb_test_name
+		}
+	    } else {
+		exp_continue
+	    }
+	}
+    }
+
+    set infs_spawn_ids [list $inf1_spawn_id $inf2_spawn_id]
+    send_debug "infs_spawn_ids=$infs_spawn_ids\n"
+
+    set count1 0
+    set count2 0
+
+    # We're going to interrupt with Ctrl-C.  For this to work we must
+    # be sure to consume the "Continuing." message first, or GDB may
+    # still own the terminal.  Also, note that in the attach case, we
+    # flushed inferior output right after attaching, so that we're
+    # sure that the "pid=" lines we see are emitted by the inferior
+    # after it is continued, instead of having been emitted before it
+    # was attached to.
+    gdb_test_multiple "continue" "continue, hand over terminal" {
+	-re "Continuing" {
+	    pass $gdb_test_name
+	}
+    }
+
+    gdb_test_multiple "" "continue" {
+	-i $infs_spawn_ids -re "pid=$pid1, count=" {
+	    incr count1
+	    pass_or_exp_continue
+	}
+	-i $infs_spawn_ids -re "pid=$pid2, count=" {
+	    incr count2
+	    pass_or_exp_continue
+	}
+	-i $gdb_spawn_id -re "received signal SIGTTOU.*$gdb_prompt " {
+	    if $expect_ttou {
+		pass "$gdb_test_name (expected SIGTTOU)"
+	    } else {
+		fail "$gdb_test_name (SIGTTOU)"
+	    }
+	}
+    }
+
+    send_gdb "\003"
+    if {$expect_ttou} {
+	gdb_test "" "Quit" "stop with control-c (Quit)"
+    } else {
+	gdb_test "" "received signal SIGINT.*" "stop with control-c (SIGINT)"
+    }
+
+    # Useful for debugging in case the Ctrl-C above fails.
+    with_test_prefix "final" {
+	gdb_test "info inferiors"
+	gdb_test "info threads"
+    }
+}
+
+set how_modes {"run" "attach" "tty"}
+
+foreach_with_prefix inf1_how $how_modes {
+    foreach_with_prefix inf2_how $how_modes {
+	if {($inf1_how == "tty" || $inf2_how == "tty")
+	    && [target_info gdb_protocol] == "extended-remote"} {
+	    # No way to specify the inferior's tty in the remote
+	    # protocol.
+	    unsupported "no support for \"tty\" in the RSP"
+	    continue
+	}
+
+	coretest $inf1_how $inf2_how
+    }
+}
+
+kill_wait_spawned_process $attach_spawn_id1
+kill_wait_spawned_process $attach_spawn_id2

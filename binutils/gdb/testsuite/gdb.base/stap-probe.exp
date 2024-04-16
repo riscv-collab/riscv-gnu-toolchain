@@ -1,0 +1,352 @@
+# Copyright (C) 2012-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile
+
+# Count the number of probes of TYPE (either 'stap' or 'dtrace'),
+# from provider matching PROVIDER, with a name matching NAME, and from
+# an objec file matching OBJECT.
+#
+# The OBJECT is optional, in which case all objects will be matched.
+#
+# If any error condition is detected, then perror is called, and -1
+# returned.
+#
+# Otherwise, returns an integer, 0 or greater.
+proc gdb_count_probes { type provider name { object "" }} {
+    set cmd "info probes ${type} ${provider} ${name}"
+    if { $object != "" } {
+	set cmd "$cmd ${object}"
+    }
+
+    set probe_count 0
+    set no_probes_line false
+    gdb_test_multiple $cmd "" {
+	-re "^$cmd\r\n" {
+	    exp_continue
+	}
+	-re "^Type\\s+Provider\\s+Name\\s+Where\\s+Semaphore\\s+Object\\s*\r\n" {
+	    exp_continue
+	}
+	-re "^\\s*\r\n" {
+	    exp_continue
+	}
+	-re "^stap\[^\r\n\]+\r\n" {
+	    incr probe_count
+	    exp_continue
+	}
+	-re "^dtrace\[^\r\n\]+\r\n" {
+	    incr probe_count
+	    exp_continue
+	}
+	-re "^No probes matched\\.\r\n" {
+	    set no_probes_line true
+	    exp_continue
+	}
+	-re "^$::gdb_prompt $" {
+	    pass $gdb_test_name
+	}
+    }
+
+    if { [expr $no_probes_line && $probe_count > 0] \
+	     || [expr !$no_probes_line && $probe_count == 0] } {
+	perror "Mismatch between no probes found line, and probes count"
+	return -1
+    }
+
+    return $probe_count
+}
+
+proc check_for_usable_xmm0_probe { binfile } {
+    set readelf_program [gdb_find_readelf]
+    set binfile [standard_output_file $binfile]
+    set command "exec $readelf_program -n $binfile"
+    verbose -log "command is $command"
+    set result [catch $command output]
+    verbose -log "result is $result"
+    verbose -log "output is $output"
+
+    # We don't actually check RESULT.  Sometimes readelf gives
+    # warnings about gaps in some of the notes data.  This is
+    # unrelated to the staps probes, but still causes readelf to exit
+    # with non-zero status.
+    #
+    # Instead, just check the output.  If readelf failed to run then
+    # the output will be empty, and the following regexps will fail to
+    # match.
+
+    # First, look for the xmmreg probe, and if we find it, grab the
+    # argument string.
+    if ![regexp {\n\s+Provider: test\n\s+Name: xmmreg\n[^\n]+\n\s+Arguments: ([^\n]+)\n} $output ignore arguments] {
+	verbose -log "APB: Couldn't find probe at all"
+	return false
+    }
+
+    verbose -log "APB: Matched on '$ignore'"
+    verbose -log "APB: arguments: '$arguments'"
+
+    # Check the the argument string mentions xmm0.
+    if ![regexp {@%?xmm0} $arguments] {
+	verbose -log "APB: Prove doesn't use xmm0 register"
+	return false
+    }
+
+    # Success!  We have a probe that uses xmm0 for an argument.
+    return true
+}
+
+# Run the tests.  We run the tests two different ways: once with a
+# plain probe, and once with a probe that has an associated semaphore.
+# This returns -1 on failure to compile or start, 0 otherwise.
+proc stap_test {exec_name {args ""}} {
+    global testfile hex srcfile
+
+    set flags {}
+    lappend flags debug
+    lappend_include_file flags $::srcdir/lib/attributes.h
+    if { $args != "" } {
+	set flags [concat $flags $args]
+    }
+
+    if {[prepare_for_testing "failed to prepare" ${exec_name} $srcfile \
+	     $flags]} {
+	return -1
+    }
+
+    set semaphore_addr_var ""
+    if {[string first "-DUSE_SEMAPHORES" $args] == -1} {
+	gdb_test_no_output "set breakpoint always-inserted on"
+	set semaphore_addr_var \
+	    [get_hexadecimal_valueof "&relocation_marker" "0"\
+		"get original address of relocation_marker"]
+    }
+
+    if ![runto_main] {
+	return -1
+    }
+
+    gdb_test "print \$_probe_argc" "No probe at PC $hex" \
+	"check argument not at probe point"
+
+    if {[string first "-DUSE_SEMAPHORES" $args] != -1} {
+	gdb_test_lines "info probes stap" "" \
+	    "test *user *$hex *$hex .*"
+    } else {
+	gdb_test_lines "info probes stap" "" \
+	    "test *user *$hex .*"
+    }
+
+    if {[runto "-pstap test:user"]} {
+	pass "run to -pstap test:user"
+    } else {
+	fail "run to -pstap test:user"
+    }
+
+    if {[string first "-DUSE_SEMAPHORES" $args] == -1} {
+	set updated_semaphore_addr_var \
+	    [get_hexadecimal_valueof "&relocation_marker" \
+		 "0" "get revised relocation_marker address"]
+	set relocation_base \
+	   [expr $updated_semaphore_addr_var - $semaphore_addr_var]
+	if {$relocation_base != 0} {
+	   # Checks that GDB doesn't mistakenly relocate and write to null
+	   # semaphore addresses.  If it were to relocate a zero-valued
+	   # semaphore address and increment the value at that address, we
+	   # would expect to see "\200ELF" here instead.
+	   gdb_test "p (*(char*) $relocation_base)@4" \
+		" = \"\\\\177ELF\"" \
+		"null semaphore relocation"
+	}
+    }
+
+    # Test probe arguments.
+    gdb_test "print \$_probe_argc" " = 1" \
+    "print \$_probe_argc for probe user"
+    gdb_test "print \$_probe_arg0 == x" " = 1" \
+    "check \$_probe_arg0 for probe user"
+    gdb_test "print \$_probe_arg1" \
+    	"Invalid probe argument 1 -- probe has 1 arguments available" \
+    	"check \$_probe_arg1 for probe user"
+
+    # Set a breakpoint with multiple probe locations.
+    gdb_test "break -pstap test:two" \
+	"Breakpoint \[0-9\]+ at $hex.*2 locations.*" \
+	"set multi-location probe breakpoint (probe two)"
+
+    # Reinit GDB, set a breakpoint on probe m4.
+    delete_breakpoints
+    if {[runto "-pstap test:m4"]} {
+      pass "run to -pstap test:m4"
+    } else {
+      fail "run to -pstap test:m4"
+    }
+
+    # Testing probe arguments.
+    gdb_test "print \$_probe_argc" " = 3" \
+    "print \$_probe_argc for probe m4"
+    gdb_test "print \$_probe_arg0" " = 42" \
+    "check \$_probe_arg0 for probe m4"
+    gdb_test "print (const char *) \$_probe_arg1" \
+    " = $hex .This is a test message.*" \
+    "check \$_probe_arg1 for probe m4"
+    gdb_test "print \$_probe_arg2 == v" " = 1" \
+    "check \$_probe_arg2 for probe m4"
+
+    # Reinit GDB, set a breakpoint on probe ps.
+    delete_breakpoints
+    if {[runto "-pstap test:ps"]} {
+      pass "run to -pstap test:ps"
+    } else {
+      fail "run to -pstap test:ps"
+    }
+
+    gdb_test "print \$_probe_argc" " = 3" \
+    "print \$_probe_argc for probe ps"
+    gdb_test "print (const char *) \$_probe_arg1" \
+    " = $hex .This is another test message.*" \
+    "print \$_probe_arg1 for probe ps"
+
+    # Check the probe is using the xmm0 register.
+    if [check_for_usable_xmm0_probe $exec_name] {
+
+	delete_breakpoints
+	if {[runto "-pstap test:xmmreg"]} {
+	    pass "run to -pstap test:xmmreg"
+	} else {
+	    fail "run to -pstap test:xmmreg"
+	}
+
+	gdb_test "print \$_probe_argc" " = 1" \
+	    "print \$_probe_argc for probe xmmreg"
+	gdb_test "print/x \$_probe_arg0" " = 0x1234" \
+	    "check \$_probe_arg0 for probe xmmreg"
+    } else {
+	unsupported "print probe argument from \$xmm0 register"
+    }
+
+    return 0
+}
+
+proc stap_test_no_debuginfo {exec_name {args ""}} {
+    global hex
+
+    set flags {}
+    lappend flags nodebug
+    lappend flags optimize=-O2
+    lappend_include_file flags $::srcdir/lib/attributes.h
+    if { $args != "" } {
+	set flags [concat $flags $args]
+    }
+
+    if {[prepare_for_testing "failed to prepare" ${exec_name} $::srcfile \
+	     $flags]} {
+	return -1
+    }
+
+    if {[runto "-pstap test:user"]} {
+	pass "run to -pstap test:user"
+    } else {
+	fail "run to -pstap test:user"
+    }
+
+    # Test probe arguments.
+    gdb_test "print \$_probe_argc" " = 1" \
+    "print \$_probe_argc for probe user"
+    gdb_test "print \$_probe_arg0 == 23" " = 1" \
+    "check \$_probe_arg0 for probe user"
+    gdb_test "print \$_probe_arg1" \
+    	"Invalid probe argument 1 -- probe has 1 arguments available" \
+    	"check \$_probe_arg1 for probe user"
+
+    # Set a breakpoint with multiple probe locations.
+    # In this scenario, we may expect more than 2 locations because of
+    # the optimizations (inlining, loop unrolling, etc).
+    gdb_test "break -pstap test:two" \
+	"Breakpoint .* at $hex.*\[0-9\]+ locations.*" \
+	"set multi-location probe breakpoint (probe two)"
+
+    # Reinit GDB, set a breakpoint on probe m4.
+    delete_breakpoints
+    if {[runto "-pstap test:m4"]} {
+      pass "run to -pstap test:m4"
+    } else {
+      fail "run to -pstap test:m4"
+    }
+
+    # Testing probe arguments.
+    gdb_test "print \$_probe_argc" " = 3" \
+    "print \$_probe_argc for probe m4"
+    gdb_test "print \$_probe_arg0" " = 42" \
+    "check \$_probe_arg0 for probe m4"
+    gdb_test "print (const char *) \$_probe_arg1" \
+    " = $hex .This is a test message.*" \
+    "check \$_probe_arg1 for probe m4"
+    gdb_test "print \$_probe_arg2 == 0" " = 1" \
+    "check \$_probe_arg2 for probe m4"
+
+    # Reinit GDB, set a breakpoint on probe ps.
+    delete_breakpoints
+    if {[runto "-pstap test:ps"]} {
+      pass "run to -pstap test:ps"
+    } else {
+      fail "run to -pstap test:ps"
+    }
+
+    gdb_test "print \$_probe_argc" " = 3" \
+    "print \$_probe_argc for probe ps"
+    gdb_test "print (const char *) \$_probe_arg1" \
+    " = $hex .This is another test message.*" \
+    "print \$_probe_arg1 for probe ps"
+
+    # Reinit GDB, set a breakpoint on probe ps.
+    if { [gdb_count_probes stap test xmmreg] > 0 } {
+	delete_breakpoints
+	if {[runto "-pstap test:xmmreg"]} {
+	    pass "run to -pstap test:xmmreg"
+	} else {
+	    fail "run to -pstap test:xmmreg"
+	}
+
+	gdb_test "print \$_probe_argc" " = 1" \
+	    "print \$_probe_argc for probe xmmreg"
+	gdb_test "print/x \$_probe_arg0" " = 0x1234" \
+	    "check \$_probe_arg0 for probe xmmreg"
+    }
+
+    return 0
+}
+
+with_test_prefix "without semaphore, not optimized" {
+    if {[stap_test "stap-probe-nosem-noopt"] == -1} {
+	untested "stap probe test failed"
+	  return -1
+    }
+
+    foreach_with_prefix pie { "nopie" "pie" } {
+	stap_test "stap-probe-nosem-noopt-$pie" $pie
+    }
+}
+
+with_test_prefix "with semaphore, not optimized" {
+    stap_test "stap-probe-sem-noopt" additional_flags=-DUSE_SEMAPHORES
+}
+
+with_test_prefix "without semaphore, optimized" {
+    stap_test_no_debuginfo "stap-probe-nosem-opt"
+}
+
+with_test_prefix "with semaphore, optimized" {
+    stap_test_no_debuginfo "stap-probe-sem-opt" additional_flags=-DUSE_SEMAPHORES
+}

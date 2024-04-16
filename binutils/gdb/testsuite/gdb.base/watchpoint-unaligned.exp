@@ -1,0 +1,188 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# This file is part of the gdb testsuite.
+
+# Test inserting read watchpoints on unaligned addresses.
+
+require allow_hw_watchpoint_tests
+
+standard_testfile
+if { [prepare_for_testing ${testfile}.exp ${testfile} ${srcfile}] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+gdb_breakpoint [gdb_get_line_number "start_again"] "Breakpoint $decimal at $hex" "start_again"
+
+set sizes {1 2 4 8}
+array set alignedend {1 1  2 2  3 4  4 4  5 8  6 8  7 8  8 8}
+
+set rwatch "rwatch"
+set rwatch_exp "Hardware read watchpoint"
+if {[istarget "s390*-*-*"]} {
+    # Target does not support this type of hardware watchpoint."
+    set rwatch "watch"
+    set rwatch_exp "Hardware watchpoint"
+}
+
+foreach wpsize $sizes {
+    for {set wpoffset 0} {$wpoffset < 8 / $wpsize} {incr wpoffset} {
+	set wpstart [expr $wpoffset * $wpsize]
+	set wpend [expr ($wpoffset + 1) * $wpsize]
+	set wpendaligned $alignedend($wpend)
+	foreach rdsize $sizes {
+	    for {set rdoffset 0} {$rdoffset < 8 / $rdsize} {incr rdoffset} {
+		set rdstart [expr $rdoffset * $rdsize]
+		set rdend [expr ($rdoffset + 1) * $rdsize]
+		set expect_hit [expr max ($wpstart, $rdstart) < min ($wpend, $rdend)]
+		set test "$rwatch data.u.size$wpsize\[$wpoffset\]"
+		set wpnum ""
+		gdb_test_multiple $test $test {
+		    -re "$rwatch_exp (\[0-9\]+): .*\r\n$gdb_prompt $" {
+			set wpnum $expect_out(1,string)
+		    }
+		    -re "Expression cannot be implemented with read/access watchpoint.\r\n$gdb_prompt $" {
+			if {$wpsize == 8 && [istarget "arm*-*-*"]} {
+			    untested $test
+			    continue
+			}
+			fail $test
+		    }
+		}
+		gdb_test_no_output -nopass "set variable size = $rdsize"
+		gdb_test_no_output -nopass "set variable offset = $rdoffset"
+		set test "continue"
+		set got_hit 0
+		gdb_test_multiple $test $test {
+		    -re "$rwatch_exp $wpnum:.*alue = .*\r\n$gdb_prompt $" {
+			set got_hit 1
+			send_gdb "continue\n"
+			exp_continue
+		    }
+		    -re " start_again .*\r\n$gdb_prompt $" {
+		    }
+		}
+		gdb_test_no_output -nopass "delete $wpnum"
+		set test "wp(size=$wpsize offset=$wpoffset) rd(size=$rdsize offset=$rdoffset) expect=$expect_hit"
+		if {$expect_hit == $got_hit} {
+		    pass $test
+		} else {
+		    # We do not know if we run on a fixed Linux kernel
+		    # or not.  Report XFAIL only in the FAIL case.
+		    if {$expect_hit == 0 && $rdstart < $wpendaligned} {
+			setup_xfail external/20207 "aarch64*-*-linux*"
+		    }
+		    if {!$expect_hit && [expr max ($wpstart / 8, $rdstart / 8) < min (($wpend + 7) / 8, ($rdend + 7) / 8)]} {
+			setup_xfail breakpoints/23131 "powerpc*-*-*"
+		    }
+		    fail $test
+		}
+	    }
+	}
+    }
+}
+
+foreach wpcount {4 7} {
+    array set wpoffset_to_wpnum {}
+    for {set wpoffset 1} {$wpoffset <= $wpcount} {incr wpoffset} {
+	set test "$rwatch data.u.size1\[$wpoffset\]"
+	set wpnum ""
+	# Initialize the result incase the test fails.
+	set wpoffset_to_wpnum($wpoffset) 0
+	gdb_test_multiple $test $test {
+	    -re "$rwatch_exp (\[0-9\]+): .*\r\n$gdb_prompt $" {
+		set wpoffset_to_wpnum($wpoffset) $expect_out(1,string)
+	    }
+	    -re "There are not enough available hardware resources for this watchpoint.\r\n$gdb_prompt $" {
+		if {$wpoffset > 1} {
+		    setup_xfail breakpoints/23131 "powerpc*-*-*"
+		    setup_xfail breakpoints/23131 "arm*-*-*"
+		}
+		fail $test
+	    }
+	}
+    }
+    gdb_test_no_output -nopass "set variable size = 1"
+    gdb_test_no_output -nopass "set variable offset = 1"
+    set test "continue"
+    set got_hit 0
+    gdb_test_multiple $test $test {
+	-re "\r\nCould not insert hardware watchpoint .*\r\n$gdb_prompt $" {
+	}
+	-re "$rwatch_exp $wpoffset_to_wpnum(1):.*alue = .*\r\n$gdb_prompt $" {
+	    set got_hit 1
+	    send_gdb "continue\n"
+	    exp_continue
+	}
+	-re " start_again .*\r\n$gdb_prompt $" {
+	}
+    }
+    for {set wpoffset 1} {$wpoffset <= $wpcount} {incr wpoffset} {
+	if {$wpoffset_to_wpnum($wpoffset)} {
+	    gdb_test_no_output "delete $wpoffset_to_wpnum($wpoffset)" ""
+	}
+    }
+    set test "wpcount($wpcount)"
+    if {!$wpoffset_to_wpnum([expr $wpcount - 1])} {
+	untested $test
+	continue
+    }
+    if {$wpcount > 4} {
+	if {![istarget "s390*-*-*"]} {
+	    setup_kfail tdep/22389 *-*-*
+	}
+    }
+    gdb_assert $got_hit $test
+}
+
+if ![runto_main] {
+    return -1
+}
+gdb_breakpoint [gdb_get_line_number "final_return"] "Breakpoint $decimal at $hex" "final_return"
+set test {watch data.u.size8twice[1]}
+set wpnum 0
+gdb_test_multiple $test $test {
+    -re "Hardware watchpoint (\[0-9\]+): .*\r\n$gdb_prompt $" {
+	set wpnum $expect_out(1,string)
+	pass $gdb_test_name
+    }
+    -re "Watchpoint (\[0-9\]+): .*\r\n$gdb_prompt $" {
+	if {[istarget "arm*-*-*"]} {
+	    untested $gdb_test_name
+	} else {
+	    fail $gdb_test_name
+	}
+    }
+}
+if {$wpnum} {
+    set test "continue"
+    set got_hit 0
+    gdb_test_multiple $test $test {
+	-re "\r\nCould not insert hardware watchpoint .*\r\n$gdb_prompt $" {
+	}
+	-re "Hardware watchpoint $wpnum:.*New value = .*\r\n$gdb_prompt $" {
+	    set got_hit 1
+	    send_gdb "continue\n"
+	    exp_continue
+	}
+	-re " final_return .*\r\n$gdb_prompt $" {
+	}
+    }
+    gdb_assert $got_hit "size8twice write"
+}

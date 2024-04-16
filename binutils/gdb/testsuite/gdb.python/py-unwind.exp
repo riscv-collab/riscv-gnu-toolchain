@@ -1,0 +1,275 @@
+# Copyright (C) 2015-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It verifies that frame
+# unwinders can be implemented in Python.
+
+load_lib gdb-python.exp
+
+require allow_python_tests
+
+standard_testfile
+
+# Stack protection can make the stack look a bit different, breaking the
+# assumptions this test has about its layout.
+
+set flags "additional_flags=-fno-stack-protector"
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile} "debug $flags"] } {
+    return -1
+}
+
+# This test runs on a specific platform.
+require is_x86_64_m64_target
+
+# The following tests require execution.
+
+if {![runto_main]} {
+    return 0
+}
+
+# Check for the corrupt backtrace.
+proc check_for_broken_backtrace {testname} {
+    gdb_test_sequence "where" $testname {
+	"\\r\\n#0 .* corrupt_frame_inner \\(\\) at "
+	"\\r\\n#1 .* corrupt_frame_outer \\(\\) at "
+	"Backtrace stopped: frame did not save the PC"
+    }
+}
+
+# Check for the correct backtrace.
+proc check_for_fixed_backtrace {testname} {
+    gdb_test_sequence "where" $testname {
+	"\\r\\n#0 .* corrupt_frame_inner \\(\\) at "
+	"\\r\\n#1 .* corrupt_frame_outer \\(\\) at "
+	"\\r\\n#2 .* main \\(.*\\) at"
+    }
+}
+
+# Check the 'info unwinder' output.
+proc check_info_unwinder {testname enabled} {
+    if {$enabled} {
+	set suffix ""
+    } else {
+	set suffix " \\\[disabled\\\]"
+    }
+
+    gdb_test_sequence "info unwinder" $testname \
+	[list \
+	     "Global:" \
+	     "  test unwinder${suffix}"]
+}
+
+set pyfile [gdb_remote_download host ${srcdir}/${subdir}/${testfile}.py]
+
+gdb_breakpoint [gdb_get_line_number "break backtrace-broken"]
+
+gdb_continue_to_breakpoint "break backtrace-broken"
+
+check_for_broken_backtrace "Backtrace is initially broken"
+
+gdb_test "source ${pyfile}" "Python script imported" \
+    "import python scripts"
+
+check_info_unwinder "info unwinder after loading script" on
+
+check_for_fixed_backtrace "check backtrace after loading unwinder"
+
+# Check that the Python unwinder frames can be flushed / released.
+gdb_test "maint flush register-cache" "Register cache flushed\\." "flush frames"
+
+check_for_fixed_backtrace "check backtrace after flush"
+
+# Try to disable the unwinder but instead set the enabled field to a
+# non boolean value.  This should fail.  Check the 'info unwinder'
+# output to be sure.
+gdb_test "python global_test_unwinder.enabled = \"off\"" \
+    [multi_line \
+	 "TypeError: incorrect type for enabled attribute: <class 'str'>" \
+	 "Error while executing Python code\\."]
+check_info_unwinder "info unwinder after failed disable" on
+
+# While we're doing silly stuff, lets try to change the name of this
+# unwider.  Doing this is bad as the new name might clash with an
+# already registered name, which violates the promises made during
+# 'register_unwinder'.
+set pattern_1 "can't set attribute(?: 'name')?"
+set pattern_2 "property 'name' of 'TestUnwinder' object has no setter"
+gdb_test "python global_test_unwinder.name = \"foo\"" \
+    [multi_line \
+	 "AttributeError: (?:${pattern_1}|${pattern_2})" \
+	 "Error while executing Python code\\."]
+check_info_unwinder "info unwinder after failed name change" on
+
+# Now actually disable the unwinder by manually adjusting the
+# 'enabled' attribute.  Check that the stack is once again broken, and
+# that the unwinder shows as disabled in the 'info unwinder' output.
+gdb_test_no_output "python global_test_unwinder.enabled = False"
+check_for_broken_backtrace "stack is broken after disabling"
+check_info_unwinder "info unwinder after manually disabling" off
+
+# Now enable the unwinder using the 'enable unwinder' command.
+gdb_test "enable unwinder global \"test unwinder\"" \
+    "1 unwinder enabled"
+check_for_fixed_backtrace "check backtrace after enabling with command"
+check_info_unwinder "info unwinder after command enabled" on
+
+# And now disable using the command and check the stack is once again
+# broken, and that the 'info unwinder' output updates correctly.
+gdb_test "disable unwinder global \"test unwinder\"" \
+    "1 unwinder disabled"
+check_for_broken_backtrace "stack is broken after command disabling"
+check_info_unwinder "info unwinder after command disabling" off
+
+# Check that invalid register names and values cause errors.
+gdb_test "python print(add_saved_register_errors\[\"unknown_name\"\])" \
+    "Bad register" \
+    "add_saved_register error when an unknown register name is used"
+gdb_test "python print(add_saved_register_errors\[\"unknown_number\"\])" \
+    "Bad register" \
+    "add_saved_register error when an unknown register number is used"
+gdb_test "python print(add_saved_register_errors\[\"bad_value\"\])" \
+    "argument 2 must be gdb.Value, not int" \
+    "add_saved_register error when invalid register value is used"
+gdb_test "python print(read_register_error)" "Bad register" \
+    "read_register error"
+
+# Try to create an unwinder object with a non-string name.
+gdb_test "python obj = simple_unwinder(True)" \
+    [multi_line \
+	 "TypeError: incorrect type for name: <class 'bool'>" \
+	 "Error while executing Python code\\."]
+
+# Now register the simple_unwinder with a valid name, and use the
+# unwinder to capture a PendingFrame object.
+gdb_test_no_output "python obj = simple_unwinder(\"simple\")"
+gdb_test_no_output "python gdb.unwinder.register_unwinder(None, obj)"
+check_for_broken_backtrace "backtrace to capture a PendingFrame object"
+
+# Check the captured PendingFrame is not valid.
+gdb_test "python print(captured_pending_frame.is_valid())" "False"
+
+# Check the __repr__ of an invalid PendingFrame.
+gdb_test "python print(repr(captured_pending_frame))" \
+    "<gdb.PendingFrame \\(invalid\\)>"
+
+# Check the __repr__ of an UnwindInfo for an invalid PendingFrame.
+gdb_test "python print(captured_unwind_info)"
+gdb_test "python print(repr(captured_unwind_info))" \
+    "<gdb.UnwindInfo for an invalid frame>"
+
+# Check the repr of a PendingFrame that was copied (as a string) at a
+# time the PendingFrame was valid.
+gdb_test "python print(captured_pending_frame_repr)" \
+    "<gdb.PendingFrame level=0, sp=$hex, pc=$hex>"
+
+# Check the repr of an UnwindInfo that was copied (as a string) at a
+# time the UnwindInfo was valid.
+gdb_test "python print(captured_unwind_info_repr)" \
+    "<gdb.UnwindInfo frame #0, saved_regs=\\(rip, rbp, rsp\\)>"
+
+# Call methods on the captured gdb.PendingFrame and check we see the
+# expected error.
+gdb_test_no_output "python pf = captured_pending_frame"
+foreach cmd {"pf.read_register(\"pc\")" \
+		 "pf.create_unwind_info(None)" \
+		 "pf.architecture()" \
+		 "pf.level()" \
+		 "pf.name()" \
+		 "pf.pc()" \
+		 "pf.language()" \
+		 "pf.find_sal()" \
+		 "pf.block()" \
+		 "pf.function()" } {
+    gdb_test "python $cmd" \
+	[multi_line \
+	     "ValueError: gdb\\.PendingFrame is invalid\\." \
+	     "Error while executing Python code\\."]
+}
+
+# Turn on the useful unwinder so we have the full backtrace again, and
+# disable the simple unwinder -- because we can!
+gdb_test "enable unwinder global \"test unwinder\"" \
+    "1 unwinder enabled" \
+    "re-enable 'test unwinder' so we can check PendingFrame methods"
+gdb_test "disable unwinder global \"simple\"" \
+    "1 unwinder disabled"
+check_for_fixed_backtrace \
+    "check backtrace before testing PendingFrame methods"
+
+# Turn the 'simple' unwinder back on.
+gdb_test "enable unwinder global \"simple\"" \
+    "1 unwinder enabled"
+
+# Replace the "simple" unwinder with a new version that doesn't set
+# the 'sp' attribute.  Also the 'pc' attribute is invalid, but we'll
+# hit the missing 'sp' error first.
+with_test_prefix "frame-id 'sp' is None" {
+    gdb_test_no_output "python obj = simple_unwinder(\"simple\", None, \"xyz\")"
+    gdb_test_no_output "python gdb.unwinder.register_unwinder(None, obj, replace=True)"
+    gdb_test_no_output "python captured_pending_frame = None"
+    gdb_test "backtrace" \
+	"Python Exception <class 'ValueError'>: frame_id should have 'sp' attribute\\.\r\n.*"
+}
+
+# Replace the "simple" unwinder with a new version that sets the 'sp'
+# attribute to an invalid value.  Also the 'pc' attribute is invalid, but we'll
+# hit the invalid 'sp' error first.
+with_test_prefix "frame-id 'sp' is invalid" {
+    gdb_test_no_output "python obj = simple_unwinder(\"simple\", \"jkl\", \"xyz\")"
+    gdb_test_no_output "python gdb.unwinder.register_unwinder(None, obj, replace=True)"
+    gdb_test_no_output "python captured_pending_frame = None"
+    gdb_test "backtrace" \
+	"Python Exception <class 'ValueError'>: invalid literal for int\\(\\) with base 10: 'jkl'\r\n.*"
+}
+
+# Replace the "simple" unwinder with a new version that sets the 'sp'
+# to a valid value, but set the 'pc' attribute to an invalid value.
+with_test_prefix "frame-id 'pc' is invalid" {
+    gdb_test_no_output "python obj = simple_unwinder(\"simple\", 0x123, \"xyz\")"
+    gdb_test_no_output "python gdb.unwinder.register_unwinder(None, obj, replace=True)"
+    gdb_test_no_output "python captured_pending_frame = None"
+    gdb_test "backtrace" \
+	"Python Exception <class 'ValueError'>: invalid literal for int\\(\\) with base 10: 'xyz'\r\n.*"
+}
+
+# Gather information about every frame.
+gdb_test_no_output "python capture_all_frame_information()"
+gdb_test_no_output "python gdb.newest_frame().select()"
+gdb_test_no_output "python pspace = gdb.selected_inferior().progspace"
+gdb_test_no_output "python obj = validating_unwinder()"
+gdb_test_no_output "python gdb.unwinder.register_unwinder(pspace, obj)"
+
+check_for_fixed_backtrace \
+    "check backtrace to validate all information"
+
+gdb_test_no_output "python check_all_frame_information_matched()"
+
+# Check we can't sub-class from gdb.UnwindInfo.
+gdb_test_multiline "Sub-class gdb.UnwindInfo " \
+    "python" "" \
+    "class my_unwind_info(gdb.UnwindInfo):" "" \
+    "  def __init__(self):" "" \
+    "    pass" "" \
+    "end" \
+    [multi_line \
+	 "TypeError: type 'gdb\\.UnwindInfo' is not an acceptable base type" \
+	 "Error while executing Python code\\."]
+
+# Check we can't directly instantiate a gdb.UnwindInfo.
+gdb_test "python uw = gdb.UnwindInfo()" \
+    [multi_line \
+     "TypeError: cannot create 'gdb\\.UnwindInfo' instances" \
+     "Error while executing Python code\\."]

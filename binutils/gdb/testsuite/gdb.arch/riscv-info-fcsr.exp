@@ -1,0 +1,141 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check the formatting of the fcsr, fflags, and frm registers in the
+# output of the 'info registers' command.
+
+require {istarget "riscv*-*-*"} allow_float_test
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+if {![runto_main]} {
+   return 0
+}
+
+# Merge FFLAGS_VALUE and FRM_VALUE into a single hexadecimal value
+# that can be written to the fcsr register.  The two arguments should
+# be the value of each of the two fields within the fcsr register.
+proc merge_fflags_and_frm { fflags_value frm_value } {
+    set fcsr_value 0x[format %x [expr $fflags_value | ($frm_value << 5)]]
+    return $fcsr_value
+}
+
+# Use 'info registers' to check the current values of the fflags, frm,
+# and fcsr registers.  The value in fcsr should consist of the
+# FFLAGS_VALUE and FRM_VALUE, and the frm field of the fcsr register
+# should have the text FRM_STRING associated with it.
+proc check_fcsr { fflags_value frm_value frm_string } {
+    # Merge fflags and frm values into a single fcsr value.
+    set fcsr_value [merge_fflags_and_frm $fflags_value $frm_value]
+
+    # Build up all the patterns we will need for this test.
+    set frm_str_re [string_to_regexp "$frm_string"]
+    set frm_val_re [format %d ${frm_value}]
+
+    set nv [format %d [expr ($fflags_value >> 4) & 0x1]]
+    set dz [format %d [expr ($fflags_value >> 3) & 0x1]]
+    set of [format %d [expr ($fflags_value >> 2) & 0x1]]
+    set uf [format %d [expr ($fflags_value >> 1) & 0x1]]
+    set nx [format %d [expr ($fflags_value >> 0) & 0x1]]
+
+    set fflags_pattern "NV:${nv} DZ:${dz} OF:${of} UF:${uf} NX:${nx}"
+    set frm_pattern "FRM:${frm_val_re} \\\[${frm_str_re}\\\]"
+    set fcsr_pattern "${fflags_pattern} ${frm_pattern}"
+
+    # Now use 'info registers' to check the register values.
+    array set reg_counts {}
+    gdb_test_multiple "info registers \$fflags \$frm \$fcsr" "" {
+	-re "^info registers\[^\r\n\]+\r\n" {
+	    exp_continue
+	}
+
+	-re "^(frm)\\s+${frm_value}\\s+${frm_pattern}\r\n" {
+	    set reg_name $expect_out(1,string)
+	    incr reg_counts($reg_name)
+	    exp_continue
+	}
+
+	-re "^(fflags)\\s+${fflags_value}\\s+${fflags_pattern}\r\n" {
+	    set reg_name $expect_out(1,string)
+	    incr reg_counts($reg_name)
+	    exp_continue
+	}
+
+	-re "^(fcsr)\\s+${fcsr_value}\\s+${fcsr_pattern}\r\n" {
+	    set reg_name $expect_out(1,string)
+	    incr reg_counts($reg_name)
+	    exp_continue
+	}
+
+	-re "^$::gdb_prompt $" {
+	    pass $gdb_test_name
+	}
+    }
+
+    # Check that each register is seen only once.
+    foreach reg {fflags frm fcsr} {
+	gdb_assert { $reg_counts($reg) == 1 } \
+	    "check we saw $reg just once"
+    }
+}
+
+# Set the fcsr register based on FFLAGS_VALUE and FRM_VALUE, then
+# check that the value is displayed correctly in the 'info registers'
+# output.  FRM_STRING should appear in the 'info registers' output
+# next to the frm field.
+proc test_fcsr { fflags_value frm_value frm_string } {
+    # Merge fflags and frm values into a single fcsr value.
+    set fcsr_value [merge_fflags_and_frm $fflags_value $frm_value]
+
+    with_test_prefix "fcsr=${fcsr_value}" {
+	# Set the fcsr value directly.
+	gdb_test_no_output "set \$fcsr = ${fcsr_value}"
+
+	with_test_prefix "set through fcsr" {
+	    check_fcsr $fflags_value $frm_value $frm_string
+	}
+
+	# Reset fcsr register back to zero.
+	gdb_test_no_output "set \$fcsr = 0x0" \
+	    "reset fcsr back to 0x0"
+	gdb_test "p/x \$fcsr" " = 0x0"
+
+	# Now set fcsr value through fflags and frm.
+	gdb_test_no_output "set \$fflags = ${fflags_value}"
+	gdb_test_no_output "set \$frm = ${frm_value}"
+
+	with_test_prefix "set through fflags and frm" {
+	    check_fcsr $fflags_value $frm_value $frm_string
+	}
+    }
+}
+
+# Check each valid value of the fflags register.
+for { set i 0 } { $i < 32 } { incr i } {
+    test_fcsr 0x[format %x $i] 0x0 "RNE (round to nearest; ties to even)"
+}
+
+# Check each valid value of the frm register.
+test_fcsr 0x0 0x1 "RTZ (Round towards zero)"
+test_fcsr 0x0 0x2 "RDN (Round down towards -INF)"
+test_fcsr 0x0 0x3 "RUP (Round up towards +INF)"
+test_fcsr 0x0 0x4 "RMM (Round to nearest; ties to max magnitude)"
+test_fcsr 0x0 0x5 "INVALID\[5\]"
+test_fcsr 0x0 0x6 "INVALID\[6\]"
+test_fcsr 0x0 0x7 "INVALID\[7\] (Dynamic rounding mode)"

@@ -1,0 +1,92 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check whether we can determine the size of an optimized-out vla.
+
+standard_testfile
+
+# The EXE_SUFFIX is a string appended to the name of the test binary
+# to make it unique per variation.
+# The OPTIONS is a two item list, the first item is a list of compiler
+# flags used for building the test binary, and the second item is a
+# pattern which matches some expected output within this proc.
+proc vla_optimized_out {exe_suffix options} {
+    global testfile srcfile
+
+    lassign $options compile_flags sizeof_result
+    lappend_include_file compile_flags $::srcdir/lib/attributes.h
+
+    if { [prepare_for_testing "failed to prepare" "$testfile-$exe_suffix" $srcfile \
+	      $compile_flags] } {
+	return -1
+    }
+
+    if ![runto f1] {
+	return
+    }
+
+    gdb_test "p a" \
+	" = <optimized out>" \
+	"printed optimized out vla"
+
+    gdb_test "p sizeof (a)" \
+	" = ($sizeof_result)" \
+	"printed size of optimized out vla"
+
+    # At lower optimisation levels, the upper bound of the array is
+    # still defined, it's just the loctaion that tells GDB the array
+    # is optimised out.  In that case, when we access an element that
+    # is within the bounds of the array an answer of '<optimized out>'
+    # is reasonable.
+    #
+    # At higher optimisation levels, the array bounds themselves have
+    # been removed.  As such GDB can't be expected to know if the
+    # array contains _any_ elements at all.  It seems reasonable in
+    # that case to reply with 'no such vector element'.
+    gdb_test "p a\[0\]" \
+	"(= <optimized out>|no such vector element)" \
+	"print out of range element of vla (0)"
+
+    gdb_test "p a\[6\]" \
+	"no such vector element" \
+	"print out of range element of vla (6)"
+
+    gdb_test "p a\[0xffffffff\]" \
+	"no such vector element" \
+	"print out of range element of vla (0xffffffff)"
+}
+
+set o1_sizeof_result "6"
+if { [istarget powerpc*-*-*] && [gcc_major_version] != -1 } {
+    set o1_sizeof_result "<optimized out>|6"
+}
+
+set test_matrix {}
+lappend test_matrix \
+    "o1" \
+    [list {debug optimize=-O1 additional_flags=-DNOCLONE} $o1_sizeof_result]
+lappend test_matrix \
+    "o3" \
+    {{debug optimize=-O3} "<optimized out>|6"}
+lappend test_matrix \
+    "o3_strict" \
+    {{debug optimize=-O3 additional_flags=-gstrict-dwarf} "<optimized out>|6"}
+
+foreach {test_prefix options} $test_matrix {
+    with_test_prefix $test_prefix {
+	vla_optimized_out $test_prefix $options
+    }
+}
+

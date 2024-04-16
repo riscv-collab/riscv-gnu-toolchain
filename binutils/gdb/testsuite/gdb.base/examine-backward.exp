@@ -1,0 +1,370 @@
+# Copyright 2015-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This testsuite is to test examining memory backward by specifying a negative
+# number in the 'x' command.
+
+standard_testfile
+if { [prepare_for_testing "failed to prepare for examine-backward" \
+        ${testfile} ${srcfile}] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+proc get_first_mapped_address {} {
+    global gdb_prompt
+
+    set addr "0"
+    gdb_test_multiple "info proc mappings" "info proc mappings" {
+        -re "objfile\[\r\n\t \]+(0x\[0-9a-fA-F\]+).*\[\r\n\]*$gdb_prompt $" {
+            set addr $expect_out(1,string)
+        }
+        -re "$gdb_prompt $" {
+            unsupported "current target does not support 'info proc mappings'"
+        }
+    }
+    return ${addr}
+}
+
+with_test_prefix "invalid format" {
+    gdb_test "x/- 10xb main" "Invalid number \"10xb\"\." \
+        "a whitespace after a leading hyphen"
+    gdb_test "x/--10xb main" "Invalid number \"10xb\"\." \
+        "double hyphen"
+    gdb_test "x/-a10xb main" "Invalid number \"10xb\"\." \
+        "an alphabet after a leading hyphen"
+    gdb_test_no_output "x/-0i main" "zero with backward disassemble"
+    gdb_test_no_output "x/-0sh main" "zero with backward examine string"
+}
+
+with_test_prefix "memory page boundary" {
+    set boundary [get_first_mapped_address]
+    if {![is_address_zero_readable] && $boundary != 0} {
+        gdb_test_no_output "set print elements 0"
+        gdb_test_sequence "x/3s ${boundary}" "take 3 strings forward" {
+            "0x"
+            "0x"
+            "0x"
+        }
+        gdb_test_sequence "x/-4s" "take 4 strings backward" {
+            "Cannot access memory at address 0x"
+            "0x"
+            "0x"
+            "0x"
+        }
+        gdb_test_sequence "x/3s ${boundary}" "take 3 strings forward again" {
+            "0x"
+            "0x"
+            "0x"
+        }
+        gdb_test_sequence "x/-3s" "take 3 strings backward" {
+            "Cannot access memory at address 0x"
+            "0x"
+            "0x"
+            "0x"
+        }
+    }
+}
+
+with_test_prefix "address zero boundary" {
+    global gdb_prompt
+
+    set address_zero "0x0"
+    set byte "\t0x\[0-9a-f\]+"
+
+    set test "examine 3 bytes forward from ${address_zero}"
+    gdb_test_multiple "x/3xb ${address_zero}" "$test" {
+	-re "0x\[0-9a-f\]*0.*:${byte}${byte}${byte}\[\r\n\]*$gdb_prompt $" {
+	    pass $test
+	}
+	-re "0x\[0-9a-f\]*0.*:\tCannot access memory at address 0x\[0-9a-f\]*0\[\r\n\]*$gdb_prompt $" {
+	    # If we failed to read address 0 then this is fine, so
+	    # long as we're not expecting to be able to read from
+	    # address 0.
+	    if {![is_address_zero_readable]} {
+		# The next test assumes that the last address examined
+		# would be 0x2.  As we just failed to read address 0x0
+		# things are going to go wrong unless we now tell GDB
+		# to examine address 0x2.  We assume here that if we
+		# can't read 0x0 we can't read 0x2 either.
+		gdb_test "x/3xb 0x2" "Cannot access memory at address 0x\[0-9a-f\]*2" \
+		    "set last examined address to 0x2"
+		pass $test
+	    } else {
+		fail $test
+	    }
+	}
+    }
+
+    set test "examine 6 bytes backward"
+    gdb_test_multiple "x/-6x" "$test" {
+	-re "0x\[0-9a-f\]+fd.*:${byte}${byte}${byte}${byte}${byte}${byte}.*\[\r\n\]*$gdb_prompt $" {
+	    pass $test
+	}
+	-re "0x\[0-9a-f\]+fd.*:\tCannot access memory at address 0x\[0-9a-f\]+fd.*\[\r\n\]*$gdb_prompt $" {
+	    # We may, or may not have managed to read from address 0x0
+	    # in the previous test, however, being able to read 0x0 is
+	    # no guarantee that we can read from the other end of the
+	    # address space.  If we get an error about trying to read
+	    # from the expected address then we count that as a pass,
+	    # GDB did try to read the correct location, and this test
+	    # is (mostly) about does GDB calculate the correct address
+	    # when wrapping around.
+	    pass $test
+	}
+    }
+
+    set test "examine 3 bytes backward from ${address_zero}"
+    gdb_test_multiple "x/-3x ${address_zero}" "$test" {
+	-re "0x\[0-9a-f\]+fd.*:${byte}${byte}${byte}.*\[\r\n\]*$gdb_prompt $" {
+	    pass $test
+	}
+	-re "0x\[0-9a-f\]+fd.*:\tCannot access memory at address 0x\[0-9a-f\]+fd.*\[\r\n\]*$gdb_prompt $" {
+	    # See previous test for why this is a pass.
+	    pass $test
+	}
+    }
+}
+
+gdb_test_no_output "set charset ASCII"
+
+with_test_prefix "char-width=1, print-max=20" {
+    gdb_test_no_output "set print elements 20"
+    gdb_test_sequence "x/6s TestStrings" "take 6 strings forward" {
+        "\"ABCDEFGHIJKLMNOPQRST\"\.\.\."
+        "\"UVWXYZ\""
+        "\"\""
+        "\"\""
+        "\"[^\"]+\""
+        "\"01234567890123456789\"\.\.\."
+    }
+    gdb_test "x/-1xb" "0x39" "take 1 char backward"
+    gdb_test_sequence "x/-6s" "take 6 strings backward" {
+        "\"ABCDEFGHIJKLMNOPQRST\"\.\.\."
+        "\"UVWXYZ\""
+        "\"\""
+        "\"\""
+        "\"[^\"]+\""
+        "\"01234567890123456789\"\.\.\."
+    }
+    gdb_test_sequence "x/6s TestStrings" "take 6 strings forward again" {
+        "\"ABCDEFGHIJKLMNOPQRST\"\.\.\."
+        "\"UVWXYZ\""
+        "\"\""
+        "\"\""
+        "\"[^\"]+\""
+        "\"01234567890123456789\"\.\.\."
+    }
+    gdb_test "x/-xb" "0x39" "take 1 char backward again"
+    gdb_test "x/-s" "\"01234567890123456789\"\.\.\." \
+        "take 1 string backward (1/6)"
+    gdb_test "x/-s" "\".+\"" \
+        "take 1 string backward (2/6)"
+    gdb_test "x/-s" "\"\"" \
+        "take 1 string backward (3/6)"
+    gdb_test "x/-s" "\"\"" \
+        "take 1 string backward (4/6)"
+    gdb_test "x/-s" "\"GHIJKLMNOPQRSTUVWXYZ\"" \
+        "take 1 string backward (5/6)"
+    gdb_test "x/-s" "\"ABCDEFGHIJKLMNOPQRST\"\.\.\." \
+        "take 1 string backward (6/6)"
+}
+
+with_test_prefix "char-width=2, print-max=20" {
+    gdb_test_no_output "set print elements 20"
+    gdb_test_sequence "x/6sh TestStringsH" "take 6 strings forward" {
+        "u\"ABCDEFGHIJKLMNOPQRST\"\.\.\."
+        "u\"UVWXYZ\""
+        "u\"\""
+        "u\"\""
+        "u\"[^\"]+\""
+        "u\"01234567890123456789\"\.\.\."
+    }
+    gdb_test "x/-1xh" "0x0039" "take 1 char backward"
+    gdb_test_sequence "x/-6sh" "take 6 strings backward" {
+        "u\"ABCDEFGHIJKLMNOPQRST\"\.\.\."
+        "u\"UVWXYZ\""
+        "u\"\""
+        "u\"\""
+        "u\"[^\"]+\""
+        "u\"01234567890123456789\"\.\.\."
+    }
+    gdb_test_sequence "x/6sh TestStringsH" "take 6 strings forward again" {
+        "u\"ABCDEFGHIJKLMNOPQRST\"\.\.\."
+        "u\"UVWXYZ\""
+        "u\"\""
+        "u\"\""
+        "u\"[^\"]+\""
+        "u\"01234567890123456789\"\.\.\."
+    }
+    gdb_test "x/-xh" "0x0039" "take 1 char backward again"
+    gdb_test "x/-sh" "u\"01234567890123456789\"\.\.\." \
+        "take 1 string backward (1/6)"
+    gdb_test "x/-sh" "u\".+\"" \
+        "take 1 string backward (2/6)"
+    gdb_test "x/-sh" "u\"\"" \
+        "take 1 string backward (3/6)"
+    gdb_test "x/-sh" "u\"\"" \
+        "take 1 string backward (4/6)"
+    gdb_test "x/-sh" "u\"GHIJKLMNOPQRSTUVWXYZ\"" \
+        "take 1 string backward (5/6)"
+    gdb_test "x/-sh" "u\"ABCDEFGHIJKLMNOPQRST\"\.\.\." \
+        "take 1 string backward (6/6)"
+}
+
+with_test_prefix "char-width=4, print-max=20" {
+    gdb_test_no_output "set print elements 20"
+    gdb_test_sequence "x/6sw TestStringsW" "take 6 strings forward" {
+        "U\"ABCDEFGHIJKLMNOPQRST\"\.\.\."
+        "U\"UVWXYZ\""
+        "U\"\""
+        "U\"\""
+        "U\"[^\"]+\""
+        "U\"01234567890123456789\"\.\.\."
+    }
+    gdb_test "x/-1xw" "0x00000039" "take 1 char backward"
+    gdb_test_sequence "x/-6sw" "take 6 strings backward" {
+        "U\"ABCDEFGHIJKLMNOPQRST\"\.\.\."
+        "U\"UVWXYZ\""
+        "U\"\""
+        "U\"\""
+        "U\"[^\"]+\""
+        "U\"01234567890123456789\"\.\.\."
+    }
+    gdb_test_sequence "x/6sw TestStringsW" "take 6 strings forward again" {
+        "U\"ABCDEFGHIJKLMNOPQRST\"\.\.\."
+        "U\"UVWXYZ\""
+        "U\"\""
+        "U\"\""
+        "U\"[^\"]+\""
+        "U\"01234567890123456789\"\.\.\."
+    }
+    gdb_test "x/-xw" "0x00000039" "take 1 char backward again"
+    gdb_test "x/-sw" "U\"01234567890123456789\"\.\.\." \
+        "take 1 string backward (1/6)"
+    gdb_test "x/-sw" "U\".+\"" \
+        "take 1 string backward (2/6)"
+    gdb_test "x/-sw" "U\"\"" \
+        "take 1 string backward (3/6)"
+    gdb_test "x/-sw" "U\"\"" \
+        "take 1 string backward (4/6)"
+    gdb_test "x/-sw" "U\"GHIJKLMNOPQRSTUVWXYZ\"" \
+        "take 1 string backward (5/6)"
+    gdb_test "x/-sw" "U\"ABCDEFGHIJKLMNOPQRST\"\.\.\." \
+        "take 1 string backward (6/6)"
+}
+
+with_test_prefix "char-width=2, print-max=0" {
+    gdb_test_no_output "set print elements 0"
+    gdb_test_sequence "x/6sh TestStringsH" "take 6 strings forward" {
+        "u\"ABCDEFGHIJKLMNOPQRSTUVWXYZ\""
+        "u\"\""
+        "u\"\""
+        "u\"\\\\x307b\\\\x3052\\\\x307b\\\\x3052\""
+        "u\"012345678901234567890123456789\""
+        "u\"!!!!!!\""
+    }
+    gdb_test "x/-4xh" "0x0021\[\t \]+0x0021\[\t \]+0x0021\[\t \]+0x0000" \
+        "take 4 characters backward"
+    gdb_test_sequence "x/-6sh" "take 6 strings backward" {
+        "u\"ABCDEFGHIJKLMNOPQRSTUVWXYZ\""
+        "u\"\""
+        "u\"\""
+        "u\"[^\"]+\""
+        "u\"012345678901234567890123456789\""
+        "u\"!!!!!!\""
+    }
+    gdb_test_sequence "x/6sh TestStringsH" "take 6 strings forward again" {
+        "u\"ABCDEFGHIJKLMNOPQRSTUVWXYZ\""
+        "u\"\""
+        "u\"\""
+        "u\"\\\\x307b\\\\x3052\\\\x307b\\\\x3052\""
+        "u\"012345678901234567890123456789\""
+        "u\"!!!!!!\""
+    }
+    gdb_test "x/-xh" "0x0000" "take 1 char backward"
+    gdb_test "x/-sh" "u\"!!!!!!\"" \
+        "take 1 string backward (1/6)"
+    gdb_test "x/-sh" "u\"012345678901234567890123456789\"" \
+        "take 1 string backward (2/6)"
+    gdb_test "x/-sh" "u\".+\"" \
+        "take 1 string backward (3/6)"
+    gdb_test "x/-sh" "u\"\"" \
+        "take 1 string backward (4/6)"
+    gdb_test "x/-sh" "u\"\"" \
+        "take 1 string backward (5/6)"
+    gdb_test "x/-sh" "u\"ABCDEFGHIJKLMNOPQRSTUVWXYZ\"" \
+        "take 1 string backward (6/6)"
+}
+
+with_test_prefix "char-width=1, print-max=4" {
+    gdb_test_no_output "set print elements 4"
+    gdb_test_sequence "x/9s TestStrings" "take 9 strings forward" {
+        "\"ABCD\"\.\.\."
+        "\"EFGH\"\.\.\."
+        "\"IJKL\"\.\.\."
+        "\"MNOP\"\.\.\."
+        "\"QRST\"\.\.\."
+        "\"UVWX\"\.\.\."
+        "\"YZ\""
+        "\"\""
+        "\"\""
+    }
+    gdb_test "x/-xb" "0x00" "take 1 byte backward"
+    gdb_test_sequence "x/-4s" "take 4 strings backward (1/2)" {
+        "\"TUVW\"\.\.\."
+        "\"XYZ\""
+        "\"\""
+        "\"\""
+    }
+    gdb_test_sequence "x/-4s" "take 4 strings backward (2/2)" {
+        "\"CDEF\"\.\.\."
+        "\"GHIJ\"\.\.\."
+        "\"KLMN\"\.\.\."
+        "\"OPQR\"\.\.\."
+    }
+}
+
+with_test_prefix "backward disassemble general" {
+    set length_to_examine {1 2 3 4 10}
+    set disassmbly {}
+
+    gdb_test_no_output "set print asm-demangle on"
+    set main_re "main(\\(\\))?"
+
+    gdb_test "x/i main" "0x\[0-9a-fA-F\]+ <$main_re>:\t.*" \
+        "move the current position to main (x/i)"
+    gdb_test "x/-i" "0x\[0-9a-fA-F\]+ <$main_re>:\t.*" \
+        "move the current position to main (x/-i)"
+    for {set i 0} {$i < [llength $length_to_examine]} {incr i} {
+        set len [lindex $length_to_examine $i]
+        set instructions [capture_command_output "x/${len}i" ""]
+        lappend disassmbly $instructions
+    }
+    for {set i 0} {$i < [llength $length_to_examine]} {incr i} {
+        set idx [expr [llength $length_to_examine] - $i - 1]
+        set len [lindex $length_to_examine $idx]
+        set actual [capture_command_output "x/-${len}i" ""]
+        set expected [lindex $disassmbly $idx]
+        if {$actual == $expected} {
+            pass "inst:$idx"
+        } else {
+            fail "inst:$idx"
+        }
+    }
+}

@@ -1,0 +1,73 @@
+#   Copyright 1997-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test exercises PR20569.  GDB would crash when attempting to follow
+# an exec call when it could not resolve the path to the symbol file.
+# This was the case when an invalid sysroot is provided.
+
+standard_testfile foll-exec.c
+
+global binfile
+set binfile [standard_output_file "foll-exec"]
+set testfile2 "execd-prog"
+set srcfile2 ${testfile2}.c
+set binfile2 [standard_output_file ${testfile2}]
+
+set compile_options debug
+
+# build the first test case
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile2}" "${binfile2}" executable $compile_options] != "" } {
+    untested "failed to compile secondary testcase"
+    return -1
+}
+
+if { [is_remote target] } {
+    gdb_remote_download target $binfile2
+}
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable $compile_options] != "" } {
+    untested "failed to compile main testcase"
+    return -1
+}
+
+proc do_exec_sysroot_test {} {
+    global binfile srcfile srcfile2 testfile testfile2
+    global gdb_prompt
+
+    gdb_test_no_output "set sysroot /a/path/that/does/not/exist"
+
+    # Start the program running, and stop at main.
+    #
+    if {![runto_main]} {
+	return
+    }
+
+    # Verify that the system supports "catch exec".
+    gdb_test "catch exec" "Catchpoint \[0-9\]* \\(exec\\)" "insert exec catchpoint"
+    set test "continue to exec catchpoint"
+    gdb_test_multiple "continue" $test {
+	-re ".*Your system does not support this type\r\nof catchpoint.*$gdb_prompt $" {
+	    unsupported $test
+	    return
+	}
+	-re ".*Could not load symbols for executable.*$gdb_prompt $" {
+	    pass $test
+	}
+    }
+}
+
+# Start with a fresh gdb
+clean_restart $binfile
+do_exec_sysroot_test

@@ -1,0 +1,89 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile
+
+if { [prepare_for_testing "failed to prepare" ${testfile}] } {
+    return -1
+}
+
+if ![runto breakpt] {
+    return -1
+}
+
+# Basic attempt to read memory from globals.
+gdb_test "x/5w global_var_1" \
+    "$hex:\[ \t\]+0\[ \t\]+0\[ \t\]+0\[ \t\]+0\r\n$hex:\[ \t\]+Cannot access memory at address $hex"
+gdb_test "x/5w global_var_2" \
+    "$hex:\[ \t\]+Cannot access memory at address $hex"
+
+
+# Try a find starting from each global, expecting the search to fail
+# due to memory access failure.
+#
+# If EXPECT_WARNING is true, then expect the "Unable to access
+# ... halting search" warning before the "Pattern not found" output.
+# Otherwise, don't expect the warning.
+#
+# (EXPECT_WARNING is necessary because when testing with the RSP
+# against servers that support the remote search memory packet, GDB
+# does not print that "halting search" warning.  While there are
+# servers that do print the same warning message as GDB would if it
+# were in charge of the search (like GDBserver), we're only parsing
+# GDB's output here, not the server's output.  And while we could read
+# GDBserver's output from $inferior_spawn_id, having GDBserver print
+# the warnings on its terminal doesn't really help users.  Much better
+# would be to extend the remote protocol to let the server tell GDB
+# which memory range couldn't be accessed, and then let GDB print the
+# warning instead of the server.  See PR gdb/22293.)
+
+proc test_not_found {expect_warning} {
+    global decimal hex
+
+    if {$expect_warning} {
+	set halting_search_re \
+	    "warning: Unable to access $decimal bytes of target memory at $hex, halting search\.\r\n"
+    } else {
+	set halting_search_re ""
+    }
+
+    # Now try a find starting from each global.
+    gdb_test "find global_var_0, global_var_2, 0xff" \
+	"${halting_search_re}Pattern not found."
+
+    gdb_test "find global_var_1, global_var_2, 0xff" \
+	"${halting_search_re}Pattern not found."
+
+    gdb_test "find global_var_2, (global_var_2 + 16), 0xff" \
+	"${halting_search_re}Pattern not found."
+}
+
+# If testing with the RSP, also test with target-side search
+# acceleration disabled.  This serves as proxy for servers that don't
+# support the memory search packet, when testing with GDBserver.
+
+if {[target_info gdb_protocol] == "remote"
+    || [target_info gdb_protocol] == "extended-remote"} {
+    test_not_found 0
+    with_test_prefix "search-memory-packet off" {
+	gdb_test \
+	    "set remote search-memory-packet off" \
+	    "Support for the 'qSearch:memory' packet on the current remote target is set to \"off\"."
+
+	test_not_found 0
+    }
+} else {
+    test_not_found 1
+}

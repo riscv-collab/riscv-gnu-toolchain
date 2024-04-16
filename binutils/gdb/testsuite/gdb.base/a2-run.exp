@@ -1,0 +1,174 @@
+#   Copyright 1988-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file was written by Rob Savoye. (rob@cygnus.com)
+
+# Can't do this test without stdio support.
+require {!gdb_skip_stdio_test "a2run.exp"}
+
+#
+# test running programs
+#
+
+standard_testfile run.c
+
+set flags {}
+lappend flags debug
+lappend_include_file flags $srcdir/lib/unbuffer_output.c
+
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile $flags] } {
+    return -1
+}
+
+# Run with no arguments.
+gdb_run_cmd
+
+set saw_usage 0
+set saw_exit_wrapper 0
+set saw_spurious_output 0
+
+set test "run \"$testfile\" with no args"
+
+# Indirect spawn id lists.  Used to be able to disable the inferior
+# and gdb's spawn_ids and regexes as soon as we see the expected
+# output.
+set inferior_spawn_list "$inferior_spawn_id"
+set gdb_spawn_list "$gdb_spawn_id"
+
+# Clear either the gdb or the inferior spawn_id list and iff
+# afterwards we still have any spawn id in the indirect lists,
+# continue expecting.
+proc maybe_exp_continue {which} {
+    global inferior_spawn_list gdb_spawn_list
+
+    if {$which == "gdb"} {
+	set gdb_spawn_list ""
+    } elseif {$which == "inferior"} {
+	set inferior_spawn_list ""
+    } else {
+	error "invalid parameter"
+    }
+
+    if {$inferior_spawn_list != "" || $gdb_spawn_list != ""} {
+	exp_continue
+    }
+}
+
+# Note that if $inferior_spawn_id != $gdb_spawn_id the order we pick
+# output from each spawn id is undefined.
+set res [gdb_test_multiple "" $test {
+    -i inferior_spawn_list
+    -re "usage:  factorial <number>" {
+	set saw_usage 1
+	maybe_exp_continue inferior
+    }
+    -re "EXIT code 1" {
+	set saw_exit_wrapper 1
+	maybe_exp_continue inferior
+    }
+    eof {
+	if {$inferior_spawn_id != $gdb_spawn_id} {
+	    # In this case we may see the server/inferior exit before
+	    # GDB's program exit output.  Remove from spawn list and
+	    # continue waiting.
+	    maybe_exp_continue inferior
+	} else {
+	    # GDB crash.
+	    fail "$test (eof)"
+	}
+    }
+
+    -i gdb_spawn_list
+
+    -re "$inferior_exited_re with code 01.\r\n$gdb_prompt $" {
+	maybe_exp_continue gdb
+    }
+    -re "$inferior_exited_re with code 01.*$gdb_prompt $" {
+	set saw_spurious_output 1
+	maybe_exp_continue gdb
+    }
+
+    -re "$inferior_exited_re normally.\r\n$gdb_prompt $" {
+	# This is only considered a pass if we see the exit wrapper
+	# status.
+	maybe_exp_continue gdb
+    }
+    -re "$inferior_exited_re normally.*$gdb_prompt $" {
+	set saw_spurious_output 1
+	maybe_exp_continue gdb
+    }
+}]
+
+if {$res == 0} {
+    gdb_assert ${saw_usage} $test
+
+    if {$saw_exit_wrapper} {
+	set msg "$test (exit wrapper)"
+    } else {
+	set msg $test
+    }
+
+    gdb_assert !$saw_spurious_output "no spurious messages at program exit"
+
+}
+
+# The remaining tests don't work for targets can't take arguments...
+
+if {[target_info exists noargs]} {
+    verbose "Skipping rest of a2-run.exp because of noargs."
+    return
+}
+
+# Now run with some arguments
+setup_xfail "arm-*-coff"
+gdb_run_cmd 5
+gdb_test_stdio "" "120" "" "run \"$testfile\" with arg"
+
+# Run again with same arguments.
+gdb_run_cmd 5
+
+setup_xfail "arm-*-coff"
+gdb_test_stdio "" "120" "" "run \"$testfile\" again with same args"
+
+# Use "set args" command to specify no arguments as default and run again.
+gdb_test_no_output "set args"
+
+gdb_run_cmd
+
+gdb_test_stdio "" "usage:  factorial <number>" "" "run after setting args to nil"
+
+# The remaining tests pass inferior arguments through GDB, so doesn't
+# work with stub targets, where GDB connects to debug an already started
+# process.
+
+if [use_gdb_stub] {
+    verbose "Skipping rest of a2-run.exp because target is a stub."
+    return
+}
+
+# Use "set args" command to specify an argument and run again.
+gdb_test_no_output "set args 6"
+
+gdb_run_cmd
+
+setup_xfail "arm-*-coff"
+gdb_test_stdio "" "720" "" "run \"$testfile\" again after setting args"
+
+# GOAL: Test that shell is being used with "run".  For remote debugging
+# targets, there is no guarantee that a "shell" (whatever that is) is used.
+if {![is_remote target]} {
+    gdb_test_stdio "run `echo 8`" \
+	"40320" "" "run \"$testfile\" with shell"
+}

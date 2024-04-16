@@ -1,0 +1,189 @@
+# Copyright (C) 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It tests the mechanism
+# exposing values to Python.
+
+load_lib gdb-python.exp
+
+require allow_python_tests
+
+standard_testfile
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+    return -1
+}
+
+# The following tests require execution.
+
+if {![runto_main]} {
+    return 0
+}
+
+gdb_breakpoint [gdb_get_line_number "Block break here."]
+gdb_continue_to_breakpoint "Block break here."
+gdb_py_test_silent_cmd "python bf1 = gdb.selected_frame ()" "get frame" 0
+
+# Test Frame.__repr__() method for a valid Frame object.
+gdb_test "python print (repr(bf1))" "<gdb\\.Frame level=0 frame-id=\\{\[^\r\n\]+\\}>" \
+    "test __repr__ for gdb.Frame on a valid frame"
+
+# Test Frame.architecture() method.
+gdb_py_test_silent_cmd "python show_arch_str = gdb.execute(\"show architecture\", to_string=True)" "show arch" 0
+gdb_test "python print (bf1.architecture().name() in show_arch_str)" "True" "test Frame.architecture()"
+
+# First test that read_var is unaffected by PR 11036 changes.
+gdb_test "python print (bf1.read_var(\"i\"))" "\"stuff\"" "test i"
+gdb_test "python print (bf1.read_var(\"f\"))" "\"foo\"" "test f"
+gdb_test "python print (bf1.read_var(\"b\"))" "\"bar\"" "test b"
+
+# Check we can use a single named argument with read_var.
+gdb_test "python print (bf1.read_var(variable = \"b\"))" "\"bar\"" \
+    "test b using named arguments"
+
+# Test the read_var function in another block other than the current
+# block (in this case, the super block). Test thar read_var is reading
+# the correct variables of i and f but they are the correct value and type.
+gdb_py_test_silent_cmd "python sb = bf1.block().superblock" "get superblock" 0
+gdb_test "python print (bf1.read_var(\"i\", sb))" "1.1.*" "test i = 1.1"
+gdb_test "python print (bf1.read_var(\"i\", sb).type)" "double" "test double i"
+gdb_test "python print (bf1.read_var(\"f\", sb))" "2.2.*" "test f = 2.2"
+gdb_test "python print (bf1.read_var(\"f\", sb).type)" "double" "test double f"
+
+# Now test read_var with a variable and block using named arguments.
+gdb_test "python print (bf1.read_var(block = sb, variable = \"i\"))" "1.1.*" \
+    "test i = 1.1 usign named arguments"
+gdb_test "python print (bf1.read_var(block = sb, variable = \"f\"))" "2.2.*" \
+    "test f = 2.2 using named arguments"
+
+# And again test another outerblock, this time testing "i" is the
+# correct value and type.
+gdb_py_test_silent_cmd "python sb = sb.superblock" "get superblock" 0
+gdb_test "python print (bf1.read_var(\"i\", sb))" "99" "test i = 99"
+gdb_test "python print (bf1.read_var(\"i\", sb).type)" "int" "test int i"
+
+# Test what happens when we provide a block of the wrong type.
+gdb_test "python print (bf1.read_var(\"i\", \"some_block\"))" \
+    [multi_line \
+	 "TypeError: argument 2 must be gdb\\.Block, not str" \
+	 "Error while executing Python code\\."] \
+    "check invalid block type error"
+gdb_test "python print (bf1.read_var(block = \"some_block\", variable = \"i\"))" \
+    [multi_line \
+	 "TypeError: argument 2 must be gdb\\.Block, not str" \
+	 "Error while executing Python code\\."] \
+    "check invalid block type error when named args are used"
+
+# Test what happens when we provide a variable of the wrong type.
+gdb_test "python print (bf1.read_var(None))" \
+    [multi_line \
+	 "TypeError: argument 1 must be gdb\\.Symbol or str, not NoneType" \
+	 "Error while executing Python code\\."] \
+    "check read_var error when variable is None"
+gdb_test "python print (bf1.read_var(sb))" \
+    [multi_line \
+	 "TypeError: argument 1 must be gdb\\.Symbol or str, not gdb\\.Block" \
+	 "Error while executing Python code\\."] \
+    "check read_var error when variable is a gdb.Block"
+
+gdb_breakpoint "f2"
+gdb_continue_to_breakpoint "breakpoint at f2"
+gdb_py_test_silent_cmd "python bframe = gdb.selected_frame()" \
+    "get bottommost frame" 0
+gdb_test "up" ".*" ""
+
+# Test Frame.__repr__() method for an invalid Frame object.
+gdb_test "python print (repr(bf1))" "<gdb\\.Frame \\(invalid\\)>" \
+    "test __repr__ for gdb.Frame on an invalid frame"
+
+gdb_py_test_silent_cmd "python f1 = gdb.selected_frame ()" "get second frame" 0
+gdb_py_test_silent_cmd "python f0 = f1.newer ()" "get first frame" 0
+gdb_py_test_silent_cmd "python f2 = f1.older ()" "get last frame" 0
+
+# Check the Frame.level method.
+gdb_test "python print ('bframe.level = %d' % bframe.level ())" \
+    "bframe\\.level = 0"
+gdb_test "python print ('f0.level = %d' % f0.level ())" \
+    "f0\\.level = 0"
+gdb_test "python print ('f1.level = %d' % f1.level ())" \
+    "f1\\.level = 1"
+gdb_test "python print ('f2.level = %d' % f2.level ())" \
+    "f2\\.level = 2"
+
+gdb_test "python print (f1 == gdb.newest_frame())" False \
+    "selected frame -vs- newest frame"
+gdb_test "python print (bframe == gdb.newest_frame())" True \
+    "newest frame -vs- newest frame"
+
+gdb_test "python print ('result = %s' % (f0 == f1))" " = False" "test equality comparison (false)"
+gdb_test "python print ('result = %s' % (f0 == f0))" " = True" "test equality comparison (true)"
+gdb_test "python print ('result = %s' % (f0 != f1))" " = True" "test inequality comparison (true)"
+gdb_test "python print ('result = %s' % (f0 != f0))" " = False" "test inequality comparison (false)"
+gdb_test "python print ('result = %s' % f0.is_valid ())" " = True" "test Frame.is_valid"
+gdb_test "python print ('result = %s' % f0.name ())" " = f2" "test Frame.name"
+gdb_test "python print ('result = %s' % (f0.type () == gdb.NORMAL_FRAME))" " = True" "test Frame.type"
+gdb_test "python print ('result = %s' % (f0.unwind_stop_reason () == gdb.FRAME_UNWIND_NO_REASON))" \
+    " = True" "test Frame.unwind_stop_reason"
+gdb_test "python print ('result = %s' % gdb.frame_stop_reason_string (gdb.FRAME_UNWIND_INNER_ID))" " = previous frame inner to this frame \\(corrupt stack\\?\\)" "test gdb.frame_stop_reason_string"
+gdb_test "python print ('result = %s' % f0.pc ())" " = \[0-9\]+" "test Frame.pc"
+gdb_test "python print ('result = %s' % (f0.older () == f1))" " = True" "test Frame.older"
+gdb_test "python print ('result = %s' % (f1.newer () == f0))" " = True" "test Frame.newer"
+gdb_test "python print ('result = %s' % f0.read_var ('variable_which_surely_doesnt_exist'))" \
+  "ValueError: Variable 'variable_which_surely_doesnt_exist' not found.*Error while executing Python code." \
+  "test Frame.read_var - error"
+gdb_test "python print ('result = %s' % f0.read_var ('a'))" " = 1" "test Frame.read_var - success"
+
+gdb_test "python print ('result = %s' % (gdb.selected_frame () == f1))" " = True" "test gdb.selected_frame"
+
+# Can read SP register.
+gdb_test "python print ('result = %s' % (gdb.selected_frame ().read_register ('sp') == gdb.parse_and_eval ('\$sp')))" \
+  " = True" \
+  "test Frame.read_register(sp)"
+
+# PC value obtained via read_register is as expected.
+gdb_test "python print ('result = %s' % (f0.read_register('pc') == f0.pc()))" \
+  " = True" \
+  "test Frame.read_register(pc)"
+
+# Repeat the previous test, but this time use named arguments for the
+# read_register method call.
+gdb_test "python print ('result = %s' % (f0.read_register(register = 'pc') == f0.pc()))" \
+  " = True" \
+  "test Frame.read_register() using named arguments"
+
+# Test arch-specific register name.
+set pc ""
+if {[is_amd64_regs_target]} {
+    set pc "rip"
+} elseif {[is_x86_like_target]} {
+    set pc "eip"
+}
+if { $pc != "" } {
+    gdb_test "python print ('result = %s' % (f0.read_register('pc') == f0.read_register('$pc')))" \
+	" = True" \
+	"test Frame.read_register($pc)"
+}
+
+# Test language.
+gdb_test "python print(gdb.selected_frame().language())" "c"
+gdb_test "set language ada"
+gdb_test "python print(gdb.selected_frame().language())" "c" \
+    "frame language is not affected by global language"
+
+# This previously caused a crash -- the implementation was missing the
+# case where a register had an unexpected type.
+gdb_test "python print(gdb.selected_frame().read_register(list()))" \
+    ".*Invalid type for register.*" \
+    "test Frame.read_register with list"

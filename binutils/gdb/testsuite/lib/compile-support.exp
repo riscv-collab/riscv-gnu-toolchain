@@ -1,0 +1,305 @@
+# Copyright 2015-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Generic/oft used support routines for testing GDB's compile feature.
+
+# Helper function for skip_compile_feature_tests.  This does the real
+# work, but should not be called directly.  Returns a failure reason
+# (a string) on failure, or the empty string on success.
+
+proc _do_check_compile {expr} {
+    global gdb_prompt
+
+    set result ""
+    gdb_test_multiple "compile code -- $expr;" "check for working compile command" {
+	"Could not load libcc1.*\r\n$gdb_prompt $" {
+	    set result "could not find libcc1"
+	}
+	"Could not load libcp1.*\r\n$gdb_prompt $" {
+	    set result "could not find libcp1"
+	}
+	-re "WARNING .* there are active plugins, do not report this" {
+	    # Note that the regexp above does not check for the
+	    # prompt.  This avoids a gratuitous timeout.
+	    set result "GCC crashed"
+	}
+	-re "confused by earlier errors, bailing out" {
+	    # This scenario can happen when either GCC or GDB is
+	    # confused by some other debuginfo.
+	    # See PR compile/29541.
+	    set result "confused by glibc debuginfo"
+	}
+	-re "$::decimal symbols were missing, cannot continue" {
+	    # This appears to be a bug in the compiler plugin.
+	    set result "apparent compiler plugin bug"
+	}
+	-re "\r\n$gdb_prompt $" {
+	}
+    }
+    return $result
+}
+
+# Return 1 if we should skip tests of the "compile" feature.
+# This must be invoked after the inferior has been started.
+# EXPR is the expression to test, if any (using the default empty EXPR
+# works fine in most cases).
+
+proc skip_compile_feature_tests {{expr ""}} {
+    return [expr {[string length [_do_check_compile $expr]] > 0}]
+}
+
+# Like skip_compile_feature_tests, but also issue an "untested" when
+# skipping.
+
+proc skip_compile_feature_untested {{expr ""}} {
+    set output [_do_check_compile $expr]
+    if {[string length $output] > 0} {
+	untested "compile command not supported ($output)"
+	return 1
+    }
+    return 0
+}
+
+# This namespace provides some convenience functions for running
+# "compile code" and "compile print" tests.
+#
+# Exported functions are defined inline below.
+#
+# General usage:
+#
+# Start a new session, noting that the variable "var" will be used for
+# "compile code" expressions.  This variable /must/ exist in the stopped
+# location.
+#
+# CompileExpression::new "var"
+#
+# Test the implicit expression "foo;" with result/value 3.
+# CompileExpression::test "foo" 3
+# ---> Runs the following tests (name of tests ignored for illustration)
+#    gdb_test_no_output "compile code var = foo"
+#    gdb_test "p var" "= 3"
+#    gdb_test "compile print foo;" "= 3"
+#
+# Test the explicit expression "a = function (3); var = a;" with the result 21.
+# CompileExpression::test "a = function (3); var = a;" 21 -explicit
+# ---> Runs the following tests (name of tests ignored for illustration)
+#    gdb_test_no_output "compile code a = function (3); var = a;"
+#    gdb_test "p var" "= 21"
+#
+# Additional option flags may be passed to test to control the behavior
+# of the test harness:
+#
+# Pass -explicit to specify that the test uses an explicit expression,
+# one which sets the value of the variable (see above).  Only the code test
+# will be run.
+#
+# Pass -value and/or -print to indicate that the value and/or print steps
+# will optionally fail. Specify "xfail" or "kfail" to indicate how
+# particular step will fail.  These may be followed by any accepted DejaGNU
+# parameters such as architecture and bug#.  [See examples below.]
+#
+# To specify that the compile (and consequently print and value tests) is
+# expected to kfail/xfail, use -kfail or -xfail with any appropriate
+# DejaGNU parameters.  Both options override -print and -value.
+# [-xfail is given precedence over -kfail should both be given.]
+#
+# -value is used when a "code" test is run, specifying that the "compile
+# code" and "print VAR" steps will fail in the prescribed manner.
+# [If the print step generates a PASS, the test is considered invalidly
+# written.  VAR's value should /always/ be invalidated before a test is
+# run.]
+#
+# -print is used to specify that an expression will fail in the prescribed
+# manner when "print" test is executed.
+#
+# Pass "-name NAME" to set an optional test name.  If not specified,
+# the harness will use test names such as "compile code EXPR" and
+# "result of compile code EXPR".
+#
+# Pass "-noprint" or "-nocode" to suppress print or code tests, respectively,
+# This is useful when the expression being tested modifies the object
+# being tested, e.g., "a++".
+#
+# These options must be passed LAST to CompileExpression::test.
+#
+# Examples:
+#
+# Both "code" and "print" tests are expected to xfail:
+# CompileExpression add_imp "foo" 3 -compile {xfail *-*-*} -print {xfail *-*-*}
+#
+# The "print $VARIABLE" portion of the "code" test is expected to kfail
+# (the actual "compile code" GDB command will succeed), but the "print"
+# test should pass:
+# CompileExpression add_imp "foo" 3 -value {kfail *-*-* gdb/1234}
+
+namespace eval ::CompileExpression {
+
+    # The variable name to check testing results.  This variable
+    # must be in scope when tests are run.
+    variable varName_ {}
+
+    # Start a new expression list.  VARNAME is the name of the variable
+    # that will be printed to check if the result of the test was
+    # successful.
+    proc new {varname} {
+	variable varName_
+
+	set varName_ $varname
+    }
+
+    # Test an expression.
+    #
+    # See the preamble for a list of valid optional arguments.
+    #
+    # Implicit expressions will be sent to GDB in the form
+    # "$varName = $EXP".  "p $varName" will be used to decide the pass
+    # or fail status of the test.
+    #
+    # Explicit expressions will be sent to GDB as-is and tested using only
+    # "compile code".  The expression should set the value of the variable
+    # $varName, which is then printed to determine whether the test passed
+    # or failed.
+    #
+    # Unlike explicit expressions, implicit expressions are tested with both
+    # "compile print" and "compile code".
+
+    proc test {exp result args} {
+	parse_args {{value {"" ""}} {print {"" ""}} {name ""}
+	    {noprint} {nocode} {explicit} {xfail {"" ""}} {kfail {"" ""}}}
+
+	if {[lindex $xfail 0] != ""} {
+	    set l "xfail $xfail"
+	} elseif {[lindex $kfail 0] != ""} {
+	    set l "kfail $kfail"
+	} else {
+	    set l ""
+	    set compile {"" ""}
+	}
+	if {$l != ""} {
+	    set compile $l
+	    set print $l
+	    set value $l
+	}
+
+	set ok 1
+	if {!$nocode} {
+	    if {![do_test_ code $exp $result $explicit $name \
+		      [list $compile $value $print]]} {
+		set ok 0
+	    }
+	}
+	if {$ok && !$noprint} {
+	    if {![do_test_ print $exp $result $explicit $name \
+		      [list $compile $value $print]]} {
+		set ok 0
+	    }
+	}
+	if {!$ok} {
+	    return -code return 0
+	}
+    }
+
+    # Invoke a 'compile' command of some form.  COMMAND is the
+    # command, RESULT is the expected output, and NAME is the test
+    # name.  Issues a pass or fail.  Returns 1 on success, 0 if there
+    # is a failure that should result in the entire remaining .exp
+    # being stopped; in this case an 'unsupported' is issued.
+
+    proc compile_command_ {command result name} {
+	global gdb_prompt
+	set this_result 1
+	gdb_test_multiple $command $name {
+	    -re "WARNING .* there are active plugins, do not report this" {
+		# Note that the regexp above does not check for the
+		# prompt.  This avoids a gratuitous timeout.
+		unsupported "GCC compiler plugin crashed"
+		set this_result 0
+	    }
+	    -re "$::decimal symbols were missing, cannot continue" {
+		# This appears to be a bug in the compiler plugin.
+		unsupported "GCC compiler plugin bug"
+		set this_result 0
+	    }
+	    -re -wrap "$result" {
+		pass $name
+	    }
+	}
+	return $this_result
+    }
+
+    # Run a compile test for CMD ("print" or "code").
+    # Return 1 on success, 0 if there is some kind of catastrophic
+    # error.
+
+    proc do_test_ {cmd exp result is_explicit tst fail_list} {
+	variable varName_
+
+	if {![string match $cmd "code"]
+	    && ![string match $cmd "print"]} {
+	    error "invalid command, $cmd; should be \"print\" or \"compile\""
+	}
+
+	# Get expected result of test.  Will be "" if test is
+	# expected to PASS.
+	lassign $fail_list fail_compile fail_value fail_print
+
+	# Set a test name if one hasn't been provided.
+	if {$tst == ""} {
+	    set tst "compile $cmd $exp"
+	}
+
+	if {[string match $cmd "print"]} {
+	    if {!$is_explicit} {
+		eval setup_failures_ $fail_print
+		return [compile_command_ "compile print $exp" $result $tst]
+	    }
+	} else {
+	    if {$is_explicit} {
+		set command "compile code $exp"
+	    } else {
+		set command "compile code $varName_ = $exp"
+	    }
+	    eval setup_failures_ $fail_compile
+	    if {![compile_command_ $command "" $tst]} {
+		return 0
+	    }
+	    eval setup_failures_ $fail_value
+	    gdb_test "p $varName_" "= $result" "result of $tst"
+	}
+	return 1
+    }
+
+    # A convenience proc used to set up xfail and kfail tests.
+    # HOW is either xfail or kfail (case is ignored).  ARGS is any
+    # optional architecture, bug number, or other string to pass to
+    # respective DejaGNU setup_$how routines.
+
+    proc setup_failures_ {how args} {
+	switch -nocase $how {
+	    xfail {
+		eval setup_xfail $args
+	    }
+
+	    kfail {
+		eval setup_kfail $args
+	    }
+
+	    default {
+		# Do nothing.  Either the test is expected to PASS
+		# or we have an unhandled failure mode.
+	    }
+	}
+    }
+}

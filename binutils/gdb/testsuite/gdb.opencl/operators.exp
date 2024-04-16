@@ -1,0 +1,953 @@
+# Copyright 2010-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+#
+# Contributed by Ken Werner <ken.werner@de.ibm.com>.
+#
+# Tests GDBs support for OpenCL operators.
+
+load_lib opencl.exp
+
+require allow_opencl_tests
+
+set testfile "operators"
+set clprogram [remote_download target ${srcdir}/${subdir}/${testfile}.cl]
+
+# Compile the generic OpenCL host app
+if { [gdb_compile_opencl_hostapp "${clprogram}" "${testfile}" "" ] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+# Load the OpenCL app
+clean_restart ${testfile}
+
+# Set breakpoint at the OpenCL kernel
+gdb_test "tbreak testkernel" \
+    "" \
+    "Set pending breakpoint" \
+    ".*Function \"testkernel\" not defined.*Make breakpoint pending.*y or \\\[n\\\]. $" \
+    "y"
+
+gdb_run_cmd
+gdb_test "" ".*reakpoint.*1.*testkernel.*" "run"
+
+# Continue to the marker
+gdb_breakpoint [gdb_get_line_number "marker" "${clprogram}"]
+gdb_continue_to_breakpoint "marker"
+
+# Retrieve some information about availability of OpenCL extensions
+set have_cl_khr_fp64 [get_integer_valueof "have_cl_khr_fp64" 0]
+set have_cl_khr_fp16 [get_integer_valueof "have_cl_khr_fp16" 0]
+
+proc check_basic { name type isfloat } {
+  gdb_test "print/d ${name}a" " = 2"
+  gdb_test "print/d ${name}b" " = 1"
+  gdb_test "print/d ${name}4a" " = \\{2, 4, 8, 16\\}"
+  gdb_test "print/d ${name}4b" " = \\{1, 2, 8, 4\\}"
+
+  gdb_test "ptype ${name}a" "type = ${type}"
+  gdb_test "ptype ${name}b" "type = ${type}"
+  gdb_test "ptype ${name}4a" "type = ${type}4"
+  gdb_test "ptype ${name}4b" "type = ${type}4"
+
+  if { ! ${isfloat} } {
+    gdb_test "print/d u${name}a" " = 2"
+    gdb_test "print/d u${name}b" " = 1"
+    gdb_test "print/d u${name}4a" " = \\{2, 4, 8, 16\\}"
+    gdb_test "print/d u${name}4b" " = \\{1, 2, 8, 4\\}"
+    gdb_test "ptype u${name}a" "type = (unsigned ${type}|u${type})"
+    gdb_test "ptype u${name}b" "type = (unsigned ${type}|u${type})"
+    gdb_test "ptype u${name}4a" "type = u${type}4"
+    gdb_test "ptype u${name}4b" "type = u${type}4"
+  }
+}
+
+# Arithmetic operators
+proc check_arithmetic_ops { name type isfloat size } {
+  # scalar with scalar
+  gdb_test "print/d ${name}a + ${name}b" " = 3"
+  gdb_test "print/d ${name}a - ${name}b" " = 1"
+  gdb_test "print/d ${name}a * ${name}b" " = 2"
+  gdb_test "print/d ${name}a / ${name}b" " = 2"
+  # scalar with vector
+  gdb_test "print/d ${name}a + ${name}4b" " = \\{3, 4, 10, 6\\}"
+  gdb_test "print/d ${name}4a - ${name}b" " = \\{1, 3, 7, 15\\}"
+  gdb_test "print/d ${name}4a * ${name}b" " = \\{2, 4, 8, 16\\}"
+  gdb_test "print/d ${name}a / ${name}4b" " = \\{2, 1, 0, 0\\}"
+  # vector with vector
+  gdb_test "print/d ${name}4a + ${name}4b" " = \\{3, 6, 16, 20\\}"
+  gdb_test "print/d ${name}4a - ${name}4b" " = \\{1, 2, 0, 12\\}"
+  gdb_test "print/d ${name}4a * ${name}4b" " = \\{2, 8, 64, 64\\}"
+  gdb_test "print/d ${name}4a / ${name}4b" " = \\{2, 2, 1, 4\\}"
+
+  # scalar
+  gdb_test "print/d ${name}a++" " = 2"
+  gdb_test "print/d ++${name}a" " = 4"
+  gdb_test "print/d ${name}a--" " = 4"
+  gdb_test "print/d --${name}a" " = 2"
+  gdb_test "print/d +${name}a" " = 2"
+  gdb_test "print/d -${name}a" " = -2"
+  # vector
+  gdb_test "print/d ${name}4a++" " = \\{2, 4, 8, 16\\}"
+  gdb_test "print/d ++${name}4a" " = \\{4, 6, 10, 18\\}"
+  gdb_test "print/d ${name}4a--" " = \\{4, 6, 10, 18\\}"
+  gdb_test "print/d --${name}4a" " = \\{2, 4, 8, 16\\}"
+  gdb_test "print/d +${name}4a" " = \\{2, 4, 8, 16\\}"
+  gdb_test "print/d -${name}4a" " = \\{-2, -4, -8, -16\\}"
+
+  # scalar with vector
+  gdb_test "ptype ${name}a + ${name}4b" "type = ${type}4"
+  gdb_test "ptype ${name}4a - ${name}b" "type = ${type}4"
+  gdb_test "ptype ${name}a * ${name}4b" "type = ${type}4"
+  gdb_test "ptype ${name}4a / ${name}b" "type = ${type}4"
+  # vector with vector
+  gdb_test "ptype ${name}4a + ${name}4b" "type = ${type}4"
+  gdb_test "ptype ${name}4a - ${name}4b" "type = ${type}4"
+  gdb_test "ptype ${name}4a * ${name}4b" "type = ${type}4"
+  gdb_test "ptype ${name}4a / ${name}4b" "type = ${type}4"
+
+  # scalar
+  gdb_test "ptype ${name}a++" "type = ${type}"
+  gdb_test "ptype ++${name}a" "type = ${type}"
+  gdb_test "ptype ${name}a--" "type = ${type}"
+  gdb_test "ptype --${name}a" "type = ${type}"
+  # vector
+  gdb_test "ptype ${name}4a++" "type = ${type}4"
+  gdb_test "ptype ++${name}4a" "type = ${type}4"
+  gdb_test "ptype ${name}4a--" "type = ${type}4"
+  gdb_test "ptype --${name}4a" "type = ${type}4"
+  gdb_test "ptype +${name}4a" "type = ${type}4"
+  gdb_test "ptype -${name}4a" "type = ${type}4"
+
+  if { ${isfloat} } {
+    # scalar with scalar
+    gdb_test "ptype ${name}a + ${name}b" "type = ${type}"
+    gdb_test "ptype ${name}a - ${name}b" "type = ${type}"
+    gdb_test "ptype ${name}a * ${name}b" "type = ${type}"
+    gdb_test "ptype ${name}a / ${name}b" "type = ${type}"
+    # scalar
+    gdb_test "ptype +${name}a" "type = ${type}"
+    gdb_test "ptype -${name}a" "type = ${type}"
+  } else {
+    # scalar with scalar
+    gdb_test "print/d ${name}a % ${name}b" " = 0"
+    # scalar with vector
+    gdb_test "print/d ${name}4a % ${name}b" " = \\{0, 0, 0, 0\\}"
+    # vector with vector
+    gdb_test "print/d ${name}4a % ${name}b" " = \\{0, 0, 0, 0\\}"
+
+    # scalar with scalar
+    gdb_test "print/d u${name}a + u${name}b" " = 3"
+    gdb_test "print/d u${name}a - u${name}b" " = 1"
+    gdb_test "print/d u${name}a * u${name}b" " = 2"
+    gdb_test "print/d u${name}a / u${name}b" " = 2"
+    gdb_test "print/d u${name}a % u${name}b" " = 0"
+    # scalar with vector
+    gdb_test "print/d u${name}a + u${name}4b" " = \\{3, 4, 10, 6\\}"
+    gdb_test "print/d u${name}4a - u${name}b" " = \\{1, 3, 7, 15\\}"
+    gdb_test "print/d u${name}4a * u${name}b" " = \\{2, 4, 8, 16\\}"
+    gdb_test "print/d u${name}a / u${name}4b" " = \\{2, 1, 0, 0\\}"
+    gdb_test "print/d u${name}4a % u${name}b" " = \\{0, 0, 0, 0\\}"
+    # vector with vector
+    gdb_test "print/d u${name}4a + u${name}4b" " = \\{3, 6, 16, 20\\}"
+    gdb_test "print/d u${name}4a - u${name}4b" " = \\{1, 2, 0, 12\\}"
+    gdb_test "print/d u${name}4a * u${name}4b" " = \\{2, 8, 64, 64\\}"
+    gdb_test "print/d u${name}4a / u${name}4b" " = \\{2, 2, 1, 4\\}"
+    gdb_test "print/d u${name}4a % u${name}4b" " = \\{0, 0, 0, 0\\}"
+
+    # scalar
+    gdb_test "print/d u${name}a++" " = 2"
+    gdb_test "print/d ++u${name}a" " = 4"
+    gdb_test "print/d u${name}a--" " = 4"
+    gdb_test "print/d --u${name}a" " = 2"
+    gdb_test "print/d +u${name}a" " = 2"
+    gdb_test "print/x -u${name}a" " = 0x.*fe"
+    # vector
+    gdb_test "print/d u${name}4a++" " = \\{2, 4, 8, 16\\}"
+    gdb_test "print/d ++u${name}4a" " = \\{4, 6, 10, 18\\}"
+    gdb_test "print/d u${name}4a--" " = \\{4, 6, 10, 18\\}"
+    gdb_test "print/d --u${name}4a" " = \\{2, 4, 8, 16\\}"
+    gdb_test "print/d +u${name}4a" " = \\{2, 4, 8, 16\\}"
+    gdb_test "print/x -u${name}4a" " = \\{0x.*fe, 0x.*fc, 0x.*f8, 0x.*f0\\}"
+
+    # scalar with scalar
+    if { ${size} < 4 } {
+      gdb_test "ptype ${name}a + ${name}b" "type = int"
+      gdb_test "ptype ${name}a - ${name}b" "type = int"
+      gdb_test "ptype ${name}a * ${name}b" "type = int"
+      gdb_test "ptype ${name}a / ${name}b" "type = int"
+      gdb_test "ptype ${name}a % ${name}b" "type = int"
+      gdb_test "ptype +${name}a" "type = int"
+      gdb_test "ptype -${name}a" "type = int"
+      gdb_test "ptype u${name}a + u${name}b" "type = int"
+      gdb_test "ptype u${name}a - u${name}b" "type = int"
+      gdb_test "ptype u${name}a * u${name}b" "type = int"
+      gdb_test "ptype u${name}a / u${name}b" "type = int"
+      gdb_test "ptype u${name}a % u${name}b" "type = int"
+      gdb_test "ptype +u${name}a" "type = int"
+      gdb_test "ptype -u${name}a" "type = int"
+    } elseif { ${size} == 4 } {
+      gdb_test "ptype ${name}a + ${name}b" "type = int"
+      gdb_test "ptype ${name}a - ${name}b" "type = int"
+      gdb_test "ptype ${name}a * ${name}b" "type = int"
+      gdb_test "ptype ${name}a / ${name}b" "type = int"
+      gdb_test "ptype ${name}a % ${name}b" "type = int"
+      gdb_test "ptype +${name}a" "type = int"
+      gdb_test "ptype -${name}a" "type = int"
+      gdb_test "ptype u${name}a + u${name}b" "type = (unsigned int|uint)"
+      gdb_test "ptype u${name}a - u${name}b" "type = (unsigned int|uint)"
+      gdb_test "ptype u${name}a * u${name}b" "type = (unsigned int|uint)"
+      gdb_test "ptype u${name}a / u${name}b" "type = (unsigned int|uint)"
+      gdb_test "ptype u${name}a % u${name}b" "type = (unsigned int|uint)"
+      gdb_test "ptype +u${name}a" "type = (unsigned int|uint)"
+      gdb_test "ptype -u${name}a" "type = (unsigned int|uint)"
+    } else { # ${size} == 8
+      gdb_test "ptype ${name}a + ${name}b" "type = long"
+      gdb_test "ptype ${name}a - ${name}b" "type = long"
+      gdb_test "ptype ${name}a * ${name}b" "type = long"
+      gdb_test "ptype ${name}a / ${name}b" "type = long"
+      gdb_test "ptype ${name}a % ${name}b" "type = long"
+      gdb_test "ptype +${name}a" "type = long"
+      gdb_test "ptype -${name}a" "type = long"
+      gdb_test "ptype u${name}a + u${name}b" "type = (unsigned long|ulong)"
+      gdb_test "ptype u${name}a - u${name}b" "type = (unsigned long|ulong)"
+      gdb_test "ptype u${name}a * u${name}b" "type = (unsigned long|ulong)"
+      gdb_test "ptype u${name}a / u${name}b" "type = (unsigned long|ulong)"
+      gdb_test "ptype u${name}a % u${name}b" "type = (unsigned long|ulong)"
+      # scalar
+      gdb_test "ptype +u${name}a" "type = (unsigned long|ulong)"
+      gdb_test "ptype -u${name}a" "type = (unsigned long|ulong)"
+    }
+    gdb_test "ptype u${name}a++" "type = (unsigned ${type}|u${type})"
+    gdb_test "ptype ++u${name}a" "type = (unsigned ${type}|u${type})"
+    gdb_test "ptype u${name}a--" "type = (unsigned ${type}|u${type})"
+    gdb_test "ptype --u${name}a" "type = (unsigned ${type}|u${type})"
+    # scalar with vector
+    gdb_test "ptype ${name}a % ${name}4b" "type = ${type}4"
+    gdb_test "ptype u${name}a + u${name}4b" "type = u${type}4"
+    gdb_test "ptype u${name}4a - u${name}b" "type = u${type}4"
+    gdb_test "ptype u${name}a * u${name}4b" "type = u${type}4"
+    gdb_test "ptype u${name}4a / u${name}b" "type = u${type}4"
+    gdb_test "ptype u${name}a % u${name}4b" "type = u${type}4"
+    # vector with vector
+    gdb_test "ptype ${name}4a % ${name}4b" "type = ${type}4"
+    gdb_test "ptype u${name}4a + u${name}4b" "type = u${type}4"
+    gdb_test "ptype u${name}4a - u${name}4b" "type = u${type}4"
+    gdb_test "ptype u${name}4a * u${name}4b" "type = u${type}4"
+    gdb_test "ptype u${name}4a / u${name}4b" "type = u${type}4"
+    gdb_test "ptype u${name}4a % u${name}4b" "type = u${type}4"
+    gdb_test "ptype u${name}4a++" "type = u${type}4"
+    gdb_test "ptype ++u${name}4a" "type = u${type}4"
+    gdb_test "ptype u${name}4a--" "type = u${type}4"
+    gdb_test "ptype --u${name}4a" "type = u${type}4"
+    gdb_test "ptype +u${name}4a" "type = u${type}4"
+    gdb_test "ptype -u${name}4a" "type = u${type}4"
+  }
+}
+
+# Relational operators
+proc check_relational_ops { name type isfloat size } {
+  # scalar with scalar
+  gdb_test "print/d ${name}a > ${name}b" " = 1"
+  gdb_test "print/d ${name}b < ${name}a" " = 1"
+  gdb_test "print/d ${name}b >= ${name}a" " = 0"
+  gdb_test "print/d ${name}a <= ${name}b" " = 0"
+  # scalar with vector
+  gdb_test "print/d ${name}4a > ${name}b" " = \\{-1, -1, -1, -1\\}"
+  gdb_test "print/d ${name}a < ${name}4b" " = \\{0, 0, -1, -1\\}"
+  gdb_test "print/d ${name}4a >= ${name}b" " = \\{-1, -1, -1, -1\\}"
+  gdb_test "print/d ${name}a <= ${name}4b" " = \\{0, -1, -1, -1\\}"
+  # vector with vector
+  gdb_test "print/d ${name}4a > ${name}4b" " = \\{-1, -1, 0, -1\\}"
+  gdb_test "print/d ${name}4b < ${name}4a" " = \\{-1, -1, 0, -1\\}"
+  gdb_test "print/d ${name}4b >= ${name}4a" " = \\{0, 0, -1, 0\\}"
+  gdb_test "print/d ${name}4a <= ${name}4b" " = \\{0, 0, -1, 0\\}"
+
+  # result type should be int for scalars
+  gdb_test "ptype ${name}a < ${name}b" "type = int"
+  gdb_test "ptype ${name}a > ${name}b" "type = int"
+  gdb_test "ptype ${name}a <= ${name}b" "type = int"
+  gdb_test "ptype ${name}a >= ${name}b" "type = int"
+
+  if { ${isfloat} } {
+    if { ${size} == 2 } {
+      # result type should be short for half precision floating point vectors
+      # scalar with vector
+      gdb_test "ptype ${name}4a > ${name}b" "type = short4"
+      gdb_test "ptype ${name}a < ${name}4b" "type = short4"
+      gdb_test "ptype ${name}4a >= ${name}b" "type = short4"
+      gdb_test "ptype ${name}a <= ${name}4b" "type = short4"
+      # vector with vector
+      gdb_test "ptype ${name}4a > ${name}4b" "type = short4"
+      gdb_test "ptype ${name}4a < ${name}4b" "type = short4"
+      gdb_test "ptype ${name}4a >= ${name}4b" "type = short4"
+      gdb_test "ptype ${name}4a <= ${name}4b" "type = short4"
+    } elseif { ${size} == 4 } {
+      # result type should be int for single precision floating point vectors
+      # scalar with vector
+      gdb_test "ptype ${name}4a > ${name}b" "type = int4"
+      gdb_test "ptype ${name}a < ${name}4b" "type = int4"
+      gdb_test "ptype ${name}4a >= ${name}b" "type = int4"
+      gdb_test "ptype ${name}a <= ${name}4b" "type = int4"
+      # vector with vector
+      gdb_test "ptype ${name}4a > ${name}4b" "type = int4"
+      gdb_test "ptype ${name}4a < ${name}4b" "type = int4"
+      gdb_test "ptype ${name}4a >= ${name}4b" "type = int4"
+      gdb_test "ptype ${name}4a <= ${name}4b" "type = int4"
+    } else { # ${size} == 8
+      # result type should be long for double precision floating point vectors
+      # scalar with vector
+      gdb_test "ptype ${name}4a > ${name}b" "type = long4"
+      gdb_test "ptype ${name}a < ${name}4b" "type = long4"
+      gdb_test "ptype ${name}4a >= ${name}b" "type = long4"
+      gdb_test "ptype ${name}a <= ${name}4b" "type = long4"
+      # vector with vector
+      gdb_test "ptype ${name}4a > ${name}4b" "type = long4"
+      gdb_test "ptype ${name}4a < ${name}4b" "type = long4"
+      gdb_test "ptype ${name}4a >= ${name}4b" "type = long4"
+      gdb_test "ptype ${name}4a <= ${name}4b" "type = long4"
+    }
+  } else {
+    # scalar with scalar
+    gdb_test "print/d u${name}a > u${name}b" " = 1"
+    gdb_test "print/d u${name}b < u${name}a" " = 1"
+    gdb_test "print/d u${name}b >= u${name}a" " = 0"
+    gdb_test "print/d u${name}a <= u${name}b" " = 0"
+    # scalar with vector
+    gdb_test "print/d u${name}4a > u${name}b" " = \\{-1, -1, -1, -1\\}"
+    gdb_test "print/d u${name}a < u${name}4b" " = \\{0, 0, -1, -1\\}"
+    gdb_test "print/d u${name}4a >= u${name}b" " = \\{-1, -1, -1, -1\\}"
+    gdb_test "print/d u${name}a <= u${name}4b" " = \\{0, -1, -1, -1\\}"
+    # vector with vector
+    gdb_test "print/d u${name}4a > u${name}4b" " = \\{-1, -1, 0, -1\\}"
+    gdb_test "print/d u${name}4b < u${name}4a" " = \\{-1, -1, 0, -1\\}"
+    gdb_test "print/d u${name}4b >= u${name}4a" " = \\{0, 0, -1, 0\\}"
+    gdb_test "print/d u${name}4a <= u${name}4b" " = \\{0, 0, -1, 0\\}"
+
+    # result type for unsigned operands is signed
+    # scalar with scalar
+    gdb_test "ptype u${name}a < u${name}b" "type = int"
+    gdb_test "ptype u${name}a > u${name}b" "type = int"
+    gdb_test "ptype u${name}a <= u${name}b" "type = int"
+    gdb_test "ptype u${name}a >= u${name}b" "type = int"
+    # scalar with vector
+    gdb_test "ptype u${name}4a > u${name}b" "type = ${type}4"
+    gdb_test "ptype u${name}a < u${name}4b" "type = ${type}4"
+    gdb_test "ptype u${name}4a >= u${name}b" "type = ${type}4"
+    gdb_test "ptype u${name}a <= u${name}4b" "type = ${type}4"
+    # vector with vector
+    gdb_test "ptype u${name}4a > u${name}4b" "type = ${type}4"
+    gdb_test "ptype u${name}4a < u${name}4b" "type = ${type}4"
+    gdb_test "ptype u${name}4a >= u${name}4b" "type = ${type}4"
+    gdb_test "ptype u${name}4a <= u${name}4b" "type = ${type}4"
+  }
+}
+
+# Equality operators
+proc check_equality_ops { name type isfloat size } {
+  # scalar with scalar
+  gdb_test "print/d ${name}a == ${name}b" " = 0"
+  gdb_test "print/d ${name}a != ${name}b" " = 1"
+  # scalar with vector
+  gdb_test "print/d ${name}4a == ${name}b" " = \\{0, 0, 0, 0\\}"
+  gdb_test "print/d ${name}a != ${name}4b" " = \\{-1, 0, -1, -1\\}"
+  # vector with vector
+  gdb_test "print/d ${name}4a == ${name}4b" " = \\{0, 0, -1, 0\\}"
+  gdb_test "print/d ${name}4a != ${name}4b" " = \\{-1, -1, 0, -1\\}"
+
+  # scalar with scalar
+  gdb_test "ptype ${name}a == ${name}b" "type = int"
+  gdb_test "ptype ${name}a != ${name}b" "type = int"
+
+  if { ${isfloat} } {
+    if { ${size} == 2 } {
+      # result type should be short for half precision floating point vectors
+      # scalar with vector
+      gdb_test "ptype ${name}4a == ${name}b" "type = short4"
+      gdb_test "ptype ${name}a != ${name}4b" "type = short4"
+      # vector with vector
+      gdb_test "ptype ${name}4a == ${name}4b" "type = short4"
+      gdb_test "ptype ${name}4a != ${name}4b" "type = short4"
+    } elseif { ${size} == 4 } {
+      # result type should be int for single precision floating point vectors
+      # scalar with vector
+      gdb_test "ptype ${name}4a == ${name}b" "type = int4"
+      gdb_test "ptype ${name}a != ${name}4b" "type = int4"
+      # vector with vector
+      gdb_test "ptype ${name}4a == ${name}4b" "type = int4"
+      gdb_test "ptype ${name}4a != ${name}4b" "type = int4"
+    } else { # ${size} == 8
+      # result type should be long for double precision floating point vectors
+      # scalar with vector
+      gdb_test "ptype ${name}4a == ${name}b" "type = long4"
+      gdb_test "ptype ${name}a != ${name}4b" "type = long4"
+      # vector with vector
+      gdb_test "ptype ${name}4a == ${name}4b" "type = long4"
+      gdb_test "ptype ${name}4a != ${name}4b" "type = long4"
+    }
+  } else {
+    # scalar with scalar
+    gdb_test "print/d u${name}a == u${name}b" " = 0"
+    gdb_test "print/d u${name}a != u${name}b" " = 1"
+    # scalar with vector
+    gdb_test "print/d u${name}4a == u${name}b" " = \\{0, 0, 0, 0\\}"
+    gdb_test "print/d u${name}a != u${name}4b" " = \\{-1, 0, -1, -1\\}"
+    # vector with vector
+    gdb_test "print/d u${name}4a == u${name}4b" " = \\{0, 0, -1, 0\\}"
+    gdb_test "print/d u${name}4b != u${name}4a" " = \\{-1, -1, 0, -1\\}"
+
+    # result type for unsigned operands is signed
+    # scalar with scalar
+    gdb_test "ptype u${name}a == u${name}b" "type = int"
+    gdb_test "ptype u${name}a != u${name}b" "type = int"
+    # scalar with vector
+    gdb_test "ptype u${name}4a == u${name}b" "type = ${type}4"
+    gdb_test "ptype u${name}a != u${name}4b" "type = ${type}4"
+    # vector with vector
+    gdb_test "ptype u${name}4a == u${name}4b" "type = ${type}4"
+    gdb_test "ptype u${name}4a != u${name}4b" "type = ${type}4"
+  }
+}
+
+# Shift operators
+proc check_shift_ops { name type size } {
+  # scalar with scalar
+  gdb_test "print/d ${name}a << ${name}b" " = 4"
+  gdb_test "print/d ${name}a >> ${name}b" " = 1"
+  gdb_test "print/d u${name}a << u${name}b" " = 4"
+  gdb_test "print/d u${name}a >> u${name}b" " = 1"
+  # scalar with vector
+  gdb_test "print/d ${name}4a << ${name}b" " = \\{4, 8, 16, 32\\}"
+  gdb_test "print/d ${name}4a >> ${name}b" " = \\{1, 2, 4, 8\\}"
+  gdb_test "print/d u${name}4a << u${name}b" " = \\{4, 8, 16, 32\\}"
+  gdb_test "print/d u${name}4a >> u${name}b" " = \\{1, 2, 4, 8\\}"
+  # vector with vector
+  if { ${size} == 1 } {
+    gdb_test "print/d ${name}4a << ${name}4b" " = \\{4, 16, 0, 0\\}"
+    gdb_test "print/d u${name}4a << u${name}4b" " = \\{4, 16, 0, 0\\}"
+  } else {
+    gdb_test "print/d ${name}4a << ${name}4b" " = \\{4, 16, 2048, 256\\}"
+    gdb_test "print/d u${name}4a << u${name}4b" " = \\{4, 16, 2048, 256\\}"
+  }
+  gdb_test "print/d ${name}4a >> ${name}4b" " = \\{1, 1, 0, 1\\}"
+  gdb_test "print/d u${name}4a >> u${name}4b" " = \\{1, 1, 0, 1\\}"
+
+  # scalar with scalar
+  if { ${size} < 4 } {
+    gdb_test "ptype ${name}a << ${name}b" "type = int"
+    gdb_test "ptype ${name}a >> ${name}b" "type = int"
+    gdb_test "ptype u${name}a << u${name}b" "type = int"
+    gdb_test "ptype u${name}a >> u${name}b" "type = int"
+  } elseif { ${size} == 4 } {
+    gdb_test "ptype ${name}a << ${name}b" "type = int"
+    gdb_test "ptype ${name}a >> ${name}b" "type = int"
+    gdb_test "ptype u${name}a << u${name}b" "type = (unsigned int|uint)"
+    gdb_test "ptype u${name}a >> u${name}b" "type = (unsigned int|uint)"
+  } else { # ${size} == 8
+    gdb_test "ptype ${name}a << ${name}b" "type = long"
+    gdb_test "ptype ${name}a >> ${name}b" "type = long"
+    gdb_test "ptype u${name}a << u${name}b" "type = (unsigned long|ulong)"
+    gdb_test "ptype u${name}a >> u${name}b" "type = (unsigned long|ulong)"
+  }
+  # scalar with vector
+  gdb_test "ptype ${name}4a << ${name}b" "type = ${type}4"
+  gdb_test "ptype ${name}4a >> ${name}b" "type = ${type}4"
+  gdb_test "ptype u${name}4a << u${name}b" "type = u${type}4"
+  gdb_test "ptype u${name}4a >> u${name}b" "type = u${type}4"
+  # vector with vector
+  gdb_test "ptype ${name}4a << ${name}4b" "type = ${type}4"
+  gdb_test "ptype ${name}4a >> ${name}4b" "type = ${type}4"
+  gdb_test "ptype u${name}4a << u${name}4b" "type = u${type}4"
+  gdb_test "ptype u${name}4a >> u${name}4b" "type = u${type}4"
+}
+
+# Bitwise operators
+proc check_bitwise_ops { name type size } {
+  # scalar with scalar
+  gdb_test "print/d ${name}a & ${name}b" " = 0"
+  gdb_test "print/d ${name}a | ${name}b" " = 3"
+  gdb_test "print/d ${name}a ^ ${name}b" " = 3"
+  gdb_test "print/d u${name}a & u${name}b" " = 0"
+  gdb_test "print/d u${name}a | u${name}b" " = 3"
+  gdb_test "print/d u${name}a ^ u${name}b" " = 3"
+  # scalar with vector
+  gdb_test "print/d ${name}4a & ${name}b" " = \\{0, 0, 0, 0\\}"
+  gdb_test "print/d ${name}a | ${name}4b" " = \\{3, 2, 10, 6\\}"
+  gdb_test "print/d ${name}4a ^ ${name}b" " = \\{3, 5, 9, 17\\}"
+  gdb_test "print/d u${name}4a & u${name}b" " = \\{0, 0, 0, 0\\}"
+  gdb_test "print/d u${name}a | u${name}4b" " = \\{3, 2, 10, 6\\}"
+  gdb_test "print/d u${name}4a ^ u${name}b" " = \\{3, 5, 9, 17\\}"
+  # vector with vector
+  gdb_test "print/d ${name}4a & ${name}4b" " = \\{0, 0, 8, 0\\}"
+  gdb_test "print/d ${name}4a | ${name}4b" " = \\{3, 6, 8, 20\\}"
+  gdb_test "print/d ${name}4a ^ ${name}4b" " = \\{3, 6, 0, 20\\}"
+  gdb_test "print/d u${name}4a & u${name}4b" " = \\{0, 0, 8, 0\\}"
+  gdb_test "print/d u${name}4a | u${name}4b" " = \\{3, 6, 8, 20\\}"
+  gdb_test "print/d u${name}4a ^ u${name}4b" " = \\{3, 6, 0, 20\\}"
+
+  # scalar with scalar
+  if { ${size} < 4 } {
+    gdb_test "ptype ${name}a & ${name}b" "type = int"
+    gdb_test "ptype ${name}a | ${name}b" "type = int"
+    gdb_test "ptype ${name}a ^ ${name}b" "type = int"
+    gdb_test "ptype u${name}a & u${name}b" "type = int"
+    gdb_test "ptype u${name}a | u${name}b" "type = int"
+    gdb_test "ptype u${name}a ^ u${name}b" "type = int"
+  } elseif { ${size} == 4 } {
+    gdb_test "ptype ${name}a & ${name}b" "type = int"
+    gdb_test "ptype ${name}a | ${name}b" "type = int"
+    gdb_test "ptype ${name}a ^ ${name}b" "type = int"
+    gdb_test "ptype u${name}a & u${name}b" "type = (unsigned int|uint)"
+    gdb_test "ptype u${name}a | u${name}b" "type = (unsigned int|uint)"
+    gdb_test "ptype u${name}a ^ u${name}b" "type = (unsigned int|uint)"
+  } else { # ${size} == 8
+    gdb_test "ptype ${name}a & ${name}b" "type = long"
+    gdb_test "ptype ${name}a | ${name}b" "type = long"
+    gdb_test "ptype ${name}a ^ ${name}b" "type = long"
+    gdb_test "ptype u${name}a & u${name}b" "type = (unsigned long|ulong)"
+    gdb_test "ptype u${name}a | u${name}b" "type = (unsigned long|ulong)"
+    gdb_test "ptype u${name}a ^ u${name}b" "type = (unsigned long|ulong)"
+  }
+  # scalar with vector
+  gdb_test "ptype ${name}4a & ${name}b" "type = ${type}4"
+  gdb_test "ptype ${name}a | ${name}4b" "type = ${type}4"
+  gdb_test "ptype ${name}4a ^ ${name}b" "type = ${type}4"
+  gdb_test "ptype u${name}4a & u${name}b" "type = u${type}4"
+  gdb_test "ptype u${name}a | u${name}4b" "type = u${type}4"
+  gdb_test "ptype u${name}4a ^ u${name}b" "type = u${type}4"
+  # vector with vector
+  gdb_test "ptype ${name}4a & ${name}4b" "type = ${type}4"
+  gdb_test "ptype ${name}4a | ${name}4b" "type = ${type}4"
+  gdb_test "ptype ${name}4a ^ ${name}4b" "type = ${type}4"
+  gdb_test "ptype u${name}4a & u${name}4b" "type = u${type}4"
+  gdb_test "ptype u${name}4a | u${name}4b" "type = u${type}4"
+  gdb_test "ptype u${name}4a ^ u${name}4b" "type = u${type}4"
+
+  # scalar
+  if { ${size} < 8 } {
+    gdb_test "print/x ~${name}a" " = 0xfffffffd"
+    gdb_test "print/x ~u${name}a" " = 0xfffffffd"
+  } else {
+    gdb_test "print/x ~${name}a" " = 0xfffffffffffffffd"
+    gdb_test "print/x ~u${name}a" " = 0xfffffffffffffffd"
+  }
+  # vector
+  if { ${size} == 1 } {
+    gdb_test "print/x ~${name}4a" " = \\{0xfd, 0xfb, 0xf7, 0xef\\}"
+    gdb_test "print/x ~u${name}4a" " = \\{0xfd, 0xfb, 0xf7, 0xef\\}"
+  } elseif { ${size} == 2 } {
+    gdb_test "print/x ~${name}4a" " = \\{0xfffd, 0xfffb, 0xfff7, 0xffef\\}"
+    gdb_test "print/x ~u${name}4a" " = \\{0xfffd, 0xfffb, 0xfff7, 0xffef\\}"
+  } elseif { ${size} == 4 } {
+    gdb_test "print/x ~${name}4a" " = \\{0xfffffffd, 0xfffffffb, 0xfffffff7, 0xffffffef\\}"
+    gdb_test "print/x ~u${name}4a" " = \\{0xfffffffd, 0xfffffffb, 0xfffffff7, 0xffffffef\\}"
+  } else { # ${size} == 8
+    gdb_test "print/x ~${name}4a" " = \\{0xfffffffffffffffd, 0xfffffffffffffffb, 0xfffffffffffffff7, 0xffffffffffffffef\\}"
+    gdb_test "print/x ~u${name}4a" " = \\{0xfffffffffffffffd, 0xfffffffffffffffb, 0xfffffffffffffff7, 0xffffffffffffffef\\}"
+  }
+  # scalar
+  if { ${size} < 4 } {
+    gdb_test "ptype ~${name}a" "type = int"
+    gdb_test "ptype ~u${name}a" "type = int"
+  } elseif { ${size} == 4 } {
+    gdb_test "ptype ~${name}a" "type = int"
+    gdb_test "ptype ~u${name}a" "type = (unsigned int|uint)"
+  } else { # ${size} == 8
+    gdb_test "ptype ~${name}a" "type = long"
+    gdb_test "ptype ~u${name}a" "type = (unsigned long|ulong)"
+  }
+  # vector
+  gdb_test "ptype ~${name}4a" "type = ${type}4"
+  gdb_test "ptype ~u${name}4a" "type = u${type}4"
+}
+
+# Logical operators
+proc check_logical_ops { name type isfloat size } {
+  # scalar
+  gdb_test "print/d !${name}a " " = 0"
+  gdb_test "print/d !!${name}a " " = 1"
+  # vector
+  gdb_test "print/d !${name}4a " " = \\{0, 0, 0, 0\\}"
+  gdb_test "print/d !!${name}4a " " = \\{-1, -1, -1, -1\\}"
+
+  # scalar with scalar
+  gdb_test "print/d ${name}a && ${name}b" " = 1"
+  gdb_test "print/d ${name}a && !${name}b" " = 0"
+  gdb_test "print/d ${name}a || ${name}b" " = 1"
+  gdb_test "print/d ${name}a || !${name}b" " = 1"
+  gdb_test "print/d !${name}a || !${name}b" " = 0"
+
+  # scalar with vector
+  gdb_test "print/d ${name}4a && ${name}b" " = \\{-1, -1, -1, -1\\}"
+  gdb_test "print/d ${name}4a && !${name}b" " = \\{0, 0, 0, 0\\}"
+  gdb_test "print/d ${name}a || ${name}4b" " = \\{-1, -1, -1, -1\\}"
+  gdb_test "print/d ${name}a || !${name}4b" " = \\{-1, -1, -1, -1\\}"
+  gdb_test "print/d !${name}4a || !${name}b" " = \\{0, 0, 0, 0\\}"
+  # vector with vector
+  gdb_test "print/d ${name}4a && ${name}4b" " = \\{-1, -1, -1, -1\\}"
+  gdb_test "print/d ${name}4a || ${name}4b" " = \\{-1, -1, -1, -1\\}"
+
+  # result type should be int for scalars
+  gdb_test "ptype !${name}a" "type = int"
+  gdb_test "ptype ${name}a && ${name}b" "type = int"
+  gdb_test "ptype ${name}a || ${name}b" "type = int"
+
+  if { ${isfloat} } {
+    if { ${size} == 2 } {
+      # result type should be short for half precision floating point vectors
+      # scalar with vector
+      gdb_test "ptype ${name}4a && ${name}b" "type = short4"
+      gdb_test "ptype ${name}a || ${name}4b" "type = short4"
+      # vector with vector
+      gdb_test "ptype !${name}4a" "type = short4"
+      gdb_test "ptype ${name}4a && ${name}4b" "type = short4"
+      gdb_test "ptype ${name}4a || ${name}4b" "type = short4"
+    } elseif { ${size} == 4 } {
+      # result type should be int for single precision floating point vectors
+      # scalar with vector
+      gdb_test "ptype ${name}4a && ${name}b" "type = int4"
+      gdb_test "ptype ${name}a || ${name}4b" "type = int4"
+      # vector with vector
+      gdb_test "ptype !${name}4a" "type = int4"
+      gdb_test "ptype ${name}4a && ${name}4b" "type = int4"
+      gdb_test "ptype ${name}4a || ${name}4b" "type = int4"
+    } else { # ${size} == 8
+      # result type should be long for double precision floating point vectors
+      # scalar with vector
+      gdb_test "ptype ${name}4a && ${name}b" "type = long4"
+      gdb_test "ptype ${name}a || ${name}4b" "type = long4"
+      # vector with vector
+      gdb_test "ptype !${name}4a" "type = long4"
+      gdb_test "ptype ${name}4a && ${name}4b" "type = long4"
+      gdb_test "ptype ${name}4a || ${name}4b" "type = long4"
+    }
+  } else {
+    # unsigned scalar
+    gdb_test "print/d !u${name}a " " = 0"
+    gdb_test "print/d !!u${name}a " " = 1"
+    # unsigned vector
+    gdb_test "print/d !u${name}4a " " = \\{0, 0, 0, 0\\}"
+    gdb_test "print/d !!u${name}4a " " = \\{-1, -1, -1, -1\\}"
+
+    # scalar with scalar
+    gdb_test "print/d u${name}a && u${name}b" " = 1"
+    gdb_test "print/d u${name}a || u${name}b" " = 1"
+    # scalar with vector
+    gdb_test "print/d u${name}4a && u${name}b" " = \\{-1, -1, -1, -1\\}"
+    gdb_test "print/d u${name}a || u${name}4b" " = \\{-1, -1, -1, -1\\}"
+    # vector with vector
+    gdb_test "print/d u${name}4a && u${name}4b" " = \\{-1, -1, -1, -1\\}"
+    gdb_test "print/d u${name}4a || u${name}4b" " = \\{-1, -1, -1, -1\\}"
+
+    # scalar
+    gdb_test "ptype !u${name}a" "type = int"
+    # vector
+    gdb_test "ptype !${name}4a" "type = ${type}4"
+    gdb_test "ptype !u${name}4a" "type = ${type}4"
+
+    # scalar with vector
+    gdb_test "ptype ${name}4a && ${name}b" "type = ${type}4"
+    gdb_test "ptype ${name}a || ${name}4b" "type = ${type}4"
+    # result type for unsigned vector operand is signed
+    gdb_test "ptype u${name}4a && u${name}b" "type = ${type}4"
+    gdb_test "ptype u${name}a || u${name}4b" "type = ${type}4"
+    # vector with vector
+    gdb_test "ptype ${name}4a && ${name}4b" "type = ${type}4"
+    gdb_test "ptype ${name}4a || ${name}4b" "type = ${type}4"
+    # result type for unsigned vector operand is signed
+    gdb_test "ptype u${name}4a && u${name}4b" "type = ${type}4"
+    gdb_test "ptype u${name}4a || u${name}4b" "type = ${type}4"
+  }
+}
+
+# Conditional operator
+proc check_conditional_op { name type isfloat } {
+  # scalar with scalar
+  gdb_test "print/d ${name}a ? ${name}b : ${name}a" " = 1"
+  gdb_test "print/d !${name}a ? ${name}b : ${name}a" " = 2"
+  # scalar with vector
+  gdb_test "print/d ${name}4a ? ${name}4b : ${name}a" " = \\{1, 2, 8, 4\\}"
+  gdb_test "print/d ${name}4a ? ${name}b : ${name}4a" " = \\{1, 1, 1, 1\\}"
+  gdb_test "print/d ${name}4a > 4 ? 1 : ${name}4a" " = \\{2, 4, 1, 1\\}"
+  gdb_test "print/d ${name}4a > 4 ? ${name}4b : ${name}a" " = \\{2, 2, 8, 4\\}"
+  # vector with vector
+  gdb_test "print/d ${name}4a ? ${name}4b : ${name}4a" " = \\{1, 2, 8, 4\\}"
+  gdb_test "print/d ${name}4a > 4 ? ${name}4b : ${name}4a" " = \\{2, 4, 8, 4\\}"
+
+  # scalar with scalar
+  gdb_test "ptype ${name}a ? ${name}b : ${name}a" "type = ${type}"
+  # scalar with vector
+  gdb_test "ptype ${name}4a ? ${name}4b : ${name}a" "type = ${type}4"
+  gdb_test "ptype ${name}4a ? ${name}b : ${name}4a" "type = ${type}4"
+  # vector with vector
+  gdb_test "ptype ${name}4a ? ${name}4b : ${name}4a" "type = ${type}4"
+
+  if { !${isfloat} } {
+    # scalar with scalar
+    gdb_test "print/d u${name}a ? u${name}b : u${name}a" " = 1"
+    gdb_test "print/d !u${name}a ? u${name}b : u${name}a" " = 2"
+    # scalar with vector
+    gdb_test "print/d u${name}4a ? u${name}4b : u${name}a" " = \\{1, 2, 8, 4\\}"
+    gdb_test "print/d u${name}4a ? u${name}b : u${name}4a" " = \\{1, 1, 1, 1\\}"
+    gdb_test "print/d u${name}4a > 4 ? 1 : u${name}4a" " = \\{2, 4, 1, 1\\}"
+    gdb_test "print/d u${name}4a > 4 ? u${name}4b : u${name}a" " = \\{2, 2, 8, 4\\}"
+    # vector with vector
+    gdb_test "print/d u${name}4a ? u${name}4b : u${name}4a" " = \\{1, 2, 8, 4\\}"
+    gdb_test "print/d u${name}4a > 4 ? u${name}4b : u${name}4a" " = \\{2, 4, 8, 4\\}"
+
+    # scalar with scalar
+    gdb_test "ptype u${name}a ? u${name}b : u${name}a" "type = (unsigned ${type}|u${type})"
+    # scalar with vector
+    gdb_test "ptype u${name}4a ? u${name}4b : u${name}a" "type = u${type}4"
+    gdb_test "ptype u${name}4a ? u${name}b : u${name}4a" "type = u${type}4"
+    # vector with vector
+    gdb_test "ptype u${name}4a ? u${name}4b : u${name}4a" "type = u${type}4"
+  }
+}
+
+# Assignment operators
+proc check_assignment_ops { name type isfloat size } {
+  # scalar with scalar
+  gdb_test "print/d ${name}a = ${name}b" " = 1"
+  gdb_test "print/d ${name}a = 2" " = 2"
+  gdb_test "print/d ${name}a += ${name}b" " = 3"
+  gdb_test "print/d ${name}a -= ${name}b" " = 2"
+  gdb_test "print/d ${name}b *= ${name}a" " = 2"
+  gdb_test "print/d ${name}b /= ${name}a" " = 1"
+  # scalar with vector
+  gdb_test "print/d ${name}4a = ${name}b" " = \\{1, 1, 1, 1\\}"
+  gdb_test "print/d ${name}4a = \{2, 4, 8, 16\}" " = \\{2, 4, 8, 16\\}"
+  gdb_test "print/d ${name}4a += ${name}b" " = \\{3, 5, 9, 17\\}"
+  gdb_test "print/d ${name}4a -= ${name}b" " = \\{2, 4, 8, 16\\}"
+  gdb_test "print/d ${name}4b *= ${name}a" " = \\{2, 4, 16, 8\\}"
+  gdb_test "print/d ${name}4b /= ${name}a" " = \\{1, 2, 8, 4\\}"
+  # vector with vector
+  gdb_test "print/d ${name}4a = ${name}4b" " = \\{1, 2, 8, 4\\}"
+  gdb_test "print/d ${name}4a = \{2, 4, 8, 16\}" " = \\{2, 4, 8, 16\\}"
+  gdb_test "print/d ${name}4a += ${name}4b" " = \\{3, 6, 16, 20\\}"
+  gdb_test "print/d ${name}4a -= ${name}4b" " = \\{2, 4, 8, 16\\}"
+  gdb_test "print/d ${name}4b *= ${name}4a" " = \\{2, 8, 64, 64\\}"
+  gdb_test "print/d ${name}4b /= ${name}4a" " = \\{1, 2, 8, 4\\}"
+
+  # scalar with scalar
+  gdb_test "ptype ${name}a = ${name}b" "type = ${type}"
+  gdb_test "ptype ${name}a += ${name}b" "type = ${type}"
+  gdb_test "ptype ${name}a -= ${name}b" "type = ${type}"
+  gdb_test "ptype ${name}a *= ${name}b" "type = ${type}"
+  gdb_test "ptype ${name}a /= ${name}b" "type = ${type}"
+  # scalar with vector
+  gdb_test "ptype ${name}4a = ${name}b" "type = ${type}4"
+  gdb_test "ptype ${name}4a += ${name}b" "type = ${type}4"
+  gdb_test "ptype ${name}4a -= ${name}b" "type = ${type}4"
+  gdb_test "ptype ${name}4b *= ${name}a" "type = ${type}4"
+  gdb_test "ptype ${name}4b /= ${name}a" "type = ${type}4"
+  # vector with vector
+  gdb_test "ptype ${name}4a = ${name}4b" "type = ${type}4"
+  gdb_test "ptype ${name}4a += ${name}4b" "type = ${type}4"
+  gdb_test "ptype ${name}4a -= ${name}4b" "type = ${type}4"
+  gdb_test "ptype ${name}4b *= ${name}4a" "type = ${type}4"
+  gdb_test "ptype ${name}4b /= ${name}4a" "type = ${type}4"
+
+  if { !${isfloat} } {
+    # scalar with scalar
+    gdb_test "print/d ${name}a %= ${name}b" " = 0"
+    gdb_test "print/d ${name}a = 2" " = 2"
+    gdb_test "print/d ${name}a <<= ${name}b" " = 4"
+    gdb_test "print/d ${name}a = 2" " = 2"
+    gdb_test "print/d ${name}a >>= ${name}b" " = 1"
+    gdb_test "print/d ${name}a = 2" " = 2"
+    gdb_test "print/d ${name}a &= ${name}b" " = 0"
+    gdb_test "print/d ${name}a = 2" " = 2"
+    gdb_test "print/d ${name}a |= ${name}b" " = 3"
+    gdb_test "print/d ${name}a = 2" " = 2"
+    gdb_test "print/d ${name}a ^= ${name}b" " = 3"
+    gdb_test "print/d ${name}a = 2" " = 2"
+    # scalar with vector
+    gdb_test "print/d ${name}4b %= ${name}a" " = \\{1, 0, 0, 0\\}"
+    gdb_test "print/d ${name}4b = \{1, 2, 8, 4\}" " = \\{1, 2, 8, 4\\}"
+    gdb_test "print/d ${name}4a <<= ${name}b" " = \\{4, 8, 16, 32\\}"
+    gdb_test "print/d ${name}4a >>= ${name}b" " = \\{2, 4, 8, 16\\}"
+    gdb_test "print/d ${name}4a &= ${name}b" " = \\{0, 0, 0, 0\\}"
+    gdb_test "print/d ${name}4a = \{2, 4, 8, 16\}" " = \\{2, 4, 8, 16\\}"
+    gdb_test "print/d ${name}4a |= ${name}b" " = \\{3, 5, 9, 17\\}"
+    gdb_test "print/d ${name}4a = \{2, 4, 8, 16\}" " = \\{2, 4, 8, 16\\}"
+    gdb_test "print/d ${name}4a ^= ${name}b" " = \\{3, 5, 9, 17\\}"
+    gdb_test "print/d ${name}4a = \{2, 4, 8, 16\}" " = \\{2, 4, 8, 16\\}"
+    # vector with vector
+    gdb_test "print/d ${name}4b %= ${name}4a" " = \\{1, 2, 0, 4\\}"
+    gdb_test "print/d ${name}4b = \{1, 2, 8, 4\}" " = \\{1, 2, 8, 4\\}"
+    if { ${size} == 1 } {
+      gdb_test "print/d ${name}4a <<= ${name}4b" " = \\{4, 16, 0, 0\\}"
+      gdb_test "print/d ${name}4a >>= ${name}4b" " = \\{2, 4, 0, 0\\}"
+      gdb_test "print/d ${name}4a = \{2, 4, 8, 16\}" " = \\{2, 4, 8, 16\\}"
+    } else {
+      gdb_test "print/d ${name}4a <<= ${name}4b" " = \\{4, 16, 2048, 256\\}"
+      gdb_test "print/d ${name}4a >>= ${name}4b" " = \\{2, 4, 8, 16\\}"
+    }
+    gdb_test "print/d ${name}4a &= ${name}4b" " = \\{0, 0, 8, 0\\}"
+    gdb_test "print/d ${name}4a = \{2, 4, 8, 16\}" " = \\{2, 4, 8, 16\\}"
+    gdb_test "print/d ${name}4a |= ${name}4b" " = \\{3, 6, 8, 20\\}"
+    gdb_test "print/d ${name}4a = \{2, 4, 8, 16\}" " = \\{2, 4, 8, 16\\}"
+    gdb_test "print/d ${name}4a ^= ${name}4b" " = \\{3, 6, 0, 20\\}"
+    gdb_test "print/d ${name}4a = \{2, 4, 8, 16\}" " = \\{2, 4, 8, 16\\}"
+
+    # scalar with scalar
+    gdb_test "ptype ${name}a %= ${name}b" "type = ${type}"
+    gdb_test "ptype ${name}a <<= ${name}b" "type = ${type}"
+    gdb_test "ptype ${name}a >>= ${name}b" "type = ${type}"
+    gdb_test "ptype ${name}a &= ${name}b" "type = ${type}"
+    gdb_test "ptype ${name}a |= ${name}b" "type = ${type}"
+    gdb_test "ptype ${name}a ^= ${name}b" "type = ${type}"
+    # scalar with vector
+    gdb_test "ptype ${name}4a %= ${name}b" "type = ${type}4"
+    gdb_test "ptype ${name}4a <<= ${name}b" "type = ${type}4"
+    gdb_test "ptype ${name}4a >>= ${name}b" "type = ${type}4"
+    gdb_test "ptype ${name}4a &= ${name}b" "type = ${type}4"
+    gdb_test "ptype ${name}4a |= ${name}b" "type = ${type}4"
+    gdb_test "ptype ${name}4a ^= ${name}b" "type = ${type}4"
+    # vector with vector
+    gdb_test "ptype ${name}4a %= ${name}4b" "type = ${type}4"
+    gdb_test "ptype ${name}4a <<= ${name}4b" "type = ${type}4"
+    gdb_test "ptype ${name}4a >>= ${name}4b" "type = ${type}4"
+    gdb_test "ptype ${name}4a &= ${name}4b" "type = ${type}4"
+    gdb_test "ptype ${name}4a |= ${name}4b" "type = ${type}4"
+    gdb_test "ptype ${name}4a ^= ${name}4b" "type = ${type}4"
+
+    # scalar with scalar
+    gdb_test "print/d u${name}a = u${name}b" " = 1"
+    gdb_test "print/d u${name}a = 2" " = 2"
+    gdb_test "print/d u${name}a += u${name}b" " = 3"
+    gdb_test "print/d u${name}a -= u${name}b" " = 2"
+    gdb_test "print/d u${name}b *= u${name}a" " = 2"
+    gdb_test "print/d u${name}b /= u${name}a" " = 1"
+    gdb_test "print/d u${name}a %= u${name}b" " = 0"
+    gdb_test "print/d u${name}a = 2" " = 2"
+    gdb_test "print/d u${name}a <<= u${name}b" " = 4"
+    gdb_test "print/d u${name}a = 2" " = 2"
+    gdb_test "print/d u${name}a >>= u${name}b" " = 1"
+    gdb_test "print/d u${name}a = 2" " = 2"
+    gdb_test "print/d u${name}a &= u${name}b" " = 0"
+    gdb_test "print/d u${name}a = 2" " = 2"
+    gdb_test "print/d u${name}a |= u${name}b" " = 3"
+    gdb_test "print/d u${name}a = 2" " = 2"
+    gdb_test "print/d u${name}a ^= u${name}b" " = 3"
+    gdb_test "print/d u${name}a = 2" " = 2"
+    # scalar with vector
+    gdb_test "print/d u${name}4a = u${name}b" " = \\{1, 1, 1, 1\\}"
+    gdb_test "print/d u${name}4a = \{2, 4, 8, 16\}" " = \\{2, 4, 8, 16\\}"
+    gdb_test "print/d u${name}4a += u${name}b" " = \\{3, 5, 9, 17\\}"
+    gdb_test "print/d u${name}4a -= u${name}b" " = \\{2, 4, 8, 16\\}"
+    gdb_test "print/d u${name}4b *= u${name}a" " = \\{2, 4, 16, 8\\}"
+    gdb_test "print/d u${name}4b /= u${name}a" " = \\{1, 2, 8, 4\\}"
+    gdb_test "print/d u${name}4b %= u${name}a" " = \\{1, 0, 0, 0\\}"
+    gdb_test "print/d u${name}4b = \{1, 2, 8, 4\}" " = \\{1, 2, 8, 4\\}"
+    gdb_test "print/d u${name}4a <<= u${name}b" " = \\{4, 8, 16, 32\\}"
+    gdb_test "print/d u${name}4a >>= u${name}b" " = \\{2, 4, 8, 16\\}"
+    gdb_test "print/d u${name}4a &= u${name}b" " = \\{0, 0, 0, 0\\}"
+    gdb_test "print/d u${name}4a = \{2, 4, 8, 16\}" " = \\{2, 4, 8, 16\\}"
+    gdb_test "print/d u${name}4a |= u${name}b" " = \\{3, 5, 9, 17\\}"
+    gdb_test "print/d u${name}4a = \{2, 4, 8, 16\}" " = \\{2, 4, 8, 16\\}"
+    gdb_test "print/d u${name}4a ^= u${name}b" " = \\{3, 5, 9, 17\\}"
+    gdb_test "print/d u${name}4a = \{2, 4, 8, 16\}" " = \\{2, 4, 8, 16\\}"
+    # vector with vector
+    gdb_test "print/d u${name}4a = u${name}4b" " = \\{1, 2, 8, 4\\}"
+    gdb_test "print/d u${name}4a = \{2, 4, 8, 16\}" " = \\{2, 4, 8, 16\\}"
+    gdb_test "print/d u${name}4a += u${name}4b" " = \\{3, 6, 16, 20\\}"
+    gdb_test "print/d u${name}4a -= u${name}4b" " = \\{2, 4, 8, 16\\}"
+    gdb_test "print/d u${name}4b *= u${name}4a" " = \\{2, 8, 64, 64\\}"
+    gdb_test "print/d u${name}4b /= u${name}4a" " = \\{1, 2, 8, 4\\}"
+    gdb_test "print/d u${name}4b %= u${name}4a" " = \\{1, 2, 0, 4\\}"
+    gdb_test "print/d u${name}4b = \{1, 2, 8, 4\}" " = \\{1, 2, 8, 4\\}"
+    if { ${size} == 1 } {
+      gdb_test "print/d u${name}4a <<= u${name}4b" " = \\{4, 16, 0, 0\\}"
+      gdb_test "print/d u${name}4a >>= u${name}4b" " = \\{2, 4, 0, 0\\}"
+      gdb_test "print/d u${name}4a = \{2, 4, 8, 16\}" " = \\{2, 4, 8, 16\\}"
+    } else {
+      gdb_test "print/d u${name}4a <<= u${name}4b" " = \\{4, 16, 2048, 256\\}"
+      gdb_test "print/d u${name}4a >>= u${name}4b" " = \\{2, 4, 8, 16\\}"
+    }
+    gdb_test "print/d u${name}4a &= u${name}4b" " = \\{0, 0, 8, 0\\}"
+    gdb_test "print/d u${name}4a = \{2, 4, 8, 16\}" " = \\{2, 4, 8, 16\\}"
+    gdb_test "print/d u${name}4a |= u${name}4b" " = \\{3, 6, 8, 20\\}"
+    gdb_test "print/d u${name}4a = \{2, 4, 8, 16\}" " = \\{2, 4, 8, 16\\}"
+    gdb_test "print/d u${name}4a ^= u${name}4b" " = \\{3, 6, 0, 20\\}"
+    gdb_test "print/d u${name}4a = \{2, 4, 8, 16\}" " = \\{2, 4, 8, 16\\}"
+
+    # scalar with scalar
+    gdb_test "ptype u${name}a = u${name}b" "type = (unsigned ${type}|u${type})"
+    gdb_test "ptype u${name}a += u${name}b" "type = (unsigned ${type}|u${type})"
+    gdb_test "ptype u${name}a -= u${name}b" "type = (unsigned ${type}|u${type})"
+    gdb_test "ptype u${name}a *= u${name}b" "type = (unsigned ${type}|u${type})"
+    gdb_test "ptype u${name}a /= u${name}b" "type = (unsigned ${type}|u${type})"
+    gdb_test "ptype u${name}a %= u${name}b" "type = (unsigned ${type}|u${type})"
+    gdb_test "ptype u${name}a <<= u${name}b" "type = (unsigned ${type}|u${type})"
+    gdb_test "ptype u${name}a >>= u${name}b" "type = (unsigned ${type}|u${type})"
+    gdb_test "ptype u${name}a &= u${name}b" "type = (unsigned ${type}|u${type})"
+    gdb_test "ptype u${name}a |= u${name}b" "type = (unsigned ${type}|u${type})"
+    gdb_test "ptype u${name}a ^= u${name}b" "type = (unsigned ${type}|u${type})"
+    # scalar with vector
+    gdb_test "ptype u${name}4a = u${name}b" "type = u${type}4"
+    gdb_test "ptype u${name}4a += u${name}b" "type = u${type}4"
+    gdb_test "ptype u${name}4a -= u${name}b" "type = u${type}4"
+    gdb_test "ptype u${name}4b *= u${name}a" "type = u${type}4"
+    gdb_test "ptype u${name}4b /= u${name}a" "type = u${type}4"
+    gdb_test "ptype u${name}4a %= u${name}b" "type = u${type}4"
+    gdb_test "ptype u${name}4a <<= u${name}b" "type = u${type}4"
+    gdb_test "ptype u${name}4a >>= u${name}b" "type = u${type}4"
+    gdb_test "ptype u${name}4a &= u${name}b" "type = u${type}4"
+    gdb_test "ptype u${name}4a |= u${name}b" "type = u${type}4"
+    gdb_test "ptype u${name}4a ^= u${name}b" "type = u${type}4"
+    # vector with vector
+    gdb_test "ptype u${name}4a = u${name}4b" "type = u${type}4"
+    gdb_test "ptype u${name}4a += u${name}4b" "type = u${type}4"
+    gdb_test "ptype u${name}4a -= u${name}4b" "type = u${type}4"
+    gdb_test "ptype u${name}4b *= u${name}4a" "type = u${type}4"
+    gdb_test "ptype u${name}4b /= u${name}4a" "type = u${type}4"
+    gdb_test "ptype u${name}4a %= u${name}4b" "type = u${type}4"
+    gdb_test "ptype u${name}4a <<= u${name}4b" "type = u${type}4"
+    gdb_test "ptype u${name}4a >>= u${name}4b" "type = u${type}4"
+    gdb_test "ptype u${name}4a &= u${name}4b" "type = u${type}4"
+    gdb_test "ptype u${name}4a |= u${name}4b" "type = u${type}4"
+    gdb_test "ptype u${name}4a ^= u${name}4b" "type = u${type}4"
+  }
+}
+
+proc do_check { name type isfloat size } {
+  check_basic ${name} ${type} ${isfloat}
+  check_arithmetic_ops ${name} ${type} ${isfloat} ${size}
+  check_relational_ops ${name} ${type} ${isfloat} ${size}
+  check_equality_ops ${name} ${type} ${isfloat} ${size}
+  if { !${isfloat} } {
+    check_shift_ops ${name} ${type} ${size}
+    check_bitwise_ops ${name} ${type} ${size}
+  }
+  check_logical_ops ${name} ${type} ${isfloat} ${size}
+  check_conditional_op ${name} ${type} ${isfloat}
+  check_assignment_ops ${name} ${type} ${isfloat} ${size}
+}
+
+do_check "c" "char" 0 1
+do_check "s" "short" 0 2
+do_check "i" "int" 0 4
+do_check "l" "long" 0 8
+if { ${have_cl_khr_fp16} } {
+  do_check "h" "half" 1 2
+}
+do_check "f" "float" 1 4
+if { ${have_cl_khr_fp64} } {
+  do_check "d" "double" 1 8
+}
+# Delete the OpenCL program source
+remote_file target delete ${clprogram}

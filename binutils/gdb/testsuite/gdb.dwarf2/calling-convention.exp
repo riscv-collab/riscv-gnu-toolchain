@@ -1,0 +1,97 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This testcase checks that if a function has the DW_AT_calling_convention
+# attribute with the value DW_CC_nocall, then GDB will not:
+# - call the function,
+# - try to access the value returned by the function when using the finish
+#   command,
+# - force a user-provided return value when using the return command.
+#
+# In every case, GDB prints a message to the user indicating the issue.  For
+# the return command, GDB asks the user to confirm if the specified value
+# should be forced.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+standard_testfile .c .S
+
+# First compile the .c file so we can ask GDB what is sizeof(int).
+if { [prepare_for_testing ${testfile}.exp ${testfile} ${srcfile}] } {
+    untested "failed to compile"
+    return -1
+}
+
+# Make some DWARF for the test.
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    cu {} {
+	compile_unit {
+	    {language @DW_LANG_C}
+	    {name "calling-convention"}
+	} {
+	    declare_labels int_label
+
+	    int_label: base_type {
+		{byte_size [get_sizeof "int" 4] sdata}
+		{encoding @DW_ATE_signed}
+		{name "int"}
+	    }
+
+	    subprogram {
+		{MACRO_AT_func { foo }}
+		{type :$int_label}
+		{calling_convention @DW_CC_nocall}
+	    }
+
+	    subprogram {
+		{MACRO_AT_func { main }}
+		{type :$int_label}
+	    }
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	  [list $srcfile $asm_file] {nodebug}] } {
+    return -1
+}
+
+if {![runto_main]} {
+    return -1
+}
+
+gdb_test "call foo ()" \
+    "Cannot call the function 'foo' which does not follow the target calling convention."
+gdb_breakpoint "foo"
+gdb_continue_to_breakpoint "foo"
+
+gdb_test "return 35" \
+       "Not confirmed" \
+       "return 35" \
+       [multi_line \
+           "Function 'foo' does not follow the target calling convention\\." \
+           "If you continue, setting the return value will probably lead to unpredictable behaviors\\." \
+           "Make foo return now\\? \\(y or n\\) $"] \
+       "n"
+
+gdb_test "finish" [multi_line \
+    "Run till exit from #0  $hex in foo \\(\\)" \
+    "warning: Function 'foo' does not follow the target calling convention, cannot determine its returned value\." \
+    "$hex in main \\(\\)" \
+    "Value returned has type: int. Cannot determine contents"]

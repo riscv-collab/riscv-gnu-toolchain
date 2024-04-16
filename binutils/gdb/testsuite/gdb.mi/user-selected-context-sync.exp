@@ -1,0 +1,1339 @@
+# Copyright 2016-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test checks that the "thread", "select-frame", "frame" and "inferior"
+# CLI commands, as well as the "-thread-select" and "-stack-select-frame" MI
+# commands send the appropriate user-selection-change events to all UIs.
+#
+# This test considers the case where console and MI are two different UIs,
+# and MI is created with the new-ui command.
+#
+# It also considers the case where the console commands are sent directly in
+# the MI channel as described in PR 20487.
+#
+# It does so by starting 2 inferiors with 3 threads each.
+# - Thread 1 of each inferior is the main thread, starting the others.
+# - Thread 2 of each inferior is stopped at /* thread loop line */.
+# - Thread 3 of each inferior is either stopped at /* thread loop line */, if we
+#   are using all-stop, or running, if we are using non-stop.
+
+# Do not run if gdb debug is enabled as it doesn't work for separate-mi-tty.
+require !gdb_debug_enabled
+
+load_lib mi-support.exp
+
+standard_testfile
+
+# Multiple inferiors are needed, therefore only native gdb and extended
+# gdbserver modes are supported.
+require !use_gdb_stub
+
+set compile_options "debug pthreads"
+if {[build_executable $testfile.exp $testfile ${srcfile} ${compile_options}] == -1} {
+    untested "failed to compile"
+    return -1
+}
+
+set main_break_line [gdb_get_line_number "main break line"]
+set thread_loop_line [gdb_get_line_number "thread loop line"]
+set thread_caller_line [gdb_get_line_number "thread caller line"]
+
+# Return whether we expect thread THREAD to be running in mode MODE.
+#
+# MODE can be either "all-stop" or "non-stop".
+# THREAD can be either a CLI thread id (e.g. 2.3) or an MI thread id (e.g. 6).
+
+proc thread_is_running { mode thread } {
+    if { $mode != "non-stop" } {
+	return 0
+    }
+
+    return [expr {
+	$thread == 1.3
+	|| $thread == 2.3
+	|| $thread == 3
+	|| $thread == 6
+    }]
+}
+
+# Make a regular expression to match the various inferior/thread/frame selection
+# events for CLI.
+#
+# MODE can be either "all-stop" or "non-stop", indicating which one is currently
+#   in use.
+# INF is the inferior number we are expecting GDB to switch to, or -1 if we are
+#   not expecting GDB to announce an inferior switch.
+# THREAD is the thread number we are expecting GDB to switch to, or -1 if we are
+#   not expecting GDB to announce a thread switch.
+# FRAME is the frame number we are expecting GDB to switch to, or -1 if we are
+#   not expecting GDB to announce a frame switch.  See the FRAME_RE variable for
+#   details.
+
+proc make_cli_re { mode inf thread frame } {
+    global srcfile
+    global thread_caller_line
+    global thread_loop_line
+    global main_break_line
+    global decimal
+
+    set any "\[^\r\n\]*"
+
+    set cli_re ""
+
+    set inf_re "\\\[Switching to inferior $inf${any}\\\]"
+    set all_stop_thread_re "\\\[Switching to thread [string_to_regexp $thread]${any}\\\]"
+
+    set frame_re(0) "#0${any}child_sub_function$any$srcfile:$thread_loop_line\r\n${any}thread loop line \\\*/"
+    set frame_re(1) "#1${any}child_function \\\(args=0x0\\\) at ${any}$srcfile:$thread_caller_line\r\n$thread_caller_line${any}/\\\* thread caller line \\\*/"
+
+    # Special frame for main thread.
+    set frame_re(2) "#0${any}\r\n${main_break_line}${any}"
+
+    if { $inf != -1 } {
+	append cli_re $inf_re
+    }
+
+    if { $thread != -1 } {
+	if { $inf != -1 } {
+	    append cli_re "\r\n"
+	}
+	set thread_re $all_stop_thread_re
+
+	if [thread_is_running $mode $thread] {
+	    set thread_re "$thread_re\\\(running\\\)"
+	}
+
+	append cli_re $thread_re
+    }
+
+    if { $frame != -1 } {
+	if { $thread != -1 } {
+	    append cli_re "\r\n"
+	}
+	append cli_re $frame_re($frame)
+    }
+
+    return $cli_re
+}
+
+# Make a regular expression to match the various inferior/thread/frame selection
+# events for MI.
+#
+# MODE can be either "all-stop" or "non-stop", indicating which one is currently
+#   in use.
+# THREAD is the thread number we are expecting GDB to switch to, or -1 if we are
+#   not expecting GDB to announce a thread switch.
+# If EVENT is 1, build a regex for an "=thread-selected" async event.
+#   Otherwise, build a regex for a response to a command.
+# FRAME is the frame number we are expecting GDB to switch to, or -1 if we are
+#   not expecting GDB to announce a frame switch.  See the FRAME_RE variable for
+#   details.
+
+proc make_mi_re { mode thread frame type } {
+    global srcfile
+    global hex
+    global decimal
+    global thread_loop_line
+    global main_break_line
+    global thread_caller_line
+
+    set any "\[^\r\n\]*"
+
+    set mi_re ""
+
+    set thread_event_re "=thread-selected,id=\"$thread\""
+    set thread_answer_re "\\^done,new-thread-id=\"$thread\""
+
+    set frame_re(0) ",frame=\{level=\"0\",addr=\"$hex\",func=\"child_sub_function\",args=\\\[\\\],file=\"${any}${srcfile}\",fullname=\"${any}${srcfile}\",line=\"$thread_loop_line\",arch=\"$any\"\}"
+    set frame_re(1) ",frame=\{level=\"1\",addr=\"$hex\",func=\"child_function\",args=\\\[\{name=\"args\",value=\"0x0\"\}\\\],file=\"${any}${srcfile}\",fullname=\"${any}${srcfile}\",line=\"$thread_caller_line\",arch=\"$any\"\}"
+
+    # Special frame for main thread.
+    set frame_re(2) ",frame=\{level=\"0\",addr=\"$hex\",func=\"main\",args=\\\[\\\],file=\"${any}${srcfile}\",fullname=\"${any}${srcfile}\",line=\"${main_break_line}\",arch=\"$any\"\}"
+
+    if { $thread != -1 } {
+	if { $type == "event" } {
+	    append mi_re $thread_event_re
+	} elseif { $type == "response" } {
+	    append mi_re $thread_answer_re
+	} else {
+	    error "Invalid value for EVENT."
+	}
+    }
+
+    if { $frame != -1 } {
+	append mi_re $frame_re($frame)
+    }
+
+    if { $type == "event" } {
+	append mi_re "\r\n"
+    }
+
+    return $mi_re
+}
+
+# Make a regular expression to match the various inferior/thread/frame selection
+# events when issuing CLI commands inside MI.
+#
+# COMMAND is the CLI command that was sent to GDB, which will be output in the
+#   console output stream.
+# CLI_IN_MI_MODE indicates which method of CLI-in-MI command is used.  It can be
+#   either "direct" of "interpreter-exec".
+# MODE can be either "all-stop" or "non-stop", indicating which one is currently
+#   in use.
+# If EVENT is 1, expect a =thread-select MI event.
+# INF is the inferior number we are expecting GDB to switch to, or -1 if we are
+#   not expecting GDB to announce an inferior switch.
+# CLI_THREAD is the thread number as seen in the CLI (inferior-qualified) we are
+#   expecting GDB to switch to, or -1 if we are not expecting GDB to announce a
+#   thread switch.
+# MI_THREAD is the thread number as seen in the MI (global number) we are
+#   expecting GDB to switch to, or -1 if we are not expecting GDB to announce a
+#   thread switch.
+# FRAME is the frame number we are expecting GDB to switch to, or -1 if we are
+#   not expecting GDB to announce a frame switch.  See the FRAME_RE variable for
+#   details.
+
+proc make_cli_in_mi_re { command cli_in_mi_mode mode event inf cli_thread
+		         mi_thread frame  } {
+    global srcfile
+    global thread_loop_line
+    global main_break_line
+    global thread_caller_line
+
+    set any "\[^\r\n\]*"
+
+    set command_re [string_to_regexp $command]
+    set cli_in_mi_re "$command_re\r\n"
+
+    if { $cli_in_mi_mode == "direct" } {
+	append cli_in_mi_re "&\"$command_re\\\\n\"\r\n"
+    }
+
+    set frame_re(0) "~\"#0${any}child_sub_function${any}$srcfile:$thread_loop_line\\\\n\"\r\n~\"${thread_loop_line}${any}thread loop line \\\*/\\\\n\"\r\n"
+    set frame_re(1) "~\"#1${any}child_function \\\(args=0x0\\\) at ${any}$srcfile:$thread_caller_line\\\\n\"\r\n~\"$thread_caller_line${any}thread caller line \\\*/\\\\n\"\r\n"
+
+    # Special frame for main thread.
+    set frame_re(2) "~\"#0${any}main${any}\\\\n\"\r\n~\"${main_break_line}${any}\"\r\n"
+
+    if { $inf != -1 } {
+	append cli_in_mi_re "~\""
+	append cli_in_mi_re [make_cli_re $mode $inf -1 -1]
+	append cli_in_mi_re "\\\\n\"\r\n"
+    }
+
+    if { $cli_thread != "-1" } {
+	append cli_in_mi_re "~\""
+	append cli_in_mi_re [make_cli_re $mode -1 $cli_thread -1]
+	append cli_in_mi_re "\\\\n\"\r\n"
+    }
+
+    if { $frame != -1 } {
+	append cli_in_mi_re $frame_re($frame)
+    }
+
+    if { $event == 1 } {
+	append cli_in_mi_re [make_mi_re $mode $mi_thread $frame event]
+    }
+
+    append cli_in_mi_re "\\^done"
+
+    return $cli_in_mi_re
+}
+
+# Return the current value of the "scheduler-locking" parameter.
+
+proc show_scheduler_locking { } {
+    global gdb_prompt
+    global expect_out
+
+    set any "\[^\r\n\]*"
+
+    set test "show scheduler-locking"
+    gdb_test_multiple $test $test {
+	-re ".*Mode for locking scheduler during execution is \"(${any})\".\r\n$gdb_prompt " {
+	    pass $test
+	    return $expect_out(1,string)
+	}
+    }
+
+    error "Couldn't get current scheduler-locking value."
+}
+
+# Prepare inferior INF so it is in the state we expect (see comment at the top).
+
+proc test_continue_to_start { mode inf } {
+    global gdb_spawn_id
+    global mi_spawn_id
+    global gdb_main_spawn_id
+    global srcfile
+    global main_break_line
+    global thread_loop_line
+    global decimal
+    global gdb_prompt
+
+    set any "\[^\r\n\]*"
+
+    if { $gdb_spawn_id != $gdb_main_spawn_id } {
+	error "This should not happen."
+    }
+
+    with_test_prefix "inferior $inf" {
+	with_spawn_id $gdb_main_spawn_id {
+	    # Continue to the point where we know for sure the threads are
+	    # started.
+	    gdb_test "tbreak $srcfile:$main_break_line" \
+		"Temporary breakpoint ${any}" \
+		"set breakpoint in main"
+
+	    gdb_continue_to_breakpoint "main breakpoint"
+
+	    # Consume MI event output.
+	    with_spawn_id $mi_spawn_id {
+		if { $inf == 1 } {
+		    mi_expect_stop "breakpoint-hit" "main" "" "$srcfile" \
+			"$decimal" {"" "disp=\"del\""} "stop at breakpoint in main"
+		} else {
+		    mi_expect_stop "breakpoint-hit" "main" "" "$srcfile" \
+			"$decimal" {"" "disp=\"del\"" "locno=\"[0-9]+\""} "stop at breakpoint in main"
+		}
+	    }
+
+	    if { $mode == "all-stop" } {
+		set previous_schedlock_val [show_scheduler_locking]
+
+		# Set scheduler-locking on, so that we can control threads
+		# independently.
+		gdb_test_no_output "set scheduler-locking on"
+
+		# Continue each child thread to the point we want them to be.
+		foreach thread { 2 3 } {
+		    gdb_test "thread $inf.$thread" ".*" "select child thread $inf.$thread"
+
+		    gdb_test "tbreak $srcfile:$thread_loop_line" \
+			"Temporary breakpoint ${any}" \
+			"set breakpoint for thread $inf.$thread"
+
+		    gdb_continue_to_breakpoint "continue thread $inf.$thread to infinite loop breakpoint"
+
+		    # Consume MI output.
+		    with_spawn_id $mi_spawn_id {
+			if { $inf == 1} {
+			    mi_expect_stop "breakpoint-hit" "child_sub_function" \
+				"" "$srcfile" "$decimal" {"" "disp=\"del\""} \
+				"thread $inf.$thread stops MI"
+			} else {
+			    mi_expect_stop "breakpoint-hit" "child_sub_function" \
+				"" "$srcfile" "$decimal" {"" "disp=\"del\"" "locno=\"[0-9]+\""} \
+				"thread $inf.$thread stops MI"
+			}
+		    }
+		}
+
+		# Restore scheduler-locking to its original value.
+		gdb_test_no_output "set scheduler-locking $previous_schedlock_val"
+	    } else { # $mode == "non-stop"
+		# Put a thread-specific breakpoint for thread 2 of the current
+		# inferior.  We don't put a breakpoint for thread 3, since we
+		# want to let it run.
+		set test "set thread-specific breakpoint, thread $inf.2"
+		gdb_test_multiple "tbreak $srcfile:$thread_loop_line thread $inf.2" $test {
+		    -re "Temporary breakpoint ${any}\r\n$gdb_prompt " {
+			pass $test
+		    }
+		}
+
+		# Confirm the stop of thread $inf.2.
+		set test "thread $inf.2 stops CLI"
+		gdb_test_multiple "" $test {
+		    -re "Thread $inf.2 ${any} hit Temporary breakpoint ${any}\r\n$thread_loop_line${any}\r\n" {
+			pass $test
+		    }
+		}
+
+		# Consume MI output.
+		with_spawn_id $mi_spawn_id {
+		    if { $inf == 1} {
+			mi_expect_stop "breakpoint-hit" "child_sub_function" \
+			    "" "$srcfile" "$decimal" {"" "disp=\"del\""} \
+			    "thread $inf.2 stops MI"
+		    } else {
+			mi_expect_stop "breakpoint-hit" "child_sub_function" \
+			    "" "$srcfile" "$decimal" {"" "disp=\"del\"" "locno=\"[0-9]+\""} \
+			    "thread $inf.2 stops MI"
+		    }
+		}
+	    }
+	}
+    }
+}
+
+# Prepare the test environment.
+#
+# MODE can be either "all-stop" or "non-stop".
+
+proc_with_prefix test_setup { mode } {
+    global srcfile
+    global srcdir
+    global subdir
+    global gdb_main_spawn_id
+    global mi_spawn_id
+    global decimal
+    global binfile
+    global GDBFLAGS
+    global async
+
+    set any "\[^\r\n\]*"
+
+    save_vars { GDBFLAGS } {
+	if { $mode == "non-stop" } {
+	    set GDBFLAGS [concat $GDBFLAGS " -ex \"set non-stop 1\""]
+	}
+
+	if { [mi_clean_restart $binfile "separate-mi-tty"] != 0 } {
+	    return -1
+	}
+    }
+
+    if { [mi_runto_main] < 0 } {
+	return -1
+    }
+
+    # When using mi_expect_stop, we don't expect a prompt after the *stopped
+    # event, since the blocking commands are done from the CLI.  Setting async
+    # to 1 makes it not expect the prompt.
+    set async 1
+
+    with_spawn_id $gdb_main_spawn_id {
+	# Add the second inferior now.  While this is not mandatory, it allows
+	# us to assume that per-inferior thread numbering will be used,
+	# simplifying test_continue_to_start a bit (Thread 1.2 and not Thread 2).
+	gdb_test "add-inferior" "Added inferior 2 on connection .*" "add inferior 2"
+
+	# Prepare the first inferior for the test.
+	test_continue_to_start $mode 1
+
+	# Switch to and start the second inferior.
+	gdb_test "inferior 2" "\\\[Switching to inferior 2${any}\\\]" "switch to inferior 2"
+	gdb_load ${binfile}
+
+	# Doing "start" on the CLI generates a ton of MI output.  At some point,
+	# if we don't consume/match it, the buffer between GDB's MI channel and
+	# Expect will get full, GDB will block on a write system call and we'll
+	# deadlock, waiting for CLI output that will never arrive.  And then
+	# we're sad.  So instead of using gdb_test and expect CLI output, send
+	# the start command first, then consume MI output, and finally consume
+	# CLI output.
+	send_gdb "start\n"
+
+	with_spawn_id $mi_spawn_id {
+	    mi_expect_stop "breakpoint-hit" "main" "" "$srcfile" "$decimal" \
+		{"" "disp=\"del\"" "locno=\"[0-9]+\""} "main stop"
+	}
+
+	# Consume CLI output.
+	gdb_test "" "Temporary breakpoint.*Starting program.*"
+
+	# Prepare the second inferior for the test.
+	test_continue_to_start $mode 2
+    }
+
+    return 0
+}
+
+# Reset the selection to frame #0 of thread THREAD.
+
+proc reset_selection { thread } {
+    global gdb_main_spawn_id
+
+    set any "\[^\r\n\]*"
+
+    with_spawn_id $gdb_main_spawn_id {
+	gdb_test "thread $thread" \
+	    "\\\[Switching to thread $thread ${any}\\\].*" \
+	    "reset selection to thread $thread"
+	gdb_test "frame 0" ".*" "reset selection to frame 0"
+    }
+}
+
+# Flush Expect's internal buffers for both CLI and MI.
+#
+# The idea here is to send a command, and to consume all the characters that we
+# expect that command to output, including the following prompt.  Using gdb_test
+# and mi_gdb_test should do that.
+
+proc flush_buffers { } {
+    global gdb_main_spawn_id mi_spawn_id
+
+    with_spawn_id $gdb_main_spawn_id {
+	gdb_test "print 444" "= 444" "flush CLI"
+    }
+
+    with_spawn_id $mi_spawn_id {
+	mi_gdb_test "555-data-evaluate-expression 666" ".*done,value=\"666\"" "flush MI"
+    }
+}
+
+# Run a command on the current spawn id, to confirm that no output is pending
+# in Expect's internal buffer.  This is used to ensure that nothing was output
+# on the spawn id since the call to gdb_test/mi_gdb_test/flush_buffers.
+#
+# The key here is that the regexes use start-of-buffer anchors (^), ensuring
+# that they match the entire buffer, confirming that there was nothing in it
+# before.
+
+proc ensure_no_output { test } {
+    global gdb_spawn_id gdb_main_spawn_id mi_spawn_id
+    global decimal
+
+    if { $gdb_spawn_id == $gdb_main_spawn_id } {
+	# CLI
+	gdb_test "print 666" \
+		 "^\\\$$decimal = 666" \
+		 "$test, ensure no output CLI"
+    } elseif { $gdb_spawn_id == $mi_spawn_id } {
+	# MI
+	mi_gdb_test "777-data-evaluate-expression 888" \
+		    "^777-data-evaluate-expression 888\r\n777\\^done,value=\"888\"" \
+		    "$test, ensure no output MI"
+    } else {
+	error "Unexpected gdb_spawn_id value."
+    }
+}
+
+# Match a regular expression, or ensure that there was no output.
+#
+# If RE is non-empty, try to match the content of the program output (using the
+# current spawn_id) and pass/fail TEST accordingly.
+# If RE is empty, ensure that the program did not output anything.
+
+proc match_re_or_ensure_no_output { re test } {
+    if { $re != "" } {
+	gdb_expect {
+	    -re "$re" {
+		pass $test
+	    }
+
+	    default {
+		fail $test
+	    }
+	}
+    } else {
+	ensure_no_output $test
+    }
+}
+
+# Test selecting an inferior from CLI.
+
+proc_with_prefix test_cli_inferior { mode } {
+    global gdb_main_spawn_id mi_spawn_id
+
+    reset_selection "1.1"
+
+    set mi_re [make_mi_re $mode 4 2 event]
+    set cli_re [make_cli_re $mode 2 2.1 2]
+
+    flush_buffers
+
+    # Do the 'inferior' command.
+    with_spawn_id $gdb_main_spawn_id {
+	gdb_test "inferior 2" $cli_re "CLI select inferior"
+    }
+
+    with_spawn_id $mi_spawn_id {
+	match_re_or_ensure_no_output $mi_re "event on MI"
+    }
+
+    # Do the 'inferior' command on the currently selected inferior.  For now,
+    # GDB naively re-outputs everything.
+    with_spawn_id $gdb_main_spawn_id {
+	gdb_test "inferior 2" $cli_re "CLI select inferior again"
+    }
+
+    with_spawn_id $mi_spawn_id {
+	match_re_or_ensure_no_output $mi_re "event on MI again"
+    }
+}
+
+# Test thread selection from CLI.
+
+proc_with_prefix test_cli_thread { mode } {
+    global gdb_main_spawn_id
+    global mi_spawn_id
+
+    set any "\[^\r\n\]*"
+
+    reset_selection "1.1"
+    flush_buffers
+
+    with_test_prefix "thread 1.2" {
+	# Do the 'thread' command to select a stopped thread.
+
+	set mi_re [make_mi_re $mode 2 0 event]
+	set cli_re [make_cli_re $mode -1 1.2 0]
+
+	with_spawn_id $gdb_main_spawn_id {
+	    gdb_test "thread 1.2" $cli_re "select thread"
+	}
+
+	with_spawn_id $mi_spawn_id {
+	    match_re_or_ensure_no_output $mi_re "select thread, event on MI "
+	}
+
+	# Do the 'thread' command to select the same thread.  We shouldn't receive
+	# an event on MI, since we won't actually switch thread.
+
+	set mi_re ""
+
+	with_spawn_id $gdb_main_spawn_id {
+	    gdb_test "thread 1.2" $cli_re "select thread again"
+	}
+
+	with_spawn_id $mi_spawn_id {
+	    match_re_or_ensure_no_output $mi_re "select thread, event on MI again"
+	}
+
+	# Try the 'thread' command without arguments.
+
+	set cli_re "\\\[Current thread is 1\\.2.*\\\]"
+	set mi_re ""
+
+	with_spawn_id $gdb_main_spawn_id {
+	    gdb_test "thread" $cli_re "thread without args"
+	}
+
+	with_spawn_id $mi_spawn_id {
+	    match_re_or_ensure_no_output $mi_re "thread without args, event on MI"
+	}
+    }
+
+    with_test_prefix "thread 1.3" {
+	# Do the 'thread' command to select the third thread, stopped on all-stop,
+	# running on non-stop.
+
+	if { $mode == "all-stop" } {
+	    set cli_re [make_cli_re $mode -1 1.3 0]
+	    set mi_re [make_mi_re $mode 3 0 event]
+	} else {
+	    set cli_re [make_cli_re $mode -1 1.3 -1]
+	    set mi_re [make_mi_re $mode 3 -1 event]
+	}
+
+	with_spawn_id $gdb_main_spawn_id {
+	    gdb_test "thread 1.3" $cli_re "select thread"
+	}
+
+	with_spawn_id $mi_spawn_id {
+	    match_re_or_ensure_no_output $mi_re "select thread, event on MI"
+	}
+
+	# Do the 'thread' command to select the third thread again.  Again, we
+	# shouldn't receive an event on MI.
+
+	set mi_re ""
+
+	with_spawn_id $gdb_main_spawn_id {
+	    gdb_test "thread 1.3" $cli_re "select thread again"
+	}
+
+	with_spawn_id $mi_spawn_id {
+	    match_re_or_ensure_no_output $mi_re "select thread again, event on MI"
+	}
+
+	# Try the 'thread' command without arguments.
+
+	set cli_re "\\\[Current thread is 1\\.3 ${any}\\\]"
+	set mi_re ""
+
+	with_spawn_id $gdb_main_spawn_id {
+	    gdb_test "thread" $cli_re "thread without args"
+	}
+
+	with_spawn_id $mi_spawn_id {
+	    match_re_or_ensure_no_output $mi_re "thread without args, event on MI"
+	}
+    }
+
+    # Idea for the future: selecting a thread in a different inferior.  For now,
+    # GDB doesn't show an inferior switch, but if it did, it would be a nice
+    # place to test it.
+}
+
+# Test frame selection from CLI.
+
+proc_with_prefix test_cli_frame { mode } {
+    global gdb_main_spawn_id mi_spawn_id
+
+    with_test_prefix "thread 1.2" {
+	reset_selection "1.2"
+	flush_buffers
+
+	# Do the 'frame' command to select frame 1.
+
+	set mi_re [make_mi_re $mode 2 1 event]
+	set cli_re [make_cli_re $mode -1 -1 1]
+
+	with_spawn_id $gdb_main_spawn_id {
+	    gdb_test "frame 1" $cli_re "select frame 1"
+	}
+
+	with_spawn_id $mi_spawn_id {
+	    match_re_or_ensure_no_output $mi_re "select frame 1, event on MI"
+	}
+
+	# Do the 'frame' command to select the same frame.  This time we don't
+	# expect an event on MI, since we won't actually change frame.
+
+	set mi_re ""
+
+	with_spawn_id $gdb_main_spawn_id {
+	    gdb_test "frame 1" $cli_re "select frame 1 again"
+	}
+
+	with_spawn_id $mi_spawn_id {
+	    match_re_or_ensure_no_output $mi_re "select frame 1 again, event on MI"
+	}
+
+	# Do the 'frame' command without arguments.  We shouldn't see anything on MI.
+
+	with_spawn_id $gdb_main_spawn_id {
+	    gdb_test "frame" $cli_re "frame without args"
+	}
+
+	with_spawn_id $mi_spawn_id {
+	    match_re_or_ensure_no_output $mi_re "frame without args, event on MI"
+	}
+    }
+
+    with_test_prefix "thread 1.3" {
+	# Now, try the 'frame' command on thread 3, which is running if we are in
+	# non-stop mode.
+	reset_selection "1.3"
+	flush_buffers
+
+	if {$mode == "all-stop"} {
+	    set mi_re [make_mi_re $mode 3 1 event]
+	    set cli_re [make_cli_re $mode -1 -1 1]
+	} elseif {$mode == "non-stop"} {
+	    set mi_re ""
+	    set cli_re "Selected thread is running\\."
+	}
+
+	with_spawn_id $gdb_main_spawn_id {
+	    gdb_test "frame 1" $cli_re "select frame 1"
+	}
+
+	with_spawn_id $mi_spawn_id {
+	    match_re_or_ensure_no_output $mi_re "select frame 1, event on MI"
+	}
+
+	# Do the 'frame' command without arguments.
+
+	if { $mode == "non-stop" } {
+	    set cli_re "No stack\\."
+	}
+	set mi_re ""
+
+	with_spawn_id $gdb_main_spawn_id {
+	    gdb_test "frame" $cli_re "frame without args"
+	}
+
+	with_spawn_id $mi_spawn_id {
+	    match_re_or_ensure_no_output $mi_re "frame without args, event on MI"
+	}
+    }
+}
+
+# Test frame selection from CLI with the select-frame command.
+
+proc_with_prefix test_cli_select_frame { mode } {
+    global gdb_main_spawn_id mi_spawn_id expect_out
+
+    with_test_prefix "thread 1.2" {
+	reset_selection "1.2"
+	flush_buffers
+
+	# Do the 'select-frame' command to select frame 1.
+
+	set mi_re [make_mi_re $mode 2 1 event]
+
+	with_spawn_id $gdb_main_spawn_id {
+	    gdb_test_no_output "select-frame 1" "select frame 1"
+	}
+
+	with_spawn_id $mi_spawn_id {
+	    match_re_or_ensure_no_output $mi_re "select frame 1, event on MI"
+	}
+
+	# Do the 'select-frame' command to select the same frame.  This time we expect to
+	# event on MI, since we won't actually change frame.
+
+	set mi_re ""
+
+	with_spawn_id $gdb_main_spawn_id {
+	    gdb_test_no_output "select-frame 1" "select frame 1 again"
+	}
+
+	with_spawn_id $mi_spawn_id {
+	    match_re_or_ensure_no_output $mi_re "select frame 1 again, event on MI"
+	}
+    }
+
+    with_test_prefix "thread 1.3" {
+	# Now, try the 'select-frame' command on thread 3, which is running if we are in
+	# non-stop mode.
+	reset_selection "1.3"
+	flush_buffers
+
+	if {$mode == "all-stop"} {
+	    set mi_re [make_mi_re $mode 3 1 event]
+	} elseif {$mode == "non-stop"} {
+	    set mi-re ""
+	    set cli_re "Selected thread is running\\."
+	}
+
+	with_spawn_id $gdb_main_spawn_id {
+	    if { $mode == "all-stop" } {
+		gdb_test_no_output "select-frame 1" "select frame 1"
+	    } else {
+		gdb_test "select-frame 1" $cli_re "select frame 1"
+	    }
+	}
+
+	with_spawn_id $mi_spawn_id {
+	    match_re_or_ensure_no_output $mi_re "select frame 1, event on MI"
+	}
+    }
+}
+
+# Test doing an up and then down command from CLI.
+
+proc_with_prefix test_cli_up_down { mode } {
+    global gdb_main_spawn_id mi_spawn_id
+
+    reset_selection "1.2"
+    flush_buffers
+
+    # Try doing an 'up'.
+
+    set mi_re [make_mi_re $mode 2 1 event]
+    set cli_re [make_cli_re $mode -1 -1 1]
+
+    with_spawn_id $gdb_main_spawn_id {
+	gdb_test "up" $cli_re "frame up"
+    }
+
+    with_spawn_id $mi_spawn_id {
+	match_re_or_ensure_no_output $mi_re "frame up, event on MI"
+    }
+
+    # Try doing a 'down'.
+
+    set mi_re [make_mi_re $mode 2 0 event]
+    set cli_re [make_cli_re $mode -1 -1 0]
+
+    with_spawn_id $gdb_main_spawn_id {
+	gdb_test "down" $cli_re "frame down"
+    }
+
+    with_spawn_id $mi_spawn_id {
+	match_re_or_ensure_no_output $mi_re "frame down, event on MI"
+    }
+}
+
+# Test selecting a thread from MI.
+
+proc_with_prefix test_mi_thread_select { mode } {
+    global gdb_main_spawn_id mi_spawn_id
+
+    reset_selection "1.1"
+    flush_buffers
+
+    with_test_prefix "thread 1.2" {
+	# Do the '-thread-select' command to select a stopped thread.
+
+	set mi_re [make_mi_re $mode 2 0 response]
+	set cli_re [make_cli_re $mode -1 1.2 0]
+
+	with_spawn_id $mi_spawn_id {
+	    mi_gdb_test "-thread-select 2" $mi_re "-thread-select"
+	}
+
+	with_spawn_id $gdb_main_spawn_id {
+	    match_re_or_ensure_no_output "$cli_re\r\n" "-thread-select, event on CLI"
+	}
+
+	# Do the '-thread-select' command to select the same thread.  We
+	# shouldn't receive an event on CLI, since we won't actually switch
+	# thread.
+
+	set cli_re ""
+
+	with_spawn_id $mi_spawn_id {
+	    mi_gdb_test "-thread-select 2" $mi_re "-thread-select again"
+	}
+
+	with_spawn_id $gdb_main_spawn_id {
+	    match_re_or_ensure_no_output $cli_re "-thread-select again, event on CLI"
+	}
+    }
+
+    with_test_prefix "thread 1.3" {
+	# Do the '-thread-select' command to select the third thread, stopped on all-stop,
+	# running on non-stop.
+
+	if { $mode == "all-stop" } {
+	    set mi_re [make_mi_re $mode 3 0 response]
+	    set cli_re [make_cli_re $mode -1 1.3 0]
+	} else {
+	    set mi_re [make_mi_re $mode 3 -1 response]
+	    set cli_re [make_cli_re $mode -1 1.3 -1]
+	}
+
+	with_spawn_id $mi_spawn_id {
+	    mi_gdb_test "-thread-select 3" $mi_re "-thread-select"
+	}
+
+	with_spawn_id $gdb_main_spawn_id {
+	    match_re_or_ensure_no_output "$cli_re\r\n" "-thread-select, event on CLI"
+	}
+
+	# Do the 'thread' command to select the third thread again.  Again, we
+	# shouldn't receive an event on MI.
+
+	set cli_re ""
+
+	with_spawn_id $mi_spawn_id {
+	    mi_gdb_test "-thread-select 3" $mi_re "-thread-select again"
+	}
+
+	with_spawn_id $gdb_main_spawn_id {
+	    match_re_or_ensure_no_output $cli_re "-thread-select again, event on CLI"
+	}
+    }
+
+    with_test_prefix "thread 1.2 with --thread 2" {
+	# Test selecting a thread from MI with a --thread option.  This test
+	# verifies that even if the thread GDB would switch to is the same as
+	# the thread specified with --thread, an event is still sent to CLI.
+	# In this case this is thread 1.2
+
+	set mi_re [make_mi_re $mode 2 0 response]
+	set cli_re [make_cli_re $mode -1 1.2 0]
+
+	with_spawn_id $mi_spawn_id {
+	    mi_gdb_test "-thread-select --thread 2 2" $mi_re "-thread-select"
+	}
+
+	with_spawn_id $gdb_main_spawn_id {
+	    match_re_or_ensure_no_output "$cli_re\r\n" "-thread-select, event on cli"
+	}
+    }
+
+    with_test_prefix "thread 1.2 with --thread 3" {
+	# Test selecting a thread from MI with a --thread option.
+	# This test verifies that when different thread numbers are
+	# passed to the --thread option and the underlying
+	# -thread-select command, the correct thread is selected.
+	# In this case this is thread 1.2
+
+	reset_selection "1.1"
+
+	set mi_re [make_mi_re $mode 2 0 response]
+	set cli_re [make_cli_re $mode -1 1.2 0]
+
+	with_spawn_id $mi_spawn_id {
+	    mi_gdb_test "-thread-select --thread 3 2" $mi_re "-thread-select"
+	}
+
+	with_spawn_id $gdb_main_spawn_id {
+	    match_re_or_ensure_no_output "$cli_re\r\n" "-thread-select, event on cli"
+	}
+    }
+
+    # Idea for the future: selecting a thread in a different inferior.  For now,
+    # GDB doesn't show an inferior switch, but if it did, it would be a nice
+    # place to test it.
+}
+
+proc_with_prefix test_mi_stack_select_frame { mode } {
+    global gdb_main_spawn_id mi_spawn_id
+
+    with_test_prefix "thread 1.2" {
+	reset_selection "1.2"
+	flush_buffers
+
+	# Do the '-stack-select-frame' command to select frame 1.
+
+	set mi_re "\\^done"
+	set cli_re [make_cli_re $mode -1 -1 1]
+
+	with_spawn_id $mi_spawn_id {
+	    mi_gdb_test "-stack-select-frame 1" $mi_re "-stack-select-frame"
+	}
+
+	with_spawn_id $gdb_main_spawn_id {
+	    match_re_or_ensure_no_output "$cli_re\r\n" "-stack-select-frame, event on CLI"
+	}
+
+	# Do the '-stack-select-frame' command to select the same frame.  This time we don't
+	# expect an event on CLI, since we won't actually change frame.
+
+	set cli_re ""
+
+	with_spawn_id $mi_spawn_id {
+	    mi_gdb_test "-stack-select-frame 1" $mi_re "-stack-select-frame again"
+	}
+
+	with_spawn_id $gdb_main_spawn_id {
+	    match_re_or_ensure_no_output $cli_re "-stack-select-frame again, event on CLI"
+	}
+
+	# Now use the '-stack-select-frame' command with the --frame
+	# option, this verifies that even when the frame GDB would
+	# swith to is the same as the frame specified with --frame, an
+	# event is still sent to the CLI.
+
+	set cli_re [make_cli_re $mode -1 -1 0]
+
+	with_spawn_id $mi_spawn_id {
+	    mi_gdb_test "-stack-select-frame --thread 2 --frame 0 0" $mi_re
+	}
+
+	with_spawn_id $gdb_main_spawn_id {
+	    match_re_or_ensure_no_output "$cli_re\r\n" "-stack-select-frame with --frame 0, event on CLI"
+	}
+
+	# Now use the '-stack-select-frame' command with the --frame
+	# option, this verifies that the correct event is sent to the
+	# CLI when the frame specified with --frame is different to
+	# the actual frame selected.
+
+	set cli_re [make_cli_re $mode -1 -1 1]
+
+	with_spawn_id $mi_spawn_id {
+	    mi_gdb_test "-stack-select-frame --thread 2 --frame 2 1" $mi_re
+	}
+
+	with_spawn_id $gdb_main_spawn_id {
+	    match_re_or_ensure_no_output "$cli_re\r\n" "-stack-select-frame with --frame 2, event on CLI"
+	}
+    }
+
+    with_test_prefix "thread 1.3" {
+	# Now, try the '-stack-select-frame' command on thread 3, which is
+	# running if we are in non-stop mode.
+	reset_selection "1.3"
+	flush_buffers
+
+	if {$mode == "all-stop"} {
+	    set mi_re "\\^done"
+	    set cli_re [make_cli_re $mode -1 -1 1]
+	    append cli_re "\r\n"
+	} elseif {$mode == "non-stop"} {
+	    set cli_re ""
+	    set mi_re "\\^error,msg=\"Selected thread is running\\.\""
+	}
+
+	with_spawn_id $mi_spawn_id {
+	    mi_gdb_test "-stack-select-frame 1" $mi_re "-stack-select-frame"
+	}
+
+	with_spawn_id $gdb_main_spawn_id {
+	    match_re_or_ensure_no_output $cli_re "-stack-select-frame, event on CLI"
+	}
+    }
+}
+
+proc make_cli_in_mi_command { cli_in_mi_mode command } {
+    if { $cli_in_mi_mode == "direct" } {
+	return $command
+    } elseif { $cli_in_mi_mode == "interpreter-exec" } {
+	return "-interpreter-exec console \"$command\""
+    } else {
+	error "Invalid value for CLI_IN_MI_MODE."
+    }
+}
+
+# Test selecting the inferior using a CLI command in the MI channel.
+
+proc_with_prefix test_cli_in_mi_inferior { mode cli_in_mi_mode } {
+    global gdb_main_spawn_id mi_spawn_id
+
+    reset_selection "1.1"
+    flush_buffers
+
+    set command [make_cli_in_mi_command $cli_in_mi_mode "inferior 2"]
+
+    set mi_re [make_cli_in_mi_re $command $cli_in_mi_mode $mode 1 2 2.1 4 2]
+    set cli_re [make_cli_re $mode 2 "2.1" 2]
+
+    with_spawn_id $mi_spawn_id {
+	mi_gdb_test $command $mi_re "select inferior"
+    }
+
+    with_spawn_id $gdb_main_spawn_id {
+	match_re_or_ensure_no_output "$cli_re\r\n" "select inferior, event on CLI"
+    }
+
+    # Do the 'inferior' command on the currently selected inferior.  For now,
+    # GDB naively re-outputs everything.
+    with_spawn_id $mi_spawn_id {
+	mi_gdb_test $command $mi_re "select inferior again"
+    }
+
+    with_spawn_id $gdb_main_spawn_id {
+	match_re_or_ensure_no_output $cli_re "select inferior again, event on CLI"
+    }
+}
+
+# Test selecting the thread using a CLI command in the MI channel.
+
+proc_with_prefix test_cli_in_mi_thread { mode cli_in_mi_mode } {
+    global gdb_main_spawn_id mi_spawn_id
+
+    reset_selection "1.1"
+    flush_buffers
+
+    with_test_prefix "thread 1.2" {
+	# Do the 'thread' command to select a stopped thread.
+
+	set command [make_cli_in_mi_command $cli_in_mi_mode "thread 1.2"]
+	set mi_re [make_cli_in_mi_re $command $cli_in_mi_mode $mode 1 -1 1.2 2 0]
+	set cli_re [make_cli_re $mode -1 1.2 0]
+
+	with_spawn_id $mi_spawn_id {
+	    mi_gdb_test $command $mi_re "select thread"
+	}
+
+	with_spawn_id $gdb_main_spawn_id {
+	    match_re_or_ensure_no_output "$cli_re\r\n" "select thread, event on CLI"
+	}
+
+	# Do the 'thread' command to select the same thread.  We shouldn't
+	# receive an event on CLI, since we won't actually switch thread.
+
+	set mi_re [make_cli_in_mi_re $command $cli_in_mi_mode $mode 0 -1 1.2 2 0]
+	set cli_re ""
+
+	with_spawn_id $mi_spawn_id {
+	    mi_gdb_test $command $mi_re "select thread again"
+	}
+
+	with_spawn_id $gdb_main_spawn_id {
+	    match_re_or_ensure_no_output $cli_re "select thread again, event on CLI"
+	}
+
+	# Try the 'thread' command without arguments.
+
+	set command [make_cli_in_mi_command $cli_in_mi_mode "thread"]
+
+	set mi_re "${command}.*~\"\\\[Current thread is 1\\.2.*\\\]\\\\n\".*\\^done"
+	set cli_re ""
+
+	with_spawn_id $mi_spawn_id {
+	    mi_gdb_test $command $mi_re "thread without args"
+	}
+
+	with_spawn_id $gdb_main_spawn_id {
+	    match_re_or_ensure_no_output $cli_re "thread without args, event on CLI"
+	}
+    }
+
+    with_test_prefix "thread 1.3" {
+	# Do the 'thread' command to select the third thread, stopped on
+	# all-stop, running on non-stop.
+
+	set command [make_cli_in_mi_command $cli_in_mi_mode "thread 1.3"]
+	if { $mode == "all-stop" } {
+	    set mi_re [make_cli_in_mi_re $command $cli_in_mi_mode $mode 1 -1 1.3 3 0]
+	    set cli_re [make_cli_re $mode -1 "1.3" 0]
+	} else {
+	    set mi_re [make_cli_in_mi_re $command $cli_in_mi_mode $mode 1 -1 1.3 3 -1]
+	    set cli_re [make_cli_re $mode -1 "1.3" -1]
+	}
+
+	with_spawn_id $mi_spawn_id {
+	    mi_gdb_test $command $mi_re "select thread"
+	}
+
+	with_spawn_id $gdb_main_spawn_id {
+	    match_re_or_ensure_no_output "$cli_re\r\n" "select thread, event on CLI"
+	}
+
+	# Do the 'thread' command to select the third thread again.  Again, we
+	# shouldn't receive an event on MI.
+
+	if { $mode == "all-stop" } {
+	    set mi_re [make_cli_in_mi_re $command $cli_in_mi_mode $mode 0 -1 1.3 3 0]
+	} else {
+	    set mi_re [make_cli_in_mi_re $command $cli_in_mi_mode $mode 0 -1 1.3 3 -1]
+	}
+	set cli_re ""
+
+	with_spawn_id $mi_spawn_id {
+	    mi_gdb_test $command $mi_re "select thread again"
+	}
+
+	with_spawn_id $gdb_main_spawn_id {
+	    match_re_or_ensure_no_output $cli_re "select thread again, event on CLI"
+	}
+
+	# Try the 'thread' command without arguments.
+
+	set command [make_cli_in_mi_command $cli_in_mi_mode "thread"]
+
+	set mi_re "${command}.*~\"\\\[Current thread is 1\\.3.*\\\]\\\\n\".*\\^done"
+	set cli_re ""
+
+	with_spawn_id $mi_spawn_id {
+	    mi_gdb_test $command $mi_re "thread without args"
+	}
+
+	with_spawn_id $gdb_main_spawn_id {
+	    match_re_or_ensure_no_output $cli_re "thread without args, event on CLI"
+	}
+    }
+
+    # Idea for the future: selecting a thread in a different inferior.  For now,
+    # GDB doesn't show an inferior switch, but if it did, it would be a nice
+    # place to test it.
+}
+
+# Test selecting the frame using a CLI command in the MI channel.
+
+proc_with_prefix test_cli_in_mi_frame { mode cli_in_mi_mode } {
+    global gdb_main_spawn_id mi_spawn_id
+
+    with_test_prefix "thread 1.2" {
+	reset_selection "1.2"
+	flush_buffers
+
+	# Do the 'frame' command to select frame 1.
+
+	set command [make_cli_in_mi_command $cli_in_mi_mode "frame 1"]
+	set cli_re [make_cli_re $mode -1 -1 1]
+	set mi_re [make_cli_in_mi_re $command $cli_in_mi_mode $mode 1 -1 -1 2 1]
+
+	with_spawn_id $mi_spawn_id {
+	    mi_gdb_test $command $mi_re "select frame 1"
+	}
+
+	with_spawn_id $gdb_main_spawn_id {
+	    match_re_or_ensure_no_output "$cli_re\r\n" "select frame 1, event on CLI"
+	}
+
+	# Do the 'frame' command to select the same frame.  This time we don't
+	# expect an event on MI, since we won't actually change frame.
+
+	set mi_re [make_cli_in_mi_re $command $cli_in_mi_mode $mode 0 -1 -1 2 1]
+	set cli_re ""
+
+	with_spawn_id $mi_spawn_id {
+	    mi_gdb_test $command $mi_re "select frame 1 again"
+	}
+
+	with_spawn_id $gdb_main_spawn_id {
+	    match_re_or_ensure_no_output $cli_re "select frame 1 again, event on CLI"
+	}
+
+	# Do the 'frame' command without arguments.  We shouldn't see anything on MI.
+
+	set command [make_cli_in_mi_command $cli_in_mi_mode "frame"]
+	set mi_re [make_cli_in_mi_re $command $cli_in_mi_mode $mode 0 -1 -1 2 1]
+
+	with_spawn_id $mi_spawn_id {
+	    mi_gdb_test $command $mi_re "frame without args"
+	}
+
+	with_spawn_id $gdb_main_spawn_id {
+	    match_re_or_ensure_no_output $cli_re "frame without args, event on CLI"
+	}
+    }
+
+    with_test_prefix "thread 1.3" {
+	# Now, try the 'frame' command on thread 3, which is running if we are in
+	# non-stop mode.
+	reset_selection "1.3"
+	flush_buffers
+
+	set command [make_cli_in_mi_command $cli_in_mi_mode "frame 1"]
+	if {$mode == "all-stop"} {
+	    set cli_re [make_cli_re $mode -1 -1 1]
+	    append cli_re "\r\n"
+	    set mi_re [make_cli_in_mi_re $command $cli_in_mi_mode $mode 1 -1 -1 3 1]
+	} elseif {$mode == "non-stop"} {
+	    set cli_re ""
+	    set mi_re "\\^error,msg=\"Selected thread is running\\.\".*"
+	}
+
+	with_spawn_id $mi_spawn_id {
+	    mi_gdb_test $command $mi_re "select frame 1"
+	}
+
+	with_spawn_id $gdb_main_spawn_id {
+	    match_re_or_ensure_no_output $cli_re "select frame 1, event on CLI"
+	}
+
+	# Do the 'frame' command without arguments.
+
+	set command [make_cli_in_mi_command $cli_in_mi_mode "frame"]
+	if { $mode == "all-stop" } {
+	    set mi_re [make_cli_in_mi_re $command $cli_in_mi_mode $mode 0 -1 -1 -1 1]
+	} else {
+	    set mi_re "\\^error,msg=\"No stack\\.\""
+	}
+	set cli_re ""
+
+	with_spawn_id $mi_spawn_id {
+	    mi_gdb_test $command $mi_re "frame without args"
+	}
+
+	with_spawn_id $gdb_main_spawn_id {
+	    match_re_or_ensure_no_output $cli_re "frame without args, event on CLI"
+	}
+    }
+}
+
+foreach_with_prefix mode { "all-stop" "non-stop" } {
+    set test "setup done"
+    if { [test_setup $mode] == -1 } {
+	fail $test
+	continue
+    }
+    pass $test
+
+    # Test selecting inferior, thread and frame from CLI
+
+    test_cli_inferior $mode
+    test_cli_thread $mode
+    test_cli_frame $mode
+    test_cli_select_frame $mode
+    test_cli_up_down $mode
+
+    # Test selecting thread and frame from MI
+
+    test_mi_thread_select $mode
+    test_mi_stack_select_frame $mode
+
+    # Test some CLI commands sent through MI, both with a "direct" command,
+    # such as "thread 1", and with -interpreter-exec, such as
+    # '-interpreter-exec console "thread 1"'.
+
+    foreach_with_prefix exec_mode {"direct" "interpreter-exec"} {
+	test_cli_in_mi_inferior $mode $exec_mode
+	test_cli_in_mi_thread $mode $exec_mode
+	test_cli_in_mi_frame $mode $exec_mode
+    }
+}

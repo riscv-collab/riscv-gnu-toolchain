@@ -1,0 +1,334 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test debuginfod functionality
+
+standard_testfile
+
+load_lib dwarf.exp
+load_lib debuginfod-support.exp
+
+require allow_debuginfod_tests
+
+set sourcetmp [standard_output_file tmp-${srcfile}]
+set outputdir [standard_output_file {}]
+
+# Make a copy source file that we can move around
+if { [catch {file copy -force ${srcdir}/${subdir}/${srcfile} \
+	     [standard_output_file ${sourcetmp}]}] != 0 } {
+    error "create temporary file"
+    return -1
+}
+
+if { [gdb_compile "$sourcetmp" "$binfile" executable {debug build-id}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+if { [gdb_compile "$sourcetmp" "${binfile}2" executable {debug build-id}] != "" } {
+    fail "compile"
+    return -1
+}
+
+# Write some assembly that just has a .gnu_debugaltlink section.
+# Copied from testsuite/gdb.dwarf2/dwzbuildid.exp.
+proc write_just_debugaltlink {filename dwzname buildid} {
+    set asm_file [standard_output_file $filename]
+
+    Dwarf::assemble $asm_file {
+	upvar dwzname dwzname
+	upvar buildid buildid
+
+	gnu_debugaltlink $dwzname $buildid
+
+	# Only the DWARF reader checks .gnu_debugaltlink, so make sure
+	# there is a bit of DWARF in here.
+	cu {} {
+	    compile_unit {{language @DW_LANG_C}} {
+	    }
+	}
+    }
+}
+
+# Write some DWARF that also sets the buildid.
+# Copied from testsuite/gdb.dwarf2/dwzbuildid.exp.
+proc write_dwarf_file {filename buildid {value 99}} {
+    set asm_file [standard_output_file $filename]
+
+    Dwarf::assemble $asm_file {
+	declare_labels int_label int_label2
+
+	upvar buildid buildid
+	upvar value value
+
+	build_id $buildid
+
+	cu {} {
+	    compile_unit {{language @DW_LANG_C}} {
+		int_label2: base_type {
+		    {name int}
+		    {byte_size 4 sdata}
+		    {encoding @DW_ATE_signed}
+		}
+
+		constant {
+		    {name the_int}
+		    {type :$int_label2}
+		    {const_value $value data1}
+		}
+	    }
+	}
+    }
+}
+
+set corefile [standard_output_file "corefile"]
+
+# Setup the global variable DEBUGDIR as a directory containing the
+# debug information for the test executable.
+#
+# Run some tests to confirm that GDB is not able to find any of the
+# debug information from DEBUGDIR when the debuginfod server is not
+# running.
+proc_with_prefix no_url { } {
+    global binfile outputdir debugdir
+
+    setenv DEBUGINFOD_URLS ""
+
+    # Test that GDB cannot find source without debuginfod.
+    clean_restart $binfile
+    gdb_test_no_output "set substitute-path $outputdir /dev/null" \
+	"set substitute-path"
+    gdb_test "list" ".*No such file or directory.*"
+
+    # Strip symbols into separate file and move it so GDB cannot find it
+    # without debuginfod.
+    if { [gdb_gnu_strip_debug $binfile ""] != 0 } {
+	fail "strip debuginfo"
+	return -1
+    }
+
+    set debugdir [standard_output_file "debug"]
+    set debuginfo [standard_output_file "fetch_src_and_symbols.debug"]
+
+    file mkdir $debugdir
+    file rename -force $debuginfo $debugdir
+
+    # Test that GDB cannot find symbols without debuginfod.
+    clean_restart $binfile
+    gdb_test "file" ".*No symbol file.*"
+
+    set buildid "01234567890abcdef0123456"
+
+    write_just_debugaltlink ${binfile}_has_altlink.S ${binfile}_dwz.o \
+	$buildid
+    write_dwarf_file ${binfile}_dwz.S $buildid
+
+    if {[gdb_compile ${binfile}_has_altlink.S ${binfile}_alt.o object \
+	     nodebug] != ""} {
+	fail "compile main with altlink"
+	return -1
+    }
+
+    if {[gdb_compile ${binfile}_dwz.S ${binfile}_dwz.o object \
+	     nodebug] != ""} {
+	fail "compile altlink"
+	return -1
+    }
+
+    file rename -force ${binfile}_dwz.o $debugdir
+
+    # Test that GDB cannot find dwz without debuginfod.
+    clean_restart
+    gdb_test "file ${binfile}_alt.o" \
+	".*could not find '.gnu_debugaltlink'.*" \
+	"file [file tail ${binfile}_alt.o]"
+
+    # Generate a core file and test that GDB cannot find the
+    # executable.
+    clean_restart ${binfile}2
+    if ![runto_main] {
+	return -1
+    }
+
+    gdb_breakpoint [gdb_get_line_number "Breakpoint here"]
+    gdb_continue_to_breakpoint "stop at last line of main"
+
+    gdb_test "generate-core-file $::corefile" "Saved corefile $::corefile" \
+	"file [file tail $::corefile] gen"
+    file rename -force ${binfile}2 $debugdir
+
+    clean_restart
+    gdb_test "core $::corefile" ".*in ?? ().*" "file [file tail $::corefile]"
+}
+
+# Test that GDB prints the debuginfod URLs when loading files.  URLS
+# is the string set in the DEBUGINFOD_URLS environment variable.
+# PATTERN_RE is the URLs pattern we expect to see out of GDB.  TEST is
+# the test name.
+
+proc test_urls {urls pattern_re test} {
+    setenv DEBUGINFOD_URLS $urls
+    clean_restart
+
+    if {$pattern_re != ""} {
+	set urls_re " +${pattern_re}\r\n"
+    } else {
+	set urls_re ""
+    }
+
+    # Use "with confirm off" to avoid having to deal with the
+    # "Enable debuginfod for this session? (y or [n])" question.
+    gdb_test "with confirm off -- file $::binfile" \
+	"following URLs:\r\n${urls_re}Debuginfod .*" \
+	$test
+}
+
+# Used as a replacement for delete_breakpoints while calling
+# runto_main in one case where we don't want to delete all the
+# breakpoints.
+proc disable_delete_breakpoints {} {
+}
+
+# Uses the global variables DEBUGDIR and DB which are setup elsewhere
+# in this script.
+#
+# Start debuginfod server, and confirm that GDB can now find all the
+# expected debug information.
+proc_with_prefix local_url { } {
+    global binfile outputdir debugdir db
+
+    set url [start_debuginfod $db $debugdir]
+    if { $url == "" } {
+	unresolved "failed to start debuginfod server"
+	return
+    }
+
+    # Point the client to the server.
+    setenv DEBUGINFOD_URLS $url
+
+    # GDB should now find the symbol and source files.
+    clean_restart
+    gdb_test_no_output "set debuginfod enabled on" \
+	"enabled debuginfod for initial test"
+    gdb_load $binfile
+    gdb_test_no_output "set substitute-path $outputdir /dev/null" \
+	"set substitute-path"
+
+    set lineno [gdb_get_line_number "Breakpoint here"]
+    gdb_test "list $lineno" "return 0;\[^\r\n\]+Breakpoint here\\. .*"
+
+    # Verify that a breakpoint re-sets correctly when the actual location
+    # of the source file in the debuginfod client cache differs from
+    # the contents of DW_AT_comp_dir and DW_AT_name.
+    gdb_test "set cwd $debugdir" "" "file [file tail $binfile] cwd"
+    gdb_breakpoint $lineno
+    with_override delete_breakpoints disable_delete_breakpoints {
+	if {![runto_main]} {
+	    return
+	}
+	gdb_continue_to_breakpoint "runto breakpoint in main" \
+	    ".* Breakpoint here\\. .*"
+    }
+
+    # GDB should now find the executable file.
+    set enable_debuginfod_question \
+	"Enable debuginfod for this session. \\(y or \\\[n\\\]\\) "
+    clean_restart
+    gdb_test "core $::corefile" ".*return 0.*" "file [file tail $::corefile]" \
+	$enable_debuginfod_question "y"
+
+    # GDB should now find the debugaltlink file.
+    clean_restart
+    gdb_test "file ${binfile}_alt.o" \
+	".*Downloading.*separate debug info.*" \
+	"file [file tail ${binfile}_alt.o]" \
+	$enable_debuginfod_question "y"
+
+    # Configure debuginfod with commands.
+    unsetenv DEBUGINFOD_URLS
+    clean_restart
+    gdb_test "file $binfile" ".*No debugging symbols.*" \
+	"file [file tail $binfile] cmd"
+    gdb_test_no_output "set debuginfod enabled off"
+    gdb_test_no_output "set debuginfod urls $url" \
+	"set debuginfod url environment variable"
+
+    # GDB shouldn't find the debuginfo since debuginfod has been
+    # disabled.
+    gdb_test "file $binfile" ".*No debugging symbols.*" \
+	"file [file tail $binfile] cmd off"
+
+    # Enable debuginfod and fetch the debuginfo.
+    gdb_test_no_output "set debuginfod enabled on"
+    gdb_test "file $binfile" ".*Reading symbols from.*debuginfo.*" \
+	"file [file tail $binfile] cmd on"
+
+    # Test that URLs are printed correctly for the first-use notice.
+
+    # Empty URLS disables Debuginfod.
+    setenv DEBUGINFOD_URLS ""
+    clean_restart
+    # Disable confirmation to avoid having to deal with a query.  See
+    # test_urls.
+    set file_cmd "with confirm off -- file $binfile"
+    gdb_test_multiple $file_cmd "notice empty URL" {
+	-re -wrap "This GDB supports auto-downloading.*" {
+	    fail $gdb_test_name
+	}
+	-re -wrap "" {
+	    pass $gdb_test_name
+	}
+    }
+
+    # Whitespace-only URLS disables Debuginfod.
+    setenv DEBUGINFOD_URLS "    "
+    clean_restart
+    gdb_test_multiple $file_cmd "notice whitespace URL" {
+	-re -wrap "This GDB supports auto-downloading.*" {
+	    fail $gdb_test_name
+	}
+	-re -wrap "" {
+	    pass $gdb_test_name
+	}
+    }
+
+    test_urls $url \
+	"<$url>" \
+	"notice 1 URL"
+
+    test_urls "  $url  " \
+	"<$url>" \
+	"notice 1 URL with whitespace"
+
+    set url2 [regsub "^http://" $url ""]
+
+    test_urls "$url $url2" \
+	"<$url>\r\n +<$url2>" \
+	"notice 2 URLs"
+
+    test_urls "  $url $url2  " \
+	"<$url>\r\n +<$url2>" \
+	"notice 2 URLs with whitespace"
+}
+
+# Create CACHE and DB directories ready for debuginfod to use.
+prepare_for_debuginfod cache db
+
+with_debuginfod_env $cache {
+    no_url
+    local_url
+}
+
+stop_debuginfod

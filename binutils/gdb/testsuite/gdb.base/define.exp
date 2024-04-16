@@ -1,0 +1,345 @@
+# Copyright 1998-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file was written by Elena Zannoni. (ezannoni@cygnus.com)
+
+
+#
+# test running programs
+#
+
+standard_testfile break.c break1.c
+
+if {[prepare_for_testing "failed to prepare" ${testfile} \
+	 [list $srcfile $srcfile2] {debug nowarnings}]} {
+    return -1
+}
+
+set bp_location1 [gdb_get_line_number "set breakpoint 1 here"]
+set bp_location11 [gdb_get_line_number "set breakpoint 11 here"]
+
+if {![runto_main]} {
+    return
+}
+
+# Verify that GDB allows a user to define their very own commands.
+#
+gdb_test_multiple "define nextwhere" "define user command: nextwhere" {
+    -re "Type commands for definition of \"nextwhere\".\r\nEnd with a line saying just \"end\".\r\n>$" {
+	gdb_test "next\nbt\nend" "" \
+	    "define user command: nextwhere"
+    }
+}
+
+# Verify that those commands work as gdb_expected.
+#
+gdb_test "nextwhere" \
+    "$bp_location1\[ \t\]*printf.*#0\[ \t\]*main.*:$bp_location1.*" \
+    "use user command: nextwhere"
+
+# Verify that a user can define a command whose spelling is a
+# proper substring of another user-defined command.
+#
+gdb_test_multiple "define nextwh" "define user command: nextwh" {
+    -re "Type commands for definition of \"nextwh\".\r\nEnd with a line saying just \"end\".\r\n>$" {
+	gdb_test "next 2\nbt\nend" "" \
+	    "define user command: nextwh"
+    }
+}
+
+# Verify that a user can redefine their commands.  (Test both the
+# confirmed and unconfirmed cases.)
+#
+gdb_test "define nextwhere" \
+    "Command \"nextwhere\" not redefined.*" \
+    "redefine user command aborted: nextwhere" \
+    "Redefine command \"nextwhere\".*y or n. $" \
+    "n"
+
+send_gdb "define nextwhere\n"
+gdb_expect {
+  -re "Redefine command \"nextwhere\".*y or n. $"\
+          {send_gdb "y\n"
+           gdb_expect {
+             -re "Type commands for definition of \"nextwhere\".\r\nEnd with a line saying just \"end\".\r\n>$"\
+                     {send_gdb "bt\nnext\nend\n"
+                      gdb_expect {
+                        -re "$gdb_prompt $"\
+                                {pass "redefine user command: nextwhere"}
+                        timeout {fail "(timeout) redefine user command: nextwhere"}
+                      }
+                     }
+             timeout {fail "(timeout) redefine user command: nextwhere"}
+           }
+          }
+  -re "$gdb_prompt $"\
+          {fail "redefine user command: nextwhere"}
+  timeout {fail "(timeout) redefine user command: nextwhere"}
+}
+
+# Verify that GDB gracefully handles an attempt to redefine the
+# help text for a builtin command.
+#
+gdb_test "document step" "Command \"step\" is built-in.*" \
+    "redocumenting builtin command disallowed"
+
+# Verify that a user can document their own commands.  (And redocument
+# them.)
+#
+gdb_test_multiple "document nextwhere" "document user command: nextwhere" {
+    -re "Type documentation for \"nextwhere\".\r\nEnd with a line saying just \"end\".\r\n>$" {
+	gdb_test "A next command that first shows you where you're stepping from.\nend" \
+	    "" \
+	    "document user command: nextwhere"
+    }
+}
+
+gdb_test_multiple "document nextwhere" "re-document user command: nextwhere" {
+    -re "Type documentation for \"nextwhere\".\r\nEnd with a line saying just \"end\".\r\n>$" {
+	gdb_test "A next command that first shows you where you're stepping from.\nend" \
+	    "" \
+	    "re-document user command: nextwhere"
+    }
+}
+
+gdb_test "help nextwhere" \
+    "A next command that first shows you where you're stepping from.*" \
+    "help user command: nextwhere"
+
+# Verify that the document command preserves whitespace in the beginning of the line.
+#
+gdb_test_multiple "document nextwhere" "set up whitespace in help string" {
+    -re "Type documentation for \"nextwhere\".\r\nEnd with a line saying just \"end\".\r\n>$" {
+	gdb_test "   A next command that first shows you where you're stepping from.\nend" \
+	    "" \
+	    "set up whitespace in help string"
+    }
+}
+
+gdb_test "help nextwhere" \
+    "   A next command that first shows you where you're stepping from.*" \
+    "preserve whitespace in help string"
+
+# Verify that GDB allows a user to use . in a command name.
+#
+gdb_test_multiple "define dot.command" "define user command: dot.command" {
+    -re "Type commands for definition of \"dot.command\".\r\nEnd with a line saying just \"end\".\r\n>$" {
+	gdb_test "echo dot command\\n\nend" "" \
+	    "define user command: dot.command"
+    }
+}
+
+# Verify that dot.command works.
+#
+gdb_test "dot.command" \
+    "dot command" \
+    "full name dot.command"
+gdb_test "dot" \
+    "dot command" \
+    "partial name dot"
+gdb_test "dot." \
+    "dot command" \
+    "partial name dot."
+gdb_test "dot.c" \
+    "dot command" \
+    "partial name dot.c"
+
+
+# Verify that the command parser doesn't require a space after an 'if'
+# command in a user defined function.
+#
+gdb_test_multiple "define ifnospace" "define user command: ifnospace" \
+{
+  -re "Type commands for definition of \"ifnospace\".\r\nEnd with a line saying just \"end\".\r\n>$" \
+    {
+      gdb_test_multiple "if(3<4)\nprint \"hi there\\n\"\nend\nend" "send body of ifnospace"  \
+        {
+         -re "$gdb_prompt $"\
+                 {pass "define user command: ifnospace"}
+        }
+    }
+}
+
+gdb_test "ifnospace" ".*hi there.*" "test ifnospace is parsed correctly"
+
+# Verify that the command parser properly handles command abbreviations.
+with_test_prefix "command abbreviations in define" {
+  set test "define user command: breakmain"
+  gdb_test_multiple "define breakmain" "$test" {
+      -re "Type commands for definition of \"breakmain\".\r\nEnd with a line saying just \"end\".\r\n>$" {
+	  pass "$test"
+	  set test "send body of breakmain"
+	  gdb_test_multiple "break -q main\ncommand\necho\nend\nend" "$test"  {
+	      -re "$gdb_prompt $"\
+		  {pass "$test"}
+	  }
+      }
+  }
+
+  gdb_test "breakmain" ".*Breakpoint .*" "run user command"
+
+  # If GDB fails to interpret properly the abbrev "command", the last "end"
+  # will be missing.  Issue it to avoid a desync that would break the other
+  # tests in this file.
+  gdb_test "end" \
+    "This command cannot be used at the top level.*" \
+    "additional end command"
+
+  gdb_test "info break \$bpnum" \
+    [multi_line \
+      "Num     Type\[ \]+Disp Enb Address\[ \]+What.*" \
+      "\[0-9\]+\[\t \]+breakpoint     keep y.* in main at .*" \
+      "\[\t \]+echo.*"] \
+    "info break shows echo command"
+}
+
+
+# Verify that the command parser doesn't require a space after an 'while'
+# command in a user defined function.
+#
+gdb_test_multiple "define whilenospace" "define user command: whilenospace" \
+{
+  -re "Type commands for definition of \"whilenospace\".\r\nEnd with a line saying just \"end\".\r\n>$" \
+    {
+      gdb_test_multiple "set \$i=1\nwhile(\$i<2)\nset \$i=2\nprint \"hi there\\n\"\nend\nend" "send body of whilenospace" \
+         {
+           -re "$gdb_prompt $" \
+                   {pass "define user command: whilenospace"}
+         }
+    }
+}
+
+gdb_test "whilenospace" ".*hi there.*" "test whilenospace is parsed correctly"
+
+# Verify that the user can "hook" a builtin command.  We choose to
+# hook the "stop" pseudo command, and we'll define it to use a user-
+# define command.
+#
+gdb_test_multiple "define user-bt" "define user command: user-bt" {
+    -re "Type commands for definition of \"user-bt\".\r\nEnd with a line saying just \"end\".\r\n>$" {
+	gdb_test "bt\nend" \
+	    "" \
+	    "define user command: user-bt"
+    }
+}
+
+gdb_test_multiple "define hook-stop" "define hook-stop command" {
+    -re "Type commands for definition of \"hook-stop\".\r\nEnd with a line saying just \"end\".\r\n>$" {
+	gdb_test "user-b\nend" \
+	    "" \
+	    "define hook-stop command"
+    }
+}
+
+gdb_test "next" "#0\[ \t\]*main.*:$bp_location11.*" \
+    "use hook-stop command"
+
+# Verify that GDB responds gracefully to an attempt to define a "hook
+# command" which doesn't exist.  (Test both the confirmed and unconfirmed
+# cases.)
+#
+gdb_test "define hook-bar" \
+    "Not confirmed.*" \
+    "define hook undefined command aborted: bar" \
+    "warning: Your new `hook-bar' command does not hook any existing command.\r\nProceed.*y or n. $" \
+    "n"
+
+send_gdb "define hook-bar\n"
+gdb_expect {
+  -re "warning: Your new `hook-bar' command does not hook any existing command.\r\nProceed.*y or n. $"\
+          {send_gdb "y\n"
+           gdb_expect {
+             -re "Type commands for definition of \"hook-bar\".\r\nEnd with a line saying just \"end\".\r\n>$"\
+                     {send_gdb "nextwhere\nend\n"
+                      gdb_expect {
+                        -re "$gdb_prompt $"\
+                                {pass "define hook undefined command: bar"}
+                        timeout {fail "(timeout) define hook undefined command: bar"}
+                      }
+                     }
+             -re "$gdb_prompt $"\
+                     {fail "define hook undefined command: bar"}
+             timeout {fail "(timeout) define hook undefined command: bar"}
+           }
+          }
+  -re "$gdb_prompt $"\
+          {fail "define hook undefined command: bar"}
+  timeout {fail "(timeout) define hook undefined command: bar"}
+}
+
+# Test creation of an additional target subcommand.
+gdb_test_multiple "define target testsuite" "" {
+    -re "Type commands for definition of \"target testsuite\".\r\nEnd with a line saying just \"end\".\r\n>$" {
+	gdb_test "printf \"hello\\n\"\nend" "" "define target testsuite"
+    }
+}
+gdb_test_multiple "document target testsuite" "" {
+    -re "Type documentation for \"target testsuite\".\r\nEnd with a line saying just \"end\".\r\n>$" {
+	gdb_test "A test target.\nend" "" "document target testsuite"
+    }
+}
+
+gdb_test "help target" ".*A test target.*"
+gdb_test "target testsuite" "hello"
+gdb_test "show user target testsuite" "User command \"target testsuite\":\r\n  printf \"hello\\\\n\"\r\n"
+
+# We should even be able to hook subcommands.
+gdb_test_multiple "define target hook-testsuite" "" {
+    -re "Type commands for definition of \"target hook-testsuite\".\r\nEnd with a line saying just \"end\".\r\n>$" {
+	gdb_test "printf \"one\\n\"\nend" "" "define target hook-testsuite"
+    }
+}
+
+gdb_test_multiple "define target hookpost-testsuite" "" {
+    -re "Type commands for definition of \"target hookpost-testsuite\".\r\nEnd with a line saying just \"end\".\r\n>$" {
+	gdb_test "printf \"two\\n\"\nend" "" "define target hookpost-testsuite"
+    }
+}
+
+gdb_test "target testsuite" "one\r\nhello\r\ntwo" "target testsuite with hooks"
+
+# Save the GDB prompt so it can be restored to the original value later.
+set prior_prompt ""
+gdb_test_multiple "show prompt" "save gdb_prompt" {
+    -re "Gdb's prompt is \"($gdb_prompt) \"\.\[\r\n\]*$gdb_prompt $" {
+	set prior_prompt $expect_out(1,string)
+	pass "save gdb_prompt"
+    }
+}
+
+# This is a quasi-define command: Verify that the user can redefine
+# GDB's gdb_prompt.
+#
+gdb_test_multiple "set prompt \\(blah\\) " "set gdb_prompt" {
+    -re "\\(blah\\) $" {
+	pass "set gdb_prompt"
+    }
+}
+
+gdb_test_multiple "set prompt $prior_prompt " "reset gdb_prompt" {
+    -re "\r\n$gdb_prompt $" {
+	pass "reset gdb_prompt"
+    }
+}
+
+gdb_test_multiple "define do-define" "" {
+    -re "Type commands for definition of \"do-define\".\r\nEnd with a line saying just \"end\".\r\n>$" {
+	gdb_test "define do-printit\necho here\\n\nend\nend" "" "define do-define"
+    }
+}
+gdb_test_no_output "do-define" "invoke do-define"
+gdb_test "do-printit" "here" "invoke do-printit"
+
+gdb_exit

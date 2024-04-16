@@ -1,0 +1,86 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test doesn't make sense on native-gdbserver.
+require !use_gdb_stub
+
+# There's no easy way to set environment variables on remote targets
+# (via dejagnu) yet.
+require {!is_remote target}
+
+standard_testfile
+
+if { [build_executable "failed to prepare" $testfile $srcfile debug] } {
+    return -1
+}
+
+set unique_file [standard_output_file "unique-file.unique-extension"]
+set unique_file_dir [standard_output_file ""]
+
+run_on_host \
+    "touch OUTPUT_DIR/unique-file.unique-extension" \
+    "touch" "$unique_file"
+
+# Initial setup for simple test (wildcard expansion, variable substitution).
+
+proc initial_setup_simple { startup_with_shell run_args } {
+    global hex decimal binfile unique_file
+
+    clean_restart $binfile
+
+    gdb_test_no_output "set startup-with-shell $startup_with_shell"
+
+    gdb_test_no_output "set args $run_args" \
+	"set args \$run_args"
+
+    set test "inferior started"
+    if { [runto_main] } {
+	pass $test
+    } else {
+	fail $test
+    }
+}
+
+## Run the actual tests
+
+with_test_prefix "startup_with_shell = on; run_args = *.unique-extension" {
+    initial_setup_simple "on" "$unique_file_dir/*.unique-extension"
+    gdb_test "print argv\[1\]" "\\\$$decimal = $hex \"$unique_file\"" \
+	"first argument expanded"
+}
+
+with_test_prefix "startup_with_shell = off; run_args = *.unique-extension" {
+    initial_setup_simple "off" "$unique_file_dir/*.unique-extension"
+    gdb_test "print argv\[1\]" "\\\$$decimal = $hex \"$unique_file_dir/\\\*\.unique-extension\"" \
+	"first argument not expanded"
+}
+
+with_test_prefix "startup_with_shell = on; run_args = \$TEST" {
+    set env(TEST) "1234"
+    initial_setup_simple "on" "\$TEST"
+    gdb_test "print argv\[1\]" "\\\$$decimal = $hex \"1234\"" \
+	"testing first argument"
+    unset env(TEST)
+}
+
+with_test_prefix "startup_with_shell = off; run_args = \$TEST" {
+    set env(TEST) "1234"
+    initial_setup_simple "off" "\$TEST"
+    gdb_test "print argv\[1\]" "\\\$$decimal = $hex \"\\\$TEST\"" \
+	"testing first argument"
+    unset env(TEST)
+}

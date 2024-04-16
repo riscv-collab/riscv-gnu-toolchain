@@ -1,0 +1,106 @@
+# Copyright (C) 2012-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, see <http://www.gnu.org/licenses/>.
+
+# Test single-step on bbit.  
+
+require {istarget "*octeon*"}
+
+proc current_insn {} {
+    global gdb_prompt
+
+    send_gdb "x/i \$pc\n"
+    gdb_expect {
+	-re ".*?:\\s+\(.*?\)\\s*$gdb_prompt $" {
+	    set insn $expect_out(1,string)
+	    return $insn
+	}
+    }
+    return ""
+}
+
+proc single_step {} {
+    global gdb_prompt
+
+    send_gdb "si\n"
+    gdb_expect {
+	-re "$gdb_prompt \$" {
+	    return 1
+	}
+    }
+    return 0
+}
+
+proc single_step_until { match } {
+    global timeout
+
+    set insn [current_insn]
+    set start [timestamp]
+    while { $insn != "" && [timestamp] - $start < 3*$timeout } {
+	if [regexp $match $insn] {
+	    return 1
+	}
+	if {![single_step]} {
+	    return 0
+	}
+	set insn [current_insn]
+    }
+    return 0
+}
+
+proc test_bbit { name taken } {
+    if {![single_step_until "bbit"]} {
+	fail "$name single-step until bbit"
+	return
+    }
+    pass "$name single-step until bbit"
+    gdb_test "si" "" "$name single-step on bbit"
+    if [regexp "li\\s+\[sv\]0,$taken" [current_insn]] {
+	pass "$name check insn after bbit"
+    } else {
+	send_log "expected: li\\s+\[sv\]0,$taken found [current_insn]\n"
+	fail "$name check insn after bbit"
+    }
+}
+
+set testfile "mips-octeon-bbit"
+set srcfile ${testfile}.c
+set binfile ${objdir}/${subdir}/${testfile}
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable \
+       {debug nowarnings}] != "" } {
+     fail "compilation"
+     return
+}
+
+pass "compilation"
+
+clean_restart $binfile
+# Native needs run.
+runto_main
+
+set tests ""
+foreach n [list "0_10" "0_36" "1_20" "1_49"] {
+    lappend tests "bbit_is_taken_$n"
+}
+foreach func $tests {
+    gdb_test "break $func" "Breakpoint.*at.*" "set breakpoint on $func"
+}
+
+foreach func $tests {
+    gdb_test "continue" "Continuing.*Breakpoint.*$func.*" "hit $func first"
+    test_bbit "$func branch taken" 1
+    gdb_test "continue" "Continuing.*Breakpoint.*$func.*" "hit $func second"
+    test_bbit "$func branch not taken" 0
+}

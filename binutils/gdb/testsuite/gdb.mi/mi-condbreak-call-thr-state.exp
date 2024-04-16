@@ -1,0 +1,110 @@
+# Copyright (C) 2013-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Regression test for PR15693.  A breakpoint with a condition that
+# calls a function that evaluates false would result in a spurious
+# *running event sent to the frontend each time the breakpoint is hit
+# (and the target re-resumed).  Like:
+#
+#  -exec-continue
+#  ^running
+#  *running,thread-id="all"
+#  (gdb)
+#  *running,thread-id="all"
+#  *running,thread-id="all"
+#  *running,thread-id="all"
+#  *running,thread-id="all"
+#  *running,thread-id="all"
+#  ...
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+# Run either the multi-threaded or the single-threaded variant of the
+# test, as determined by VARIANT.
+proc test { variant } {
+    global gdb_test_file_name
+    global testfile srcdir subdir srcfile srcfile2 binfile
+    global mi_gdb_prompt async
+
+    with_test_prefix "$variant" {
+	set options {debug}
+	if {$variant == "mt" } {
+	    lappend options "pthreads"
+	}
+
+	# Don't use standard_testfile as we need a different binary
+	# for each variant.
+	set testfile $gdb_test_file_name-$variant
+	set binfile [standard_output_file ${testfile}]
+	set srcfile $testfile.c
+	set srcfile2 $gdb_test_file_name.c
+
+	if {[build_executable "failed to prepare" \
+		 $testfile \
+		 "${srcfile} ${srcfile2}" \
+		 $options] == -1} {
+	    return -1
+	}
+
+	if {[mi_clean_restart $binfile]} {
+	    return
+	}
+
+	mi_runto test
+
+	# Leave the breakpoint at 'test' set, on purpose.  The next
+	# resume shall emit a single '*running,thread-id="all"', even
+	# if GDB needs to step over a breakpoint (that is, even if GDB
+	# needs to run only one thread for a little bit).
+
+	set bp_location [gdb_get_line_number "set breakpoint here" $srcfile2]
+	set bp_location_end [gdb_get_line_number "set end breakpoint here" $srcfile2]
+
+	mi_gdb_test "-break-insert -c return_false() $srcfile2:$bp_location" ".*" \
+	    "insert conditional breakpoint"
+
+	mi_gdb_test "-break-insert $srcfile2:$bp_location_end" ".*" \
+	    "insert end breakpoint"
+
+	set msg "no spurious *running notifications"
+	send_gdb "-exec-continue\n"
+	gdb_expect {
+	    -re "\\*running.*\\*running.*\\*stopped" {
+		fail $msg
+	    }
+	    -re "\\^running\r\n\\*running,thread-id=\"all\"\r\n${mi_gdb_prompt}.*\\*stopped" {
+		pass $msg
+	    }
+	    timeout {
+		fail "$msg (timeout)"
+	    }
+	}
+
+	# In sync mode, there's an extra prompt after *stopped.  Consume it.
+	if {!$async} {
+	    gdb_expect {
+		-re "$mi_gdb_prompt" {
+		}
+	    }
+	}
+    }
+}
+
+# Single-threaded.
+test "st"
+
+# Multi-threaded.
+test "mt"

@@ -1,0 +1,73 @@
+# Copyright 2010-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile
+set executable ${testfile}
+
+if { [gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+clean_restart $executable
+
+if ![runto_main] {
+    return -1
+}
+
+# `noprint' would not test the full logic of GDB.
+gdb_test "handle SIGUSR1 nostop print pass" \
+    "\r\nSIGUSR1\[ \t\]+No\[ \t\]+Yes\[ \t\]+Yes\[ \t\].*"
+
+gdb_test_no_output "set scheduler-locking off"
+
+gdb_breakpoint [gdb_get_line_number "step-1"]
+gdb_test_no_output {set $step1=$bpnum}
+gdb_continue_to_breakpoint "step-1" ".* step-1 .*"
+gdb_test_no_output {disable $step1}
+
+# 1 as we are now stopped at the `step-1' label.
+set step_at 1
+for {set i 0} {$i < 100} {incr i} {
+    set test "step $i"
+    # Presume this step failed - as in the case of a timeout.
+    set failed 1
+    gdb_test_multiple "step" $test {
+	-re " received signal SIGUSR1, User defined signal 1.\r\n" {
+	    exp_continue -continue_timer
+	}
+	-re "step-(\[012\]).*\r\n$gdb_prompt $" {
+	    set now $expect_out(1,string)
+	    if {$step_at == 2 && $now == 1} {
+		set failed 0
+	    } elseif {$step_at == 1 && $now == 2} {
+		set failed 0
+		# Continue over the re-signalling back to the handle entry.
+		gdb_test_no_output -nopass {enable $step1}
+		gdb_test -nopass "continue" " step-1 .*"
+		set now 1
+		gdb_test_no_output -nopass {disable $step1}
+	    } else  {
+		fail $test
+	    }
+	    set step_at $now
+	}
+    }
+    if $failed {
+	return
+    }
+}
+# We can never reliably say the racy problematic case has been tested.
+pass "step"

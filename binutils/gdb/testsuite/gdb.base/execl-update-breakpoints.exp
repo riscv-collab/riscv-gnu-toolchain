@@ -1,0 +1,135 @@
+# Copyright 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that when following an exec, we don't try to insert breakpoints
+# in the new image at the addresses the symbols had before the exec.
+
+standard_testfile
+
+# Build two copies of the program, each linked at a different address.
+# The address of "main" in the first binary should end up being an
+# unmapped address in the second binary.
+
+set objfile ${binfile}.o
+set exec1 ${binfile}1
+set exec2 ${binfile}2
+
+if { [gdb_compile [file join $srcdir $subdir $srcfile] $objfile \
+	  object [list debug]] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+if { [gdb_compile $objfile $exec1 executable {debug text_segment=0x1000000}] != ""
+     || [gdb_compile $objfile $exec2 executable {debug text_segment=0x2000000}] != ""} {
+    untested "link failed"
+    return -1
+}
+
+# First check whether the address of "main" in exec1 is readable in
+# exec2.  If it is, then skip the test as unsupported.
+
+clean_restart ${exec1}
+if {![runto_main]} {
+    return -1
+}
+
+set addr ""
+set test "main address first"
+gdb_test_multiple "p/x &main" $test {
+    -re " = (0x\[0-9a-f\]+)\r\n$gdb_prompt $" {
+	set addr $expect_out(1,string)
+	pass $test
+    }
+}
+
+clean_restart ${exec2}
+if {![runto_main]} {
+    return -1
+}
+
+set cannot_access 0
+set test "probe memory access"
+gdb_test_multiple "x $addr" $test {
+    -re "Cannot access memory at address .*$gdb_prompt $" {
+	set cannot_access 1
+	pass $test
+    }
+    -re ".*$gdb_prompt $" {
+	pass $test
+    }
+}
+
+if {!$cannot_access} {
+    unsupported "main address is readable in second binary"
+    return
+}
+
+# The test proper.  ALWAYS_INSERTED indicates whether testing in
+# "breakpoint always-inserted" mode.
+
+proc test { always_inserted } {
+    global exec1
+    global gdb_prompt
+
+    clean_restart ${exec1}
+
+    gdb_test_no_output "set breakpoint always-inserted $always_inserted"
+
+    if {![runto_main]} {
+	return -1
+    }
+
+    # Set a second breakpoint (whose original address also ends up
+    # unmmapped after the exec), for PR 19548.
+    gdb_test "break some_function" "Breakpoint .*"
+
+    # PR17431: with always-inserted on, we'd see:
+    #  (gdb) continue
+    #  Continuing.
+    #  Warning:
+    #  Cannot insert breakpoint 1.
+    #  Cannot access memory at address 0x10000ff
+
+    # PR 19548: with more than one breakpoint, we'd see:
+    #  (gdb) continue
+    #  Continuing.
+    #  process (...) is executing new program: (...)/execl-update-breakpoints2
+    #  Error in re-setting breakpoint 1: Warning:
+    #  Cannot insert breakpoint 2.
+    #  Cannot access memory at address 0x1000764
+    set not_nl "\[^\r\n\]*"
+    set regex ""
+    append regex \
+	"^continue\r\n" \
+	"Continuing\\.\r\n" \
+	"${not_nl} is executing new program: ${not_nl}\r\n" \
+	"(Reading ${not_nl} from remote target\\.\\.\\.\r\n)*" \
+	"(?:.Thread debugging using .*? enabled.\r\nUsing .*? library .*?\\.\r\n)?" \
+	"\r\n" \
+	"Breakpoint 1, main.*$gdb_prompt $"
+    set message "continue across exec"
+    gdb_test_multiple "continue" $message {
+	-re $regex {
+	    pass $message
+	}
+    }
+}
+
+foreach always_inserted { "off" "on" } {
+    with_test_prefix "always-inserted $always_inserted" {
+	test $always_inserted
+    }
+}

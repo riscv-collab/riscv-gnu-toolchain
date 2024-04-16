@@ -1,0 +1,111 @@
+# Copyright 2005-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "ada.exp"
+
+require allow_ada_tests
+
+# This testcase verifies the behavior of the `start' command, which
+# does not work when we use the gdb stub...
+require !use_gdb_stub
+
+standard_ada_testfile first
+
+# Build the first test program (note that cygwin needs the $EXEEXT).
+if {[gdb_compile_ada "${srcfile}" "${binfile}$EXEEXT" executable {debug}] != ""} {
+    return -1
+}
+
+# Build the second test program
+set srcfile2 ${srcdir}/${subdir}/${testdir}/second.adb
+set binfile2 [standard_output_file second$EXEEXT]
+
+if {[gdb_compile_ada "${srcfile2}" "${binfile2}" executable {debug}] != ""} {
+    return -1
+}
+
+# Start with a fresh gdb.
+
+set common_binfile [standard_output_file common$EXEEXT]
+
+gdb_start
+gdb_reinitialize_dir $srcdir/$subdir
+
+# Load the first executable.
+
+gdb_test "shell mv ${binfile} ${common_binfile}" "" \
+    "shell mv \${binfile} \${common_binfile}"
+gdb_load ${common_binfile}
+
+# Start the program, we should land in the program main procedure
+if { [gdb_start_cmd] < 0 } {
+    fail start
+    return -1
+}
+
+gdb_test "" \
+         "first \\(\\) at .*first.adb.*" \
+         "start first"
+
+# Restore first executable to its original name, and move
+# second executable into its place.  Ensure that the new
+# executable is at least a second newer than the old.
+
+gdb_test "shell mv ${common_binfile} ${binfile}" "" \
+    "shell mv \${common_binfile} \${binfile}"
+gdb_test "shell mv ${binfile2} ${common_binfile}" "" \
+    "shell mv \${binfile2} \${common_binfile}"
+gdb_test "shell sleep 1" "" "shell sleep 1, once"
+gdb_test "shell touch ${common_binfile}" "" \
+    "shell touch \${common_binfile}"
+
+# Start the program a second time, GDB should land in procedure Second
+# this time.
+
+if { [gdb_start_cmd] < 0 } {
+    fail "start second"
+} else {
+    gdb_test "" \
+             "second \\(\\) at .*second.adb.*" \
+             "start second"
+}
+
+# Try again, this time with just changing the file time of first.
+
+clean_restart "${binfile}$EXEEXT"
+
+# Ensure we don't accidently use the main symbol cache.
+gdb_test_no_output "mt set symbol-cache-size 0"
+
+# Put something in the symbol lookup cache that will get looked up when
+# starting after having re-read symbols.  PR 17855.
+gdb_breakpoint break_me
+
+gdb_test "shell touch ${binfile}$EXEEXT" "" \
+    "shell touch \${binfile}\$EXEEXT"
+gdb_test "shell sleep 1" "" "shell sleep 1, twice"
+
+if { [gdb_start_cmd] < 0 } {
+    # PR 17855: At this point gdb may have crashed or gotten an internal
+    # error, but we still need to detect this.  Just issue any simple command
+    # to verify gdb is still running.  This will establish in gdb.log whether
+    # gdb is still running.
+    gdb_test_no_output "set \$check_gdb_running = 0" "check gdb running"
+    fail "start just first"
+} else {
+    gdb_test "" \
+	"first \\(\\) at .*first.adb.*" \
+	"start just first"
+}

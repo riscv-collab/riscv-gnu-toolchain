@@ -1,0 +1,233 @@
+# Copyright 2004-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Call target_compile with SOURCE DEST TYPE and OPTIONS as argument,
+# after having temporarily changed the current working directory to
+# BUILDDIR.
+
+proc target_compile_ada_from_dir {builddir source dest type options} {
+    global board
+    set board [target_info name]
+    set save_multilib_flag [board_info $board multilib_flags]
+    set multilib_flag ""
+    foreach op $save_multilib_flag {
+	if { $op == "-pie" || $op == "-no-pie" } {
+	    # Pretend gnatmake supports -pie/-no-pie, route it to
+	    # linker.
+	    append multilib_flag " -largs $op -margs"
+	} else {
+	    append multilib_flag " $op"
+	}
+    }
+    if { $multilib_flag != "" } {
+	unset_board_info "multilib_flags"
+	set_board_info multilib_flags "$multilib_flag"
+    }
+
+    catch {
+	with_cwd $builddir {
+	    return [target_compile $source $dest $type $options]
+	}
+    } result options
+
+    if { $save_multilib_flag != "" } {
+	unset_board_info "multilib_flags"
+	set_board_info multilib_flags $save_multilib_flag
+    }
+
+    return -options $options $result
+}
+
+# Compile some Ada code.  Return "" if the compile was successful.
+# OPTIONS are as for target_compile, but with this addition:
+# "no-force" - do not pass -f to gnatmake.  By default -f is
+# used, forcing a full recompilation.
+
+proc gdb_compile_ada_1 {source dest type options} {
+
+    set srcdir [file dirname $source]
+    set gprdir [file dirname $srcdir]
+    set objdir [file dirname $dest]
+
+    file delete $dest
+
+    # Although strictly not necessary, we force the recompilation
+    # of all units (additional_flags=-f).  This is what is done
+    # when using GCC to build programs in the other languages,
+    # and it avoids using a stray objfile file from a long-past
+    # run, for instance.
+    append options " ada"
+    if {[lsearch -exact $options no-force] == -1} {
+	append options " additional_flags=-f"
+    }
+    append options " additional_flags=-I$srcdir"
+
+    set result [target_compile_ada_from_dir \
+                    $objdir [file tail $source] $dest $type $options]
+
+    # The Ada build always produces some output, even when the build
+    # succeeds. Thus, we can not use the output the same way we do in
+    # gdb_compile to determine whether the build has succeeded or not.
+    # We therefore simply check whether the dest file has been created
+    # or not. Unless not present, the build has succeeded.
+    if [file exists $dest] { set result "" }
+    return $result
+}
+
+# Compile some Ada code.  Generate "PASS: foo.exp: compilation SOURCE" if the
+# compile was successful.
+
+proc gdb_compile_ada {source dest type options} {
+    set result [gdb_compile_ada_1 $source $dest $type $options]
+
+    gdb_compile_test $source $result
+    return $result
+}
+
+# Like standard_testfile, but for Ada.  Historically the Ada tests
+# used a different naming convention from many of the other gdb tests,
+# and this difference was preserved during the conversion to
+# standard_testfile.  DIR defaults to the base name of the test case;
+# but can be overridden to find sources in a different subdirectory of
+# gdb.ada.
+
+proc standard_ada_testfile {base_file {dir ""}} {
+    global gdb_test_file_name srcdir subdir
+    global testdir testfile srcfile binfile
+
+    if {$dir == ""} {
+	set testdir $gdb_test_file_name
+    } else {
+	set testdir $dir
+    }
+
+    set testfile $base_file
+    set srcfile $srcdir/$subdir/$testdir/$testfile.adb
+    set binfile [standard_output_file $testfile]
+}
+
+# A helper function to find the appropriate version of a tool.
+# TOOL is the tool's name, e.g., "gnatbind" or "gnatlink".
+
+proc find_ada_tool {tool} {
+    set upper [string toupper $tool]
+
+    set targname ${upper}_FOR_TARGET
+    global $targname
+    if {[info exists $targname]} {
+	return $targname
+    }
+
+    global tool_root_dir
+    set root "$tool_root_dir/gcc"
+    set result ""
+
+    if {![is_remote host]} {
+        set result [lookfor_file $root $tool]
+	if { $result != "" && $tool == "gnatlink" } {
+	    set result "$result --GCC=$root/xgcc -B$root"
+	}
+    }
+
+    if {$result == ""} {
+        set result [transform $tool]
+    }
+
+    return $result
+}
+
+# Return 1 if gnatmake is at least version $MAJOR.x.x
+
+proc gnatmake_version_at_least { major } {
+    set gnatmake [gdb_find_gnatmake]
+    set gnatmake [lindex [split $gnatmake] 0]
+    if {[catch {exec $gnatmake --version} output]} {
+	return 0
+    }
+    if { [regexp {GNATMAKE ([^ .]+).([^ .]+).([^ .]+)} $output \
+	      match gnatmake_major gnatmake_minor gnatmake_micro] } {
+	if { $gnatmake_major >= $major } {
+	    return 1
+	} else {
+	    return 0
+	}
+    }
+
+    # Unknown, return 1
+    return 1
+}
+
+# Return 1 if the GNAT runtime appears to have debug info.
+
+proc gnat_runtime_has_debug_info_1 { shared } {
+    if { ![allow_ada_tests] } {
+	return 0
+    }
+
+    global srcdir
+
+    set src "$srcdir/lib/gnat_debug_info_test.adb"
+    set dst [standard_output_file "gnat_debug_info_test"]
+
+    set opts {}
+    lappend opts debug
+    if { $shared } {
+	# Make sure we link against the shared GNAT run time.
+	set gnatbind_options [list -bargs -shared -margs]
+
+	foreach option $gnatbind_options {
+	    lappend opts [concat "additional_flags=" $option]
+	}
+    }
+
+    if { [gdb_compile_ada_1 $src $dst executable $opts] != "" } {
+	return 0
+    }
+
+    clean_restart $dst
+
+    if { ! [runto "GNAT_Debug_Info_Test"] } {
+	return 0
+    }
+
+    set has_debug_info 0
+
+    gdb_test_multiple "whatis __gnat_debug_raise_exception" "" {
+	-re -wrap "type = <text variable, no debug info>" { }
+	-re -wrap "type = void" {
+	    set has_debug_info 1
+	}
+	default {
+	    # Some other unexpected output...
+	    fail $gdb_test_name
+	}
+    }
+
+    gdb_exit
+
+    return $has_debug_info
+}
+
+# Return 1 if the static GNAT runtime appears to have debug info.
+
+gdb_caching_proc gnat_runtime_has_debug_info {} {
+    return [gnat_runtime_has_debug_info_1 0]
+}
+
+# Return 1 if the shared GNAT runtime appears to have debug info.
+
+gdb_caching_proc shared_gnat_runtime_has_debug_info {} {
+    return [gnat_runtime_has_debug_info_1 1]
+}

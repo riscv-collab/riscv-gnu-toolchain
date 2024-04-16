@@ -1,0 +1,130 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that GDB can support accesing fields of a structure if the
+# fields have non-standard names.  Specifically, if the names are
+# reserved C type names like 'double', 'float', 'int', etc.
+#
+# We don't expect to that such structures should be seen in real C
+# code, but in some cases GDB will generate artificial structures, and
+# in some cases, these type names are the obvious choice for field
+# names.
+#
+# One specific example is RISC-V, the 64-bit floating point registers
+# are represented as a structure with the field names 'float' and
+# 'double'.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use
+# gas.
+require dwarf2_support
+
+standard_testfile .c .S
+set asm_file [standard_output_file $srcfile2]
+
+# We need to know the size of integer and address types in order to
+# write some of the debugging info we'd like to generate.
+#
+# For that, we ask GDB by debugging our test program.  Any program
+# would do, but since we already have one specifically for this
+# testcase, might as well use that.
+if [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] {
+    return -1
+}
+set int_size [get_sizeof "int" -1]
+
+# Rebuild the test binary with the single field within the structure
+# renamed to FIELD_NAME, then test that we can access the field
+# through '.' and through '->'.
+proc run_test { field_name } {
+    global asm_file testfile srcfile subdir srcdir
+    global int_size
+
+    Dwarf::assemble $asm_file {
+	global srcdir subdir srcfile
+	global field_name int_size
+
+	cu {} {
+	    DW_TAG_compile_unit {
+                {DW_AT_language @DW_LANG_C}
+                {DW_AT_name     $srcfile}
+                {DW_AT_comp_dir /tmp}
+	    } {
+		declare_labels itype ptype stype
+
+		itype: DW_TAG_base_type {
+		    {DW_AT_byte_size $int_size DW_FORM_sdata}
+		    {DW_AT_encoding  @DW_ATE_signed}
+		    {DW_AT_name int}
+		}
+
+		stype: DW_TAG_structure_type {
+		    {DW_AT_name "foo"}
+		    {DW_AT_byte_size $int_size DW_FORM_sdata}
+		} {
+		    member {
+			{name $field_name}
+			{type :$itype}
+			{data_member_location 0 data1}
+		    }
+		}
+
+		ptype: DW_TAG_pointer_type {
+		    {DW_AT_type :$stype}
+		}
+
+		DW_TAG_variable {
+		    {DW_AT_name obj}
+		    {DW_AT_type :$stype}
+		    {DW_AT_location {
+			DW_OP_addr [gdb_target_symbol obj]
+		    } SPECIAL_expr}
+		    {external 1 flag}
+		}
+
+		DW_TAG_variable {
+		    {DW_AT_name ptr}
+		    {DW_AT_type :$ptype}
+		    {DW_AT_location {
+			DW_OP_addr [gdb_target_symbol ptr]
+		    } SPECIAL_expr}
+		    {external 1 flag}
+		}
+	    }
+	}
+    }
+
+    if { [prepare_for_testing "failed to prepare" ${testfile} \
+	      [list $srcfile $asm_file] {nodebug}] } {
+	return -1
+    }
+
+    if ![runto_main] {
+	return -1
+    }
+
+    gdb_test "p obj.$field_name" " = 0" \
+	"access a field named '$field_name' directly"
+
+    gdb_test "p ptr->$field_name" " = 0" \
+	"access a field named '$field_name' through a pointer"
+
+    gdb_exit
+}
+
+foreach field_name { double float char byte long int short unsigned signed } {
+    run_test $field_name
+}

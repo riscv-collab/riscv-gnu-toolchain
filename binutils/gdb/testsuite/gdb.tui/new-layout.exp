@@ -1,0 +1,153 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test "tui new-layout".
+
+tuiterm_env
+
+standard_testfile tui-layout.c
+
+if {[build_executable "failed to prepare" ${testfile} ${srcfile}] == -1} {
+    return -1
+}
+
+# Make sure TUI is supported before continuing.
+with_test_prefix "initial check" {
+    Term::clean_restart 24 80 $testfile
+    if {![Term::enter_tui]} {
+	unsupported "TUI not supported"
+	return
+    }
+}
+
+Term::clean_restart 24 80 $testfile
+
+gdb_test "tui new-layout" \
+    "No layout name specified"
+gdb_test "tui new-layout example" \
+    "New layout does not contain any windows"
+gdb_test "tui new-layout example zzq" \
+    "Unknown window \"zzq\""
+gdb_test "tui new-layout example src 1 src 1" \
+    "Window \"src\" seen twice in layout"
+gdb_test "tui new-layout example src 1" \
+    "New layout does not contain the \"cmd\" window"
+
+# Avoid unbalanced curly braces problems with tcl 8.5.
+if { [tcl_version_at_least 8 6] } {
+    gdb_test "tui new-layout example src 1\}" \
+	"Extra '\}' in layout specification"
+    gdb_test "tui new-layout example {src 1} 1\}" \
+	"Extra '\}' in layout specification"
+    gdb_test "tui new-layout example \{src 1" \
+	"Missing '\}' in layout specification"
+}
+
+# Each entry of this list describes a layout, and some associated
+# tests.  The items within each entry are:
+# 1. layout name,
+# 2. a string used to create the layout,
+# 3. a list of boxes to check for once the layout is selected,
+# 4. a regexp to match against the whole screen contents, this
+#    can be empty to skip this check.
+set layouts \
+    [list \
+	 [list example "asm 1 status 0 cmd 1" \
+	      {{0 0 80 15}} "$hex <main>"] \
+	 [list example2 "{asm 1 status 0} 1 cmd 1" \
+	      {{0 0 80 15}} ""] \
+	 [list h "{-horizontal asm 1 src 1} 1 status 0 cmd 1" \
+	      {{0 0 40 15} {39 0 41 15}} \
+	      "$hex <main>.*21.*return 0"] \
+	 [list example3 "{-horizontal src 1 cmd 1} 1 status 0 asm 1" \
+	      {{0 0 40 11} {0 12 80 12}} \
+	      "21.*return 0.*$hex <main>"] \
+	 [list example4 "src 1 status 0 {-horizontal cmd 1 regs 1} 1" \
+	      {{0 0 80 11} {40 12 40 12}} ""] \
+	 [list example5 "{-horizontal src 1 cmd 1} 1 status 0" \
+	      {{0 0 40 23}} ""] \
+	 [list cmd_only "cmd 1" {} ""]]
+
+# Helper function to verify a list of boxes.
+proc check_boxes {boxes} {
+    set boxno 1
+    foreach box $boxes {
+	eval Term::check_box [list "box $boxno"] $box
+	incr boxno
+    }
+}
+
+# Now create the layouts.
+foreach layout $layouts {
+    lassign $layout name desc
+    gdb_test_no_output "tui new-layout $name $desc"
+    gdb_test "help layout $name" \
+	"Apply the \"$name\" layout.*tui new-layout $name $desc"
+}
+
+if {![Term::enter_tui]} {
+    unsupported "TUI not supported"
+    return
+}
+
+set text [Term::get_all_lines]
+gdb_assert {![string match "No Source Available" $text]} \
+    "initial source listing"
+
+foreach_with_prefix layout $layouts {
+    lassign $layout name desc boxes content_pattern
+
+    # Reset the layout to a known starting configuration.
+    Term::command "layout src"
+    Term::command "winheight cmd 8"
+
+    # Apply our test layout.
+    Term::command "layout $name"
+    check_boxes $boxes
+
+    if {$content_pattern != ""} {
+	Term::check_contents "contents in layout $name" \
+	    "${content_pattern}"
+    }
+
+    # Some additional tests for the 'h' layout.
+    if {$name == "h"} {
+	Term::command "winheight src - 5"
+	Term::check_box "left window box after shrink" 0 0 40 10
+	Term::check_box "right window box after shrink" 39 0 41 10
+
+	Term::command "winheight src + 5"
+	Term::check_box "left window box after grow" 0 0 40 15
+	Term::check_box "right window box after grow" 39 0 41 15
+    } elseif {$name == "cmd_only"} {
+	Term::check_region_contents "bottom of cmd window is blank" \
+	    0 14 80 10 "^\\s+$"
+	Term::command "info win"
+	Term::check_region_contents "info win output" \
+	    0 0 80 24 [multi_line "info win\\s+" \
+			   "Name\\s+Lines\\s+Columns\\s+Focus\\s+" \
+			   "cmd\\s+24\\s+80\\s+\\(has focus\\)\\s+" \
+			   "$gdb_prompt\\s+"]
+    }
+}
+
+Term::command "layout src"
+Term::command "winheight cmd 8"
+Term::check_box "before cmd_only: src box in src layout" 0 0 80 15
+
+Term::command "layout cmd_only"
+
+Term::command "layout src"
+Term::check_box "after cmd_only: src box in src layout" 0 0 80 15

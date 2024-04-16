@@ -1,0 +1,126 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test doing a "run" or an "attach" while the program is running.
+#
+# We test a non-threaded and a threaded configuration, so that targets
+# that don't support threads get some testing, but we also test with
+# threads when possible in case that triggers some
+# multi-thread-specific bugs.
+
+standard_testfile
+
+set binfile_threads ${binfile}-threads
+set binfile_nothreads ${binfile}-nothreads
+unset binfile
+
+# Valid parameter / axis values:
+#
+#   - non-stop: "off" of "on"
+#   - threaded: 0 or 1
+#   - run-or-attach: "run" or "attach"
+
+proc_with_prefix test { non-stop threaded run-or-attach } {
+    global gdb_prompt
+
+    if { ${run-or-attach} == "attach" && ![can_spawn_for_attach] } {
+	unsupported "attach not supported"
+	return
+    }
+
+    save_vars ::GDBFLAGS {
+	set ::GDBFLAGS "$::GDBFLAGS -ex \"set non-stop ${non-stop}\""
+
+	# The test doesn't work when the remote target uses the
+	# synchronous remote protocol, because GDB can't kill the
+	# remote inferior while it is running, when we "run" or
+	# "attach" again.  When aswering "yes" to the "Start it from
+	# the beginning?" question, we otherwise get:
+	#
+	#   Cannot execute this command while the target is running.  Use the
+	#   "interrupt" command to stop the target and then try again.
+	#
+	# Interrupting the target would defeat the purpose of the
+	# test.  So when non-stop is off and using the remote target,
+	# force the target to use the async / non-stop version of the
+	# protocol.
+	if { [target_info exists gdb_protocol] && ${non-stop} == "off" } {
+	    set ::GDBFLAGS "$::GDBFLAGS -ex \"maint set target-non-stop on\""
+	}
+
+	clean_restart $::binfile
+    }
+
+    if { ![runto_main] } {
+	return
+    }
+
+    gdb_breakpoint "all_started" "temporary"
+    gdb_continue_to_breakpoint "continue to all_started"
+
+    # If all-stop, everything stopped when we hit the all_started
+    # breakpoint, so resume execution in background.  If running the
+    # non-threaded version, our only thread is stopped in any case, so
+    # resume as well.  But if we are in non-stop with two threads, we
+    # have one running and one stopped, leave it like this, it makes
+    # an interesting test case.
+    if { ${non-stop} == "off" || !${threaded} } {
+	gdb_test "continue &" "Continuing."
+    }
+
+    gdb_test_no_output "set confirm off"
+
+    # Run again (or, connect to a new stub if using a stub), take
+    # advantage of the fact that runto_main leaves the breakpoint on
+    # main in place.
+    if { ${run-or-attach} == "run" } {
+	gdb_run_cmd
+	gdb_test "" "Breakpoint $::decimal, .*main.*" "hit main breakpoint after re-run"
+    } elseif { ${run-or-attach} == "attach" } {
+	set test_spawn_id [spawn_wait_for_attach $::binfile]
+	set test_pid [spawn_id_get_pid $test_spawn_id]
+
+	gdb_test_multiple "attach $test_pid" "attach to process" {
+	    -re "Attaching to program: .*$gdb_prompt " {
+		pass $gdb_test_name
+	    }
+	}
+
+	gdb_exit
+	kill_wait_spawned_process $test_spawn_id
+    } else {
+	error "Invalid value for run-or-attach"
+    }
+}
+
+foreach_with_prefix threaded {0 1} {
+    set options [list debug additional_flags=-DWITH_THREADS=$threaded \
+		    additional_flags=-std=gnu99]
+    if { $threaded } {
+	set binfile $binfile_threads
+	lappend options pthreads
+    } else {
+	set binfile $binfile_nothreads
+    }
+    if { [build_executable "failed to prepare" ${binfile} ${srcfile} $options] } {
+	continue
+    }
+
+    foreach_with_prefix run-or-attach {run attach} {
+	foreach_with_prefix non-stop {off on} {
+	    test ${non-stop} ${threaded} ${run-or-attach}
+	}
+    }
+}

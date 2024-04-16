@@ -1,0 +1,114 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib dwarf.exp
+
+require dwarf2_support
+
+standard_testfile main.c -dw.S
+
+set asm_file [standard_output_file $srcfile2]
+
+set c64 6639779683436459270
+set c32 1779823878
+
+Dwarf::assemble $asm_file {
+    cu {} {
+	compile_unit {} {
+	    declare_labels i64_type i32_type i64_array i32_array
+
+	    i64_type: base_type {
+		{name "int64_t"}
+		{encoding @DW_ATE_signed}
+		{byte_size 8 DW_FORM_sdata}
+	    }
+
+	    i32_type: base_type {
+		{name "int32_t"}
+		{encoding @DW_ATE_signed}
+		{byte_size 4 DW_FORM_sdata}
+	    }
+
+	    i64_array: DW_TAG_array_type {
+		{DW_AT_name array_type}
+		{DW_AT_type :$i64_type}
+	    } {
+		DW_TAG_subrange_type {
+		    {DW_AT_type        :$i64_type}
+		    {DW_AT_lower_bound 0 DW_FORM_data1}
+		    {DW_AT_upper_bound 3 DW_FORM_data1}
+		}
+	    }
+
+	    i32_array: DW_TAG_array_type {
+		{DW_AT_name array_type}
+		{DW_AT_type :$i32_type}
+	    } {
+		DW_TAG_subrange_type {
+		    {DW_AT_type        :$i32_type}
+		    {DW_AT_lower_bound 0 DW_FORM_data1}
+		    {DW_AT_upper_bound 3 DW_FORM_data1}
+		}
+	    }
+
+	    DW_TAG_variable {
+		{name i64_noptr}
+		{type :$i64_array}
+		{location {
+		    DW_OP_constu $::c64
+		    DW_OP_stack_value
+		    DW_OP_piece 8
+		} SPECIAL_expr}
+	    }
+
+	    DW_TAG_variable {
+		{name i32_noptr}
+		{type :$i32_array}
+		{location {
+		    DW_OP_constu $::c32
+		    DW_OP_stack_value
+		    DW_OP_piece 4
+		} SPECIAL_expr}
+	    }
+	}
+    }
+}
+
+if {[build_executable ${testfile}.exp ${testfile} \
+	 [list $srcfile $asm_file] {nodebug}]} {
+    return -1
+}
+
+# We need --readnow because otherwise we never read in the CU we
+# created above.
+save_vars { GDBFLAGS } {
+    append set GDBFLAGS " -readnow"
+    clean_restart ${testfile}
+}
+
+if {![runto_main]} {
+    return -1
+}
+
+set cmd "print i64_noptr"
+if { [is_64_target] } {
+    gdb_test $cmd \
+	" = \\{$c64, <optimized out>, <optimized out>, <optimized out>\\}"
+} else {
+    unsupported $cmd
+}
+
+gdb_test "print i32_noptr" \
+    " = \\{$c32, <optimized out>, <optimized out>, <optimized out>\\}"

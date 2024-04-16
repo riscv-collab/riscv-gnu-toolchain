@@ -1,0 +1,61 @@
+# Copyright (C) 2019-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test a binary with address signing works regardless of whether the target
+# supports pauth instructions.  On non pauth systems, all pauth instructions
+# are treated as nops.
+
+require is_aarch64_target
+
+require {have_compile_flag -mbranch-protection=pac-ret+leaf}
+
+# Build program with address signing forced on.
+standard_testfile
+set compile_flags {debug}
+lappend compile_flags "additional_flags=-fno-inline"
+
+# Records whether the compilation was successful or not.
+set compilation_ok 0
+
+# We need to try a couple compilation flags here because -msign-return-address
+# was dropped at some point, but could still be supported.
+foreach pauth_flag "-mbranch-protection=pac-ret+leaf -msign-return-address=all" {
+    set flags $compile_flags
+    lappend flags "additional_flags=$pauth_flag"
+
+    if {!$compilation_ok && ![prepare_for_testing "failed to prepare" ${testfile} ${srcfile} ${flags}] } {
+	set compilation_ok 1
+    }
+}
+
+# If we couldn't compile, just bail out.
+if {!$compilation_ok} {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+gdb_breakpoint [ gdb_get_line_number "break here" ]
+gdb_continue_to_breakpoint "break here" ".*break here.*"
+
+# Ensure we can get a full backtrace, despite the address signing.
+gdb_test "bt" \
+    [multi_line \
+	"#0\[ \t\]+bar \\(b=9\\) at \[^\r\n\]+" \
+	"#1\[ \t\]+$hex (\\\[PAC\\\] )?in foo \\(a=5\\) at \[^\r\n\]+" \
+	"#2\[ \t\]+$hex (\\\[PAC\\\] )?in main \\(\\) at \[^\r\n\]+" ] \
+    "backtrace"

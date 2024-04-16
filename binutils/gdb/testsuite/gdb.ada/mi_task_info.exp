@@ -1,0 +1,59 @@
+# Copyright 2011-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "ada.exp"
+
+require allow_ada_tests
+
+standard_ada_testfile task_switch
+
+if {[gdb_compile_ada "${srcfile}" "${binfile}" executable [list debug additional_flags=-gnata ]] != "" } {
+  return -1
+}
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+if {[mi_clean_restart $binfile]} {
+    return
+}
+
+####################################
+# 1. Try catching all exceptions.  #
+####################################
+
+if {![mi_runto "task_switch.break_me"]} {
+   return 0
+}
+
+set ada_task_info_hdr \
+  "hdr=\\\[{width=\"1\",alignment=\"-1\",col_name=\"current\",colhdr=\"\"},{width=\"3\",alignment=\"1\",col_name=\"id\",colhdr=\"ID\"},{width=\"9\",alignment=\"1\",col_name=\"task-id\",colhdr=\"TID\"},{width=\"4\",alignment=\"1\",col_name=\"thread-id\",colhdr=\"\"},{width=\"4\",alignment=\"1\",col_name=\"parent-id\",colhdr=\"P-ID\"},{width=\"3\",alignment=\"1\",col_name=\"priority\",colhdr=\"Pri\"},{width=\"22\",alignment=\"-1\",col_name=\"state\",colhdr=\"State\"},{width=\"1\",alignment=\"2\",col_name=\"name\",colhdr=\"Name\"}\\\]"
+set task_1 \
+  "{id=\"1\",task-id=\" *(0x)?\[0-9a-fA-F\]+\",thread-id=\"\[0-9\]+\",priority=\"\[0-9\]+\",state=\"(Child (Activation|Termination) Wait|Runnable)\",name=\"main_task\"}"
+set task_2 \
+  "{id=\"2\",task-id=\" *(0x)?\[0-9a-fA-F\]+\",thread-id=\"\[0-9\]+\",parent-id=\"1\",priority=\"\[0-9\]+\",state=\"(Accept or Select Term|Runnable)\",name=\"my_callee\"}"
+set task_3 \
+  "{current=\"\\*\",id=\"3\",task-id=\" *(0x)?\[0-9a-fA-F\]+\",thread-id=\"\[0-9\]+\",parent-id=\"1\",priority=\"\[0-9\]+\",state=\"Runnable\",name=\"my_caller\"}"
+
+# Get the full list of tasks...
+mi_gdb_test "-ada-task-info" \
+  ".*\\^done,tasks={nr_rows=\"3\",nr_cols=\"8\",$ada_task_info_hdr,body=\\\[$task_1,$task_2,$task_3\\\]}" \
+  "-ada-task-info with no argument"
+
+# Now, only get the info about task 3.
+mi_gdb_test "-ada-task-info 3" \
+  "\\^done,tasks={nr_rows=\"1\",nr_cols=\"8\",$ada_task_info_hdr,body=\\\[$task_3\\\]}" \
+  "-ada-task-info 3"
+

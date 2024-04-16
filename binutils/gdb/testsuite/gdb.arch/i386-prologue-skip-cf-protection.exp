@@ -1,0 +1,59 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test skipping a prologue that was generated with gcc's -fcf-protection=full
+# (control flow protection) option.
+#
+# This option places an `endbr32`/`endbr64` instruction at the start of
+# all functions, which can interfere with prologue analysis.
+
+standard_testfile .c
+set binfile ${binfile}
+
+require {is_any_target x86_64-*-* i?86-*-*}
+
+require supports_fcf_protection
+
+set opts {debug additional_flags=-fcf-protection=full}
+
+if { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable $opts] != "" } {
+    untested "failed to compile"
+    return
+}
+
+clean_restart ${binfile}
+
+# Get start address of function main.
+set main_addr [get_integer_valueof &main -1]
+gdb_assert {$main_addr != -1}
+
+set bp_addr -1
+
+# Put breakpoint on main, get the address where the breakpoint was installed.
+gdb_test_multiple "break -q main" "break on main, get address" {
+    -re -wrap "Breakpoint $decimal at ($hex).*" {
+	set bp_addr $expect_out(1,string)
+
+	# Convert to decimal.
+	set bp_addr [expr $bp_addr]
+
+	pass $gdb_test_name
+    }
+}
+
+if { $bp_addr != -1 } {
+    # Make sure some prologue was skipped.
+    gdb_assert {$bp_addr > $main_addr}
+}

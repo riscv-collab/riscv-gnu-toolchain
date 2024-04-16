@@ -1,0 +1,460 @@
+# Copyright (C) 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.
+# It tests the mechanism exposing values to Guile.
+
+load_lib gdb-guile.exp
+
+require allow_guile_tests
+
+standard_testfile
+
+set has_argv0 [gdb_has_argv0]
+
+# Build inferior to language specification.
+# LANG is one of "c" or "c++".
+proc build_inferior {exefile lang} {
+    global srcdir subdir srcfile testfile hex
+
+    # Use different names for .o files based on the language.
+    # For Fission, the debug info goes in foo.dwo and we don't want,
+    # for example, a C++ compile to clobber the dwo of a C compile.
+    # ref: http://gcc.gnu.org/wiki/DebugFission
+    switch ${lang} {
+	"c" { set filename ${testfile}.o }
+	"c++" { set filename ${testfile}-cxx.o }
+    }
+    set objfile [standard_output_file $filename]
+
+    if { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${objfile}" object "debug $lang"] != ""
+	 || [gdb_compile "${objfile}" "${exefile}" executable "debug $lang"] != "" } {
+	untested "failed to compile in $lang mode"
+	return -1
+    }
+    return 0
+}
+
+proc test_value_in_inferior {} {
+    global gdb_prompt
+    global testfile
+
+    gdb_breakpoint [gdb_get_line_number "break to inspect struct and union"]
+
+    gdb_continue_to_breakpoint "break to inspect struct and union"
+
+    # Just get inferior variable s in the value history, available to guile.
+    gdb_test "print s" "= {a = 3, b = 5}" ""
+
+    gdb_scm_test_silent_cmd "gu (define s (history-ref 0))" "set s"
+
+    gdb_test "gu (print (value-field s \"a\"))" \
+	"= 3" "access element inside struct using string name"
+
+    # Append value in the value history.
+    gdb_scm_test_silent_cmd "gu (define i (history-append! (make-value 42)))" \
+	"append 42"
+
+    gdb_test "gu i" "\[0-9\]+"
+    gdb_test "gu (history-ref i)" "#<gdb:value 42>"
+    gdb_test "p \$" "= 42"
+
+    # Verify the recorded history value survives a gc.
+    gdb_test_no_output "guile (gc)"
+    gdb_test "p \$\$" "= 42"
+
+    # Make sure 'history-append!' rejects non-value objects.
+    gdb_test "gu (history-append! 123)" \
+	"ERROR:.* Wrong type argument.*" "history-append! type error"
+
+    # Test dereferencing the argv pointer.
+
+    # Just get inferior variable argv the value history, available to guile.
+    gdb_test "print argv" "= \\(char \\*\\*\\) 0x.*" ""
+
+    gdb_scm_test_silent_cmd "gu (define argv (history-ref 0))" \
+	"set argv"
+    gdb_scm_test_silent_cmd "gu (define arg0 (value-dereference argv))" \
+	"set arg0"
+
+    # Check that the dereferenced value is sane.
+    global has_argv0
+    set test "verify dereferenced value"
+    if { $has_argv0 } {
+	gdb_test_no_output "set print elements unlimited" ""
+	gdb_test_no_output "set print repeats unlimited" ""
+	gdb_test "gu (print arg0)" "0x.*$testfile\"" $test
+    } else {
+	unsupported $test
+    }
+
+    # Smoke-test value-optimized-out?.
+    gdb_test "gu (print (value-optimized-out? arg0))" \
+	"= #f" "Test value-optimized-out?"
+
+    # Test address attribute.
+    gdb_test "gu (print (value-address arg0))" \
+	"= 0x\[\[:xdigit:\]\]+" "Test address attribute"
+    # Test address attribute is #f in a non-addressable value.
+    gdb_test "gu (print (value-address (make-value 42)))" \
+	"= #f" "Test address attribute in non-addressable value"
+
+    # Test displaying a variable that is temporarily at a bad address.
+    # But if we can examine what's at memory address 0, then we'll also be
+    # able to display it without error.  Don't run the test in that case.
+    set can_read_0 [is_address_zero_readable]
+
+    # Test memory error.
+    set test "parse_and_eval with memory error"
+    if {$can_read_0} {
+	untested $test
+    } else {
+	gdb_test "gu (print (parse-and-eval \"*(int*)0\"))" \
+	    "ERROR: Cannot access memory at address 0x0.*" $test
+    }
+
+    # Test Guile lazy value handling
+    set test "memory error and lazy values"
+    if {$can_read_0} {
+	untested $test
+    } else {
+	gdb_test_no_output "gu (define inval (parse-and-eval \"*(int*)0\"))"
+	gdb_test "gu (print (value-lazy? inval))" \
+	    "#t"
+	gdb_test "gu (define inval2 (value-add inval 1))" \
+	    "ERROR: Cannot access memory at address 0x0.*" \
+	    "$test, using value in value-add"
+	gdb_test "gu (value-fetch-lazy! inval))" \
+	    "ERROR: Cannot access memory at address 0x0.*" \
+	    "$test, using value in value-fetch-lazy!"
+    }
+    gdb_test_no_output "gu (define argc-lazy (parse-and-eval \"argc\"))"
+    gdb_test_no_output "gu (define argc-notlazy (parse-and-eval \"argc\"))"
+    gdb_test_no_output "gu (value-fetch-lazy! argc-notlazy)"
+    gdb_test "gu (print (value-lazy? argc-lazy))" "= #t" \
+	"argc-lazy is initially lazy"
+    gdb_test "gu (print (value-lazy? argc-notlazy))" "= #f"
+    gdb_test "print argc" "= 1" "sanity check argc"
+    gdb_test "gu (print (value-lazy? argc-lazy))" "= #t" \
+	"argc-lazy is still lazy after argc is printed"
+    gdb_test_no_output "set argc=2"
+    gdb_test "gu (print argc-notlazy)" "= 1"
+    gdb_test "gu (print argc-lazy)" "= 2"
+    gdb_test "gu (print (value-lazy? argc-lazy))" "= #f" \
+	"argc-lazy is no longer lazy"
+
+    # Test string fetches, both partial and whole.
+    gdb_test "print st" "\"divide et impera\""
+    gdb_scm_test_silent_cmd "gu (define st (history-ref 0))" \
+	"inf: get st value from history"
+    gdb_test "gu (print (value->string st))" \
+	"= divide et impera"  "Test string with no length"
+    gdb_test "gu (print (value->string st #:length -1))" \
+	"= divide et impera" "Test string (length = -1) is all of the string"
+    gdb_test "gu (print (value->string st #:length 6))" \
+	"= divide"
+    gdb_test "gu (print (string-append \"---\" (value->string st #:length 0) \"---\"))" \
+	"= ------" "Test string (length = 0) is empty"
+    gdb_test "gu (print (string-length (value->string st #:length 0)))" \
+	"= 0" "Test length is 0"
+
+    # Fetch a string that has embedded nulls.
+    gdb_test "print nullst" "\"divide\\\\000et\\\\000impera\".*"
+    gdb_scm_test_silent_cmd "gu (define nullst (history-ref 0))" \
+	"inf: get nullst value from history"
+    gdb_test "gu (print (value->string nullst))" \
+	"divide" "Test string to first null"
+    gdb_scm_test_silent_cmd "gu (set! nullst (value->string nullst #:length 9))" \
+	"get string beyond null"
+    gdb_test "gu (print nullst)" \
+	"= divide\\\\000et"
+
+    gdb_scm_test_silent_cmd "gu (define argv-ref (value-reference-value argv))" \
+	"test value-reference-value"
+    gdb_test "gu (equal? argv (value-referenced-value argv-ref))" "#t"
+    gdb_test "gu (eqv? (type-code (value-type argv-ref)) TYPE_CODE_REF)" "#t"
+
+    gdb_scm_test_silent_cmd "gu (define argv-rref (value-rvalue-reference-value argv))" \
+	"test value-rvalue-reference-value"
+    gdb_test "gu (equal? argv (value-referenced-value argv-rref))" "#t"
+    gdb_test "gu (eqv? (type-code (value-type argv-rref)) TYPE_CODE_RVALUE_REF)" "#t"
+
+    gdb_test "gu (equal? (value-type (value-const-value argv)) (type-const (value-type argv)))" \
+	"#t"
+}
+
+proc test_strings {} {
+    gdb_test "gu (make-value \"test\")" "#<gdb:value \"test\">" "make string"
+
+    # Test string conversion errors.
+    set save_charset [get_target_charset]
+    gdb_test_no_output "set target-charset UTF-8"
+
+    gdb_test_no_output "gu (set-port-conversion-strategy! #f 'error)"
+    gdb_test "gu (print (value->string (make-value (string #\\x1234)) #:encoding \"ASCII\"))" \
+	"ERROR.*decoding-error.*" \
+	"value->string with default #:errors = 'error"
+
+    # There is no 'escape strategy for C->SCM string conversions, but it's
+    # still a legitimate value for %default-port-conversion-strategy.
+    # GDB handles this by, umm, substituting 'substitute.
+    # Use this case to also handle "#:errors #f" which explicitly says
+    # "use %default-port-conversion-strategy".
+    gdb_test_no_output "gu (set-port-conversion-strategy! #f 'escape)"
+    gdb_test "gu (print (value->string (make-value (string #\\x1234)) #:encoding \"ASCII\" #:errors #f))" \
+	"= \[?\]{3}" "value->string with default #:errors = 'escape"
+
+    # This is last in the default conversion tests so that
+    # %default-port-conversion-strategy ends up with the default value.
+    gdb_test_no_output "gu (set-port-conversion-strategy! #f 'substitute)"
+    gdb_test "gu (print (value->string (make-value (string #\\x1234)) #:encoding \"ASCII\"))" \
+	"= \[?\]{3}" "value->string with default #:errors = 'substitute"
+
+    gdb_test "gu (print (value->string (make-value (string #\\x1234)) #:encoding \"ASCII\" #:errors 'error))" \
+	"ERROR.*decoding-error.*" "value->string #:errors 'error"
+    gdb_test "gu (print (value->string (make-value (string #\\x1234)) #:encoding \"ASCII\" #:errors 'substitute))" \
+	"= \[?\]{3}" "value->string #:errors 'substitute"
+    gdb_test "gu (print (value->string (make-value \"abc\") #:errors \"foo\"))" \
+	"ERROR.*invalid error kind.*" "bad value for #:errors"
+
+    gdb_test_no_output "set target-charset $save_charset" \
+	"restore target-charset"
+}
+
+proc test_inferior_function_call {} {
+    global gdb_prompt hex decimal
+
+    # Correct inferior call without arguments.
+    gdb_test "p/x fp1" "= $hex.*"
+    gdb_scm_test_silent_cmd "gu (define fp1 (history-ref 0))" \
+	"get fp1 value from history"
+    gdb_scm_test_silent_cmd "gu (set! fp1 (value-dereference fp1))" \
+	"dereference fp1"
+    gdb_test "gu (print (value-call fp1 '()))" \
+	"= void"
+
+    # Correct inferior call with arguments.
+    gdb_test "p/x fp2" "= $hex.*" \
+	"place fp2 into value history, the first time"
+    gdb_scm_test_silent_cmd "gu (define fp2 (history-ref 0))" \
+	"get fp2 value from history"
+    gdb_scm_test_silent_cmd "gu (set! fp2 (value-dereference fp2))" \
+	"dereference fp2"
+    gdb_test "gu (print (value-call fp2 (list 10 20)))" \
+	"= 30"
+
+    # Incorrect to call an int value.
+    gdb_test "p i" "= $decimal.*"
+    gdb_scm_test_silent_cmd "gu (define i (history-ref 0))" \
+	"inf call: get i value from history"
+    gdb_test "gu (print (value-call i '()))" \
+	"ERROR: .*: Wrong type argument in position 1 \\(expecting function \\(value of TYPE_CODE_FUNC\\)\\): .*"
+
+    # Incorrect number of arguments.
+    gdb_test "p/x fp2" "= $hex.*" \
+	"place fp2 into value history, the second time"
+    gdb_scm_test_silent_cmd "gu (define fp3 (history-ref 0))" \
+	"get fp3 value from history"
+    gdb_scm_test_silent_cmd "gu (set! fp3 (value-dereference fp3))" \
+	"dereference fp3"
+    gdb_test "gu (print (value-call fp3 (list 10)))" \
+	"ERROR: Too few arguments in function call.*"
+}
+
+proc test_value_after_death {} {
+    # Construct a type while the inferior is still running.
+    gdb_scm_test_silent_cmd "gu (define ptrtype (lookup-type \"PTR\"))" \
+	"create PTR type"
+
+    # Kill the inferior and remove the symbols.
+    gdb_test "kill" "" "kill the inferior" \
+	"Kill the program being debugged. .y or n. $" \
+	"y"
+    gdb_test "file" "" "discard the symbols" \
+	"Discard symbol table from.*y or n. $" \
+	"y"
+
+    # First do a garbage collect to delete anything unused.  PR 16612.
+    gdb_scm_test_silent_cmd "gu (gc)" "garbage collect"
+
+    # Now create a value using that type.  Relies on arg0, created by
+    # test_value_in_inferior.
+    gdb_scm_test_silent_cmd "gu (define castval (value-cast arg0 (type-pointer ptrtype)))" \
+	"cast arg0 to PTR"
+
+    # Make sure the type is deleted.
+    gdb_scm_test_silent_cmd "gu (set! ptrtype #f)" \
+	"delete PTR type"
+
+    # Now see if the value's type is still valid.
+    gdb_test "gu (print (value-type castval))" \
+	"= PTR ." "print value's type"
+}
+
+# Regression test for invalid subscript operations.  The bug was that
+# the type of the value was not being checked before allowing a
+# subscript operation to proceed.
+
+proc test_subscript_regression {exefile lang} {
+    # Start with a fresh gdb.
+    clean_restart ${exefile}
+
+    if ![gdb_guile_runto_main ] {
+	return
+    }
+
+    if {$lang == "c++"} {
+	gdb_breakpoint [gdb_get_line_number "break to inspect pointer by reference"]
+	gdb_continue_to_breakpoint "break to inspect pointer by reference"
+
+	gdb_scm_test_silent_cmd "print rptr_int" \
+	    "Obtain address"
+	gdb_scm_test_silent_cmd "gu (define rptr (history-ref 0))" \
+	    "set rptr"
+	gdb_test "gu (print (value-subscript rptr 0))" \
+	    "= 2" "Check pointer passed as reference"
+
+	# Just the most basic test of dynamic_cast -- it is checked in
+	# the C++ tests.
+	gdb_test "gu (print (value->bool (value-dynamic-cast (parse-and-eval \"base\") (type-pointer (lookup-type \"Derived\")))))" \
+	    "= #t"
+
+	# Likewise.
+	gdb_test "gu (print (value-dynamic-type (parse-and-eval \"base\")))" \
+	    "= Derived \[*\]"
+	gdb_test "gu (print (value-dynamic-type (parse-and-eval \"base_ref\")))" \
+	    "= Derived \[&\]"
+	# A static type case.
+	gdb_test "gu (print (value-dynamic-type (parse-and-eval \"5\")))" \
+	    "= int"
+    }
+
+    gdb_breakpoint [gdb_get_line_number "break to inspect struct and union"]
+    gdb_continue_to_breakpoint "break to inspect struct and union in $lang"
+
+    gdb_scm_test_silent_cmd "gu (define intv (make-value 1))" \
+	"Create int value for subscript test"
+    gdb_scm_test_silent_cmd "gu (define stringv (make-value \"foo\"))" \
+	"Create string value for subscript test"
+
+    # Try to access an int with a subscript.  This should fail.
+    gdb_test "gu (print intv)" \
+	"= 1" "Baseline print of an int Guile value"
+    gdb_test "gu (print (value-subscript intv 0))" \
+	"ERROR: Cannot subscript requested type.*" \
+	"Attempt to access an integer with a subscript"
+
+    # Try to access a string with a subscript.  This should pass.
+    gdb_test "gu (print stringv)" \
+	"= \"foo\"" "Baseline print of a string Guile value"
+    gdb_test "gu (print (value-subscript stringv 0))" \
+	"= 102 'f'" "Attempt to access a string with a subscript"
+
+    # Try to access an int array via a pointer with a subscript.
+    # This should pass.
+    gdb_scm_test_silent_cmd "print p" "Build pointer to array"
+    gdb_scm_test_silent_cmd "gu (define pointer (history-ref 0))" "set pointer"
+    gdb_test "gu (print (value-subscript pointer 0))" \
+	"= 1" "Access array via pointer with int subscript"
+    gdb_test "gu (print (value-subscript pointer intv))" \
+	"= 2" "Access array via pointer with value subscript"
+
+    # Try to access a single dimension array with a subscript to the
+    # result.  This should fail.
+    gdb_test "gu (print (value-subscript (value-subscript pointer intv) 0))" \
+	"ERROR: Cannot subscript requested type.*" \
+	"Attempt to access an integer with a subscript 2"
+
+    # Lastly, test subscript access to an array with multiple
+    # dimensions.  This should pass.
+    gdb_scm_test_silent_cmd "print {\"fu \",\"foo\",\"bar\"}" "Build array"
+    gdb_scm_test_silent_cmd "gu (define marray (history-ref 0))" ""
+    gdb_test "gu (print (value-subscript (value-subscript marray 1) 2))" \
+	"o." "Test multiple subscript"
+}
+
+# A few tests of gdb:parse-and-eval.
+
+proc test_parse_and_eval {} {
+    gdb_test "gu (print (parse-and-eval \"23\"))" \
+	"= 23" "parse-and-eval constant test"
+    gdb_test "gu (print (parse-and-eval \"5 + 7\"))" \
+	"= 12" "parse-and-eval simple expression test"
+    gdb_test "gu (raw-print (parse-and-eval \"5 + 7\"))" \
+	"#<gdb:value 12>" "parse-and-eval type test"
+}
+
+# Test that values are hashable.
+# N.B.: While smobs are hashable, the hash is really non-existent,
+# they all get hashed to the same value.  Guile may provide a hash function
+# for smobs in a future release.  In the meantime one should use a custom
+# hash table that uses gdb:hash-gsmob.
+
+proc test_value_hash {} {
+    gdb_test_multiline "Simple Guile value dictionary" \
+	"guile" "" \
+	"(define one (make-value 1))" "" \
+	"(define two (make-value 2))" "" \
+	"(define three (make-value 3))" "" \
+        "(define vdict (make-hash-table 5))" "" \
+	"(hash-set! vdict one \"one str\")" "" \
+	"(hash-set! vdict two \"two str\")" "" \
+	"(hash-set! vdict three \"three str\")" "" \
+	"end"
+    gdb_test "gu (print (hash-ref vdict one))" \
+	"one str" "Test dictionary hash 1"
+    gdb_test "gu (print (hash-ref vdict two))" \
+	"two str" "Test dictionary hash 2"
+    gdb_test "gu (print (hash-ref vdict three))" \
+	"three str" "Test dictionary hash 3"
+}
+
+# Build C version of executable.  C++ is built later.
+if { [build_inferior "${binfile}" "c"] < 0 } {
+    return
+}
+
+# Start with a fresh gdb.
+clean_restart ${binfile}
+
+gdb_install_guile_utils
+gdb_install_guile_module
+
+test_parse_and_eval
+test_value_hash
+
+# The following tests require execution.
+
+if ![gdb_guile_runto_main] {
+    return
+}
+
+test_value_in_inferior
+test_inferior_function_call
+test_strings
+test_value_after_death
+
+# Test either C or C++ values. 
+
+test_subscript_regression "${binfile}" "c"
+
+if {[allow_cplus_tests]} {
+    if { [build_inferior "${binfile}-cxx" "c++"] < 0 } {
+	return
+    }
+    with_test_prefix "c++" {
+	test_subscript_regression "${binfile}-cxx" "c++"
+    }
+}

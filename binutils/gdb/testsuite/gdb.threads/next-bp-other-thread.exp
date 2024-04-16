@@ -1,0 +1,55 @@
+# Copyright (C) 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that GDB behaves correctly when a "next" steps over a call, and
+# another thread hits a breakpoint that doesn't cause a user visible
+# stop (and so needs to be stepped over).  GDB used to trip on an
+# invalid assertion - PR17408.
+
+standard_testfile
+
+if {[build_executable "failed to prepare" $testfile $srcfile \
+	 {debug pthreads}] == -1} {
+    return -1
+}
+
+# Test all "set scheduler-locking" variants.
+foreach schedlock {"off" "step" "on" } {
+    with_test_prefix "schedlock=$schedlock" {
+	clean_restart $binfile
+
+	if ![runto_main] {
+	    continue
+	}
+
+	gdb_breakpoint [gdb_get_line_number "set wait-thread breakpoint here"]
+	gdb_continue_to_breakpoint "run to wait-thread breakpoint"
+	gdb_test "info threads" "\\\* 1 .*  2 .*" "info threads shows all threads"
+
+	delete_breakpoints
+
+	gdb_breakpoint [gdb_get_line_number "set breakpoint child here"]
+	# Give it a condition that always fails.
+	gdb_test "condition \$bpnum global_zero == 1" ".*"
+
+	gdb_test_no_output "set scheduler-locking $schedlock"
+
+	# While stepping over the sleep call, the other thread hits a
+	# breakpoint that doesn't cause a user visible stop (and so
+	# needs to be stepped over).  The next should complete as if
+	# that breakpoint never triggered.
+	gdb_test "next" "EXIT_SUCCESS.*" "next over function call"
+    }
+}

@@ -1,0 +1,322 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test nested class definitions with the type printer.
+#
+# This test works by constructing a tree to represent "struct S10" in
+# the corresponding source file.  It then walks the nodes of this tree
+# to construct input suitable for passing to cp_test_ptype_class.
+
+require allow_cplus_tests
+
+load_lib "cp-support.exp"
+
+standard_testfile .cc
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile \
+	 {debug c++}]} {
+    return -1
+}
+
+# Build the node given by ID (a number representing the struct S[ID] in
+# the source file).
+#
+# For each node, stored as ::nodes(ID,ARG), where ARG is
+#
+# fields   - list of fields [no children]
+# children - list of types [children]
+
+proc build_node {id} {
+    global nodes
+
+    # For any node, FIELDS is always the types i(N), e(N), u(N)
+    # CHILDREN is a list of nodes called [E(N), U(N)] S(N+1)
+    #
+    # The root (10) also has S(N+11), S(N+21), S(N+31), S(N+41)
+
+    set nodes($id,fields) [list "int i$id" "E$id e$id" "U$id u$id"]
+    set nodes($id,children) {}
+    if {$id == 10} {
+	set limit 5
+    } else {
+	set limit 1
+    }
+    for {set i 0} {$i < $limit} {incr i} {
+	set n [expr {1 + $id + $i * 10}]
+
+	# We don't build nodes which are multiples of 10
+	# (the source only uses that at the root struct).
+	# We also don't create nodes not in the source file
+	# (id >= 60).
+	if {[expr {$n % 10}] != 0 && $n < 60} {
+	    lappend nodes($id,children) $n
+	}
+    }
+}
+
+# A helper procedure to indent the log output by LVL.  This is used for
+# debugging the tree, if ever necessary.
+
+proc indent {lvl} {
+    for {set i 0} {$i < $lvl} {incr i} {
+	send_log "  "
+    }
+}
+
+# For the given CHILD name and PARENT_LIST, return the fully qualified
+# name of the child type.
+
+proc qual_name {child parent_list} {
+    if {[string range $child 0 2] != "int" && [llength $parent_list]} {
+	return "[join $parent_list ::]::$child"
+    } else {
+	return "$child"
+    }
+}
+
+# Output the test source to the log.
+
+proc make_source {} {
+    # Output the structure.
+    test_nested_limit 10 true
+
+    # Output main().
+    send_log "int\nmain \(\)\n\{\n"
+    set plist {}
+    for {set i 10} {$i < 60} {incr i} {
+	if {$i > 10 && [expr {$i % 10}] == 0} {
+	    incr i
+	    set plist {"S10"}
+	    send_log "\n"
+	}
+	send_log "  [qual_name S$i $plist] s$i;\n"
+	lappend plist "S$i"
+    }
+
+    send_log "  return 0;\n"
+    send_log "\}\n"
+}
+
+# Output to the log and/or create the result list for the fields of node ID.
+
+proc make_fields {result_var id parent_list indent_lvl log} {
+    upvar $result_var result
+    global nodes
+
+    foreach type $nodes($id,fields) {
+	set s "[qual_name $type $parent_list];"
+	if {$log} {
+	    indent $indent_lvl
+	    send_log "$s\n"
+	}
+	lappend result [list "field" "public" "$s"]
+    }
+}
+
+# Output to the log and/or create the result list for the union type in
+# node ID.
+
+proc make_union {result_var id parent_list indent_lvl log} {
+    upvar $result_var result
+
+    set s "[qual_name U$id $parent_list]"
+    set a "int a;"
+    set c "char c;"
+    lappend result [list "type" "public" "union" $s [list $a $c]]
+    if {$log} {
+	indent $indent_lvl
+	send_log "union $s \{\n"
+	indent [expr {$indent_lvl + 1}]
+	send_log "$a\n"
+	indent [expr {$indent_lvl + 1}]
+	send_log "$c\n"
+	indent $indent_lvl
+	send_log "\};\n"
+    }
+}
+
+# Output to the log and/or create the result list for the enum type in
+# node ID.
+
+proc make_enum {result_var id parent_list indent_lvl log} {
+    upvar $result_var result
+
+    set s "[qual_name E$id $parent_list]"
+    set a "[qual_name A$id $parent_list]"
+    set b "[qual_name B$id $parent_list]"
+    set c "[qual_name C$id $parent_list]"
+    lappend result [list "type" "public" "enum" $s [list $a $b $c]]
+
+    if {$log} {
+	indent $indent_lvl
+	send_log "enum $s \{$a, $b, $c\};\n"
+    }
+}
+
+# Output to the log and/or create the result list for the node given by ID.
+#
+# LIMIT describes the number of nested types to output (corresponding to
+# the "set print type nested-type-limit" command).
+# PARENT_LIST is the list of parent nodes already seen.
+# INDENT_LVL is the indentation level (used when LOG is true).
+
+proc node_result {result_var id limit parent_list indent_lvl log} {
+    upvar $result_var result
+
+    # Start a new type list.
+    set my_name "S$id"
+    set s "[qual_name $my_name $parent_list]"
+    set my_result [list "type" "public" "struct" $s]
+
+    if {$log} {
+	indent $indent_lvl
+	send_log "struct $my_name \{\n"
+    } else {
+	# Add this node to the parent list so that its name appears in
+	# qualified names, but only if we are not logging. [See immediately
+	# below.]
+	lappend parent_list "$my_name"
+    }
+
+    # `ptype' outputs fields before type definitions, but in order to
+    # output compile-ready code, these must be output in reverse.
+
+    if {!$log} {
+	# Output field list to a local children list.
+	set children_list {}
+	make_fields children_list $id $parent_list \
+	    [expr {$indent_lvl + 1}] $log
+
+	# Output type definitions to the local children list.
+	# The first number of ID gives us the depth of the node.
+	if {[string index $id 1] < $limit || $limit < 0} {
+	    make_enum children_list $id $parent_list \
+		[expr {$indent_lvl + 1}] $log
+	    make_union children_list $id $parent_list \
+		[expr {$indent_lvl + 1}] $log
+	}
+    } else {
+	# Output type definitions to the local children list.
+	# The first number of ID gives us the depth of the node.
+	if {[string index $id 1] < $limit || $limit < 0} {
+	    make_enum children_list $id $parent_list \
+		[expr {$indent_lvl + 1}] $log
+	    make_union children_list $id $parent_list \
+		[expr {$indent_lvl + 1}] $log
+	    send_log "\n"
+	}
+
+	# Output field list to a local children list.
+	set children_list {}
+	make_fields children_list $id $parent_list \
+	    [expr {$indent_lvl + 1}] $log
+	send_log "\n"
+    }
+
+    # Output the children to the local children list.
+    global nodes
+    if {[info exists nodes($id,children)]} {
+	foreach c $nodes($id,children) {
+	    if {[string index $c 1] <= $limit || $limit < 0} {
+		node_result children_list $c $limit $parent_list \
+		    [expr {$indent_lvl + 1}] $log
+	    }
+	}
+    }
+
+    # Add this node's children to its result and add its result to
+    # its parent's results.
+    lappend my_result $children_list
+    lappend result $my_result
+
+    if {$log} {
+	indent $indent_lvl
+	send_log "\};\n"
+    }
+}
+
+# Test nested type definitions.  LIMIT specifies how many nested levels
+# of definitions to test.  If LOG is true, output the tree to the log in
+# a human-readable format mimicing the source code.
+#
+# Only test when not logging.  Generating source code usable by the
+# test is not quite the same as how GDB outputs it.
+
+proc test_nested_limit {limit log} {
+    set result {}
+
+    if {!$log} {
+	# Set the number of nested definitions to print.
+	gdb_test_no_output "set print type nested-type-limit $limit"
+
+	# Check the output of "show type print nested-type-limit"
+	if {$limit < 0} {
+	    set lstr "unlimited"
+	} else {
+	    set lstr $limit
+	}
+	gdb_test "show print type nested-type-limit" \
+	    "Will print $lstr nested types defined in a class" \
+	    "show print type nested-type-limit ($limit)"
+    } else {
+	send_log "Tree to $limit levels:\n"
+    }
+
+    # Generate the result list.
+    node_result result 10 $limit {} 0 $log
+
+    if {!$log} {
+	# The only output we check for is the contents of the struct,
+	# ignoring the leading "type = struct S10 {" and trailing "}" of
+	# the outermost node.
+	set result [lindex $result 0]
+	lassign $result type access key name children
+	cp_test_ptype_class $name "ptype $name (limit = $limit)" $key \
+	    $name $children
+    }
+}
+
+# Build a tree of nodes describing the structures in the source file.
+
+# An array holding all the nodes
+array set nodes {}
+build_node 10
+for {set i 1} {$i < 6} {incr i} {
+    for {set j 1} {$j < 10} {incr j} {
+	build_node $i$j
+    }
+}
+
+# Check relevant commands.
+
+# By default, we do not print nested type definitions.
+gdb_test "show print type nested-type-limit" \
+    "Will not print nested types defined in a class" \
+    "show default print type nested-type-limit"
+
+# -1 means we print all nested types
+test_nested_limit -1 false
+
+# Test the output of "show print type nested-type-limit" and
+# ptype on the test source.
+
+for {set i 1} {$i < 9} {incr i} {
+    test_nested_limit $i false
+}
+
+# To output the test code to the log, uncomment the following line:
+#make_source
+
+unset -nocomplain nodes result

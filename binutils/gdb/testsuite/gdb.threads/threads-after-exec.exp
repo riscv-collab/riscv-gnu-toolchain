@@ -1,0 +1,61 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that after an exec of a non-leader thread, we don't leave the
+# non-leader thread listed in internal thread lists, causing problems.
+
+standard_testfile .c
+
+proc do_test { } {
+    if [prepare_for_testing "failed to prepare" $::testfile $::srcfile {debug pthreads}] {
+	return -1
+    }
+
+    if ![runto_main] {
+	return
+    }
+
+    gdb_test "catch exec" "Catchpoint $::decimal \\(exec\\)"
+
+    gdb_test "continue" "Catchpoint $::decimal .*" "continue until exec"
+
+    # Confirm we only have one thread in the thread list.
+    gdb_test "p \$_inferior_thread_count" " = 1"
+
+    # Get the post-exec thread number.  Due to PR gdb/31069 ("Zombie
+    # leader detection racy") this isn't always thread 1.1.
+    set cur_thr [get_integer_valueof "\$_thread" 0]
+
+    if {[istarget *-*-linux*] && [gdb_is_target_native]} {
+	# Confirm there's only one LWP in the list as well, and that
+	# it is bound to the existing GDB thread.
+	set inf_pid [get_inferior_pid]
+	gdb_test_multiple "maint info linux-lwps" "" {
+	    -wrap -re "Thread ID *\r\n$inf_pid\.$inf_pid\.0\[ \t\]+1\.$cur_thr *" {
+		pass $gdb_test_name
+	    }
+	}
+    }
+
+    # Test that GDB is able to kill the inferior.  This used to crash
+    # on native Linux as GDB did not dispose of the pre-exec LWP for
+    # the non-leader (and that LWP did not have a matching thread in
+    # the core thread list).
+    gdb_test "with confirm off -- kill" \
+	"\\\[Inferior 1 (.*) killed\\\]" \
+	"kill inferior"
+}
+
+do_test

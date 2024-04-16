@@ -1,0 +1,405 @@
+# Copyright 2011-2024 Free Software Foundation, Inc.
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "trace-support.exp"
+
+standard_testfile
+set executable $testfile
+set expfile $testfile.exp
+
+# Some targets have leading underscores on assembly symbols.
+set additional_flags [gdb_target_symbol_prefix_flags]
+
+require gdb_trace_common_supports_arch
+
+if [prepare_for_testing "failed to prepare" $executable $srcfile \
+	[list debug $additional_flags]] {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+if ![gdb_target_supports_trace] {
+    unsupported "target does not support trace"
+    return -1
+}
+
+# Set breakpoint and tracepoint at the same address.
+
+proc break_trace_same_addr_1 { trace_type option } \
+{ with_test_prefix "1 $trace_type $option" \
+{
+    global executable
+    global hex
+
+    # Start with a fresh gdb.
+    clean_restart ${executable}
+    if ![runto_main] {
+	return -1
+    }
+
+    gdb_test_no_output "set breakpoint always-inserted ${option}"
+
+    gdb_breakpoint "end" qualified
+
+    gdb_breakpoint "set_point" qualified
+    gdb_test "${trace_type} set_point" "\(Fast t|T\)racepoint \[0-9\] at $hex: file.*"
+
+    gdb_test_no_output "tstart"
+
+    gdb_test "continue" "Continuing\\.\[ \r\n\]+(Thread .* hit )?Breakpoint.*" \
+	"continue to set_point"
+
+    gdb_test "continue" "Continuing\\.\[ \r\n\]+(Thread .* hit )?Breakpoint.*" \
+	"continue to end"
+    gdb_test_no_output "tstop"
+
+    gdb_test "tfind" "Found trace frame 0, tracepoint .*" "tfind frame 0"
+    gdb_test "tfind" "Target failed to find requested trace frame\\..*"
+}}
+
+# Set multiple tracepoints at the same address.
+
+proc break_trace_same_addr_2 { trace_type1 trace_type2 option } \
+{ with_test_prefix "2 $trace_type1 $trace_type2 $option" \
+{
+    global executable
+    global hex
+
+    # Start with a fresh gdb.
+    clean_restart ${executable}
+    if ![runto_main] {
+	return -1
+    }
+
+    gdb_test_no_output "set breakpoint always-inserted ${option}"
+
+    gdb_breakpoint "end" qualified
+
+    gdb_test "${trace_type1} set_point" \
+	"\(Fast t|T\)racepoint \[0-9\] at $hex: file.*" \
+	"${trace_type1} set_point (1)"
+
+    gdb_test "${trace_type2} set_point" \
+	"\(Fast t|T\)racepoint \[0-9\] at $hex: file.*" \
+	"${trace_type2} set_point (2)"
+
+    gdb_test_no_output "tstart"
+    gdb_test "continue" "Continuing\\.\[ \r\n\]+(Thread .* hit )?Breakpoint.*" \
+	"continue to end"
+
+    gdb_test_no_output "tstop"
+
+    gdb_test "tfind" "Found trace frame 0, tracepoint .*" "tfind frame 0"
+    gdb_test "tfind" "Found trace frame 1, tracepoint .*" "tfind frame 1"
+    gdb_test "tfind" "Target failed to find requested trace frame\\..*"
+}}
+
+# Set breakpoint and tracepoint at the same address.  Delete breakpoint, and verify
+# that tracepoint still works.
+
+proc break_trace_same_addr_3 { trace_type option } \
+{ with_test_prefix "3 $trace_type $option" \
+{
+    global executable
+    global hex
+
+    # Start with a fresh gdb.
+    clean_restart ${executable}
+    if ![runto_main] {
+	return -1
+    }
+
+    gdb_test_no_output "set breakpoint always-inserted ${option}"
+    gdb_breakpoint "marker" qualified
+    gdb_breakpoint "end" qualified
+
+    gdb_breakpoint "set_point" qualified
+    gdb_test "${trace_type} set_point" "\(Fast t|T\)racepoint \[0-9\] at $hex: file.*"
+
+    gdb_test_no_output "tstart"
+
+    gdb_test "continue" "Continuing\\.\[ \r\n\]+(Thread .* hit )?Breakpoint.*" \
+	"continue to marker"
+    gdb_test "delete break 4"
+
+    gdb_test "continue" "Continuing\\.\[ \r\n\]+(Thread .* hit )?Breakpoint.*" \
+	"continue to end"
+    gdb_test_no_output "tstop"
+
+    gdb_test "tfind" "Found trace frame 0, tracepoint .*" "tfind frame 0"
+    gdb_test "tfind" "Target failed to find requested trace frame\\..*"
+}}
+
+# Set breakpoint and tracepoint at the same address.  Delete tracepoint, and verify
+# that breakpoint still works.
+
+proc break_trace_same_addr_4 { trace_type option } \
+{ with_test_prefix "4 $trace_type $option" \
+{
+    global executable
+    global hex
+
+
+    # Start with a fresh gdb.
+    clean_restart ${executable}
+    if ![runto_main] {
+	return -1
+    }
+
+    gdb_test_no_output "set breakpoint always-inserted ${option}"
+    gdb_breakpoint "marker" qualified
+    gdb_breakpoint "end" qualified
+
+    gdb_breakpoint "set_point" qualified
+    gdb_test "${trace_type} set_point" "\(Fast t|T\)racepoint \[0-9\] at $hex: file.*"
+
+    gdb_test "continue" "Continuing\\.\[ \r\n\]+(Thread .* hit )?Breakpoint.*" \
+	"continue to marker"
+    # Delete tracepoint set on set_point.
+    gdb_test "delete trace 5"
+
+    gdb_test "tstart" "No tracepoints defined, not starting trace.*"
+
+    gdb_test "continue" "Continuing\\.\[ \r\n\]+(Thread .* hit )?Breakpoint.*" \
+	"continue to set_point"
+    gdb_test "continue" "Continuing\\.\[ \r\n\]+(Thread .* hit )?Breakpoint.*" \
+	"continue to end"
+    gdb_test "tstop" "Trace is not running.*"
+
+    gdb_test "tfind" "Target failed to find requested trace frame\\..*"
+}}
+
+# Set two tracepoints TRACE1 and TRACE2 at two locations, and start tracing.
+# Then, set tracepoint TRACE3 at either of these two locations.
+# TRACE3_AT_FIRST_LOC is a boolean variable to decide insert TRACE3 at which
+# of two locations.  Verify  these tracepoints work as expected.
+
+proc break_trace_same_addr_5 { trace1 trace2 trace3 trace3_at_first_loc } \
+{ with_test_prefix "5 $trace1 $trace2 ${trace3}@${trace3_at_first_loc}" \
+{
+    global executable
+    global hex
+    global fpreg
+    global spreg
+    global pcreg
+
+    # Start with a fresh gdb.
+    clean_restart ${executable}
+    if ![runto_main] {
+	return -1
+    }
+
+    gdb_breakpoint "marker" qualified
+    gdb_breakpoint "end" qualified
+
+    gdb_test "${trace1} set_point" "\(Fast t|T\)racepoint \[0-9\] at $hex: file.*" \
+	"${trace1} set_point 1"
+    gdb_trace_setactions "set action for tracepoint 1" "" \
+	"collect \$$pcreg" "^$"
+    gdb_test "${trace2} after_set_point" \
+	"\(Fast t|T\)racepoint \[0-9\] at $hex: file.*" \
+	"${trace2} after_set_point 1"
+
+    gdb_trace_setactions "set action for tracepoint 2" "" \
+	"collect \$$spreg" "^$"
+
+    gdb_test_no_output "tstart"
+
+    gdb_test "continue" "Continuing\\.\[ \r\n\]+(Thread .* hit )?Breakpoint.*" \
+	"continue to marker"
+
+    if [string equal $trace3_at_first_loc "1"] {
+	gdb_test "${trace3} set_point" "\(Fast t|T\)racepoint \[0-9\] at $hex: file.*" \
+	    "${trace3} set_point 2"
+    } else {
+	gdb_test "${trace3} after_set_point" \
+	    "\(Fast t|T\)racepoint \[0-9\] at $hex: file.*" \
+	    "${trace2} after_set_point 2"
+    }
+    gdb_trace_setactions "set action for tracepoint 3" "" \
+	"collect \$$fpreg" "^$"
+
+    gdb_test "continue" "Continuing\\.\[ \r\n\]+(Thread .* hit )?Breakpoint.*" \
+	"continue to end"
+    gdb_test_no_output "tstop"
+
+    gdb_test "tfind tracepoint 4" "Found trace frame \[0-9\], tracepoint .*" \
+	"tfind test frame of tracepoint 4"
+    gdb_test "tdump" \
+	"Data collected at tracepoint .*, trace frame \[0-9\]:.*\\$${pcreg} = .*" \
+	"tdump 1"
+    gdb_test "tfind 0" "Found trace frame 0, tracepoint .*" \
+	"reset to frame 0 (1)"
+    gdb_test "tfind tracepoint 5" "Found trace frame \[0-9\], tracepoint .*" \
+	"tfind test frame of tracepoint 5"
+    gdb_test "tdump" \
+	"Data collected at tracepoint .*, trace frame \[0-9\]:.*\\$${spreg} = .*" \
+	"tdump 2"
+    gdb_test "tfind 0" "Found trace frame 0, tracepoint .*" \
+	"reset to frame 0 (2)"
+    gdb_test "tfind tracepoint 6" "Found trace frame \[0-9\], tracepoint .*" \
+	"tfind test frame of tracepoint 6"
+    gdb_test "tdump" \
+	"Data collected at tracepoint .*, trace frame \[0-9\]:.*\\$${fpreg} = .*" \
+	"tdump 3"
+}}
+
+# Set two tracepoints at the same address, and enable/disable them.  Verify
+# tracepoints work as expect.
+
+proc break_trace_same_addr_6 { trace1 enable1 trace2 enable2 } \
+{ with_test_prefix "6 $trace1 $enable1 $trace2 $enable2" \
+{
+    global executable
+    global hex
+    global gdb_prompt
+    global spreg
+    global pcreg
+
+    # Start with a fresh gdb.
+    clean_restart ${executable}
+    if ![runto_main] {
+	return -1
+    }
+
+    gdb_breakpoint "marker" qualified
+    gdb_breakpoint "end" qualified
+
+    gdb_test "continue" "Continuing\\.\[ \r\n\]+(Thread .* hit )?Breakpoint.*" \
+	"continue to marker"
+
+    gdb_test "${trace1} set_point" "\(Fast t|T\)racepoint \[0-9\] at $hex: file.*" \
+	"${trace1} set_point 1"
+    gdb_trace_setactions "set action for tracepoint 1" "" \
+	"collect \$$pcreg" "^$"
+    gdb_test "${trace2} set_point" "\(Fast t|T\)racepoint \[0-9\] at $hex: file.*" \
+    	"${trace2} set_point 2"
+    gdb_trace_setactions "set action for tracepoint 2" "" \
+	"collect \$$spreg" "^$"
+
+    gdb_test_no_output "$enable1 4"
+    gdb_test_no_output "$enable2 5"
+
+    gdb_test_no_output "tstart"
+    gdb_test "continue" "Continuing\\.\[ \r\n\]+(Thread .* hit )?Breakpoint.*" \
+	"continue to end"
+    gdb_test_no_output "tstop"
+
+
+    if [string equal $enable1 "enable"] {
+	gdb_test "tfind tracepoint 4" "Found trace frame \[0-9\], tracepoint .*" \
+	    "tfind test frame of tracepoint 4"
+	gdb_test "tdump" \
+	    "Data collected at tracepoint .*, trace frame \[0-9\]:.*\\$${pcreg} = .*" \
+	    "tdump 1"
+	gdb_test "tfind 0" "Found trace frame 0, tracepoint .*" \
+	    "reset to frame 0 (1)"
+    } else {
+	gdb_test "tfind tracepoint 4" "Target failed to find requested trace frame.*" \
+	    "tfind test frame of tracepoint 4"
+    }
+
+    if [string equal $enable2 "enable"] {
+	gdb_test "tfind tracepoint 5" "Found trace frame \[0-9\], tracepoint .*" \
+	    "tfind test frame of tracepoint 5"
+	gdb_test "tdump" \
+	    "Data collected at tracepoint .*, trace frame \[0-9\]:.*\\$${spreg} = .*" \
+	    "tdump 2"
+	gdb_test "tfind 0" "Found trace frame 0, tracepoint .*" \
+	    "reset to frame 0 (2)"
+    } else {
+	gdb_test "tfind tracepoint 5" "Target failed to find requested trace frame.*" \
+	    "tfind test frame of tracepoint 5"
+    }
+}}
+
+
+foreach break_always_inserted { "on" "off" } {
+    break_trace_same_addr_1 "trace" ${break_always_inserted}
+    break_trace_same_addr_2 "trace" "trace" ${break_always_inserted}
+    break_trace_same_addr_3 "trace" ${break_always_inserted}
+    break_trace_same_addr_4 "trace" ${break_always_inserted}
+}
+
+foreach at_first_loc { "1" "0" } {
+    break_trace_same_addr_5 "trace" "trace" "trace" ${at_first_loc}
+}
+
+break_trace_same_addr_6 "trace" "enable" "trace" "disable"
+break_trace_same_addr_6 "trace" "disable" "trace" "enable"
+
+require allow_shlib_tests
+
+set libipa [get_in_proc_agent]
+set remote_libipa [gdb_load_shlib $libipa]
+
+# Can't use prepare_for_testing, because that splits compiling into
+# building objects and then linking, and we'd fail with "linker input
+# file unused because linking not done" when building the object.
+
+if { [gdb_compile "$srcdir/$subdir/$srcfile" $binfile \
+	  executable [list debug $additional_flags shlib=$libipa] ] != "" } {
+    untested "failed to compile"
+    return -1
+}
+clean_restart ${executable}
+
+if ![runto_main] {
+    return 0
+}
+
+gdb_reinitialize_dir $srcdir/$subdir
+if { [gdb_test "info sharedlibrary" ".*${remote_libipa}.*" "IPA loaded"] != 0 } {
+    untested "could not find IPA lib loaded"
+} else {
+    foreach break_always_inserted { "on" "off" } {
+	break_trace_same_addr_1 "ftrace" ${break_always_inserted}
+	break_trace_same_addr_2 "trace" "ftrace" ${break_always_inserted}
+	break_trace_same_addr_2 "ftrace" "trace" ${break_always_inserted}
+	break_trace_same_addr_2 "ftrace" "ftrace" ${break_always_inserted}
+	break_trace_same_addr_3 "ftrace" ${break_always_inserted}
+	break_trace_same_addr_4 "ftrace" ${break_always_inserted}
+    }
+
+    foreach trace1 { "trace" "ftrace" } {
+	foreach trace2 { "trace" "ftrace" } {
+	    foreach trace3 { "trace" "ftrace" } {
+
+		if { [string equal $trace1 "trace"]
+		     && [string equal $trace2 "trace"]
+		     && [string equal $trace3 "trace"] } {
+		    continue
+		}
+
+		foreach at_first_loc { "1" "0" } {
+		    break_trace_same_addr_5 $trace1 $trace2 $trace3 $at_first_loc
+		}
+	    }
+	}
+    }
+
+    foreach trace1 { "trace" "ftrace" } {
+	foreach trace2 { "trace" "ftrace" } {
+	    if { [string equal $trace1 "trace"]
+		 && [string equal $trace2 "trace"] } {
+		    continue
+		}
+	    break_trace_same_addr_6 $trace1 "enable" $trace2 "disable"
+	    break_trace_same_addr_6 $trace1 "disable" $trace2 "enable"
+	}
+    }
+}

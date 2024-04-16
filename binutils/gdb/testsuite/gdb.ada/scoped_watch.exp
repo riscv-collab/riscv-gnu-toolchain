@@ -1,0 +1,83 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "ada.exp"
+
+require allow_ada_tests
+
+standard_ada_testfile foo_p708_025
+
+if {[gdb_compile_ada "${srcfile}" "${binfile}" executable {debug}] != ""} {
+    return -1
+}
+
+clean_restart ${testfile}
+
+set bp_location [gdb_get_line_number "START" ${testdir}/pck.adb]
+runto "pck.adb:$bp_location"
+
+# Insert a watchpoint on local variable "result"
+
+gdb_test "watch result" \
+         ".*atchpoint \[0-9\]+: result"
+
+# Insert a breakpoint we'll reach after returning from the current
+# function.
+
+set bp_location [gdb_get_line_number "Do_Nothing" ${testdir}/foo_p708_025.adb]
+gdb_test "break foo_p708_025.adb:$bp_location" \
+         "Breakpoint \[0-9\]+ at.*: file .*foo_p708_025.adb, line \[0-9\]+."
+
+# This breakpoint will be there to stop us after we test what happens
+# during a continue (see below...)
+
+gdb_test "break pck.increment" \
+         "Breakpoint \[0-9\]+ at.*: file .*pck.adb, line \[0-9\]+."
+
+# Continue until we reach our watchpoint.  It isn't strictly necessary
+# for our purpose that the watchpoint actually triggers, but this shows
+# that the watchpoint exists and is active.
+gdb_test "cont" \
+         ".*atchpoint \[0-9\]+: result.*Old value = 8.*New value = 64.*" \
+         "continuing to watchpoint hit"
+
+# Continue again.  We should be stopped at the (internal) breakpoint
+# that we setup to delete the watchpoint as soon as the program leaves
+# the current scope.
+
+gdb_test \
+    "cont" \
+    ".*atchpoint \[0-9\]+ deleted because the program has left the block.*" \
+    "continuing until watchpoint automatic deletion"
+
+# Continue one more time.  We should be reaching one of the breakpoints
+# (on the call to Do_Nothing) we set earlier.
+
+gdb_test "cont" \
+         "Breakpoint \[0-9\]+.*Do_Nothing.*" \
+         "continuing to breakpoint on call to Do_Nothing"
+
+# Do a next, to verify that it works...
+
+gdb_test "next" \
+         ".* Call_Me;" \
+         "next to call to Call_Me"
+
+# And finally, one more continue.
+
+
+gdb_test "cont" \
+         "Breakpoint \[0-9\]+.*pck\\.increment.*" \
+         "continuing to breakpoint in pck.increment"

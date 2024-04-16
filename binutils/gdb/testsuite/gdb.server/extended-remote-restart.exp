@@ -1,0 +1,137 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test is about restarting execution of a forked application when
+# using gdb extended remote target.
+#
+# There are two issues that the test tries to expose in GDB:
+#
+# 1. GDB would throw an assertion upon reconnecting to a remote target
+# if there was more than one inferior already active in GDB, and
+#
+# 2. GDB would not prune transient inferiors from the inferior list
+# when reconnecting to a remote target.  So, for example, an inferior
+# created by GDB to track the child of a fork would usually be removed
+# from the inferior list once the child exited.  However, reconnecting
+# to a remote target would result in the child inferior remaining in
+# the inferior list.
+
+# This test is only for extended remote targets.
+if {[target_info gdb_protocol] != "extended-remote"} {
+    unsupported "requires extended-remote"
+    return
+}
+
+# This test also makes use of 'detach-on-fork' which is not supported
+# on all platforms.
+require {is_any_target "*-*-linux*" "*-*-openbsd*"}
+
+# And we need to be able to reconnect to gdbserver.
+set gdbserver_reconnect_p 1
+if { [info proc gdb_reconnect] == "" } {
+    unsupported "requires gdbserver reconnect"
+    return 0
+}
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+# Core of the test.  DO_KILL_P controls whether we kill one of the
+# inferiors before reconnecting.  And FOLLOW_CHILD_P controls whether
+# we follow the child or the parent at the fork.
+proc test_reload { do_kill_p follow_child_p } {
+    global decimal
+    global binfile
+
+    clean_restart ${binfile}
+
+    if {![runto_main]} {
+	return 0
+    }
+
+    # Set detach-on-fork off
+    gdb_test_no_output "set detach-on-fork off"
+
+    set live_inf_ptn "process $decimal"
+    set dead_inf_ptn "<null>"
+
+    if ${follow_child_p} {
+	gdb_test_no_output "set follow-fork child"
+	set parent_prefix " "
+	set child_prefix "\\*"
+	set parent_inf_after_kill_ptn ${live_inf_ptn}
+	set child_inf_after_kill_ptn ${dead_inf_ptn}
+    } else {
+	gdb_test_no_output "set follow-fork parent"
+	set parent_prefix "\\*"
+	set child_prefix " "
+	set parent_inf_after_kill_ptn ${dead_inf_ptn}
+	set child_inf_after_kill_ptn ${live_inf_ptn}
+    }
+
+    gdb_breakpoint "breakpt"
+    gdb_continue_to_breakpoint "breakpt"
+
+    set ws "\[ \t\]+"
+    set any_re "\[^\r\n\]+"
+    set connection_re $any_re
+    set executable_re $any_re
+
+    gdb_test "info inferiors" \
+	[multi_line \
+	     "  Num${ws}Description${ws}Connection${ws}Executable${ws}" \
+	     "${parent_prefix} 1${ws}${live_inf_ptn}${ws}${connection_re}${executable_re}" \
+	     "${child_prefix} 2${ws}${live_inf_ptn}${ws}${connection_re}${executable_re}" ] \
+	"Check inferiors at breakpoint"
+
+    if { $do_kill_p } {
+	# (Optional) Kill one of the inferiors.
+	gdb_test "kill" \
+	    "" \
+	    "Kill inferior" \
+	    "Kill the program being debugged.*y or n. $" \
+	    "y"
+
+	# Check the first inferior really did die.
+	gdb_test "info inferiors" \
+	    [multi_line \
+		 "  Num${ws}Description${ws}Connection${ws}Executable${ws}" \
+		 "${parent_prefix} 1${ws}${parent_inf_after_kill_ptn}${ws}${connection_re}${executable_re}" \
+		 "${child_prefix} 2${ws}${child_inf_after_kill_ptn}${ws}${connection_re}${executable_re}" ] \
+	    "Check inferior was killed"
+    }
+
+    # Disconnect, and reconnect to the target.
+    gdb_test "disconnect" ".*"
+
+    if { [gdb_reconnect] == 0 } {
+	pass "reconnect after fork"
+    } else {
+	fail "reconnect after fork"
+    }
+}
+
+# Run all combinations of the test.
+foreach do_kill_p [list 1 0] {
+    foreach follow_child_p [list 1 0] {
+	with_test_prefix \
+	    "kill: ${do_kill_p}, follow-child ${follow_child_p}" {
+		test_reload ${do_kill_p} ${follow_child_p}
+	    }
+    }
+}

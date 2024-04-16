@@ -1,0 +1,188 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the gdb testsuite
+
+# This tests that C++ alignof works in gdb, and that it agrees with
+# the compiler.
+
+require allow_cplus_tests
+
+# The types we're going to test.
+
+set typelist {
+    char {unsigned char}
+    short {unsigned short}
+    int {unsigned int}
+    long {unsigned long}
+    {long long} {unsigned long long}
+    float
+    double {long double}
+    empty
+    bigenum
+    vstruct
+    bfstruct
+    arrstruct
+    derived
+    derived2
+}
+
+if {[has_int128_cxx]} {
+    # Note we don't check "unsigned __int128" yet because at least gcc
+    # canonicalizes the name to "__int128 unsigned", and there isn't a
+    # c-exp.y production for this.
+    # https://sourceware.org/bugzilla/show_bug.cgi?id=20991
+    lappend typelist __int128
+}
+
+# Create the test file.
+
+set filename [standard_output_file align.cc]
+set outfile [open $filename w]
+
+# Prologue.
+puts $outfile {
+    template<typename T, typename U>
+    struct align_pair
+    {
+	T one;
+	U two;
+    };
+
+    template<typename T, typename U>
+    struct align_union
+    {
+	T one;
+	U two;
+    };
+
+    enum bigenum { VALUE = 0xffffffffull };
+
+    struct empty { };
+
+    struct vstruct { virtual ~vstruct() {}  char c; };
+
+    struct bfstruct { unsigned b : 3; };
+
+    struct arrstruct { short fld[7]; };
+
+    unsigned a_int3 = alignof (int[3]);
+
+#if defined __GNUC__ && !defined __clang__
+    /* As a GNU C extension, GCC allows void pointer arithmetic, with
+       sizeof (void) == 1.
+       Another GNU C extension is __alignof__, which can be used to get
+       __alignof__ (void), which is also 1.  This is unavailabe on clang.
+       GCC used to only warn for alignof (void), but starting with GCC 12.1,
+       as well as GCC 11.3, it will generate an error (note that using
+       -std=gnu++11 does not prevent the error).
+       So we avoid using alignof, and use __alignof__ instead.  */
+    unsigned a_void = __alignof__ (void);
+#else
+    /* No support for __alignof__ (void), hardcode value.  */
+    unsigned a_void = 1;
+#endif
+
+    struct base { char c; };
+    struct derived : public virtual base { int i; };
+
+    struct b2 : public virtual base { char d; };
+    struct derived2 : public b2, derived { char e; };
+}
+
+# First emit single items.
+foreach type $typelist {
+    set utype [join [split $type] _]
+    puts $outfile "$type item_$utype;"
+    puts $outfile "unsigned a_$utype\n  = alignof ($type);"
+    puts $outfile "typedef $type t_$utype;"
+    puts $outfile "t_$utype item_t_$utype;"
+}
+
+# Now emit all pairs.
+foreach type $typelist {
+    set utype [join [split $type] _]
+    foreach inner $typelist {
+	set uinner [join [split $inner] _]
+	puts $outfile "align_pair<$type, $inner> item_${utype}_x_${uinner};"
+	puts $outfile "unsigned a_${utype}_x_${uinner}"
+	puts $outfile "  = alignof (align_pair<$type, $inner>);"
+
+	puts $outfile "align_union<$type, $inner> item_${utype}_u_${uinner};"
+	puts $outfile "unsigned a_${utype}_u_${uinner}"
+	puts $outfile "  = alignof (align_union<$type, $inner>);"
+    }
+}
+
+# Epilogue.
+puts $outfile {
+    int main() {
+	return 0;
+    }
+}
+
+close $outfile
+
+standard_testfile $filename
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile \
+	 {debug nowarnings c++ additional_flags=-std=c++11}]} {
+    return -1
+}
+
+if {![runto_main]} {
+    perror "test suppressed"
+    return
+}
+
+proc maybe_xfail {type} {
+    # See https://gcc.gnu.org/bugzilla/show_bug.cgi?id=69560
+    # The g++ implementation of alignof is changing to match C11.
+    if {[is_x86_like_target]
+	&& [test_compiler_info {gcc-[0-8]-*}]
+	&& ($type == "double" || $type == "long long"
+	    || $type == "unsigned long long")} {
+	setup_xfail *-*-*
+    }
+}
+
+foreach type $typelist {
+    set utype [join [split $type] _]
+    set expected [get_integer_valueof a_$utype 0]
+
+    maybe_xfail $type
+    gdb_test "print alignof($type)" " = $expected"
+
+    maybe_xfail $type
+    gdb_test "print alignof(t_$utype)" " = $expected"
+
+    maybe_xfail $type
+    gdb_test "print alignof(typeof(item_$utype))" " = $expected"
+
+    foreach inner $typelist {
+	set uinner [join [split $inner] _]
+	set expected [get_integer_valueof a_${utype}_x_${uinner} 0]
+	gdb_test "print alignof(align_pair<${type},${inner}>)" " = $expected"
+
+	set expected [get_integer_valueof a_${utype}_u_${uinner} 0]
+	gdb_test "print alignof(align_union<${type},${inner}>)" " = $expected"
+    }
+}
+
+set expected [get_integer_valueof a_int3 0]
+gdb_test "print alignof(int\[3\])" " = $expected"
+
+set expected [get_integer_valueof a_void 0]
+gdb_test "print alignof(void)" " = $expected"

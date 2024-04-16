@@ -1,0 +1,73 @@
+# Copyright 2015-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# The purpose of this testcase is to verify that we can "next" over
+# a call to a function provided by one shared library made from another
+# shared library, and that GDB stops at the expected location. In this
+# case, the call is made from sub1 (provided by libdso1) and we are
+# calling sub2 (provided by libdso2).
+#
+# Note that, while this is not the main purpose of this testcase, it
+# also happens to exercise an issue with displaced stepping on amd64
+# when libdso1 is mapped at an address greater than 0xffffffff.
+
+require allow_shlib_tests
+
+standard_testfile
+
+set output_dir [standard_output_file {}]
+
+set libdso2 $testfile-dso2
+set srcfile_libdso2 $srcdir/$subdir/$libdso2.c
+set binfile_libdso2 [standard_output_file $libdso2.so]
+
+set libdso1 $testfile-dso1
+set srcfile_libdso1 $srcdir/$subdir/$libdso1.c
+set binfile_libdso1 [standard_output_file $libdso1.so]
+
+if { [gdb_compile_shlib $srcfile_libdso2 $binfile_libdso2 \
+	[list debug]] != "" } {
+  untested "failed to compile shared library 2"
+  return -1
+}
+
+if { [gdb_compile_shlib $srcfile_libdso1 $binfile_libdso1 \
+	[list debug]] != "" } {
+  untested "failed to compile shared library 1"
+  return -1
+}
+
+if { [gdb_compile $srcdir/$subdir/$srcfile $binfile executable \
+	[list debug shlib=$binfile_libdso2 shlib=$binfile_libdso1]] != "" } {
+  return -1
+}
+
+clean_restart $binfile
+gdb_load_shlib $binfile_libdso2
+gdb_load_shlib $binfile_libdso1
+
+if { ![runto_main] } {
+  return -1
+}
+
+set bp_location [gdb_get_line_number "STOP HERE" [file tail $srcfile_libdso1]]
+gdb_breakpoint ${libdso1}.c:${bp_location}
+
+gdb_continue_to_breakpoint "at call to sub2" \
+    ".*sub2 ().*"
+
+gdb_test "next" \
+    ".*return 5;.*" \
+    "next over call to sub2"

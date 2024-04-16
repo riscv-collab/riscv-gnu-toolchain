@@ -1,0 +1,538 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Contributed by Mentor Graphics, written by Maciej W. Rozycki.
+
+# Test MIPS16 thunk support.
+
+# This should work on any targets that support MIPS16 execution, including
+# Linux and bare-iron ones, but not all of them do, for example MIPS16
+# support has been added to Linux relatively late in the game.  Also besides
+# environment support, the target processor has to support the MIPS16 ASE.
+# Finally as of this writing MIPS16 support has only been implemented in the
+# toolchain for a subset of ABIs, so we need to check that a MIPS16
+# executable can be built and run at all before we attempt the actual test.
+
+require {istarget "mips*-*-*"}
+
+# A helper to set caller's SRCFILE and OBJFILE based on FILENAME and SUFFIX.
+proc set_src_and_obj { filename { suffix "" } } {
+    upvar srcfile srcfile
+    upvar objfile objfile
+    global srcdir
+    global subdir
+
+    if {![string equal "$suffix" ""]} {
+	set suffix "-$suffix"
+    }
+    set srcfile ${srcdir}/${subdir}/${filename}.c
+    set objfile [standard_output_file ${filename}${suffix}.o]
+}
+
+# First check if a trivial MIPS16 program can be built and debugged.  This
+# verifies environment and processor support, any failure here must be
+# classed as the lack of support.
+set testname mips16-thunks-main
+
+set_src_and_obj mips16-thunks-inmain
+set options [list debug nowarnings additional_flags=-mips16]
+set objfiles ${objfile}
+gdb_compile ${srcfile} ${objfile} object ${options}
+
+set_src_and_obj mips16-thunks-main
+set options [list debug nowarnings additional_flags=-mips16]
+lappend objfiles ${objfile}
+gdb_compile ${srcfile} ${objfile} object ${options}
+
+set binfile [standard_output_file ${testname}]
+set options [list debug nowarnings]
+if {[gdb_compile ${objfiles} ${binfile} executable ${options}] != ""} {
+    unsupported "no MIPS16 support in the toolchain."
+    return
+}
+clean_restart ${testname}
+gdb_breakpoint inmain
+gdb_run_cmd
+gdb_test_multiple "" "check for MIPS16 support in the processor" {
+    -re "Breakpoint 1.*inmain .*$gdb_prompt $" {
+	gdb_test_multiple "finish" \
+	    "check for MIPS16 support in the processor" {
+	    -re "Value returned is \\\$\[0-9\]+ = 0\[^0-9\].*$gdb_prompt $" {
+		verbose "MIPS16 support check successful."
+	    }
+	    -re "$gdb_prompt $" {
+		unsupported "no MIPS16 support in the processor."
+		return
+	    }
+	    default {
+		unsupported "no MIPS16 support in the processor."
+		return
+	    }
+	}
+    }
+    -re "$gdb_prompt $" {
+	unsupported "no MIPS16 support in the processor."
+	return
+    }
+    default {
+	unsupported "no MIPS16 support in the processor."
+	return
+    }
+}
+
+# Check if MIPS16 PIC code can be built and debugged.  We want to check
+# PIC and MIPS16 thunks are handled correctly together if possible, but
+# on targets that do not support PIC code, e.g. bare iron, we still want
+# to test the rest of functionality.
+set testname mips16-thunks-pic
+set picflag ""
+
+set_src_and_obj mips16-thunks-inmain pic
+set options [list \
+    debug nowarnings additional_flags=-mips16 additional_flags=-fPIC]
+set objfiles ${objfile}
+gdb_compile ${srcfile} ${objfile} object ${options}
+
+set_src_and_obj mips16-thunks-main pic
+set options [list \
+    debug nowarnings additional_flags=-mips16 additional_flags=-fPIC]
+lappend objfiles ${objfile}
+gdb_compile ${srcfile} ${objfile} object ${options}
+
+set binfile [standard_output_file ${testname}]
+set options [list debug nowarnings additional_flags=-fPIC]
+if {[gdb_compile ${objfiles} ${binfile} executable ${options}] == ""} {
+    clean_restart ${testname}
+    gdb_breakpoint inmain
+    gdb_run_cmd
+    gdb_test_multiple "" "check for PIC support" {
+	-re "Breakpoint 1.*inmain .*$gdb_prompt $" {
+	    note "PIC support present, will make additional PIC thunk checks."
+	    set picflag additional_flags=-fPIC
+	}
+	-re "$gdb_prompt $" {
+	    note "No PIC support, skipping additional PIC thunk checks."
+	}
+	default {
+	    note "No PIC support, skipping additional PIC thunk checks."
+	}
+    }
+} else {
+    note "No PIC support, skipping additional PIC thunk checks."
+}
+
+# OK, build the twisted executable.  This program contains the following
+# MIPS16 thunks:
+# - __call_stub_fp_sin,
+# - __call_stub_fp_sinblah,
+# - __call_stub_fp_sinfrob,
+# - __call_stub_fp_sinhelper,
+# - __call_stub_lsinhelper,
+# - __fn_stub_lsinmips16,
+# - __fn_stub_sinblah16,
+# - __fn_stub_sinfrob16,
+# - __fn_stub_sinmips16,
+# - __mips16_call_stub_df_2,
+# - __mips16_ret_df.
+# Additionally, if PIC code is supported, it contains the following PIC thunks:
+# - .pic.__mips16_call_stub_df_2,
+# - .pic.__mips16_ret_df,
+# - .pic.sinblah,
+# - .pic.sinblah16,
+# - .pic.sinfrob,
+# - .pic.sinfrob16.
+set testname mips16-thunks-sin
+
+set_src_and_obj mips16-thunks-sinmain
+set options [list debug nowarnings additional_flags=-mips16]
+set objfiles ${objfile}
+gdb_compile ${srcfile} ${objfile} object ${options}
+
+set_src_and_obj mips16-thunks-sin
+set options [list debug nowarnings additional_flags=-mno-mips16]
+lappend objfiles ${objfile}
+gdb_compile ${srcfile} ${objfile} object ${options}
+
+set_src_and_obj mips16-thunks-sinmips16
+set options [list debug nowarnings additional_flags=-mips16]
+lappend objfiles ${objfile}
+gdb_compile ${srcfile} ${objfile} object ${options}
+
+set_src_and_obj mips16-thunks-sinfrob
+set options [list \
+    debug nowarnings additional_flags=-mno-mips16 ${picflag}]
+lappend objfiles ${objfile}
+gdb_compile ${srcfile} ${objfile} object ${options}
+
+set_src_and_obj mips16-thunks-sinfrob16
+set options [list \
+    debug nowarnings additional_flags=-mips16 ${picflag}]
+lappend objfiles ${objfile}
+gdb_compile ${srcfile} ${objfile} object ${options}
+
+set binfile [standard_output_file ${testname}]
+set options [list debug nowarnings]
+gdb_compile ${objfiles} ${binfile} executable ${options}
+clean_restart ${testname}
+if {![runto_main]} {
+    return
+}
+
+# Build some useful regular expressions out of a list of functions FUNCS
+# to be used to match against backtraces.
+proc build_frames_re { funcs } {
+    upvar anyframe anyframe
+    upvar frames frames
+    upvar frame frame
+    upvar func func
+
+    set fid 0
+    set argsandsource " +\\\(.*\\\) +at +\[^\r\n\]+\r\n"
+    set addrin "(?:\[^ \]+ +in +)?"
+    set anyframe "#${fid} +${addrin}(\[^ \]+)${argsandsource}"
+    set frame "#${fid} +${addrin}${func}${argsandsource}"
+    set frames "$frame"
+    foreach f [lrange $funcs 1 end] {
+	incr fid
+	append frames "#${fid} +${addrin}${f}${argsandsource}"
+    }
+}
+
+# Single-step through the function that is at the head of function list
+# FUNCS until a different function (frame) is reached.  Before each step
+# check the backtrace against FUNCS.  ID is used for reporting, to tell
+# apart different calls to this procedure for the same function.  If
+# successful, then return the name of the function we have stopped in.
+proc step_through { id funcs } {
+    global gdb_prompt
+
+    set func [lindex $funcs 0]
+    build_frames_re "$funcs"
+
+    set msg "single-stepping through \"${func}\" ($id)"
+
+    # Arbitrarily limit the maximium number of steps made to avoid looping
+    # indefinitely in the case something goes wrong, increase as (if)
+    # necessary.
+    set count 8
+    while { $count > 0 } {
+	if { [gdb_test_multiple "backtrace" "$msg (backtrace)" {
+	    -re "${frames}$gdb_prompt $" {
+		if { [gdb_test_multiple "step" "$msg (step)" {
+		    -re "$gdb_prompt $" {
+			if { [gdb_test_multiple "frame" "$msg (frame)" {
+			    -re "${frame}.*$gdb_prompt $" {
+			    }
+			    -re "${anyframe}.*$gdb_prompt $" {
+				pass "$msg"
+				return $expect_out(1,string)
+			    }
+			}] != 0 } then {
+			    return ""
+			}
+		    }
+		}] != 0 } then {
+		    return ""
+		}
+	    }
+	}] != 0 } then {
+	    return ""
+	}
+	incr count -1
+    }
+    fail "$msg (too many steps)"
+    return ""
+}
+
+# Finish the current function that must be one that is at the head of
+# function list FUNCS.  Before that check the backtrace against FUNCS.
+# ID is used for reporting, to tell apart different calls to this
+# procedure for the same function.  If successful, then return the name
+# of the function we have stopped in.
+proc finish_through { id funcs } {
+    global gdb_prompt
+
+    set func [lindex $funcs 0]
+    build_frames_re "$funcs"
+
+    set msg "finishing \"${func}\" ($id)"
+
+    gdb_test_multiple "backtrace" "$msg (backtrace)" {
+	-re "${frames}$gdb_prompt $" {
+	    gdb_test_multiple "finish" "$msg (finish)" {
+		-re "Run till exit from ${frame}.*$gdb_prompt $" {
+		    gdb_test_multiple "frame" "$msg (frame)" {
+			-re "${anyframe}.*$gdb_prompt $" {
+			    pass "$msg"
+			    return $expect_out(1,string)
+			}
+		    }
+		}
+	    }
+	}
+    }
+    return ""
+}
+
+# Report PASS if VAL is equal to EXP, otherwise report FAIL, using MSG.
+proc pass_if_eq { val exp msg } {
+    if {[string equal "$val" "$exp"]} {
+	pass "$msg"
+    } else {
+	fail "$msg"
+    }
+}
+
+# Check if FUNC is equal to WANT.  If not, then assume that we have stepped
+# into a library call.  In this case finish it, then step out of the caller.
+# ID is used for reporting, to tell apart different calls to this procedure
+# for the same function.  If successful, then return the name of the
+# function we have stopped in.
+proc finish_if_ne { id func want funcs } {
+    if {![string equal "$func" "$want"]} {
+	set call "$func"
+	set want [lindex $funcs 0]
+	set func [finish_through "$id" [linsert $funcs 0 "$func"]]
+	pass_if_eq "$func" "$want" "\"${call}\" finishing to \"${want}\" ($id)"
+	set func [step_through "$id" $funcs]
+    }
+    return "$func"
+}
+
+# Now single-step through the program, making sure all thunks are correctly
+# stepped over and omitted from backtraces.
+
+set id 1
+set func [step_through $id [list main]]
+pass_if_eq "$func" sinfrob16 "stepping from \"main\" into \"sinfrob16\" ($id)"
+
+incr id
+set func [step_through $id [list sinfrob16 main]]
+set func [finish_if_ne $id "$func" main [list sinfrob16 main]]
+pass_if_eq "$func" main "stepping from \"sinfrob16\" back to \"main\" ($id)"
+
+incr id
+set func [step_through $id [list main]]
+pass_if_eq "$func" sinfrob "stepping from \"main\" into \"sinfrob\" ($id)"
+
+incr id
+set func [step_through $id [list sinfrob main]]
+set func [finish_if_ne $id "$func" main [list sinfrob main]]
+pass_if_eq "$func" main "stepping from \"sinfrob\" back to \"main\" ($id)"
+
+# 5
+incr id
+set func [step_through $id [list main]]
+pass_if_eq "$func" sinhelper "stepping from \"main\" into \"sinhelper\" ($id)"
+
+incr id
+set func [step_through $id [list sinhelper main]]
+set func [finish_if_ne $id "$func" sinfrob16 [list sinhelper main]]
+pass_if_eq "$func" sinfrob16 \
+    "stepping from \"sinhelper\" into \"sinfrob16\" ($id)"
+
+incr id
+set func [step_through $id [list sinfrob16 sinhelper main]]
+set func [finish_if_ne $id "$func" sinhelper [list sinfrob16 sinhelper main]]
+pass_if_eq "$func" sinhelper \
+    "stepping from \"sinfrob16\" back to \"sinhelper\" ($id)"
+
+incr id
+set func [step_through $id [list sinhelper main]]
+pass_if_eq "$func" sinfrob "stepping from \"sinhelper\" into \"sinfrob\" ($id)"
+
+incr id
+set func [step_through $id [list sinfrob sinhelper main]]
+set func [finish_if_ne $id "$func" sinhelper [list sinfrob sinhelper main]]
+pass_if_eq "$func" sinhelper \
+    "stepping from \"sinfrob\" back to \"sinhelper\" ($id)"
+
+# 10
+incr id
+set func [step_through $id [list sinhelper main]]
+pass_if_eq "$func" sinmips16 \
+    "stepping from \"sinhelper\" into \"sinmips16\" ($id)"
+
+incr id
+set func [step_through $id [list sinmips16 sinhelper main]]
+set func [finish_if_ne $id "$func" sinfrob16 [list sinmips16 sinhelper main]]
+pass_if_eq "$func" sinfrob16 \
+    "stepping from \"sinmips16\" into \"sinfrob16\" ($id)"
+
+incr id
+set func [step_through $id [list sinfrob16 sinmips16 sinhelper main]]
+set func [finish_if_ne $id "$func" sinmips16 \
+	      [list sinfrob16 sinmips16 sinhelper main]]
+pass_if_eq "$func" sinmips16 \
+    "stepping from \"sinfrob16\" back to \"sinmips16\" ($id)"
+
+incr id
+set func [step_through $id [list sinmips16 sinhelper main]]
+pass_if_eq "$func" sinfrob "stepping from \"sinmips16\" into \"sinfrob\" ($id)"
+
+incr id
+set func [step_through $id [list sinfrob sinmips16 sinhelper main]]
+set func [finish_if_ne $id "$func" sinhelper \
+	      [list sinfrob sinmips16 sinhelper main]]
+pass_if_eq "$func" sinmips16 \
+    "stepping from \"sinfrob\" back to \"sinmips16\" ($id)"
+
+# 15
+incr id
+set func [step_through $id [list sinmips16 sinhelper main]]
+pass_if_eq "$func" sinfrob16 \
+    "stepping from \"sinmips16\" into \"sinfrob16\" (indirectly) ($id)"
+
+incr id
+set func [step_through $id [list sinfrob16 sinmips16 sinhelper main]]
+set func [finish_if_ne $id "$func" sinmips16 \
+	      [list sinfrob16 sinmips16 sinhelper main]]
+pass_if_eq "$func" sinmips16 \
+    "stepping from \"sinfrob16\" back to \"sinmips16\" (indirectly) ($id)"
+
+incr id
+set func [step_through $id [list sinmips16 sinhelper main]]
+pass_if_eq "$func" sinfrob \
+    "stepping from \"sinmips16\" into \"sinfrob\" (indirectly) ($id)"
+
+incr id
+set func [step_through $id [list sinfrob sinmips16 sinhelper main]]
+set func [finish_if_ne $id "$func" sinhelper \
+	      [list sinfrob sinmips16 sinhelper main]]
+pass_if_eq "$func" sinmips16 \
+    "stepping from \"sinfrob\" back to \"sinmips16\" (indirectly) ($id)"
+
+incr id
+set func [step_through $id [list sinmips16 sinhelper main]]
+pass_if_eq "$func" sinhelper \
+    "stepping from \"sinmips16\" back to \"sinhelper\" ($id)"
+
+# 20
+incr id
+set func [step_through $id [list sinhelper main]]
+pass_if_eq "$func" main "stepping from \"sinhelper\" back to \"main\" ($id)"
+
+incr id
+set func [step_through $id [list main]]
+pass_if_eq "$func" sinblah "stepping from \"main\" into \"sinblah\" ($id)"
+
+incr id
+set func [step_through $id [list sinblah main]]
+set func [finish_if_ne $id "$func" main [list sinblah main]]
+pass_if_eq "$func" main "stepping from \"sinblah\" back to \"main\" ($id)"
+
+incr id
+set func [step_through $id [list main]]
+pass_if_eq "$func" sinblah16 "stepping from \"main\" into \"sinblah16\" ($id)"
+
+incr id
+set func [step_through $id [list sinblah16 main]]
+set func [finish_if_ne $id "$func" main [list sinblah16 main]]
+pass_if_eq "$func" main "stepping from \"sinblah16\" back to \"main\" ($id)"
+
+# 25
+incr id
+set func [step_through $id [list main]]
+pass_if_eq "$func" lsinhelper \
+    "stepping from \"main\" into \"lsinhelper\" ($id)"
+
+incr id
+set func [step_through $id [list lsinhelper main]]
+set func [finish_if_ne $id "$func" sinblah [list lsinhelper main]]
+pass_if_eq "$func" sinblah \
+    "stepping from \"lsinhelper\" into \"sinblah\" ($id)"
+
+incr id
+set func [step_through $id [list sinblah lsinhelper main]]
+set func [finish_if_ne $id "$func" lsinhelper [list sinblah lsinhelper main]]
+pass_if_eq "$func" lsinhelper \
+    "stepping from \"sinblah\" back to \"lsinhelper\" ($id)"
+
+incr id
+set func [step_through $id [list lsinhelper main]]
+pass_if_eq "$func" sinblah16 \
+    "stepping from \"lsinhelper\" into \"sinblah16\" ($id)"
+
+incr id
+set func [step_through $id [list sinblah16 lsinhelper main]]
+set func [finish_if_ne $id "$func" lsinhelper [list sinblah16 lsinhelper main]]
+pass_if_eq "$func" lsinhelper \
+    "stepping from \"sinblah16\" back to \"lsinhelper\" ($id)"
+
+# 30
+incr id
+set func [step_through $id [list lsinhelper main]]
+pass_if_eq "$func" lsinmips16 \
+    "stepping from \"lsinhelper\" into \"lsinmips16\" ($id)"
+
+incr id
+set func [step_through $id [list lsinmips16 lsinhelper main]]
+set func [finish_if_ne $id "$func" sinblah [list lsinmips16 lsinhelper main]]
+pass_if_eq "$func" sinblah \
+    "stepping from \"lsinmips16\" into \"sinblah\" ($id)"
+
+incr id
+set func [step_through $id [list sinblah lsinmips16 lsinhelper main]]
+set func [finish_if_ne $id "$func" lsinmips16 \
+	      [list sinblah lsinmips16 lsinhelper main]]
+pass_if_eq "$func" lsinmips16 \
+    "stepping from \"sinblah\" back to \"lsinmips16\" ($id)"
+
+incr id
+set func [step_through $id [list lsinmips16 lsinhelper main]]
+pass_if_eq "$func" sinblah16 \
+    "stepping from \"lsinmips16\" into \"sinblah16\" ($id)"
+
+incr id
+set func [step_through $id [list sinblah16 lsinmips16 lsinhelper main]]
+set func [finish_if_ne $id "$func" lsinhelper \
+	      [list sinblah16 lsinmips16 lsinhelper main]]
+pass_if_eq "$func" lsinmips16 \
+    "stepping from \"sinblah16\" back to \"lsinmips16\" ($id)"
+
+# 35
+incr id
+set func [step_through $id [list lsinmips16 lsinhelper main]]
+pass_if_eq "$func" sinblah \
+    "stepping from \"lsinmips16\" into \"sinblah\" (indirectly) ($id)"
+
+incr id
+set func [step_through $id [list sinblah lsinmips16 lsinhelper main]]
+set func [finish_if_ne $id "$func" lsinmips16 \
+	      [list sinblah lsinmips16 lsinhelper main]]
+pass_if_eq "$func" lsinmips16 \
+    "stepping from \"sinblah\" back to \"lsinmips16\" (indirectly) ($id)"
+
+incr id
+set func [step_through $id [list lsinmips16 lsinhelper main]]
+pass_if_eq "$func" sinblah16 \
+    "stepping from \"lsinmips16\" into \"sinblah16\" (indirectly) ($id)"
+
+incr id
+set func [step_through $id [list sinblah16 lsinmips16 lsinhelper main]]
+set func [finish_if_ne $id "$func" lsinhelper \
+	      [list sinblah16 lsinmips16 lsinhelper main]]
+pass_if_eq "$func" lsinmips16 \
+    "stepping from \"sinblah16\" back to \"lsinmips16\" (indirectly) ($id)"
+
+incr id
+set func [step_through $id [list lsinmips16 lsinhelper main]]
+pass_if_eq "$func" lsinhelper \
+    "stepping from \"lsinmips16\" back to \"lsinhelper\" ($id)"
+
+# 40
+incr id
+set func [step_through $id [list lsinhelper main]]
+pass_if_eq "$func" main "stepping from \"lsinhelper\" back to \"main\" ($id)"

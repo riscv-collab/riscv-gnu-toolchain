@@ -1,0 +1,377 @@
+# Copyright (C) 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It tests Python-based
+# pretty-printing for MI.
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi2"
+
+standard_testfile py-prettyprint.c
+set pyfile py-prettyprint.py
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug additional_flags=-DMI}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+if {[mi_clean_restart $binfile]} {
+    return
+}
+
+if {[lsearch -exact [mi_get_features] python] < 0} {
+    unsupported "python support is disabled"
+    return -1
+}
+
+mi_runto_main
+
+set remote_python_file [gdb_remote_download host ${srcdir}/${subdir}/${pyfile}]
+
+set cmd "source ${remote_python_file}"
+set re [string_list_to_regexp & {"} $cmd \\ n {"} \r\n ^ done]
+mi_gdb_test $cmd $re "load python file"
+
+mi_continue_to_line [gdb_get_line_number {MI breakpoint here} ${srcfile}] \
+  "step to breakpoint"
+
+with_test_prefix "varobj container" {
+    mi_create_floating_varobj container c \
+	"create container varobj, no pretty-printing"
+
+    mi_list_varobj_children container {
+	{ container.name name 1 string }
+	{ container.len len 0 int }
+	{ container.elements elements 1 "int ." }
+    } "examine container children=0, no pretty-printing"
+
+    mi_delete_varobj container "delete varobj"
+}
+
+with_test_prefix "varobj nscont" {
+    mi_create_floating_varobj nscont nstype \
+	"create nscont varobj, no pretty-printing"
+
+    mi_list_varobj_children nscont {
+	{ nscont.len len 0 int }
+	{ nscont.elements elements 1 "int ." }
+    } "examine nscont children=0, no pretty-printing"
+
+    mi_delete_varobj nscont "delete varobj"
+}
+
+mi_gdb_test "-enable-pretty-printing" "\\^done"
+
+mi_create_varobj_checked string string_1 \
+    "struct string_repr" \
+    "create string_1 varobj"
+
+mi_create_varobj_checked lstring estring \
+    "struct lazystring" \
+    "create estring varobj"
+
+mi_gdb_test "-data-evaluate-expression \"string_1 = string_2\"" ".*" \
+    "assign string_1 from string_2"
+
+mi_gdb_test "-var-update string" \
+    "\\^done,changelist=\\\[{name=\"string\",in_scope=\"true\",type_changed=\"false\",dynamic=\"1\",has_more=\"0\"}\\\]" \
+    "update string varobj after assignment"
+
+with_test_prefix "varobj container" {
+    # The "elements" field of "c" is still empty, so the attribute
+    # "has_more" is expected to be zero.
+    mi_create_dynamic_varobj container c "container .* with 0 elements" 0 \
+	"create container varobj"
+
+    mi_list_varobj_children container {
+    } "examine container children=0"
+
+    mi_next "next over update 1"
+
+    mi_varobj_update_dynamic container "varobj update 1" {
+	type_changed false new_num_children 1 dynamic 1 has_more 0
+    } {
+    } {
+	{ name {container.\[0\]} exp {\[0\]} numchild 0 type int }
+    }
+
+    mi_next "next over update 2"
+
+    mi_varobj_update_dynamic container "varobj update 2" {
+	type_changed false new_num_children 2 dynamic 1 has_more 0
+    } {
+    } {
+	{ name {container.\[1\]} exp {\[1\]} numchild 0 type int }
+    }
+
+    mi_gdb_test "-var-set-visualizer container None" \
+	"\\^done" \
+	"clear visualizer"
+
+    mi_gdb_test "-var-update container" \
+	"\\^done,changelist=\\\[\\\]" \
+	"varobj update after clearing"
+
+    mi_gdb_test "-var-set-visualizer container gdb.default_visualizer" \
+	"\\^done" \
+	"choose default visualizer"
+
+    mi_varobj_update_dynamic container "varobj update after choosing default" {
+	type_changed false new_num_children 2 dynamic 1 has_more 0
+    } {
+    } {
+	{ name {container.\[0\]} exp {\[0\]} numchild 0 type int }
+	{ name {container.\[1\]} exp {\[1\]} numchild 0 type int }
+    }
+
+    mi_gdb_test "-var-set-visualizer container ContainerPrinter" \
+	"\\^done" \
+	"choose visualizer using expression"
+
+    mi_varobj_update_dynamic container \
+	"varobj update after choosing via expression" {
+	    type_changed false new_num_children 2 dynamic 1 has_more 0
+	} {
+	} {
+	    { name {container.\[0\]} exp {\[0\]} numchild 0 type int }
+	    { name {container.\[1\]} exp {\[1\]} numchild 0 type int }
+	}
+
+    mi_list_varobj_children_range container 1 2 2 {
+	{ {container.\[1\]} {\[1\]} 0 int }
+    } "list varobj children after selecting child range"
+
+    mi_list_varobj_children_range container -1 -1 2 {
+	{ {container.\[0\]} {\[0\]} 0 int }
+	{ {container.\[1\]} {\[1\]} 0 int }
+    } "list varobj children after resetting child range"
+
+    mi_next "next over update 3"
+
+    mi_gdb_test "-var-set-update-range container 0 1" \
+	"\\^done" \
+	"set update range"
+
+    # This should truncate the list.
+    mi_list_varobj_children container {
+	{ {container.\[0\]} {\[0\]} 0 int }
+    } "list children after setting update range"
+
+    # This should return just the items in [1,2).
+    mi_list_varobj_children_range container 1 2 2 {
+	{ {container.\[1\]} {\[1\]} 0 int }
+    } "list selected children after setting range"
+
+    # This should not be affected by the previous list-children request.
+    mi_list_varobj_children container {
+	{ {container.\[0\]} {\[0\]} 0 int }
+    } "list children after listing selected range"
+
+    mi_next "next over update 4"
+
+    # This should only show the first child, because the update range has
+    # been set.
+    mi_varobj_update_dynamic container \
+	"update after next with restricted range" {
+	    type_changed false new_num_children 1 dynamic 1 has_more 1
+	} {
+	    { name {container.\[0\]} in_scope true type_changed false has_more 0 }
+	} {
+	}
+
+    mi_gdb_test "-var-set-update-range container 3 4" \
+	"\\^done" \
+	"set update range with non-zero start"
+
+    # Elements were updated but should not be reported.
+    mi_varobj_update_dynamic container \
+	"update varobj with change outside selected range" {
+	    type_changed false new_num_children 3 dynamic 1 has_more 0
+	} {
+	} {
+	}
+}
+
+mi_next "next over update 5"
+
+# Regression test: examine an object that has no children, then update
+# it to ensure that we don't print the children.
+mi_create_dynamic_varobj container2 c2 "container .* with 0 elements" 0 \
+  "create second container varobj"
+
+mi_gdb_test "-var-update container2" \
+  "\\^done,changelist=.." \
+  "update varobj, no children requested"
+
+mi_next "next over update 6"
+
+# Now container2 has an element -- and an update should mention that
+# it has_more.  But, because we did not request children, we still
+# should not actually see them.
+mi_varobj_update_dynamic container2 \
+    "update varobj 2, no children requested" {
+	type_changed false dynamic 1 has_more 1
+    } {} {}
+
+mi_continue_to_line \
+    [gdb_get_line_number {MI outer breakpoint here} ${srcfile}] \
+    "step to first outer breakpoint"
+
+mi_create_dynamic_varobj outer outer "x = 0" 1 \
+  "create outer varobj"
+
+mi_list_varobj_children outer {
+  { outer.s s 2 "struct substruct" }
+  { outer.x x 0 "int" }
+} "list children of outer"
+
+mi_list_varobj_children outer.s {
+  { outer.s.a a 0 int }
+  { outer.s.b b 0 int }
+} "list children of outer.s"
+
+mi_next "next over outer update"
+
+mi_gdb_test "-var-update outer" \
+  ".done,changelist=.{name=\"outer.s.a\",in_scope=\"true\",type_changed=\"false\",has_more=\"0\"}." \
+  "update after updating element of outer"
+
+mi_continue_to_line \
+    [gdb_get_line_number {Another MI breakpoint} ${srcfile}] \
+    "step to second breakpoint"
+
+mi_varobj_update_with_type_change container int 0 "update after type change"
+
+
+mi_continue_to_line \
+    [gdb_get_line_number {break to inspect struct and union} ${srcfile}] \
+    "step to second outer breakpoint"
+
+with_test_prefix "varobj nscont" {
+    mi_create_dynamic_varobj nscont nstype ".*" 1 \
+	"create nstype varobj"
+
+    mi_list_varobj_children nscont {
+	{ {nscont.\[0\]} {\[0\]} 0 int }
+	{ {nscont.\[1\]} {\[1\]} 0 int }
+    } "list children after setting update range"
+
+    mi_gdb_test "-var-set-visualizer nscont None" \
+	"\\^done" \
+	"clear visualizer"
+
+    mi_gdb_test "-var-update nscont" \
+	"\\^done,changelist=\\\[\\\]" \
+	"varobj update after clearing"
+
+    mi_gdb_test "-var-set-visualizer nscont gdb.default_visualizer" \
+	"\\^done" \
+	"choose default visualizer"
+}
+
+set cmd "python exception_flag = True"
+set re [string_list_to_regexp & {"} $cmd \\ n {"} \r\n ^ done]
+mi_gdb_test $cmd $re
+
+mi_create_dynamic_varobj nstype2 nstype2 ".*" 1 \
+  "create nstype2 varobj"
+
+mi_list_varobj_children nstype2 {
+    { {nstype2.<error at 0>} {<error at 0>} 7 {char \[7\]} }
+} "list children after setting exception flag"
+
+mi_create_varobj me me \
+  "create me varobj"
+
+mi_gdb_test "-var-evaluate-expression me" \
+	"\\^done,value=\"<error reading variable: Cannot access memory.>.*\"" \
+	"evaluate me varobj"
+
+# Regression test for python/14836.
+mi_create_dynamic_varobj children_as_list children_as_list \
+    children_as_list_val 1 \
+    "printer whose children are returned as a list"
+
+# Test that when a pretty-printer returns a gdb.Value in its to_string, we call
+# the pretty-printer of that value too.
+mi_create_varobj_checked tsrvw tsrvw  \
+    "struct to_string_returns_value_wrapper" \
+    "create tsrvw varobj"
+mi_check_varobj_value tsrvw "Inner to_string 1989" "check tsrvw varobj value"
+mi_gdb_test "-data-evaluate-expression tsrvw" \
+    "\\^done,value=\"Inner to_string 1989\"" \
+    "check tsrvw expression value"
+
+# Regression test for bug 14741.
+mi_continue_to_line \
+    [gdb_get_line_number {breakpoint bug 14741} ${srcfile}] \
+    "step to breakpoint for bug 14741"
+
+mi_create_dynamic_varobj c c "container .* with 1 elements" 1 \
+  "create varobj for c"
+
+mi_gdb_test "-var-set-visualizer c ArrayPrinter" \
+  "\\^done" \
+  "choose array visualizer for c"
+
+mi_list_varobj_children c {
+    { {c.\[0\]} {\[0\]} 0 int }
+} "list children of c"
+
+mi_next "next over change of array element"
+
+# 'c' is noticed as changing here due to an artifact of the
+# -var-update implementation.  However, it seems harmless.
+mi_gdb_test "-var-update c" \
+    "\\^done,changelist=\\\[{name=\"c\",in_scope=\"true\",type_changed=\"false\",displayhint=\"array\",dynamic=\"1\",has_more=\"0\"},{name=\"c.\\\[0\\\]\",in_scope=\"true\",type_changed=\"false\",has_more=\"0\"}\\\]" \
+    "update varobj after element change"
+
+# C++ MI tests
+gdb_exit
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}-cxx" \
+	   executable {debug c++ additional_flags=-DMI}] != "" } {
+    untested "failed to compile in C++ mode"
+    return -1
+}
+
+if {[mi_clean_restart ${binfile}-cxx]} {
+    return
+}
+
+if {[lsearch -exact [mi_get_features] python] < 0} {
+    unsupported "python support is disabled"
+    return -1
+}
+
+with_test_prefix "varobj fake" {
+    mi_runto_main
+    mi_continue_to_line \
+	[gdb_get_line_number {break to inspect struct and union} ${srcfile}] \
+	"step to breakpoint"
+
+    # Test python/12531.  Install visualizer on a cplus_fake_child.
+    mi_create_varobj fake fake \
+	"create fake varobj"
+
+    mi_list_varobj_children fake {
+	{ fake.private private 1 }
+    } "list children of fake"
+
+    mi_list_varobj_children fake.private {
+	{ fake.private.sname sname 0 int }
+    } "list children fake.private"
+
+    mi_gdb_test "-var-set-visualizer fake.private gdb.default_visualizer" \
+	"\\^done" "Install visualizer on a cplus_fake_child"
+}

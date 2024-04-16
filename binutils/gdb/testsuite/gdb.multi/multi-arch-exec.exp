@@ -1,0 +1,189 @@
+# Copyright 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test multi-exec / multi-process features that work for all configurations,
+# even ones that cannot run multiple processes simultaneously.
+
+set testfile "multi-arch-exec"
+
+# The plain remote target can't do multiple inferiors.
+require !use_gdb_stub
+
+# The 64-bit compile may succeed for i386-linux, but gdb won't be able
+# to load the file.
+if [istarget "i?86-*linux*"] {
+    return
+}
+
+# The testcase builds two programs, each of its own architecture.  For
+# example, one built with -m64, another with -m32.  The exact compiler
+# options depends on target triplet.  We generically refer to the
+# architectures simply as 'architecture 1' and 'architecture 2'.  Each
+# program is actually built twice, once for each architecture, because
+# we test both execing from arch1 to arch2 and from arch2 to arch1.
+# The architecture of the executable that execs is encoded in the
+# binaries' names, like so:
+#
+#    $first_arch-multi-arch-exec         # execing program
+#    $first_arch-multi-arch-exec-hello   # execed program
+
+# Append the options necessary to build a program for architecture 1
+# to the OPTIONS_VAR list.
+
+proc append_arch1_options {options_var} {
+    upvar 1 $options_var options
+
+    if { [istarget "aarch64*-*-*"] } {
+	return 1
+    }
+
+    lappend options "additional_flags=-m64"
+    return 1
+}
+
+# Append the options necessary to build a program for architecture 2
+# to the OPTIONS_VAR list.
+
+proc append_arch2_options {options_var} {
+    upvar 1 $options_var options
+
+    if { [istarget "aarch64*-*-*"] } {
+	if {[arm_cc_for_target] != ""} {
+	    lappend options "compiler=[arm_cc_for_target]"
+	    return 1
+	} else {
+	    unsupported "ARM compiler is not known"
+	    return 0
+	}
+    }
+
+    if [istarget "powerpc64*-*-*"] {
+	set march "-m64"
+    } elseif [istarget "s390*-*-*"] {
+	set march "-m31"
+    } else {
+	set march "-m32"
+    }
+    lappend options "additional_flags=${march}"
+    return 1
+}
+
+# Append the options necessary to build a program for architecture
+# ARCH to the OPTIONS_VAR list.  Returns true on success.
+
+proc append_arch_options {arch options_var} {
+    upvar 1 $options_var options
+
+    if {$arch == 1} {
+	return [append_arch1_options options]
+    } elseif {$arch == 2} {
+	return [append_arch2_options options]
+    } else {
+	error "unhandled architecture: $arch"
+    }
+}
+
+# Build the executables for testing with FIRST_ARCH (either 1 or 2) as
+# the architecture before the exec.  Returns true on success.
+
+proc build_executables { first_arch } {
+
+    # Can't use standard_testfile, we want executables with specialized
+    # names.
+    set from_exec "$first_arch-multi-arch-exec"
+    set from_srcfile multi-arch-exec.c
+    set from_binfile [standard_output_file ${from_exec}]
+
+    set to_exec "$first_arch-multi-arch-exec-hello"
+    set to_srcfile hello.c
+    set to_binfile [standard_output_file ${to_exec}]
+
+    # Build two executables, one for each arch.
+
+    if {$first_arch == 1} {
+	set from_arch 1
+	set to_arch 2
+    } elseif {$first_arch == 2} {
+	set from_arch 2
+	set to_arch 1
+    } else {
+	error "unhandled first architecture: $first_arch"
+    }
+
+    set from_options [list debug pthreads]
+    if {![append_arch_options $from_arch from_options]} {
+	return 0
+    }
+
+    if { [build_executable "failed to prepare" ${from_exec} "${from_srcfile}" \
+	      $from_options] } {
+	return 0
+    }
+
+    set to_options [list debug]
+    if {![append_arch_options $to_arch to_options]} {
+	return 0
+    }
+
+    if { [build_executable "failed to prepare" ${to_exec} "${to_srcfile}" \
+	      $to_options] } {
+	return 0
+    }
+
+    return 1
+}
+
+proc do_test { first_arch mode selected_thread } {
+        global bkptno_numopt_re
+	set from_exec "$first_arch-multi-arch-exec"
+
+	clean_restart ${from_exec}
+	if {![runto all_started]} {
+	    return -1
+	}
+
+	# Delete the breakpoint at 'all_started' otherwise GDB may
+	# switch context back to thread 1 to step over the breakpoint.
+	delete_breakpoints
+
+	# A location for this breakpoint should be found in the new
+	# post-exec image too.
+	gdb_breakpoint main
+
+	gdb_test "thread $selected_thread" "Switching to thread $selected_thread .*"
+
+	gdb_test_no_output "set follow-exec-mode $mode"
+
+	# Test that GDB updates the target description / arch successfully
+	# after the exec.
+	gdb_test "continue" "Breakpoint $bkptno_numopt_re, main.*" "continue across exec that changes architecture"
+}
+
+# Test both arch1=>arch2 and arch2=>arch1.
+foreach_with_prefix first_arch {1 2} {
+    if {![build_executables $first_arch]} {
+	continue
+    }
+
+    # Test handling the exec event with either the main thread or the
+    # second thread selected.  This tries to ensure that GDB doesn't read
+    # registers off of the execing thread before figuring out its
+    # architecture.
+    foreach_with_prefix selected_thread {1 2} {
+	foreach_with_prefix follow_exec_mode {"same" "new"} {
+	    do_test $first_arch $follow_exec_mode $selected_thread
+	}
+    }
+}

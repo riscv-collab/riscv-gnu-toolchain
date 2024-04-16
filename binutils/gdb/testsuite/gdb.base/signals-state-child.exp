@@ -1,0 +1,128 @@
+# Copyright 2016-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that gdb's (or gdbserver's) own signal handling does not
+# interfere with the signal actions (dispositions, etc.) and mask
+# their spawned children inherit.
+#
+# - If gdb inherits some signal set to SIG_IGN, so should the
+#   inferior, even if gdb itself chooses not to ignore the signal.
+#
+# - If gdb inherits some signal set to SIG_DFL, so should the inferior
+#   even if gdb itself ignores that signal.
+#
+# This requires special support in gdb/gdbserver because the exec
+# family of functions does not reset the signal disposition of signals
+# that are set to SIG_IGN, nor signal masks and flags.
+
+standard_testfile
+
+if {![is_remote host] && ![is_remote target]} {
+    set gdb_txt [standard_output_file gdb.txt]
+    set standalone_txt [standard_output_file standalone.txt]
+    set purely_local 1
+} else {
+    set gdb_txt gdb.txt
+    set standalone_txt standalone.txt
+    set purely_local 0
+}
+
+remote_file host delete $gdb_txt
+remote_file host delete $standalone_txt
+remote_file target delete $gdb_txt
+remote_file target delete $standalone_txt
+
+set options [list debug "additional_flags=-DOUTPUT_TXT=\"$gdb_txt\""]
+if {[build_executable $testfile.exp $testfile $srcfile $options]} {
+    untested "failed to compile"
+    return -1
+}
+
+set options [list debug "additional_flags=-DOUTPUT_TXT=\"$standalone_txt\""]
+if {[build_executable $testfile.exp $testfile-standalone $srcfile $options]} {
+    untested "failed to compile"
+    return -1
+}
+
+# Run the program directly, and dump its initial signal actions and
+# mask in "standalone.txt".
+
+if { [is_remote target] } {
+    set target_binfile_standalone \
+	[gdb_remote_download target $binfile-standalone]
+
+    # Ensure that target_binfile_standalone is absolute, to work around
+    # current dir not being included in PATH.
+    set target_binfile_standalone \
+	[remote_file target absolute $target_binfile_standalone]
+    if { $target_binfile_standalone == "" } {
+	# Not supported by default, but supported in for instance
+	# remote-gdbserver-on-localhost.exp.
+	unsupported "require failed: remote_file target absolute"
+	return
+    }
+} else {
+    set target_binfile_standalone $binfile-standalone
+}
+
+# Use remote_spawn instead of remote_exec, like how we spawn gdb.
+# This is in order to take the same code code paths in dejagnu
+# compared to when running the program through gdb.  E.g., because
+# local_exec uses -ignore SIGHUP, while remote_spawn does not, if we
+# used remote_exec, the test program would start with SIGHUP ignored
+# when run standalone, but not when run through gdb.
+set res [remote_spawn target "$target_binfile_standalone"]
+if { $res < 0 || $res == "" } {
+    untested "spawning \$target_binfile_standalone failed"
+    return 1
+}
+
+set wait_status [remote_wait target 60]
+set have_standalone [expr [lindex $wait_status 0] == 0]
+gdb_assert { $have_standalone } "collect standalone signals state"
+remote_close target
+
+# Now run the program through gdb, and dump its initial signal actions
+# and mask in "gdb.txt".
+
+clean_restart $binfile
+
+if {![runto_main]} {
+    return -1
+}
+
+gdb_continue_to_end "collect signals state under gdb"
+
+set test "signals states are identical"
+if { ! $have_standalone } {
+    untested $test
+    return -1
+}
+
+if {!$purely_local} {
+    # Copy file from target to host through build.
+    remote_download host [remote_upload target gdb.txt] gdb.txt
+    remote_download host [remote_upload target standalone.txt] standalone.txt
+}
+
+# Diff the .txt files.  They should be identical.
+gdb_test "shell diff -s $standalone_txt $gdb_txt" \
+    "Files .* are identical.*" \
+    $test
+
+if { [is_remote target] } {
+    remote_file target delete gdb.txt
+    remote_file target delete standalone.txt
+}

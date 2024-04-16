@@ -1,0 +1,80 @@
+# Copyright 2011-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+load_lib dwarf.exp
+
+# Test multiple location breakpoints vs. prologue analysis on -O2 -g code.
+# when the first statement of a function is an inlined function GDB could
+# crash.  Map of this testcase:
+# 
+# File name                            Line number    Starting address
+# main.c                                         5    func_start
+# other.c                                        1    func0
+# 	`inlined' called at main.c line 8
+# main.c                                         9    func1
+# 	func1 = Breakpoint location 1
+# other.c                                        1    func2
+# 	`inlined2' called at main.c line 11
+# main.c                                         9    func3
+# 	func3 = Breakpoint location 2
+# 	`otherinline' called at main.c line 9
+# end of main                                         func_end
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+standard_testfile
+set executable ${testfile}
+
+if [is_ilp32_target] {
+    set ptrbits 32
+} else {
+    set ptrbits 64
+}
+
+if { [build_executable ${testfile}.exp ${executable} \
+	  "${testfile}.c ${testfile}.S" \
+	  [list additional_flags=-DINLINED \
+		additional_flags=-DPTRBITS=$ptrbits]] == -1 } {
+    return -1
+}
+
+# We need those symbols global to access them from the .S file.
+set test "strip stub symbols"
+set objcopy_program [gdb_find_objcopy]
+set result [catch "exec $objcopy_program							\
+			-N func0 -N func1 -N func2 -N func3         -N func_start -N func_end	\
+			-N fund0 -N fund1 -N fund2 -N fund3 -N fund -N fund_start		\
+			${binfile}" output]
+verbose "result is $result"
+verbose "output is $output"
+if {$result != 0} {
+    fail $test
+    return
+}
+pass $test
+
+clean_restart $executable
+
+if ![runto_main] {
+    return -1
+}
+
+gdb_breakpoint "func"
+gdb_continue_to_breakpoint "func"
+
+# Sanity check GDB has really found 2 locations
+gdb_test {info break $bpnum} "\r\n2\\.1\[ \t\]\[^\n\]*\r\n2\\.2\[ \t\]\[^\n\]*" "2 locations found"
+
+gdb_test "p (int) v" " = 0" "no statement got executed"

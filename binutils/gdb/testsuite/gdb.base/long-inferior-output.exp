@@ -1,0 +1,71 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# When debugging with "target remote |", the inferior's output is
+# connected to a pipe, and if GDB doesn't flush the pipe while the
+# inferior is running and the pipe becomes full, then the inferior
+# deadlocks:
+#
+#  1. User sets breakpoint, and types "continue"
+#
+#  2. Inferior prints to stdout/stderr before reaching breakpoint
+#     location.
+#
+#  3. The output pipe becomes full, so the inferior blocks forever in
+#     the printf/write call.
+#
+#  4. The breakpoint is never reached.
+
+require {!target_info exists gdb,noinferiorio}
+
+standard_testfile
+
+if [prepare_for_testing "failed to prepare" $testfile {} {debug}] {
+    return -1
+}
+
+if {![runto_main]} {
+    return
+}
+
+set printing_done_line [gdb_get_line_number "printing done"]
+gdb_test "break $printing_done_line" ".*" "set breakpoint after printing"
+
+send_gdb "continue\n"
+
+set expected_lines 3000
+set more 1
+set i 0
+while {$more} {
+    set more 0
+    gdb_expect {
+	-i $inferior_spawn_id
+	-ex "this is line number $i" {
+	    incr i
+           if {$i != $expected_lines} {
+		set more 1
+	    }
+	}
+    }
+}
+
+gdb_assert {$i == $expected_lines} "saw all lines"
+
+set test "breakpoint reached"
+gdb_test_multiple "" $test {
+    -re "Breakpoint .* main .*$srcfile:$printing_done_line.*$gdb_prompt $" {
+	pass $test
+    }
+}

@@ -1,0 +1,213 @@
+# Copyright 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Based on a file written by Fred Fish. (fnf@cygnus.com)
+# This file is part of the GDB testsuite.  It tests precord dumpfile
+# debugging with watchpoints.
+
+# This test suitable only for process record-replay
+require supports_process_record
+
+standard_testfile watch-reverse.c
+set precsave [standard_output_file watch.precsave]
+
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile] } {
+    return -1
+}
+
+runto_main
+
+# Activate process record/replay
+gdb_test_no_output "record" "turn on process record"
+
+set end_location  [gdb_get_line_number "end of main"  ]
+gdb_test "break $end_location" \
+    "Breakpoint $decimal at .*$srcfile, line $end_location\." \
+    "breakpoint at end of main"
+
+gdb_test "continue" "Breakpoint .* end of main .*" "run to end of main"
+
+gdb_test "record save $precsave" \
+    "Saved core file $precsave with execution log\."  \
+    "save process recfile"
+
+gdb_test "kill" "" "kill process, prepare to debug log file" \
+    "Kill the program being debugged\\? \\(y or n\\) " "y"
+
+gdb_test "record restore $precsave" \
+    "Restored records from core file .*" \
+    "reload core file"
+
+# Only software watchpoints can be used in reverse
+gdb_test_no_output "set can-use-hw-watchpoints 0" ""
+
+gdb_test "break marker1" \
+    "Breakpoint $decimal at $hex: file .*$srcfile, line $decimal.*" \
+    "set breakpoint at marker1"
+
+gdb_test "break marker2" \
+    "Breakpoint $decimal at $hex: file .*$srcfile, line $decimal.*" \
+    "set breakpoint at marker2"
+
+gdb_continue_to_breakpoint "marker1" ".*$srcfile:.*"
+
+gdb_test "watch ival3" \
+    ".*\[Ww\]atchpoint $decimal: ival3.*" \
+    "set watchpoint on ival3"
+
+# Continue until first change, from -1 to 0
+
+gdb_test "continue" \
+    ".*\[Ww\]atchpoint.*ival3.*Old value = -1.*New value = 0.*ival3 = count; ival4 = count;.*" \
+    "watchpoint hit, first time"
+
+# Continue until the next change, from 0 to 1.
+gdb_test "continue" \
+    ".*\[Ww\]atchpoint.*ival3.*Old value = 0.*New value = 1.*ival3 = count; ival4 = count;.*" \
+    "watchpoint hit, second time"
+
+# Continue until the next change, from 1 to 2.
+gdb_test "continue" \
+    ".*\[Ww\]atchpoint.*ival3.*Old value = 1.*New value = 2.*ival3 = count; ival4 = count;.*" \
+    "watchpoint hit, third time"
+
+# Continue until the next change, from 2 to 3.
+gdb_test "continue" \
+    ".*\[Ww\]atchpoint.*ival3.*Old value = 2.*New value = 3.*ival3 = count; ival4 = count;.*" \
+    "watchpoint hit, fourth time"
+
+# Continue until the next change, from 3 to 4.
+# Note that this one is outside the loop.
+
+gdb_test "continue" \
+    ".*\[Ww\]atchpoint.*ival3.*Old value = 3.*New value = 4.*ival3 = count; ival4 = count;.*" \
+    "watchpoint hit, fifth time"
+
+# Continue until we hit the finishing marker function.
+# Make sure we hit no more watchpoints.
+
+gdb_continue_to_breakpoint "marker2" ".*$srcfile:.*"
+
+###
+###
+###
+
+gdb_test_no_output "set exec-direction reverse" \
+    "set reverse, first time"
+
+# Reverse until the previous change, from 4 to 3
+# Note that this one is outside the loop
+
+gdb_test "continue" \
+    ".*\[Ww\]atchpoint.*ival3.*Old value = 4.*New value = 3.*ival3 = count; ival4 = count;.*" \
+    "watchpoint hit in reverse, first time"
+
+# Reverse until the previous change, from 3 to 2.
+gdb_test "continue" \
+    ".*\[Ww\]atchpoint.*ival3.*Old value = 3.*New value = 2.*ival3 = count; ival4 = count;.*" \
+    "watchpoint hit in reverse, second time"
+
+# Reverse until the previous change, from 2 to 1.
+gdb_test "continue" \
+    ".*\[Ww\]atchpoint.*ival3.*Old value = 2.*New value = 1.*ival3 = count; ival4 = count;.*" \
+    "watchpoint hit in reverse, third time"
+
+# Reverse until the previous change, from 1 to 0.
+gdb_test "continue" \
+    ".*\[Ww\]atchpoint.*ival3.*Old value = 1.*New value = 0.*ival3 = count; ival4 = count;.*" \
+    "watchpoint hit in reverse, fourth time"
+
+# Reverse until first change, from 0 to -1
+
+gdb_test "continue" \
+    ".*\[Ww\]atchpoint.*ival3.*Old value = 0.*New value = -1.*ival3 = count; ival4 = count;.*" \
+    "watchpoint hit in reverse, fifth time"
+
+gdb_test_no_output "set can-use-hw-watchpoints 1" "enable hw watchpoints"
+
+###
+###
+###
+
+gdb_test_no_output "set exec-direction forward" "set forward"
+
+# Continue until first change, from -1 to 0
+
+gdb_test "continue" \
+    ".*\[Ww\]atchpoint.*ival3.*Old value = -1.*New value = 0.*ival3 = count; ival4 = count;.*" \
+    "watchpoint hit, forward replay, first time"
+
+# Continue until the next change, from 0 to 1.
+gdb_test "continue" \
+    ".*\[Ww\]atchpoint.*ival3.*Old value = 0.*New value = 1.*ival3 = count; ival4 = count;.*" \
+    "watchpoint hit, forward replay, second time"
+
+# Continue until the next change, from 1 to 2.
+gdb_test "continue" \
+    ".*\[Ww\]atchpoint.*ival3.*Old value = 1.*New value = 2.*ival3 = count; ival4 = count;.*" \
+    "watchpoint hit, forward replay, third time"
+
+# Continue until the next change, from 2 to 3.
+gdb_test "continue" \
+    ".*\[Ww\]atchpoint.*ival3.*Old value = 2.*New value = 3.*ival3 = count; ival4 = count;.*" \
+    "watchpoint hit, forward replay, fourth time"
+
+# Continue until the next change, from 3 to 4.
+# Note that this one is outside the loop.
+
+gdb_test "continue" \
+    ".*\[Ww\]atchpoint.*ival3.*Old value = 3.*New value = 4.*ival3 = count; ival4 = count;.*" \
+    "watchpoint hit, forward replay, fifth time"
+
+# Continue until we hit the finishing marker function.
+# Make sure we hit no more watchpoints.
+
+gdb_test "continue" "marker2 .*" "replay forward to marker2"
+
+###
+###
+###
+
+gdb_test_no_output "set exec-direction reverse" \
+    "set reverse, second time"
+
+# Reverse until the previous change, from 4 to 3
+# Note that this one is outside the loop
+
+gdb_test "continue" \
+    ".*\[Ww\]atchpoint.*ival3.*Old value = 4.*New value = 3.*ival3 = count; ival4 = count;.*" \
+    "watchpoint hit in reverse, HW, first time"
+
+# Reverse until the previous change, from 3 to 2.
+gdb_test "continue" \
+    ".*\[Ww\]atchpoint.*ival3.*Old value = 3.*New value = 2.*ival3 = count; ival4 = count;.*" \
+    "watchpoint hit in reverse, HW, second time"
+
+# Reverse until the previous change, from 2 to 1.
+gdb_test "continue" \
+    ".*\[Ww\]atchpoint.*ival3.*Old value = 2.*New value = 1.*ival3 = count; ival4 = count;.*" \
+    "watchpoint hit in reverse, HW, third time"
+
+# Reverse until the previous change, from 1 to 0.
+gdb_test "continue" \
+    ".*\[Ww\]atchpoint.*ival3.*Old value = 1.*New value = 0.*ival3 = count; ival4 = count;.*" \
+    "watchpoint hit in reverse, HW, fourth time"
+
+# Reverse until first change, from 0 to -1
+
+gdb_test "continue" \
+    ".*\[Ww\]atchpoint.*ival3.*Old value = 0.*New value = -1.*ival3 = count; ival4 = count;.*" \
+    "watchpoint hit in reverse, HW, fifth time"
+

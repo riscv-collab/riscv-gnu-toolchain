@@ -1,0 +1,87 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that a concrete var importing an abstract var using
+# DW_AT_abstract_origin inherits the DW_AT_const_value attribute.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+standard_testfile main.c .S
+
+set executable ${testfile}
+set asm_file [standard_output_file ${srcfile2}]
+
+# We need to know the size of integer type in order
+# to write some of the debugging info we'd like to generate.
+if [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] {
+    return -1
+}
+
+# Create the DWARF.
+Dwarf::assemble $asm_file {
+    declare_labels cu_label main_label int_label
+    declare_labels aaa_label
+    set int_size [get_sizeof "int" 4]
+
+    cu {} {
+	cu_label: partial_unit {
+	    {language @DW_LANG_C}
+	    {name "imported_unit.c"}
+	} {
+	    int_label: base_type {
+		{byte_size $int_size sdata}
+		{encoding @DW_ATE_signed}
+		{name int}
+	    }
+
+	    aaa_label: DW_TAG_variable {
+		{name aaa}
+		{type :$int_label}
+		{const_value 1 DW_FORM_sdata}
+	    }
+
+	    main_label: subprogram {
+		{name main}
+		{type :$int_label}
+		{external 1 flag}
+	    }
+	}
+    }
+
+    cu {} {
+	compile_unit {
+	    {language @DW_LANG_C}
+	    {name "<artificial>"}
+	} {
+	    DW_TAG_variable {
+		{abstract_origin %$aaa_label}
+	    }
+	    subprogram {
+		{abstract_origin %$main_label}
+		{MACRO_AT_range {main}}
+	    }
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	  [list $srcfile $asm_file] {nodebug}] } {
+    return -1
+}
+
+gdb_test "p aaa" "= 1"

@@ -1,0 +1,85 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test "next" bouncing between two breakpoints in two threads running
+# in different targets.
+
+source $srcdir/$subdir/multi-target.exp.tcl
+
+if {![multi_target_prepare]} {
+    return
+}
+
+proc test_ping_pong_next {} {
+    global srcfile
+
+    if {![setup "off"]} {
+	untested "setup failed"
+	return
+    }
+
+    # Block/unblock inferiors 1 and 2 according to INF1 and INF2.
+    proc block {inf1 inf2} {
+	gdb_test "thread apply 1.1 p wait_for_gdb = $inf1" " = $inf1"
+	gdb_test "thread apply 2.1 p wait_for_gdb = $inf2" " = $inf2"
+    }
+
+    # We'll use inferiors 1 and 2.  Make sure they're really connected
+    # to different targets.
+    gdb_test "thread apply 1.1 maint print target-stack" \
+	"- native.*"
+    gdb_test "thread apply 2.1 maint print target-stack" \
+	"- extended-remote.*"
+
+    # Set two breakpoints, one for each of inferior 1 and 2.  Inferior
+    # 1 is running on the native target, and inferior 2 is running on
+    # extended-gdbserver.  Run to breakpoint 1 to gets things started.
+    set line1 [gdb_get_line_number "set break 1 here"]
+    set line2 [gdb_get_line_number "set break 2 here"]
+
+    gdb_test "thread 1.1" "Switching to thread 1.1 .*"
+
+    gdb_test "break $srcfile:$line1 thread 1.1" \
+	"Breakpoint .*$srcfile:$line1\\..*"
+
+    gdb_test "continue" "hit Breakpoint .*"
+
+    gdb_test "break $srcfile:$line2 thread 2.1" \
+	"Breakpoint .*$srcfile:$line2\\..*"
+
+    # Now block inferior 1 and issue "next".  We should stop at the
+    # breakpoint for inferior 2, given schedlock off.
+    with_test_prefix "next inf 1" {
+	block 1 0
+	gdb_test "next" "Thread 2.1 .*hit Breakpoint .*$srcfile:$line2.*"
+    }
+
+    # Now unblock inferior 2 and block inferior 1.  "next" should run
+    # into the breakpoint in inferior 1.
+    with_test_prefix "next inf 2" {
+	block 0 1
+	gdb_test "next" "Thread 1.1 .*hit Breakpoint .*$srcfile:$line1.*"
+    }
+
+    # Try nexting inferior 1 again.
+    with_test_prefix "next inf 1 again" {
+	block 1 0
+	gdb_test "next" "Thread 2.1 .*hit Breakpoint .*$srcfile:$line2.*"
+    }
+}
+
+test_ping_pong_next
+
+multi_target_cleanup

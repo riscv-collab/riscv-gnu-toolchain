@@ -1,0 +1,67 @@
+# Copyright 2016-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require {!target_info exists gdb,nointerrupts}
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+standard_testfile
+
+if {[gdb_compile_pthreads "$srcdir/$subdir/$srcfile" $binfile executable {debug}] != "" } {
+    return -1
+}
+
+# This tests the resolution of PR 20039.
+#
+# With a multi-threaded inferior and with MI/all-stop, it was not possible
+# to interrupt it with ctrl-C after a continue.
+
+proc test_continue_interrupt { } {
+  global binfile
+  global async
+
+  if {[mi_clean_restart $binfile]} {
+      return
+  }
+
+  # ... and run it.
+  #
+  # Note this test relies on mi_runto deleting the breakpoint.
+  # A step-over here would mask the bug.
+  mi_runto "all_threads_created"
+
+  # Consistency check.
+  mi_check_thread_states {"stopped" "stopped" "stopped"} "check thread states"
+
+  # Continue.
+  mi_send_resuming_command "exec-continue" "continue"
+
+  # Wait a bit to make sure all MI events are sent, before sending the
+  # interruption request.
+  sleep 1
+
+  # Send the interrupt request.
+  if { $async } {
+    mi_gdb_test "888-exec-interrupt" "888\\^done" "interrupt"
+  } else {
+    send_gdb "\003"
+  }
+
+  # Wait for the *stopped.
+  mi_expect_interrupt "interrupt reported"
+}
+
+test_continue_interrupt

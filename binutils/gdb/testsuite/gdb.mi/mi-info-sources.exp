@@ -1,0 +1,213 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test the -file-list-exec-source-files command.
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+standard_testfile .c -base.c
+
+if {[build_executable $testfile.exp $testfile \
+	 [list $srcfile $srcfile2] debug]} {
+    untested $testfile.exp
+    return -1
+}
+
+mi_clean_restart $binfile
+
+set readnow_p [mi_readnow]
+
+mi_runto_main
+
+# Unload symbols for shared libraries to prevent
+# 'ERROR: internal buffer is full'.
+mi_gdb_test "nosharedlibrary" ".*\\^done" "nosharedlibrary"
+
+# Helper to build expected MI output pattern for a list.  NAME is the
+# name of the list (which can be the empty string) and args is one
+# or more strings representing the fields of the list, which will be
+# joined with a comma.
+#
+# If any of the fields in args matches ".*" then the comma before and
+# after are dropped from the final pattern.
+proc mi_list { name args } {
+    set str ""
+
+    if { $name != "" } {
+	set str "${name}="
+    }
+
+    set pattern ""
+    foreach a $args {
+	if { [string length $pattern] > 0 } {
+	    if { [string range $pattern end-1 end] != ".*" \
+		     && [string range $a 0 1] != ".*" } {
+		set pattern "${pattern},"
+	    }
+	}
+	set pattern "${pattern}${a}"
+    }
+    set str "$str\\\[${pattern}\\\]"
+    return ${str}
+}
+
+# Helper to build expected MI output pattern for a tuple.  NAME is the
+# name of the tuple (which can be the empty string) and args is one
+# or more strings representing the fields of the tuple, which will be
+# joined with a comma.
+#
+# If any of the fields in args matches ".*" then the comma before and
+# after are dropped from the final pattern.
+proc mi_tuple { name args } {
+    set str ""
+
+    if { $name != "" } {
+	set str "${name}="
+    }
+
+    set pattern ""
+    foreach a $args {
+	if { [string length $pattern] > 0 } {
+	    if { [string range $pattern end-1 end] != ".*" \
+		     && [string range $a 0 1] != ".*" } {
+		set pattern "${pattern},"
+	    }
+	}
+	set pattern "${pattern}${a}"
+    }
+    set str "$str\\{${pattern}\\}"
+    return ${str}
+}
+
+# Helper to build expected MI output pattern for a single field.  NAME
+# is the name of the field, and PATTERN matches the fields contents.
+# This proc will add quotes around PATTERN.
+proc mi_field { name pattern } {
+    set str ""
+
+    if { $name != "" } {
+	set str "${name}="
+    }
+
+    set str "$str\"${pattern}\""
+    return ${str}
+}
+
+# Run tests on '-file-list-exec-source-files'.  DEBUG_FULLY_READ is either the string
+# "true" or "false" and indicates if the GDB will have read all the
+# debug for the test program or not yet.
+proc check_info_sources { debug_fully_read } {
+
+    with_test_prefix "debug_read=${debug_fully_read}" {
+
+	if { $debug_fully_read } {
+	    set p1 \
+		[mi_list "files" \
+		     ".*" \
+		     [mi_tuple "" \
+			  [mi_field "file" "\[^\"\]*mi-info-sources-base\\.c"] \
+			  [mi_field "fullname" "\[^\"\]+mi-info-sources-base\\.c"] \
+			  [mi_field "debug-fully-read" "${debug_fully_read}"]] \
+		     ".*"]
+	    set p2 \
+		[mi_list "files" \
+		     ".*" \
+		     [mi_tuple "" \
+			  [mi_field "file" "\[^\"\]*mi-info-sources\\.c"] \
+			  [mi_field "fullname" "\[^\"\]+mi-info-sources\\.c"] \
+			  [mi_field "debug-fully-read" "true"]] \
+		     ".*"]
+	} else {
+	    set p1 \
+		[mi_list "files" \
+		     ".*" \
+		     [mi_tuple "" \
+			  [mi_field "file" "\[^\"\]*mi-info-sources\\.c"] \
+			  [mi_field "fullname" "\[^\"\]+mi-info-sources\\.c"] \
+			  [mi_field "debug-fully-read" "true"]] \
+		     ".*"]
+	    set p2 \
+		[mi_list "files" \
+		     ".*" \
+		     [mi_tuple "" \
+			  [mi_field "file" "\[^\"\]*mi-info-sources-base\\.c"] \
+			  [mi_field "fullname" "\[^\"\]+mi-info-sources-base\\.c"] \
+			  [mi_field "debug-fully-read" "${debug_fully_read}"]] \
+		     ".*"]
+	}
+
+	mi_gdb_test "-file-list-exec-source-files" ".*\\^done,${p1}" \
+	    "-file-list-exec-source-files, src1"
+	mi_gdb_test "-file-list-exec-source-files" ".*\\^done,${p2}" \
+	    "-file-list-exec-source-files, src2"
+
+	set p [mi_list "files" \
+		   [mi_tuple "" \
+			[mi_field "file" "\[^\"\]*mi-info-sources-base\\.c"] \
+			[mi_field "fullname" "\[^\"\]+mi-info-sources-base\\.c"] \
+			[mi_field "debug-fully-read" "${debug_fully_read}"]]]
+	mi_gdb_test "-file-list-exec-source-files --basename -- base" ".*\\^done,${p}" \
+	    "-file-list-exec-source-files --basename -- base"
+
+	# Figure out the value for the 'debug-info' field.
+	if {${debug_fully_read} == "true"} {
+	    set debug_info "fully-read"
+	} else {
+	    set debug_info "partially-read"
+	}
+
+	set p [mi_list "files" \
+		   [mi_tuple "" \
+			[mi_field "filename" "\[^\"\]+mi-info-sources(\.debug)?"] \
+			[mi_field "debug-info" "${debug_info}"] \
+			[mi_list "sources" \
+			     ".*" \
+			     [mi_tuple "" \
+				  [mi_field "file" "\[^\"\]*mi-info-sources\\.c"] \
+				  [mi_field "fullname" "\[^\"\]+mi-info-sources\\.c"] \
+				  [mi_field "debug-fully-read" "true"]] \
+			     ".*"]]]
+	mi_gdb_test "-file-list-exec-source-files --group-by-objfile" \
+	    ".*\\^done,${p}" \
+	    "-file-list-exec-source-files --group-by-objfile, look for mi-info-sources.c"
+
+	set p [mi_list "files" \
+		   [mi_tuple "" \
+			[mi_field "filename" "\[^\"\]+mi-info-sources(\.debug)?"] \
+			[mi_field "debug-info" "${debug_info}"] \
+			[mi_list "sources" \
+			     ".*" \
+			     [mi_tuple "" \
+				  [mi_field "file" "\[^\"\]*mi-info-sources-base\\.c"] \
+				  [mi_field "fullname" "\[^\"\]+mi-info-sources-base\\.c"] \
+				  [mi_field "debug-fully-read" "${debug_fully_read}"]] \
+			     ".*"]]]
+	mi_gdb_test "-file-list-exec-source-files --group-by-objfile" \
+	    ".*\\^done,${p}" \
+	    "-file-list-exec-source-files --group-by-objfile, look for mi-info-sources-base.c"
+    }
+}
+
+if { ! $readnow_p } {
+    check_info_sources "false"
+}
+
+mi_continue_to "some_other_func"
+
+# Force "fully-read".
+mi_gdb_test "maint expand-symtabs"
+
+check_info_sources "true"

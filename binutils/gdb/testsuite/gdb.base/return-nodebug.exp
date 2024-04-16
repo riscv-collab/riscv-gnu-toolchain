@@ -1,0 +1,76 @@
+# Copyright (C) 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+set allow_float_test [allow_float_test]
+
+proc do_test {type} {
+    set typenospace [string map {{ } -} $type]
+
+    with_test_prefix "$typenospace" {
+	if {[runto "func"]} {
+	    # Verify that we do not crash when using "return" from a
+	    # function with no debugging info.  Such function has no
+	    # `struct symbol'.  It may still have an associated
+	    # `struct minimal_symbol'.
+
+	    gdb_test "return -1" \
+		"Return value type not available for selected stack frame\\.\r\nPlease use an explicit cast of the value to return\\." \
+		"return from function with no debug info without a cast"
+
+	    # Cast of the result to the proper width must be done explicitely.
+	    gdb_test "return ($type) -1" "#0 .* main \\(.*" \
+		"return from function with no debug info with a cast" \
+		"Make selected stack frame return now\\? \\(y or n\\) " "y"
+
+	    gdb_test "advance marker" "marker \\(.*" \
+		"advance to marker"
+
+	    # And if it returned the full width of the result.
+	    if {$type == "float" || $type == "double"} {
+		set flag ""
+	    } else {
+		set flag "/d"
+	    }
+	    gdb_test "print $flag t" " = -1" "full width of the returned result"
+	}
+    }
+}
+
+foreach type {{signed char} {short} {int} {long} {long long} {float} {double}} {
+    if { !$allow_float_test && ($type == "float" || $type == "double") } {
+	continue
+    }
+    set typenospace_dash \
+	[string map {{ } -} $type]
+    set typenospace_underscore \
+	[string map {{ } _} $type]
+
+    standard_testfile .c return-nodebug1.c
+
+    set additional_flags {}
+    lappend additional_flags \
+	additional_flags=-DTYPE_NOSPACE=$typenospace_underscore
+    lappend additional_flags \
+	additional_flags=-DTYPE_NOSPACE_$typenospace_underscore
+
+    if {[prepare_for_testing_full "failed to prepare" \
+	     [list ${testfile}-${typenospace_dash} debug \
+		  $srcfile [concat {debug} $additional_flags] \
+		  $srcfile2 $additional_flags]]} {
+	continue
+    }
+
+    do_test $type
+}

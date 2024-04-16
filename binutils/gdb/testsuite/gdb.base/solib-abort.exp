@@ -1,0 +1,56 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test corner case of printing solib name when unwinding.
+# https://sourceware.org/bugzilla/show_bug.cgi?id=29074
+
+require allow_shlib_tests
+
+# Library file.
+set libname "solib-abort-lib"
+set srcfile_lib ${srcdir}/${subdir}/${libname}.c
+set binfile_lib [standard_output_file ${libname}.so]
+# Note: no debugging info here, since this will assure that the solib
+# name is printed in the stack trace.
+set lib_flags {}
+
+# Binary file.
+set testfile "solib-abort"
+set srcfile ${srcdir}/${subdir}/${testfile}.c
+set binfile [standard_output_file ${testfile}]
+set bin_flags [list debug shlib=${binfile_lib}]
+
+if { [gdb_compile_shlib ${srcfile_lib} ${binfile_lib} $lib_flags] != ""
+     || [gdb_compile ${srcfile} ${binfile} executable $bin_flags] != "" } {
+  untested "failed to compile"
+  return -1
+}
+
+clean_restart $binfile
+
+if {![runto_main]} {
+  return 0
+}
+
+# Run until the program dies.
+gdb_test "cont" "Program received signal SIGABRT,.*"
+
+# The solib name should show up in the stack trace.  The bug here was
+# that if the function calling abort appeared last in the text
+# section, and if GCC didn't emit an epilogue after the call, then gdb
+# would use the wrong PC to find the solib name.  This test doesn't
+# exactly test this in all situations, but with the correct
+# environment it is sufficient.
+gdb_test "bt" "#$decimal .* in callee .* from .*${libname}\\.so.*"

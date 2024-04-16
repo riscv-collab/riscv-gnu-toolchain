@@ -1,0 +1,211 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This tests a segfault that occurs when reading inlined_subroutine DIEs
+# with abstract_origins pointing to DIEs in other CUs.
+#
+# See https://bugzilla.redhat.com/show_bug.cgi?id=1638798 .
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF.
+require dwarf2_support
+
+standard_testfile main.c .S
+
+# Create the DWARF.  This is derived from the reproducer in the Fedora
+# bugzila mentioned above.  For clarity, some "superfluous" DIES have
+# been left instead of simplifying/pruning the test further.
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    declare_labels Db D72f8 D736e
+    declare_labels D266465 D266477 D266483 D266496 D266498 D266ad3 D266ad9 \
+	D266ade D26b227 D26b237
+    declare_labels D26d8b1 D26d8c3 D26d8cf D26d944 D26d946 D26e103 D26e145 \
+	D26e415 D26e48c D26df00 D26df06 D26df0b D272519 D274c1a D274c42
+
+    cu {} {
+	Db: compile_unit {
+	    {language @DW_LANG_C99}
+	    {name "<artificial>"}
+	} {
+	    D72f8: subprogram {
+		{abstract_origin %$D272519}
+		{low_pc 0xb9e20 addr}
+		{high_pc 0x1f5 data4}
+	    } {
+		D736e: inlined_subroutine {
+		    {abstract_origin %$D26b227}
+		    {low_pc 0xb9efc addr}
+		    {high_pc 0xc data4}
+		} {
+		    formal_parameter {
+			{abstract_origin %$D274c42}
+		    }
+		}
+	    }
+	}
+    }
+
+    cu {} {
+	D266465: compile_unit {
+	    {language @DW_LANG_C99}
+	} {
+	    D266477: typedef {
+		{name "size_t"}
+		{type :$D266483}
+	    }
+
+	    D266483: base_type {
+		{byte_size 8 sdata}
+		{encoding @DW_ATE_unsigned}
+	    }
+
+	    D266496: pointer_type {
+		{byte_size 8 sdata}
+	    }
+
+	    D266498: restrict_type {
+		{type :$D266496}
+	    }
+
+	    D266ad3: pointer_type {
+		{byte_size 8 sdata}
+		{type :$D266ade}
+	    }
+
+	    D266ad9: restrict_type {
+		{type :$D266ad3}
+	    }
+
+	    D266ade: const_type {}
+
+	    D26b227: subprogram {
+		{external 1 flag}
+		{name "memcpy"}
+		{type :$D266496}
+	    } {
+		D26b237: formal_parameter {
+		    {name "__dest"}
+		    {type :$D266498}
+		}
+		formal_parameter {
+		    {name "__src"}
+		    {type :$D266ad9}
+		}
+		formal_parameter {
+		    {name "__len"}
+		    {type :$D266477}
+		}
+	    }
+	}
+    }
+
+    cu {} {
+	D26d8b1: compile_unit {
+	    {language @DW_LANG_C99}
+	} {
+	    D26d8c3: typedef {
+		{name "size_t"}
+		{type :$D26d8cf}
+	    }
+
+	    D26d8cf: base_type {
+		{byte_size 8 sdata}
+		{encoding @DW_ATE_unsigned}
+		{name "long unsigned int"}
+	    }
+
+	    D26d944: pointer_type {
+		{byte_size 8 sdata}
+	    }
+
+	    D26d946: restrict_type {
+		{type :$D26d944}
+	    }
+
+	    D26e103: structure_type {
+		{name "__object"}
+		{byte_size 12 sdata}
+	    } {
+		member {
+		    {name "__ob_next"}
+		    {type :$D26e145}
+		    {data_member_location 0 sdata}
+		}
+	    }
+
+	    D26e145: pointer_type {
+		{byte_size 8 sdata}
+		{type :$D26e103}
+	    }
+
+	    D26e415: typedef {
+		{name "PyObject"}
+		{type :$D26e103}
+	    }
+
+	    D26e48c: pointer_type {
+		{byte_size 8 sdata}
+		{type :$D26e415}
+	    }
+
+	    D26df00: pointer_type {
+		{byte_size 8 sdata}
+		{type :$D26df0b}
+	    }
+
+	    D26df06: restrict_type {
+		{type :$D26df00}
+	    }
+
+	    D26df0b: const_type {}
+
+	    D272519: subprogram {
+		{name "bytes_repeat"}
+		{type :$D26e48c}
+	    }
+
+	    D274c1a: subprogram {
+		{external 1 flag}
+		{name "memcpy"}
+		{type :$D26d944}
+	    } {
+		formal_parameter {
+		    {name "__dest"}
+		    {type :$D26d946}
+		}
+		formal_parameter {
+		    {name "__src"}
+		    {type :$D26df06}
+		}
+		D274c42: formal_parameter {
+		    {name "__len"}
+		    {type :$D26d8c3}
+		}
+	    }
+	}
+    }
+}
+
+if {[prepare_for_testing "failed to prepare" $testfile \
+	 "${asm_file} ${srcfile}" {}]} {
+    return -1
+}
+
+# All we need to do is set a breakpoint, which causes the DWARF
+# info to be read, to demonstrate the problem.
+
+gdb_breakpoint "bytes_repeat" message

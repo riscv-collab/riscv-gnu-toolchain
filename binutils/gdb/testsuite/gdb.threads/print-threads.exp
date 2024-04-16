@@ -1,0 +1,110 @@
+# Copyright (C) 1996-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file was written by Daniel Jacobowitz <drow@mvista.com>
+# (parts based on pthreads.exp by Fred Fish (fnf@cygnus.com).
+#
+# It tests miscellaneous actions with multiple threads, including
+# handling for thread exit.
+
+
+standard_testfile
+
+# regexp for "horizontal" text (i.e. doesn't include newline or
+# carriage return)
+set horiz "\[^\n\r\]*"
+
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable debug] != "" } {
+    return -1
+}
+
+# Now we can proceed with the real testing.
+
+clean_restart ${binfile}
+
+gdb_test_no_output "set print sevenbit-strings"
+#gdb_test_no_output "set print address off"
+gdb_test_no_output "set width 0"
+
+# We'll need this when we send_gdb a ^C to GDB.  Need to do it before we
+# run the program and gdb starts saving and restoring tty states.
+gdb_test "shell stty intr '^C'" ".*"
+
+proc test_all_threads { name kill } {
+    global gdb_prompt inferior_exited_re
+
+    with_test_prefix $name {
+	set i 0
+	set j 0
+	gdb_test_multiple "continue" "all threads ran once" {
+	    -re "Breakpoint \[0-9\]+, thread_function \\(arg=.*\\) at .*print-threads.c:\[0-9\]+.*$gdb_prompt" {
+		set i [expr $i + 1]
+		pass "hit thread_function breakpoint, $i"
+		send_gdb "continue\n"
+		exp_continue
+	    }
+	    -re "Breakpoint \[0-9\]+, .* kill \\(.*\\) .*$gdb_prompt" {
+		set j [expr $j + 1]
+		if { $kill == 1 } {
+		    pass "hit kill breakpoint, $j"
+		} else {
+		    fail "hit kill breakpoint, $j (unexpected)"
+		}
+		send_gdb "continue\n"
+		exp_continue
+	    }
+	    -re "$inferior_exited_re normally.\[\r\n\]+$gdb_prompt" {
+		pass "program exited normally"
+		if {$i == 5} {
+		    pass "all threads ran once"
+		} else {
+		    fail "all threads ran once (total $i threads ran)"
+		}
+	    }
+	    -re " received signal SIGTRAP.*(Thread \[-0-9a-fx\]* \\(zombie\\)|0x00000000 in ).*$gdb_prompt $" {
+		if { $kill == 1 } {
+		    kfail "gdb/1265" "Running threads (zombie thread)"
+		} else {
+		    fail "running threads (unknown output)"
+		}
+	    }
+	}
+    }
+}
+
+# Record the old timeout, we need to extend it for slower tests.
+set oldtimeout $timeout
+
+runto_main
+gdb_test "break thread_function" "Breakpoint \[0-9\]+ at 0x\[0-9a-f\]+: file .*print-threads.c, line \[0-9\]*\\."
+gdb_test_no_output "set var slow = 0"
+test_all_threads "fast" 0
+
+runto_main
+gdb_test "break thread_function" "Breakpoint \[0-9\]+ at 0x\[0-9a-f\]+: file .*print-threads.c, line \[0-9\]*\\." "break thread_function (2)"
+gdb_test_no_output "set var slow = 1"
+# Extend the timeout for slower tests.
+set timeout [expr $oldtimeout + 120]
+test_all_threads "slow" 0
+set timeout $oldtimeout
+
+runto_main
+gdb_test "break thread_function" "Breakpoint \[0-9\]+ at 0x\[0-9a-f\]+: file .*print-threads.c, line \[0-9\]*\\." "break thread_function (3)"
+gdb_test_no_output "set var slow = 1" "set var slow = 1 (2)"
+gdb_breakpoint "kill"
+# Extend the timeout for slower tests.
+set timeout [expr $oldtimeout + 120]
+test_all_threads "slow with kill breakpoint" 1
+set timeout $oldtimeout

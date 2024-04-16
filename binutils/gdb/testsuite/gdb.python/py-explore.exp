@@ -1,0 +1,479 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile
+
+require allow_python_tests
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+    return -1
+}
+
+set SS "struct SimpleStruct"
+set SU "union SimpleUnion"
+set CS "struct ComplexStruct"
+set CU "union ComplexUnion"
+set enter_field_number_prompt  {Enter the field number of choice: }
+set return_to_parent_prompt {Press enter to return to parent value: }
+set array_index_prompt {Enter the index of the element you want to explore in .*: }
+
+proc compound_description { value_name type_desc type_name } {
+    return "The value of '$value_name' is a $type_desc of type '$type_name' with the following fields:\[\r\n\]+"
+}
+
+proc typedef_description { value_name typedef_name type_name } {
+    return "The value of '$value_name' is of type '$typedef_name' which is a typedef of type '$type_name'\.\[\r\n\]+"
+}
+
+proc scalar_description { value_name type } {
+    return "'$value_name' is a scalar value of type '$type'\.\[\r\n\]+"
+}
+
+proc array_description { value_name type } {
+    return "'$value_name' is an array of '$type'\.\[\r\n\]+"
+}
+
+proc pointer_description { value_name type_name } {
+    set type_description "'$value_name' is a pointer to a value of type '$type_name'\.\[\r\n\]+"
+    set prompt "Continue exploring it as a pointer to a single value \[\[\]y/n\[\]\]: " 
+    return "$type_description$prompt"
+}
+
+proc field_values { args } {
+    set result ""
+    foreach field $args {
+        set result "$result\[ \]*$field \[\.\]\[\.\] \[\(\]Value of type .*\[\)\]\[\r\n\]+"
+    }
+    return $result
+}
+
+proc field_choices { args } {
+    set result ""
+    set field_num 0
+    foreach field $args {
+        set result "$result$field\[ \]+=\[ \]+<Enter $field_num to explore this field of type .*"
+        incr field_num
+    }
+    return $result
+}
+
+proc scalar_value { value_name value } {
+    return "$value_name = $value\[r\n\]+"
+}
+
+set SS_fields [field_values {a = 10} {d = 100[.].*}]
+
+if ![runto_main] {
+   return -1
+}
+
+gdb_breakpoint [gdb_get_line_number "Break here."]
+gdb_continue_to_breakpoint "Break here" ".*Break here.*"
+
+#########################
+# Value exploration tests
+#########################
+
+gdb_test "explore i" "[scalar_description {i} {int}].*i = .*"
+gdb_test "explore ss" "[compound_description {ss} {struct/class} $SS].*$SS_fields"
+gdb_test "explore *ss_ptr" "[compound_description {\*ss_ptr} {struct/class} $SS].*$SS_fields"
+gdb_test "explore ss_t" "[typedef_description {ss_t} {SS} $SS].*[compound_description {ss_t} {struct/class} $SS].*$SS_fields"
+
+gdb_test_multiple "explore ss_ptr" "" {
+    -re "[pointer_description {ss_ptr} $SS].*" {
+        pass "explore ss_ptr"
+        gdb_test_multiple "y" "explore_as_single_value_pointer" {
+            -re "$SS_fields.*$gdb_prompt" {
+                pass "explore ss_ptr as single value pointer"
+            }
+        }
+    }
+}
+
+gdb_test_multiple "explore darray_ref" "" {
+    -re "[pointer_description {darray_ref} {double}].*" {
+        pass "explore darray_ref"
+        gdb_test_multiple "n" "no_to_explore_as_pointer" {
+            -re "Continue exploring it as a pointer to an array \[\[\]y/n\[\]\]: " {
+                pass "no_to_explore_as_pointer"
+                gdb_test_multiple "y" "explore_as_array" {
+                    -re ".*Enter the index of the element you want to explore in 'darray_ref':.*"  {
+                        pass "explore_as_array"
+                        gdb_test_multiple "2" "explore_as_array_index_2" {
+                            -re ".*'darray_ref\\\[2\\\]' is a scalar value of type 'double'\..*darray_ref\\\[2\\\] = 0.*" {
+                                pass "explore_as_array_index_2"
+                                gdb_test_multiple "\0" "end explore_as_array_index_2" {
+                                    -re ".*Returning to parent value.*Enter the index of the element you want to explore in 'darray_ref':.*" {
+                                        pass "end explore_as_array_index_2"
+                                        gdb_test_multiple "\0" "end explore_as_array" {
+                                            -re "\[\n\r\]+$gdb_prompt" {
+                                                pass "end explore_as_array"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } 
+                    }
+                }
+            }
+        }
+    }
+}
+
+gdb_test_multiple "explore su" "" {
+    -re "[compound_description {su} {union} {union SimpleUnion}].*[field_choices {i} {c} {f} {d}].*$enter_field_number_prompt" {
+        pass "explore su"
+        gdb_test_multiple "3" "explore su.d" {
+            -re "[scalar_description {su.d} {double}].*[scalar_value {su.d} {100[.].*}].*$return_to_parent_prompt" {
+                pass "explore su.d"
+                gdb_test_multiple " " "end su.d exploration" {
+                    -re ".*[compound_description {su} {union} {union SimpleUnion}].*[field_choices {i} {c} {f} {d}].*$enter_field_number_prompt" {
+                        pass "end su.d exploration"
+                        gdb_test_multiple "\0" "end su exploration" {
+                            -re "$gdb_prompt" {
+                                pass "end su exploration"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+gdb_test_multiple "explore cs" "" {
+    -re "[compound_description {cs} {struct/class} {struct ComplexStruct}].*[field_choices {s} {u} {sa}].*$enter_field_number_prompt" {
+        pass "explore cs"
+        gdb_test_multiple "0" "explore cs.s" {
+            -re "[compound_description {cs.s} {struct/class} {struct SimpleStruct}].*[field_values {a = 10} {d = 100[.].*}].*$return_to_parent_prompt" {
+                pass "explore cs.s"
+                gdb_test_multiple " " "end cs.s exploration" {
+                    -re ".*$enter_field_number_prompt" {
+                        pass "end cs.s exploration"
+                    }
+                }
+            }
+        }
+        gdb_test_multiple "1" "explore cs.u" {
+            -re "[compound_description {cs.u} {union} {union SimpleUnion}].*.*[field_choices {i} {c} {f} {d}].*$enter_field_number_prompt" {
+                pass "explore cs.u"
+                gdb_test_multiple " " "end cs.u exploration" {
+                    -re ".*$enter_field_number_prompt" {
+                        pass "end cs.u exploration"
+                    }
+                }
+            }
+        }
+        gdb_test_multiple "\0" "explore cs.u" {
+            -re "$gdb_prompt" {
+                pass "end cs exploration"
+            }
+        }
+    }
+}
+
+gdb_test_multiple "explore cu" "" {
+    -re "[compound_description {cu} {union} {union ComplexUnion}].*[field_choices {s} {sa}].*$enter_field_number_prompt" {
+        pass "explore cu"
+        gdb_test_multiple "1" "explore cu.sa" {
+            -re ".*[array_description {cu.sa} $SS].*$array_index_prompt" {
+                pass "explore cu.sa"
+                gdb_test_multiple "0" "explore cu.sa\[0\]" {
+                    -re "[compound_description {\(cu.sa\)\[0\]} {struct/class} {struct SimpleStruct}].*[field_values {a = 0} {d = 100[.].*}].*$return_to_parent_prompt" {
+                        pass "explore cu.sa\[0\]"
+                        gdb_test_multiple "\0" "end cu.sa\[0\] exploration" {
+                            -re "[array_description {cu.sa} $SS]$array_index_prompt" {
+                                pass "end cu.sa\[0\] exploration"
+                            }
+                        }
+                    }
+                }
+                gdb_test_multiple "\0" "end cu.sa exploration" {
+                    -re ".*$enter_field_number_prompt" {
+                        pass "end cu.sa exploration"
+                        gdb_test_multiple "\0" "end cu exploration" {
+                            -re "$gdb_prompt" {
+                                pass "end cu exploration"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+########################
+# Type exploration tests
+########################
+
+proc scalar_type_decsription {type} {
+    return "'$type' is a scalar type\."
+}
+
+proc child_scalar_type_description {path type} {
+    return "$path is of a scalar type '$type'\."
+}
+
+proc compound_type_description { type_name type_desc } {
+    return "'$type_name' is a $type_desc with the following fields:"
+}
+
+proc child_compound_type_description { path type_name type_desc } {
+    return "$path is a $type_desc of type '$type_name' with the following fields:"
+}
+
+proc child_array_type_description { path target_type_name } {
+    return "$path is an array of '$target_type_name'\."
+}
+
+proc typedef_type_description { type_name target_name } {
+    return "The type '$type_name' is a typedef of type '$target_name'\."
+}
+
+set SS_fields_types [field_choices {a} {d}]
+set SU_fields_types [field_choices {i} {c} {f} {d}]
+set CS_fields_types [field_choices {s} {u} {sa}]
+set CU_fields_types [field_choices {s} {sa}]
+
+set CS_field_0 "field 's' of 'struct ComplexStruct'"
+set CS_field_1 "field 'u' of 'struct ComplexStruct'"
+set CS_field_2 "field 'sa' of 'struct ComplexStruct'"
+set CS_field_2_array_element "an array element of $CS_field_2"
+
+set CU_field_0 "field 's' of 'union ComplexUnion'"
+set CU_field_1 "field 'sa' of 'union ComplexUnion'"
+set CU_field_1_array_element "an array element of $CU_field_1"
+
+gdb_test "explore int" ".*[scalar_type_decsription {int}].*"
+
+gdb_test_multiple "explore struct SimpleStruct" "" {
+    -re ".*[compound_type_description $SS {struct/class}].*$SS_fields_types.*" {
+        pass "explore struct SimpleStruct"
+        gdb_test_multiple "0" "explore type struct SimpleStruct feild 0" {
+            -re ".*[child_scalar_type_description {field 'a' of 'struct SimpleStruct'} {int}].*" {
+                pass "explore type struct SimpleStruct feild 0"
+                gdb_test_multiple "\0" "return to struct SimpleStruct from field 0" {
+                    -re ".*[compound_type_description $SS {struct/class}].*$SS_fields_types.*" {
+                        pass "return to struct SimpleStruct from field 0"
+                    }
+                }
+            }
+        }
+        gdb_test_multiple "1" "explore type struct SimpleStruct feild 1" {
+            -re ".*[child_scalar_type_description {field 'd' of 'struct SimpleStruct'} {double}].*" {
+                pass "explore type struct SimpleStruct feild 1"
+                gdb_test_multiple "\0" "return to struct SimpleStruct from field 1" {
+                    -re ".*[compound_type_description $SS {struct/class}].*$SS_fields_types.*" {
+                        pass "return to struct SimpleStruct from field 1"
+                    }
+                }
+            }
+        }
+        gdb_test_multiple "\0" "return to GDB prompt from struct SimpleStruct" {
+            -re "$gdb_prompt" {
+                pass "return to GDB prompt from struct SimpleStruct"
+            }
+        }
+    }
+}
+
+gdb_test_multiple "explore union SimpleUnion" "" {
+  -re ".*[compound_type_description $SU {union}].*$SU_fields_types.*" {
+      pass "explore union SimpleUnion"
+        gdb_test_multiple "0" "explore type union SimpleUnion feild 0" {
+            -re ".*[child_scalar_type_description {field 'i' of 'union SimpleUnion'} {int}].*" {
+                pass "explore type union SimpleUnion feild 0"
+                gdb_test_multiple "\0" "return to union SimpleUnion from field 0" {
+                    -re ".*[compound_type_description $SU {union}].*$SU_fields_types.*" {
+                        pass "return to union SimpleUnion from field 0"
+                    }
+                }
+            }
+        }
+        gdb_test_multiple "1" "explore type union SimpleUnion feild 1" {
+            -re ".*[child_scalar_type_description {field 'c' of 'union SimpleUnion'} {char}].*" {
+                pass "explore type union SimpleUnion feild 1"
+                gdb_test_multiple "\0" "return to union SimpleUnion from field 1" {
+                    -re ".*[compound_type_description $SU {union}].*$SU_fields_types.*" {
+                        pass "return to union SimpleUnion from field 1"
+                    }
+                }
+            }
+        }
+        gdb_test_multiple "2" "explore type union SimpleUnion feild 2" {
+            -re ".*[child_scalar_type_description {field 'f' of 'union SimpleUnion'} {float}].*" {
+                pass "explore type union SimpleUnion feild 2"
+                gdb_test_multiple "\0" "return to union SimpleUnion from field 2" {
+                    -re ".*[compound_type_description $SU {union}].*$SU_fields_types.*" {
+                        pass "return to union SimpleUnion from field 2"
+                    }
+                }
+            }
+        }
+        gdb_test_multiple "3" "explore type union SimpleUnion feild 3" {
+            -re ".*[child_scalar_type_description {field 'd' of 'union SimpleUnion'} {double}].*" {
+                pass "explore type union SimpleUnion feild 3"
+                gdb_test_multiple "\0" "return to union SimpleUnion from field 3" {
+                    -re ".*[compound_type_description $SU {union}].*$SU_fields_types.*" {
+                        pass "return to union SimpleUnion from field 3"
+                    }
+                }
+            }
+        }
+        gdb_test_multiple "\0" "return to GDB prompt from union SimpleUnion" {
+            -re "$gdb_prompt" {
+                pass "return to GDB prompt from union SimpleUnion"
+            }
+        }
+  }
+}
+
+gdb_test_multiple "explore SS" "" {
+    -re ".*[typedef_type_description {SS} $SS].*[compound_type_description {SS} {struct/class}].*$SS_fields_types.*" {
+        pass "explore SS"
+        gdb_test_multiple "0" "explore type SS feild 0" {
+            -re ".*[child_scalar_type_description {field 'a' of 'SS'} {int}].*" {
+                pass "explore type SS feild 0"
+                gdb_test_multiple "\0" "return to SS from field 0" {
+                    -re ".*[compound_type_description {SS} {struct/class}].*$SS_fields_types.*" {
+                        pass "return to SS from field 0"
+                    }
+                }
+            }
+        }
+        gdb_test_multiple "1" "explore type SS feild 1" {
+            -re ".*[child_scalar_type_description {field 'd' of 'SS'} {double}].*" {
+                pass "explore type SS feild 1"
+                gdb_test_multiple "\0" "return to struct SimpleStruct from field 1" {
+                    -re ".*[compound_type_description {SS} {struct/class}].*$SS_fields_types.*" {
+                        pass "return to SS field 1"
+                    }
+                }
+            }
+        }
+        gdb_test_multiple "\0" "return to GDB prompt from SS" {
+            -re "$gdb_prompt" {
+                pass "return to GDB prompt from SS"
+            }
+        }
+    }
+}
+
+gdb_test_multiple "explore type struct ComplexStruct" "" {
+    -re ".*[compound_type_description $CS {struct/class}].*$CS_fields_types.*" {
+        pass "explore type struct ComplexStruct"
+        gdb_test_multiple "0" "explore type struct ComplexStruct field 0" {
+            -re ".*[child_compound_type_description $CS_field_0 $SS {struct/class}].*$SS_fields_types.*" {
+                pass "explore type struct ComplexStruct field 0"
+                gdb_test_multiple "\0" "return to ComplexStruct from field 0" {
+                    -re ".*[compound_type_description $CS {struct/class}].*$CS_fields_types.*" {
+                        pass "return to ComplexStruct from field 0"
+                    }
+                }
+            }
+        }
+        gdb_test_multiple "1" "explore type struct ComplexStruct field 1" {
+            -re ".*[child_compound_type_description $CS_field_1 $SU {union}].*$SU_fields_types.*" {
+                pass "explore type struct ComplexStruct field 1"
+                gdb_test_multiple "\0" "return to ComplexStruct from field 1" {
+                    -re ".*[compound_type_description $CS {struct/class}].*$CS_fields_types.*" {
+                        pass "return to ComplexStruct from field 1"
+                    }
+                }
+            }
+        }
+        gdb_test_multiple "2" "explore type struct ComplexStruct field 2" {
+            -re ".*[child_array_type_description $CS_field_2 {SS}].*" {
+                pass "explore type struct ComplexStruct field 2"
+                gdb_test_multiple "\0" "return to ComplexStruct from field 2" {
+                    -re ".*[compound_type_description $CS {struct/class}].*$CS_fields_types.*" {
+                        pass "return to ComplexStruct from field 2"
+                    }
+                }
+            }
+        }
+        gdb_test_multiple "\0" "return to GDB prompt from ComplexStruct type exploration" {
+            -re "$gdb_prompt" {
+                pass "return to GDB prompt from ComplexStruct type exploration"
+            }
+        }
+    }
+}
+
+gdb_test_multiple "explore type union ComplexUnion" "" {
+    -re ".*[compound_type_description $CU {union}].*$CU_fields_types.*" {
+        pass "explore type union ComplexUnion"
+        gdb_test_multiple "0" "explore type union ComplexStruct field 0" {
+            -re ".*[child_compound_type_description $CU_field_0 $SS {struct/class}].*$SS_fields_types.*" {
+                pass "explore type union ComplexUnion field 0"
+                gdb_test_multiple "\0" "return to ComplexUnion from field 0" {
+                    -re ".*[compound_type_description $CU {union}].*$CU_fields_types.*" {
+                        pass "return to ComplexUnion from field 0"
+                    }
+                }
+            }
+        }
+        gdb_test_multiple "1" "explore type union ComplexUnion field 1" {
+            -re ".*[child_array_type_description $CU_field_1 $SS].*" {
+                pass "explore type union ComplexUnion field 1"
+                gdb_test_multiple "\0" "return to ComplexUnion array" {
+                    -re ".*[compound_type_description $CU {union}].*$CU_fields_types.*" {
+                        pass "return to ComplexUnion from field 1"
+                    }
+                }
+            }
+        }
+        gdb_test_multiple "\0" "return to GDB prompt from ComplexUnion type exploration" {
+            -re "$gdb_prompt" {
+                pass "return to GDB prompt from ComplexUnion type exploration"
+            }
+        }
+    }
+}
+
+with_test_prefix "using 'cu'" {
+    gdb_test_multiple "explore type cu" "" {
+	-re "'cu' is of type 'union ComplexUnion'.*[compound_type_description $CU {union}].*$CU_fields_types.*" {
+	    pass "explore type union ComplexUnion"
+	    gdb_test_multiple "0" "explore type union ComplexStruct field 0" {
+		-re ".*[child_compound_type_description $CU_field_0 $SS {struct/class}].*$SS_fields_types.*" {
+		    pass "explore type union ComplexUnion field 0"
+		    gdb_test_multiple "\0" "return to ComplexUnion from field 0" {
+			-re ".*[compound_type_description $CU {union}].*$CU_fields_types.*" {
+			    pass "return to ComplexUnion from field 0"
+			}
+		    }
+		}
+	    }
+	    gdb_test_multiple "1" "explore type union ComplexUnion field 1" {
+		-re ".*[child_array_type_description $CU_field_1 $SS].*" {
+		    pass "explore type union ComplexUnion field 1"
+		    gdb_test_multiple "\0" "return to ComplexUnion array" {
+			-re ".*[compound_type_description $CU {union}].*$CU_fields_types.*" {
+			    pass "return to ComplexUnion from field 1"
+			}
+		    }
+		}
+	    }
+	    gdb_test_multiple "\0" "return to GDB prompt from ComplexUnion type exploration" {
+		-re "$gdb_prompt" {
+		    pass "return to GDB prompt from ComplexUnion type exploration"
+		}
+	    }
+	}
+    }
+}

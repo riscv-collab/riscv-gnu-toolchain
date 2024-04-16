@@ -1,0 +1,304 @@
+# Copyright (C) 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.
+# It tests the mechanism of exposing types to Guile.
+
+load_lib gdb-guile.exp
+
+standard_testfile
+
+# Build inferior to language specification.
+
+proc build_inferior {exefile lang} {
+    global srcdir subdir srcfile
+
+    if { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${exefile}" executable "debug $lang"] != "" } {
+	untested "failed to compile in $lang mode"
+	return -1
+    }
+    return 0
+}
+
+# Restart GDB.
+# The result is the same as gdb_guile_runto_main.
+
+proc restart_gdb {exefile} {
+    global srcdir subdir
+
+    clean_restart $exefile
+
+    if { ![allow_guile_tests] } {
+	return 0
+    }
+
+    if ![gdb_guile_runto_main] {
+	return 0
+    }
+    gdb_scm_test_silent_cmd "guile (use-modules (gdb iterator))" \
+	"load iterator module" 0
+
+    return 1
+}
+
+# Set breakpoint and run to that breakpoint.
+
+proc runto_bp {bp} {
+    gdb_breakpoint [gdb_get_line_number $bp]
+    gdb_continue_to_breakpoint $bp
+}
+
+proc test_fields {lang} {
+    with_test_prefix "test_fields" {
+	global gdb_prompt
+
+	# fields of a typedef should still return the underlying field list
+	gdb_test "guile (print (length (type-fields (value-type (parse-and-eval \"ts\")))))" \
+	    "= 2" "$lang typedef field list"
+
+	if {$lang == "c++"} {
+	    # Test usage with a class.
+	    gdb_scm_test_silent_cmd "print c" "print value (c)"
+	    gdb_scm_test_silent_cmd "guile (define c (history-ref 0))" \
+		"get value (c) from history"
+	    gdb_scm_test_silent_cmd "guile (define fields (type-fields (value-type c)))" \
+		"get fields from c type"
+	    gdb_test "guile (print (length fields))" \
+		"= 2" "check number of fields of c"
+	    gdb_test "guile (print (field-name (car fields)))" \
+		"= c" "check class field c name"
+	    gdb_test "guile (print (field-name (cadr fields)))" \
+		"= d" "check class field d name"
+	}
+
+	# Test normal fields usage in structs.
+	gdb_scm_test_silent_cmd "print st" "print value (st)"
+	gdb_scm_test_silent_cmd "guile (define st (history-ref 0))" \
+	    "get value (st) from history"
+	gdb_scm_test_silent_cmd "guile (define st-type (value-type st))" \
+	    "get st-type"
+	gdb_scm_test_silent_cmd "guile (define fields (type-fields st-type))" \
+	    "get fields from st.type"
+	gdb_test "guile (print (length fields))" \
+	    "= 2" "check number of fields (st)"
+	gdb_test "guile (print (field-name (car fields)))" \
+	    "= a" "check structure field a name"
+	gdb_test "guile (print (field-name (cadr fields)))" \
+	    "= b" "check structure field b name"
+	gdb_test "guile (print (field-name (type-field st-type \"a\")))" \
+	    "= a" "check fields lookup by name"
+
+	# Test has-field?
+	gdb_test "guile (print (type-has-field? st-type \"b\"))" \
+	    "= #t" "check existent field"
+	gdb_test "guile (print (type-has-field? st-type \"nosuch\"))" \
+	    "= #f" "check non-existent field"
+
+	# Test Guile mapping behavior of gdb:type for structs/classes.
+	gdb_test "guile (print (type-num-fields (value-type st)))" \
+	    "= 2" "check number of fields (st) with type-num-fields"
+	gdb_scm_test_silent_cmd "guile (define fi (make-field-iterator st-type))" \
+	    "create field iterator"
+	gdb_test "guile (print (iterator-map field-bitpos fi))" \
+	    "= \\(0 32\\)" "check field iterator"
+
+	# Test rejection of mapping operations on scalar types.
+	gdb_test "guile (print (make-field-iterator (field-type (type-field st-type \"a\"))))" \
+	    "ERROR: .*: Out of range: type is not a structure, union, or enum type in position 1: .*" \
+	    "check field iterator on bad type"
+
+	# Test type-array.
+	gdb_scm_test_silent_cmd "print ar" "print value (ar)"
+	gdb_scm_test_silent_cmd "guile (define ar (history-ref 0))" \
+	    "get value (ar) from history"
+	gdb_scm_test_silent_cmd "guile (define ar0 (value-subscript ar 0))" \
+	    "define ar0"
+	gdb_test "guile (print (value-cast ar0 (type-array (value-type ar0) 1)))" \
+	    "= \\{1, 2\\}" "cast to array with one argument"
+	gdb_test "guile (print (value-cast ar0 (type-array (value-type ar0) 0 1)))" \
+	    "= \\{1, 2\\}" "cast to array with two arguments"
+
+	# Test type-vector.
+	# Note: vectors cast differently than arrays.  Here ar[0] is replicated
+	# for the size of the vector.
+	gdb_scm_test_silent_cmd "print vec_data_1" "print value (vec_data_1)"
+	gdb_scm_test_silent_cmd "guile (define vec_data_1 (history-ref 0))" \
+	    "get value (vec_data_1) from history"
+
+	gdb_scm_test_silent_cmd "print vec_data_2" "print value (vec_data_2)"
+	gdb_scm_test_silent_cmd "guile (define vec_data_2 (history-ref 0))" \
+	    "get value (vec_data_2) from history"
+
+	gdb_scm_test_silent_cmd "guile (define vec1 (value-cast vec_data_1 (type-vector (value-type ar0) 1)))" \
+	    "set vec1"
+	gdb_test "guile (print vec1)" \
+	    "= \\{1, 1\\}" "cast to vector with one argument"
+	gdb_scm_test_silent_cmd "guile (define vec2 (value-cast vec_data_1 (type-vector (value-type ar0) 0 1)))" \
+	    "set vec2"
+	gdb_test "guile (print vec2)" \
+	    "= \\{1, 1\\}" "cast to vector with two arguments"
+	gdb_test "guile (print (value=? vec1 vec2))" \
+	    "= #t"
+	gdb_scm_test_silent_cmd "guile (define vec3 (value-cast vec_data_2 (type-vector (value-type ar0) 1)))" \
+	    "set vec3"
+	gdb_test "guile (print (value=? vec1 vec3))" \
+	    "= #f"
+    }
+}
+
+proc test_equality {lang} {
+    with_test_prefix "test_equality" {
+	gdb_scm_test_silent_cmd "guile (define st (parse-and-eval \"st\"))" \
+	    "get st"
+	gdb_scm_test_silent_cmd "guile (define ar (parse-and-eval \"ar\"))" \
+	    "get ar"
+	gdb_test "guile (print (eq? (value-type st) (value-type st)))" \
+	    "= #t" "test type eq? on equal types"
+	gdb_test "guile (print (eq? (value-type st) (value-type ar)))" \
+	    "= #f" "test type eq? on not-equal types"
+	gdb_test "guile (print (equal? (value-type st) (value-type st)))" \
+	    "= #t" "test type equal? on equal types"
+	gdb_test "guile (print (equal? (value-type st) (value-type ar)))" \
+	    "= #f" "test type equal? on not-equal types"
+
+	if {$lang == "c++"} {
+	    gdb_scm_test_silent_cmd "guile (define c (parse-and-eval \"c\"))" \
+		"get c"
+	    gdb_scm_test_silent_cmd "guile (define d (parse-and-eval \"d\"))" \
+		"get d"
+	    gdb_test "guile (print (eq? (value-type c) (field-type (car (type-fields (value-type d))))))" \
+		"= #t" "test c++ type eq? on equal types"
+	    gdb_test "guile (print (eq? (value-type c) (value-type d)))" \
+		"= #f" "test c++ type eq? on not-equal types"
+	    gdb_test "guile (print (equal? (value-type c) (field-type (car (type-fields (value-type d))))))" \
+		"= #t" "test c++ type equal? on equal types"
+	    gdb_test "guile (print (equal? (value-type c) (value-type d)))" \
+		"= #f" "test c++ type equal? on not-equal types"
+	}
+    }
+}
+
+proc test_enums {} {
+    with_test_prefix "test_enum" {
+	gdb_scm_test_silent_cmd "print e" "print value (e)"
+	gdb_scm_test_silent_cmd "guile (define e (history-ref 0))" \
+	    "get value (e) from history"
+	gdb_scm_test_silent_cmd "guile (define fields (type-fields (value-type e)))" \
+	    "extract type fields from e"
+	gdb_test "guile (print (length fields))" \
+	    "= 3" "check the number of enum fields"
+	gdb_test "guile (print (field-name (car fields)))" \
+	    "= v1" "check enum field\[0\] name"
+	gdb_test "guile (print (field-name (cadr fields)))" \
+	    "= v2" "check enum field\[1\]name"
+
+	# Ditto but by mapping operations.
+	gdb_test "guile (print (type-num-fields (value-type e)))" \
+	    "= 3" "check the number of enum values"
+	gdb_test "guile (print (field-name (type-field (value-type e) \"v1\")))" \
+	    "= v1" "check enum field lookup by name (v1)"
+	gdb_test "guile (print (field-name (type-field (value-type e) \"v3\")))" \
+	    "= v3" "check enum field lookup by name (v3)"
+	gdb_test "guile (print (iterator-map field-enumval (make-field-iterator (value-type e))))" \
+	    "\\(0 1 2\\)" "check enum fields iteration"
+    }
+}
+
+proc test_base_class {} {
+    with_test_prefix "test_base_class" {
+	gdb_scm_test_silent_cmd "print d" "print value (d)"
+	gdb_scm_test_silent_cmd "guile (define d (history-ref 0))" \
+	    "get value (d) from history"
+	gdb_scm_test_silent_cmd "guile (define fields (type-fields (value-type d)))" \
+	    "extract type fields from d"
+	gdb_test "guile (print (length fields))" \
+	    "= 3" "check the number of fields"
+	gdb_test "guile (print (field-baseclass? (car fields)))" \
+	    "= #t" "check base class (fields\[0\])"
+	gdb_test "guile (print (field-baseclass? (cadr fields)))" \
+	    "= #f" "check base class (fields\[1\])"
+    }
+}
+
+proc test_range {} {
+    with_test_prefix "test_range" {
+	with_test_prefix "on ranged value" {
+	    # Test a valid range request.
+	    gdb_scm_test_silent_cmd "print ar" "print value (ar)"
+	    gdb_scm_test_silent_cmd "guile (define ar (history-ref 0))" \
+		"get value (ar) from history"
+	    gdb_test "guile (print (length (type-range (value-type ar))))" \
+		"= 2" "check correct tuple length"
+	    gdb_test "guile (print (type-range (value-type ar)))" \
+		"= \\(0 1\\)" "check range"
+	}
+
+	with_test_prefix "on unranged value" {
+	    # Test where a range does not exist.
+	    gdb_scm_test_silent_cmd "print st" "print value (st)"
+	    gdb_scm_test_silent_cmd "guile (define st (history-ref 0))" \
+		"get value (st) from history"
+	    gdb_test "guile (print (type-range (value-type st)))" \
+		"ERROR: .*: Wrong type argument in position 1 \\(expecting ranged type\\): .*" \
+		"check range for non ranged type"
+	}
+
+	with_test_prefix "on flexible array member" {
+	    gdb_scm_test_silent_cmd "print f" "print value (f)"
+	    gdb_scm_test_silent_cmd "guile (define f (history-ref 0))" \
+		"get value (f) from history"
+	    gdb_test "guile (print (type-range (field-type (type-field (value-type (value-dereference f)) \"items\"))))" \
+		"= \\(0 (0|-1)\\)"
+	    gdb_test "guile (print (value-subscript (value-field (value-dereference f) \"items\") 0))" \
+		"= 111"
+	    gdb_test "guile (print (value-subscript (value-field (value-dereference f) \"items\") 1))" \
+		"= 222"
+	}
+    }
+}
+
+# Perform C Tests.
+
+if { [build_inferior "${binfile}" "c"] < 0 } {
+    return
+}
+if ![restart_gdb "${binfile}"] {
+    return
+}
+
+with_test_prefix "lang_c" {
+    runto_bp "break to inspect struct and array."
+    test_fields "c"
+    test_equality "c"
+    test_enums
+}
+
+# Perform C++ Tests.
+
+if { [build_inferior "${binfile}-cxx" "c++"] < 0 } {
+    return
+}
+if ![restart_gdb "${binfile}-cxx"] {
+    return
+}
+
+with_test_prefix "lang_cpp" {
+    runto_bp "break to inspect struct and array."
+    test_fields "c++"
+    test_base_class
+    test_range
+    test_equality "c++"
+    test_enums
+}

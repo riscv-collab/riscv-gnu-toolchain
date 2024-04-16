@@ -1,0 +1,75 @@
+# Copyright (C) 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test handling of threads across an execl.
+
+# Original image, loads a thread library.
+standard_testfile
+
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug}] != "" } {
+    return -1
+}
+
+# New image, that does not load a thread library.
+set testfile1 "execl1"
+set srcfile1 ${testfile1}.c
+set binfile1 [standard_output_file ${testfile1}]
+
+if {[gdb_compile "${srcdir}/${subdir}/${srcfile1}" "${binfile1}" executable {debug}] != "" } {
+    return -1
+}
+
+clean_restart ${binfile}
+if { [is_remote target] } {
+    gdb_remote_download target $binfile1
+}
+
+runto_main
+
+gdb_test "b [gdb_get_line_number "breakpoint here"]" \
+         ".*Breakpoint .*execl.*" "set breakpoint at execl"
+
+gdb_test "continue" ".*breakpoint here.*" "continue to exec"
+
+gdb_test "info threads" "1 *Thread.*2 *Thread.*3 *Thread.*" "info threads before exec"
+
+# Work around PR25656, where the breakpoint above sets 2 breakpoint locations:
+# - one on gdb.threads/execl.c:$linenumber, and
+# - one in GLIBC's execl.c:$linenumber, in __GI_execl
+# Delete the breakpoint to make sure we hit main upon continue, rather than
+# __GI_execl.
+gdb_test_no_output "delete 2"
+
+# When continuing from this point we'll hit the breakpoint in main()
+# again, this time in the exec'd process.
+gdb_test "continue" ".*Breakpoint 1, main.*" \
+    "continue across exec"
+
+gdb_test_multiple "info threads" "info threads after exec" {
+    -re "2 *Thread .*$gdb_prompt $" {
+	# Old threads left behind.
+	fail "$gdb_test_name"
+    }
+    -re "4 *Thread .*$gdb_prompt $" {
+	# New threads registered.
+	fail "$gdb_test_name"
+    }
+    -re "$gdb_prompt $" {
+	# Target doesn't register the main thread, pass for now.
+	pass "$gdb_test_name"
+    }
+}
+
+gdb_continue_to_end

@@ -1,0 +1,784 @@
+# This test code is part of GDB, the GNU debugger.
+
+# Copyright 2003-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "data-structures.exp"
+
+# Controls whether detailed logging for cp_test_ptype_class is enabled.
+# By default, it is not.  Enable it to assist with troubleshooting
+# failed cp_test_ptype_class tests.  [Users can simply add the statement
+# "set debug_cp_ptype_test_class true" after this file is loaded.]
+
+set ::debug_cp_test_ptype_class false
+
+# Auxiliary function to check for known problems.
+#
+# EXPECTED_STRING is the string expected by the test.
+#
+# ACTUAL_STRING is the actual string output by gdb.
+#
+# ERRATA_TABLE is a list of lines of the form:
+#
+#  { expected-string broken-string {eval-block} }
+#
+# If there is a line for the given EXPECTED_STRING, and if the
+# ACTUAL_STRING output by gdb is the same as the BROKEN_STRING in the
+# table, then I eval the eval-block.
+
+proc cp_check_errata { expected_string actual_string errata_table } {
+    foreach erratum $errata_table {
+	if { "$expected_string" == [lindex $erratum 0]
+	&&   "$actual_string"   == [lindex $erratum 1] } then {
+	    eval [lindex $erratum 2]
+	}
+    }
+}
+
+# A convenience procedure for outputting debug info for cp_test_ptype_class
+# to the log.  Set the global variable "debug_cp_test_ptype_class"
+# to enable logging (to help with debugging failures).
+
+proc cp_ptype_class_verbose {msg} {
+    global debug_cp_test_ptype_class
+
+    if {$debug_cp_test_ptype_class} {
+	verbose -log $msg
+    }
+}
+
+# A namespace to wrap internal procedures.
+
+namespace eval ::cp_support_internal {
+
+    # A convenience procedure to return the next element of the queue.
+    proc next_line {qid} {
+	set elem {}
+
+	while {$elem == "" && ![queue empty $qid]} {
+	    # We make cp_test_ptype_class trim whitespace
+	    set elem [queue pop $qid]
+	}
+
+	if {$elem == ""} {
+	    cp_ptype_class_verbose "next line element: no more lines"
+	} else {
+	    cp_ptype_class_verbose "next line element: \"$elem\""
+	}
+	return $elem
+    }
+}
+
+# Test ptype of a class.  Return `true' if the test passes, false otherwise.
+#
+# Different C++ compilers produce different output.  To accommodate all
+# the variations listed below, I read the output of "ptype" and process
+# each line, matching it to the class description given in the
+# parameters.
+#
+# IN_EXP is the expression to use; the appropriate "ptype" invocation
+# is prepended to it.  IN_TESTNAME is the testname for
+# gdb_test_multiple.  If IN_TESTNAME is the empty string, then it
+# defaults to "ptype IN_EXP".
+#
+# IN_KEY is "class" or "struct".  For now, I ignore it, and allow either
+# "class" or "struct" in the output, as long as the access specifiers all
+# work out okay.
+#
+# IN_TAG is the class tag or structure tag.
+#
+# IN_CLASS_TABLE is a list of class information.  Each entry contains a
+# keyword and some values.  The keywords and their values are:
+#
+#   { base "base-declaration" }
+#
+#      the class has a base with the given declaration.
+#
+#   { vbase "name" }
+#
+#      the class has a virtual base pointer with the given name.  this
+#      is for gcc 2.95.3, which emits ptype entries for the virtual base
+#      pointers.  the vbase list includes both indirect and direct
+#      virtual base classes (indeed, a virtual base is usually
+#      indirect), so this information cannot be derived from the base
+#      declarations.
+#
+#   { field "access" "declaration" }
+#
+#      the class has a data field with the given access type and the
+#      given declaration.
+#
+#   { method "access" "declaration" }
+#
+#      the class has a member function with the given access type
+#      and the given declaration.
+#
+#   { typedef "access" "declaration" }
+#
+#      the class has a typedef with the given access type and the
+#      given declaration.
+#
+#   { type "access" "key" "name" children }
+#
+#      The class has a nested type definition with the given ACCESS.
+#      KEY is the keyword of the nested type ("enum", "union", "struct",
+#         "class").
+#      NAME is the (tag) name of the type.
+#      CHILDREN is a list of the type's children.  For struct and union keys,
+#        this is simply the same type of list that is normally passed to
+#        this procedure.  For enums the list of children should be the
+#        defined enumerators.  For unions it is a list of declarations.
+#        NOTE: The enum key will add a regexp to handle optional storage
+#        class specifiers (": unsigned int", e.g.).  The caller need not
+#        specify this.
+#
+# If you test the same class declaration more than once, you can specify
+# IN_CLASS_TABLE as "ibid".  "ibid" means: look for a previous class
+# table that had the same IN_KEY and IN_TAG, and re-use that table.
+#
+# IN_TAIL is the expected text after the close brace, specifically the "*"
+# in "struct { ... } *".  This is an optional parameter.  The default
+# value is "", for no tail.
+#
+# IN_ERRATA_TABLE is a list of errata entries.  See cp_check_errata for the
+# format of the errata table.  Note: the errata entries are not subject to
+# demangler syntax adjustment, so you have to make a bigger table
+# with lines for each output variation.
+# 
+# IN_PTYPE_ARG are arguments to pass to ptype.  The default is "/r".
+#
+# RECURSIVE_QID is used internally to call this procedure recursively
+# when, e.g., testing nested type definitions.  The "ptype" command will
+# not be sent to GDB and the lines in the queue given by this argument will
+# be used instead.
+#
+# gdb can vary the output of ptype in several ways:
+#
+# . CLASS/STRUCT
+#
+#   The output can start with either "class" or "struct", depending on
+#   what the symbol table reader in gdb decides.  This is usually
+#   unrelated to the original source code.
+#
+#     dwarf-2  debug info distinguishes class/struct, but gdb ignores it
+#     stabs+   debug info does not distinguish class/struct
+#     hp       debug info distinguishes class/struct, and gdb honors it
+#
+#   I tried to accommodate this with regular expressions such as
+#   "((class|struct) A \{ public:|struct A \{)", but that turns into a
+#   hairy mess because of optional private virtual base pointers and
+#   optional public synthetic operators.  This is the big reason I gave
+#   up on regular expressions and started parsing the output.
+#
+# . REDUNDANT ACCESS SPECIFIER
+#
+#   In "class { private: ... }" or "struct { public: ... }", gdb might
+#   or might not emit a redundant initial access specifier, depending
+#   on the gcc version.
+#
+# . VIRTUAL BASE POINTERS
+#
+#   If a class has virtual bases, either direct or indirect, the class
+#   will have virtual base pointers.  With gcc 2.95.3, gdb prints lines
+#   for these virtual base pointers.  This does not happen with gcc
+#   3.3.4, gcc 3.4.1, or hp acc A.03.45.
+#
+#   I accept these lines.  These lines are optional; but if I see one of
+#   these lines, then I expect to see all of them.
+#
+#   Note: drow considers printing these lines to be a bug in gdb.
+#
+# . SYNTHETIC METHODS
+#
+#   A C++ compiler may synthesize some methods: an assignment
+#   operator, a copy constructor, a constructor, and a destructor.  The
+#   compiler might include debug information for these methods.
+#
+#     dwarf-2  gdb does not show these methods
+#     stabs+   gdb shows these methods
+#     hp       gdb does not show these methods
+#
+#   I accept these methods.  These lines are optional, and any or
+#   all of them might appear, mixed in anywhere in the regular methods.
+#
+#   With gcc v2, the synthetic copy-ctor and ctor have an additional
+#   "int" parameter at the beginning, the "in-charge" flag.
+#
+# . DEMANGLER SYNTAX VARIATIONS
+#
+#   Different demanglers produce "int foo(void)" versus "int foo()",
+#   "const A&" versus "const A &", and so on.
+#
+# TESTED WITH
+#
+#   gcc 2.95.3 -gdwarf-2
+#   gcc 2.95.3 -gstabs+
+#   gcc 3.3.4 -gdwarf-2
+#   gcc 3.3.4 -gstabs+
+#   gcc 3.4.1 -gdwarf-2
+#   gcc 3.4.1 -gstabs+
+#   gcc HEAD 20040731 -gdwarf-2
+#   gcc HEAD 20040731 -gstabs+
+# 
+# TODO
+#
+# Tagless structs.
+#
+# "A*" versus "A *" and "A&" versus "A &" in user methods.
+#
+# -- chastain 2004-08-07
+
+proc cp_test_ptype_class { in_exp in_testname in_key in_tag in_class_table
+			   { in_tail "" } { in_errata_table { } }
+			   { in_ptype_arg /r } { recursive_qid 0 } } {
+    global gdb_prompt
+    set wsopt "\[\r\n\t \]*"
+    set hwsopt "\[\t \]*"
+
+    if {$recursive_qid == 0} {
+	# The test name defaults to the command, but without the
+	# arguments, for historical reasons.
+
+	if {"$in_testname" == ""} { set in_testname "ptype $in_exp" }
+
+	set in_command "ptype${in_ptype_arg} $in_exp"
+    }
+
+    # Save class tables in a history array for reuse.
+
+    global cp_class_table_history
+    if {$in_class_table == "ibid"} {
+	if {![info exists cp_class_table_history("$in_key,$in_tag")]} {
+	    fail "$in_testname // bad ibid"
+	    return false
+	}
+	set in_class_table $cp_class_table_history("$in_key,$in_tag")
+    } else {
+	set cp_class_table_history("$in_key,$in_tag") $in_class_table
+    }
+
+    # Split the class table into separate tables.
+
+    set list_bases   { }
+    set list_vbases  { }
+    set list_fields  { }
+    set list_methods { }
+    set list_typedefs { }
+    set list_types    { }
+    set list_enums    { }
+    set list_unions   { }
+
+    foreach class_line $in_class_table {
+	switch [lindex $class_line 0] {
+	    "base"   { lappend list_bases   [lindex $class_line 1] }
+	    "vbase"  { lappend list_vbases  [lindex $class_line 1] }
+	    "field"  { lappend list_fields  [lrange $class_line 1 2] }
+	    "method" { lappend list_methods [lrange $class_line 1 2] }
+	    "typedef" { lappend list_typedefs [lrange $class_line 1 2] }
+	    "type"    { lappend list_types [lrange $class_line 1 4] }
+	    default  {
+		fail "$in_testname // bad line in class table: $class_line"
+		return false
+	    }
+	}
+    }
+
+    # Construct a list of synthetic operators.
+    # These are: { count ccess-type regular-expression }.
+
+    set list_synth { }
+    lappend list_synth [list 0 "public" \
+			    "$in_tag & operator=\\($in_tag const ?&\\);"]
+    lappend list_synth [list 0 "public" \
+			    "$in_tag\\((int,|) ?$in_tag const ?&\\);"]
+    lappend list_synth [list 0 "public" \
+			    "$in_tag\\((int|void|)\\);"]
+
+    # Partial regexp for parsing the struct/class header.
+    set regexp_header "(struct|class)${hwsopt}(\[^ \t\]*)${hwsopt}"
+    append regexp_header "(\\\[with .*\\\]${hwsopt})?((:\[^\{\]*)?)${hwsopt}\{"
+    if {$recursive_qid == 0} {
+	# Actually do the ptype.
+	# For processing the output of ptype, we must get to the prompt.
+	set parse_okay 0
+	set state 0
+	set actual_body ""
+	gdb_test_multiple "$in_command" "$in_testname // parse failed" {
+	    -re "type = ${regexp_header}" {
+		if { $state == 0 } { set state 1 } else { set state -1 }
+		set actual_key          $expect_out(1,string)
+		set actual_tag          $expect_out(2,string)
+		set actual_base_string  $expect_out(4,string)
+		exp_continue
+	    }
+	    -re "^\r\n\}${hwsopt}(\[^\r\n\]*)(?=\r\n)" {
+		if { $state == 1 } { set state 2 } else { set state -2 }
+		set actual_tail $expect_out(1,string)
+		exp_continue
+	    }
+	    -re "^\r\n(\[^\r\n\]*)(?=\r\n)" {
+		if { $state != 1 } { set $state -3 }
+		if { $actual_body == "" } {
+		    set actual_body $expect_out(1,string)
+		} else {
+		    append actual_body "\n$expect_out(1,string)"
+		}
+		exp_continue
+	    }
+	    -re -wrap "" {
+		if { $state == 2 } {
+		    set parse_okay 1
+		}
+	    }
+	}
+    } else {
+	# The struct/class header by the first element in the line queue.
+	# "Parse" that instead of the output of ptype.
+	set header [cp_support_internal::next_line $recursive_qid]
+	set parse_okay [regexp $regexp_header $header dummy actual_key \
+			    actual_tag dummy actual_base_string]
+
+	if {$parse_okay} {
+	    cp_ptype_class_verbose \
+		"Parsing nested type definition (parse_okay=$parse_okay):"
+	    cp_ptype_class_verbose \
+		"\tactual_key=$actual_key, actual_tag=$actual_tag"
+	    cp_ptype_class_verbose "\tactual_base_string=$actual_base_string"
+	}
+
+	# Cannot have a tail with a nested type definition.
+	set actual_tail ""
+    }
+
+    if { ! $parse_okay } {
+	cp_ptype_class_verbose "*** parse failed ***"
+	return false
+    }
+
+    # Check the actual key.  It would be nice to require that it match
+    # the input key, but gdb does not support that.  For now, accept any
+    # $actual_key as long as the access property of each field/method
+    # matches.
+
+    switch "$actual_key" {
+	"class"  { set access "private" }
+	"struct" { set access "public"  }
+	default  {
+	    cp_check_errata "class"  "$actual_key" $in_errata_table
+	    cp_check_errata "struct" "$actual_key" $in_errata_table
+	    fail "$in_testname // wrong key: $actual_key"
+	    return false
+	}
+    }
+
+    # Check the actual tag.
+
+    if {"$actual_tag" != "$in_tag"} {
+	cp_check_errata "$in_tag" "$actual_tag" $in_errata_table
+	fail "$in_testname // wrong tag: $actual_tag"
+	return false
+    }
+
+    # Check the actual bases.
+    # First parse them into a list.
+
+    set list_actual_bases { }
+    if {"$actual_base_string" != ""} {
+	regsub "^:${wsopt}" $actual_base_string "" actual_base_string
+	set list_actual_bases [split $actual_base_string ","]
+    }
+
+    # Check the base count.
+
+    if {[llength $list_actual_bases] < [llength $list_bases]} {
+	fail "$in_testname // too few bases"
+	return false
+    }
+    if {[llength $list_actual_bases] > [llength $list_bases]} {
+	fail "$in_testname // too many bases"
+	return false
+    }
+
+    # Check each base.
+
+    foreach actual_base $list_actual_bases {
+	set actual_base [string trim $actual_base]
+	set base [lindex $list_bases 0]
+	if {"$actual_base" != "$base"} {
+	    cp_check_errata "$base" "$actual_base" $in_errata_table
+	    fail "$in_testname // wrong base: $actual_base"
+	    return false
+	}
+	set list_bases [lreplace $list_bases 0 0]
+    }
+
+    # Parse each line in the body.
+
+    set last_was_access 0
+    set vbase_match 0
+
+    if {$recursive_qid == 0} {
+	# Use a queue to hold the lines that will be checked.
+	# This will allow processing below to remove lines from the input
+	# more easily.
+	set line_queue [::Queue::new]
+	foreach l [split $actual_body "\r\n"] {
+	    set l [string trim $l]
+	    if {$l != ""} {
+		queue push $line_queue $l
+	    }
+	}
+    } else {
+	set line_queue $recursive_qid
+    }
+
+    while {![queue empty $line_queue]} {
+
+	# Get the next line.
+
+	set actual_line [cp_support_internal::next_line $line_queue]
+	if {"$actual_line" == ""} { continue }
+
+	# Access specifiers.
+
+	if {[regexp "^(public|protected|private)${wsopt}:\$" "$actual_line" s0 s1]} {
+	    set access "$s1"
+	    if {$last_was_access} {
+		fail "$in_testname // redundant access specifier"
+		queue delete $line_queue
+		return false
+	    }
+	    set last_was_access 1
+	    continue
+	} else {
+	    set last_was_access 0
+	}
+
+	# Optional virtual base pointer.
+
+	if {[llength $list_vbases] > 0} {
+	    set vbase [lindex $list_vbases 0]
+	    if {[regexp "$vbase \\*(_vb.|_vb\\\$|__vb_)\[0-9\]*$vbase;" $actual_line]} {
+		if {"$access" != "private"} {
+		    cp_check_errata "private" "$access" $in_errata_table
+		    fail "$in_testname // wrong access specifier for virtual base: $access"
+		    queue delete $line_queue
+		    return false
+		}
+		set list_vbases [lreplace $list_vbases 0 0]
+		set vbase_match 1
+		continue
+	    }
+	}
+
+	# Data field.
+
+	if {[llength $list_fields] > 0} {
+	    set field_access [lindex [lindex $list_fields 0] 0]
+	    set field_decl   [lindex [lindex $list_fields 0] 1]
+	    if {$recursive_qid > 0} {
+		cp_ptype_class_verbose "\tactual_line=$actual_line"
+		cp_ptype_class_verbose "\tfield_access=$field_access"
+		cp_ptype_class_verbose "\tfield_decl=$field_decl"
+		cp_ptype_class_verbose "\taccess=$access"
+	    }
+	    if {"$actual_line" == "$field_decl"} {
+		if {"$access" != "$field_access"} {
+		    cp_check_errata "$field_access" "$access" $in_errata_table
+		    fail "$in_testname // wrong access specifier for field: $access"
+		    queue delete $line_queue
+		    return false
+		}
+		set list_fields [lreplace $list_fields 0 0]
+		continue
+	    }
+
+	    # Data fields must appear before synths and methods.
+	    cp_check_errata "$field_decl" "$actual_line" $in_errata_table
+	    fail "$in_testname // unrecognized line type 1: $actual_line"
+	    queue delete $line_queue
+	    return false
+	}
+
+	# Method function.
+
+	if {[llength $list_methods] > 0} {
+	    set method_access [lindex [lindex $list_methods 0] 0]
+	    set method_decl   [lindex [lindex $list_methods 0] 1]
+	    if {"$actual_line" == "$method_decl"} {
+		if {"$access" != "$method_access"} {
+		    cp_check_errata "$method_access" "$access" $in_errata_table
+		    fail "$in_testname // wrong access specifier for method: $access"
+		    queue delete $line_queue
+		    return false
+		}
+		set list_methods [lreplace $list_methods 0 0]
+		continue
+	    }
+
+	    # gcc 2.95.3 shows "foo()" as "foo(void)".
+	    regsub -all "\\(\\)" $method_decl "(void)" method_decl
+	    if {"$actual_line" == "$method_decl"} {
+		if {"$access" != "$method_access"} {
+		    cp_check_errata "$method_access" "$access" $in_errata_table
+		    fail "$in_testname // wrong access specifier for method: $access"
+		    queue delete $line_queue
+		    return false
+		}
+		set list_methods [lreplace $list_methods 0 0]
+		continue
+	    }
+	}
+
+	# Typedef
+
+	if {[llength $list_typedefs] > 0} {
+	    set typedef_access [lindex [lindex $list_typedefs 0] 0]
+	    set typedef_decl [lindex [lindex $list_typedefs 0] 1]
+	    if {[string equal $actual_line $typedef_decl]} {
+		if {![string equal $access $typedef_access]} {
+		    cp_check_errata $typedef_access $access $in_errata_table
+		    fail "$in_testname // wrong access specifier for typedef: $access"
+		    queue delete $line_queue
+		    return false
+		}
+		set list_typedefs [lreplace $list_typedefs 0 0]
+		continue
+	    }
+	}
+
+	# Nested type definitions
+
+	if {[llength $list_types] > 0} {
+	    cp_ptype_class_verbose "Nested type definition: "
+	    lassign [lindex $list_types 0] nested_access nested_key \
+		nested_name nested_children
+	    set msg "nested_access=$nested_access, nested_key=$nested_key, "
+	    append msg "nested_name=$nested_name, "
+	    append msg "[llength $nested_children] children"
+	    cp_ptype_class_verbose $msg
+
+	    if {![string equal $access $nested_access]} {
+		cp_check_errata $nested_access $access $in_errata_table
+		set txt "$in_testname // wrong access specifier for "
+		append txt "nested type: $access"
+		fail $txt
+		queue delete $line_queue
+		return false
+	    }
+
+	    switch $nested_key {
+		enum {
+		    set expected_result \
+			"enum $nested_name (: (unsigned )?int )?\{"
+		    foreach c $nested_children {
+			append expected_result "$c, "
+		    }
+		    set expected_result \
+			[string trimright $expected_result { ,}]
+		    append expected_result "\};"
+		    cp_ptype_class_verbose \
+			"Expecting enum result: $expected_result"
+		    if {![regexp -- $expected_result $actual_line]} {
+			set txt "$in_testname // wrong nested type enum"
+			append txt " definition: $actual_line"
+			fail $txt
+			queue delete $line_queue
+			return false
+		    }
+		    cp_ptype_class_verbose "passed enum $nested_name"
+		}
+
+		union {
+		    set expected_result "union $nested_name \{"
+		    cp_ptype_class_verbose \
+			"Expecting union result: $expected_result"
+		    if {![string equal $expected_result $actual_line]} {
+			set txt "$in_testname // wrong nested type union"
+			append txt " definition: $actual_line"
+			fail $txt
+			queue delete $line_queue
+			return false
+		    }
+
+		    # This will be followed by lines for each member of the
+		    # union.
+		    cp_ptype_class_verbose "matched union name"
+		    foreach m $nested_children {
+			set actual_line \
+			    [cp_support_internal::next_line $line_queue]
+			cp_ptype_class_verbose "Expecting union member: $m"
+			if {![string equal $m $actual_line]} {
+			    set txt "$in_testname // unexpected union member: "
+			    append txt $m
+			    fail $txt
+			    queue delete $line_queue
+			    return false
+			}
+			cp_ptype_class_verbose "matched union child \"$m\""
+		    }
+
+		    # Nested union types always end with a trailing curly brace.
+		    set actual_line [cp_support_internal::next_line $line_queue]
+		    if {![string equal $actual_line "\};"]} {
+			fail "$in_testname // missing closing curly brace"
+			queue delete $line_queue
+			return false
+		    }
+		    cp_ptype_class_verbose "passed union $nested_name"
+		}
+
+		struct -
+		class {
+		    cp_ptype_class_verbose \
+			"Expecting [llength $nested_children] children"
+		    foreach c $nested_children {
+			cp_ptype_class_verbose "\t$c"
+		    }
+		    # Start by pushing the current line back into the queue
+		    # so that the recursive call can parse the class/struct
+		    # header.
+		    queue unpush $line_queue $actual_line
+		    cp_ptype_class_verbose \
+			"Recursing for type $nested_key $nested_name"
+		    if {![cp_test_ptype_class $in_exp $in_testname $nested_key \
+			      $nested_name $nested_children $in_tail \
+			      $in_errata_table $in_ptype_arg $line_queue]} {
+			# The recursive call has already called `fail' and
+			# released the line queue.
+			return false
+		    }
+		    cp_ptype_class_verbose \
+			"passed nested type $nested_key $nested_name"
+		}
+
+		default {
+		    fail "$in_testname // invalid nested type key: $nested_key"
+		    queue delete $line_queue
+		    return false
+		}
+	    }
+
+	    set list_types [lreplace $list_types 0 0]
+	    continue
+	}
+
+	# Synthetic operators.  These are optional and can be mixed in
+	# with the methods in any order, but duplicates are wrong.
+	#
+	# This test must come after the user methods, so that a user
+	# method which matches a synth-method pattern is treated
+	# properly as a user method.
+
+	set synth_match 0
+	for { set isynth 0 } { $isynth < [llength $list_synth] } { incr isynth } {
+	    set synth         [lindex $list_synth $isynth]
+	    set synth_count   [lindex $synth 0]
+	    set synth_access  [lindex $synth 1]
+	    set synth_re      [lindex $synth 2]
+
+	    if {[regexp "$synth_re" "$actual_line"]} {
+
+		if {"$access" != "$synth_access"} {
+		    cp_check_errata "$synth_access" "$access" $in_errata_table
+		    fail "$in_testname // wrong access specifier for synthetic operator: $access"
+		    queue delete $line_queue
+		    return false
+		}
+
+		if {$synth_count > 0} {
+		    cp_check_errata "$actual_line" "$actual_line" $in_errata_table
+		    fail "$in_testname // duplicate synthetic operator: $actual_line"
+		}
+
+		# Update the count in list_synth.
+
+		incr synth_count 
+		set synth [list $synth_count $synth_access "$synth_re"]
+		set list_synth [lreplace $list_synth $isynth $isynth $synth]
+
+		# Match found.
+
+		set synth_match 1
+		break
+	    }
+	}
+	if {$synth_match} { continue }
+
+	# If checking a nested type/recursively and we see a closing curly
+	# brace, we're done.
+	if {$recursive_qid != 0 && [string equal $actual_line "\};"]} {
+	    break
+	}
+
+	# Unrecognized line.
+
+	if {[llength $list_methods] > 0} {
+	    set method_decl [lindex [lindex $list_methods 0] 1]
+	    cp_check_errata "$method_decl" "$actual_line" $in_errata_table
+	}
+
+	fail "$in_testname // unrecognized line type 2: $actual_line"
+	queue delete $line_queue
+	return false
+    }
+
+    # Done with the line queue.
+    if {$recursive_qid == 0} {
+	queue delete $line_queue
+    }
+
+    # Check for missing elements.
+
+    if {$vbase_match} {
+	if {[llength $list_vbases] > 0} {
+	    fail "$in_testname // missing virtual base pointers"
+	    return false
+	}
+    }
+
+    if {[llength $list_fields] > 0} {
+	fail "$in_testname // missing fields"
+	return false
+    }
+
+    if {[llength $list_methods] > 0} {
+	fail "$in_testname // missing methods"
+	return false
+    }
+
+    if {[llength $list_typedefs] > 0} {
+	fail "$in_testname // missing typedefs"
+	return false
+    }
+
+    # Check the tail.
+
+    set actual_tail [string trim $actual_tail]
+    if {"$actual_tail" != "$in_tail"} {
+	cp_check_errata "$in_tail" "$actual_tail" $in_errata_table
+	fail "$in_testname // wrong tail: $actual_tail"
+	return false
+    }
+
+    # It all worked, but don't call `pass' if we've been called
+    # recursively.
+
+    if {$recursive_qid == 0} {
+	pass "$in_testname"
+    }
+
+    return true
+}

@@ -1,0 +1,111 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "ada.exp"
+
+require allow_ada_tests
+
+standard_ada_testfile tester
+
+if {[gdb_compile_ada "${srcfile}" "${binfile}" executable [list debug]] != "" } {
+  return -1
+}
+
+clean_restart ${testfile}
+
+runto "aggregates.run_test"
+
+set kfail_int128support_re \
+    "That operation is not available on integers of more than 8 bytes\\."
+
+set cmd \
+    [list \
+	 "print pra := " \
+	 "((packed_array_assign_x => 2," \
+	 "packed_array_assign_y => 0," \
+	 "packed_array_assign_w => 17)," \
+	 "pr," \
+	 "(packed_array_assign_x => 7," \
+	 "packed_array_assign_y => 1," \
+	 "packed_array_assign_w => 23))"]
+set cmd [join $cmd]
+set re \
+    [list \
+	 " = \\(\\(packed_array_assign_w => 17," \
+	 "packed_array_assign_x => 2," \
+	 "packed_array_assign_y => 0\\)," \
+	 "\\(packed_array_assign_w => 104," \
+	 "packed_array_assign_x => 2," \
+	 "packed_array_assign_y => 3\\)," \
+	 "\\(packed_array_assign_w => 23," \
+	 "packed_array_assign_x => 7," \
+	 "packed_array_assign_y => 1\\)\\)"]
+
+# GNAT >= 12.0 has the needed fix here.
+set zeros_expected [expr {![test_compiler_info {gcc-1[2-9]-*}]}]
+set all_zeros \
+    [string_to_regexp "((packed_array_assign_w => 0, packed_array_assign_x => 0, packed_array_assign_y => 0), (packed_array_assign_w => 0, packed_array_assign_x => 0, packed_array_assign_y => 0), (packed_array_assign_w => 0, packed_array_assign_x => 0, packed_array_assign_y => 0))"]
+
+set re [join $re]
+gdb_test_multiple $cmd "value of pra" {
+    -re -wrap $re {
+	pass $gdb_test_name
+    }
+    -re -wrap $kfail_int128support_re {
+	kfail gdb/20991 $gdb_test_name
+    }
+    -re -wrap $all_zeros {
+	if {$zeros_expected} {
+	    setup_kfail "GCC 12 needed" *-*-*
+	}
+	fail $gdb_test_name
+    }
+}
+
+set cmd "print pra(1) := pr"
+set re \
+    [list \
+	 " = \\(packed_array_assign_w => 104," \
+	 "packed_array_assign_x => 2," \
+	 "packed_array_assign_y => 3\\)"]
+set re [join $re]
+gdb_test_multiple $cmd "" {
+    -re -wrap $re {
+	pass $gdb_test_name
+    }
+    -re -wrap $kfail_int128support_re {
+	kfail gdb/20991 $gdb_test_name
+    }
+}
+
+set cmd "print pra(1)"
+set re \
+    [list \
+	 " = \\(packed_array_assign_w => 104," \
+	 "packed_array_assign_x => 2," \
+	 "packed_array_assign_y => 3\\)"]
+set re [join $re]
+gdb_test_multiple $cmd "" {
+    -re -wrap $re {
+	pass $gdb_test_name
+    }
+    -re -wrap $kfail_int128support_re {
+	kfail gdb/20991 $gdb_test_name
+    }
+}
+
+gdb_test "print npr := (q000 => 3, r000 => (packed_array_assign_x => 6, packed_array_assign_y => 1, packed_array_assign_w => 117))" \
+    " = \\(q000 => 3, r000 => \\(packed_array_assign_w => 117, packed_array_assign_x => 6, packed_array_assign_y => 1\\)\\)" \
+    "value of npr"

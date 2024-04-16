@@ -1,0 +1,107 @@
+# Copyright 2011-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "ada.exp"
+
+require allow_ada_tests gnat_runtime_has_debug_info
+
+standard_ada_testfile foo
+
+if {[gdb_compile_ada "${srcfile}" "${binfile}" executable [list debug additional_flags=-gnata ]] != "" } {
+  return -1
+}
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+mi_clean_restart $binfile
+
+#############################################
+# 1. Try catching all exceptions handlers.  #
+#############################################
+
+with_test_prefix "scenario 1" {
+    if {[mi_runto_main] < 0} {
+	return 0
+    }
+}
+
+mi_gdb_test "-catch-handlers" \
+            "\\^done,bkptno=\"$decimal\",bkpt={.*disp=\"keep\",enabled=\"y\",what=\"all Ada exceptions handlers\",.*}" \
+            "catch all exceptions handlers"
+
+# Continue to exception handler.
+
+proc continue_to_exception_handler { test line } {
+
+    global decimal
+
+    mi_send_resuming_command "exec-continue" "$test"
+
+    # Now MI stream output.
+    mi_expect_stop \
+	"\"breakpoint-hit\",disp=\"keep\",bkptno=\"$decimal\",exception-name=\"exception\"" \
+	"foo" "" ".*" "$line" \
+	".*" \
+        $test
+}
+
+# We don't have the exception name info when stopping at the exception handlers
+# catchpoints so we use source line to check if the inferior stops at the
+# right location.
+
+set bp_ce_location [gdb_get_line_number "BREAK1" ${testdir}/foo.adb]
+continue_to_exception_handler \
+    "continue until CE handling caught by all-exceptions handlers catchpoint" \
+    "$bp_ce_location"
+
+set bp_pe_location [gdb_get_line_number "BREAK2" ${testdir}/foo.adb]
+continue_to_exception_handler \
+    "continue until PE handling caught by all-exceptions handlers catchpoint" \
+    "$bp_pe_location"
+
+##########################################################
+# 2. Try catching only some of the exceptions handlers.  #
+##########################################################
+
+# Here is the scenario:
+#  - Restart the debugger from scratch, runto_main
+#  - We'll catch only "Constraint_Error handlers"
+#  - continue, we should stop at the Constraint_Error exception handler
+#  - continue, we should not stop at the Program_Error exception handler
+#    but exit instead.
+
+with_test_prefix "scenario 2" {
+    mi_delete_breakpoints
+    if {[mi_runto_main] < 0} {
+	return 0
+    }
+}
+
+mi_gdb_test "-catch-handlers -e Constraint_Error" \
+            "\\^done,bkptno=\"$decimal\",bkpt={.*disp=\"keep\",enabled=\"y\",what=\"`Constraint_Error' Ada exception handlers\",.*}" \
+            "catch Constraint_Error"
+
+mi_execute_to "exec-continue" \
+              "\"breakpoint-hit\",disp=\"keep\",bkptno=\"$decimal\",exception-name=\"exception\"" \
+              "foo" "" ".*" "$bp_ce_location" \
+              ".*" \
+              "continue to exception catchpoint hit"
+
+# Exit the inferior.
+mi_send_resuming_command "exec-continue" "continuing to inferior exit"
+mi_expect_stop "exited-normally" "" "" "" "" "" "exit normally"
+
+mi_gdb_exit

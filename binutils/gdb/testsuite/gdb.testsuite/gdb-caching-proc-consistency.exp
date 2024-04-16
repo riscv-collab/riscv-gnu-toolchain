@@ -1,0 +1,123 @@
+#   Copyright 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# When caching a proc using gdb_caching_proc, it will become less likely to
+# be executed, and consequently it's going to be harder to detect that the
+# proc is racy.  OTOH, in general the proc is easy to rerun.  So, run all
+# uncached gdb_caching_procs a number of times and detect inconsistent results.
+# The purpose of caching is to reduce runtime, so rerunning is somewhat
+# counter-productive in that aspect, but it's better than uncached, because the
+# number of reruns is constant-bounded, and the increase in runtime is bound to
+# this test-case, and could be disabled on slow targets.
+
+# Test gdb_caching_proc NAME
+proc test_proc { name } {
+    set real_name gdb_real__$name
+
+    set resultlist [list]
+
+    with_test_prefix initial {
+	set first [gdb_do_cache_wrap $real_name]
+    }
+    lappend resultlist $first
+
+    # Ten repetitions was enough to trigger target_supports_scheduler_locking,
+    # and costs about 20 seconds on an i7-6600U.
+    set repeat 10
+
+    set racy 0
+    for {set i 0} {$i < $repeat} {incr i} {
+	with_test_prefix $i {
+	    set rerun [gdb_do_cache_wrap $real_name]
+	}
+	lappend resultlist $rerun
+	if { $rerun != $first } {
+	    set racy 1
+	}
+    }
+
+    if { $racy  == 0 } {
+	pass "consistency"
+    } else {
+	fail "consistency"
+	verbose -log "$name: $resultlist"
+    }
+}
+
+# Test gdb_caching_procs in FILE
+proc test_file { file } {
+    upvar obj obj
+    set procnames [list]
+
+    set fp [open $file]
+    while { [gets $fp line] >= 0 } {
+	if [regexp -- "^gdb_caching_proc \[ \t\]*(\[^ \t\]*)" $line \
+		match procname] {
+	    lappend procnames $procname
+	}
+    }
+    close $fp
+
+    if { [llength $procnames] == 0 } {
+	return
+    }
+
+    if { [file tail $file] == "gdb.exp" } {
+	# Already loaded
+    } else {
+	load_lib [file tail $file]
+    }
+
+    foreach procname $procnames {
+	if { [info args $procname] != "" } {
+	    # With args.
+	    continue
+	}
+	with_test_prefix $procname {
+	    switch $procname {
+		"is_address_zero_readable" { set setup_gdb 1 }
+		"target_is_gdbserver" { set setup_gdb 1 }
+		"supports_memtag" { set setup_gdb 1 }
+		"have_native_target" { set setup_gdb 1 }
+		default {set setup_gdb 0 }
+	    }
+
+	    if { $setup_gdb } {
+		clean_restart $obj
+	    }
+
+	    test_proc $procname
+
+	    gdb_exit
+	}
+    }
+}
+
+# Init
+set me "gdb_caching_proc"
+set src { int main() { return 0; } }
+if { ![gdb_simple_compile $me $src executable] } {
+    return 0
+}
+
+# Test gdb_caching_procs in gdb/testsuite/lib/*.exp
+set files [eval glob -types f $srcdir/lib/*.exp]
+set files [lsort $files]
+foreach file $files {
+    test_file $file
+}
+
+# Cleanup
+remote_file build delete $obj

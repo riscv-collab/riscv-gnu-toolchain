@@ -1,0 +1,71 @@
+# Copyright 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that when a thread other than the main thread execs, we follow
+# through to the new incarnation of the main thread, even if the main
+# thread had already exited before the exec.
+
+standard_testfile
+set executable ${testfile}
+
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug}] != "" } {
+    return -1
+}
+
+proc do_test { lock_sched nonstop } {
+    global executable
+
+    save_vars { GDBFLAGS } {
+      append GDBFLAGS " -ex \"set non-stop $nonstop\""
+      clean_restart ${executable}
+    }
+
+    if ![runto_main] {
+	return -1
+    }
+
+    gdb_breakpoint [gdb_get_line_number "break-here"]
+    gdb_continue_to_breakpoint "break-here" ".* break-here .*"
+
+    if { $nonstop == "on" } {
+	gdb_test "thread 2" "Switching.*"
+    }
+
+    gdb_test "info threads" \
+	"\r\n\[ \t\]*Id\[ \t\]+Target\[ \t\]+Id\[ \t\]+Frame\[ \t\]*\r\n\\* 2 *Thread \[^\r\n\]* at \[^\r\n\]*" \
+	"single thread left"
+
+    # Also test with sched-lock to make sure we can follow the
+    # non-leader thread execing even though the main thread wasn't
+    # resumed before the exec.
+    if { $lock_sched } {
+	gdb_test_no_output "set scheduler-locking on"
+    }
+
+    gdb_test "continue" \
+	".*is executing new program.*Breakpoint 1, main.* at .*" \
+	"continue over exec"
+}
+
+foreach_with_prefix nonstop {"on" "off"} {
+    foreach_with_prefix schedlock {"on" "off"} {
+	if {$schedlock == "on" && $nonstop == "on"} {
+	    # Schedule locking has no effect in nonstop mode.
+	    continue
+	}
+
+	do_test $schedlock $nonstop
+    }
+}

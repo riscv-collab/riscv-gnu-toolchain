@@ -1,0 +1,200 @@
+# Copyright (C) 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check that 'maint info breakpoints' succeeds in the period of time
+# between a thread-specific breakpoint being deleted, and GDB next
+# stopping.
+#
+# There used to be a bug where GDB would try to lookup the thread for
+# the thread-specific breakpoint, the thread of course having been
+# deleted, couldn't be found, and GDB would end up dereferencing a
+# nullptr.
+
+standard_testfile
+
+if {[build_executable "failed to prepare" $testfile $srcfile \
+	 {debug pthreads}] == -1} {
+    return -1
+}
+
+# We need to do things a little differently when using the remote protocol.
+set is_remote \
+    [expr [target_info exists gdb_protocol] \
+	 && ([string equal [target_info gdb_protocol] "remote"] \
+	     || [string equal [target_info gdb_protocol] "extended-remote"])]
+
+# This test requires background execution, which relies on non-stop mode.
+save_vars { GDBFLAGS } {
+    append GDBFLAGS " -ex \"maint set target-non-stop on\""
+    clean_restart ${binfile}
+}
+
+if {![runto_main]} {
+    return -1
+}
+
+# Check we hace non-stop mode.  We do try to force this on above, but maybe
+# the target doesn't support non-stop mode, in which case (hopefully)
+# non-stop mode will still show as off, and this test should not be run.
+if {![is_target_non_stop]} {
+    unsupported "required non-stop mode"
+    return -1
+}
+
+delete_breakpoints
+
+gdb_breakpoint "breakpt"
+gdb_continue_to_breakpoint "continue to first breakpt call"
+set breakpt_num [get_integer_valueof "\$bpnum" "INVALID" \
+		    "get number for breakpoint in breakpt"]
+
+# Check info threads just to confirm the thread numbering.  The rest
+# of this script just assumes we have threads numbered 1 and 2.
+gdb_test "info threads" \
+    [multi_line \
+	 "\\* 1\\s+Thread \[^\r\n\]+" \
+	 "  2\\s+Thread \[^\r\n\]+"]
+
+set main_thread 1
+set worker_thread 2
+
+# Check the 'info breakpoints' output for the thread-specific breakpoint
+# numbered BPNUM.  If EXPECTED is true then the breakpoint is expected to be
+# present, otherwise, the breakpoint is expected not to be present.
+
+proc check_for_thread_specific_breakpoint { testname bpnum expected } {
+    set saw_thread_specific_bp false
+    gdb_test_multiple "info breakpoints" $testname {
+	-re "^(\[^\r\n\]+)\r\n" {
+	    set line $expect_out(1,string)
+	    if { [regexp "$bpnum\\s+breakpoint\[^\r\n\]+ $::hex in main\
+			  at \[^\r\n\]+" $line] } {
+		set saw_thread_specific_bp true
+	    }
+	    exp_continue
+	}
+	-re "^$::gdb_prompt $" {
+	    set result [expr $expected ? $saw_thread_specific_bp \
+			    : !$saw_thread_specific_bp]
+	    gdb_assert { $result } $gdb_test_name
+	}
+    }
+}
+
+# Create a thread-specific breakpoint.  This will never actually be hit; we
+# don't care, we just want to see GDB auto-delete this breakpoint.
+gdb_breakpoint "main thread $worker_thread" \
+    "create a thread-specific breakpoint"
+set bpnum [get_integer_valueof "\$bpnum" "INVALID" \
+	       "get number for thread-specific breakpoint"]
+
+# Check the thread-specific breakpoint is present in 'info breakpoints'.
+check_for_thread_specific_breakpoint \
+    "check for thread-specific b/p before thread exit" $bpnum true
+
+# Continue in async mode.  After this the worker thread will exit.
+# The -no-prompt-anchor is needed here as sometimes the exit of the
+# worker thread will happen so quickly that expect will see the
+# 'thread exited' message immediately after the prompt, which breaks
+# the normal gdb_test prompt anchoring.
+gdb_test -no-prompt-anchor "continue&" "Continuing\\."
+
+if {$is_remote} {
+    # Collect the output from GDB telling us that the thread exited.
+    # Unfortunately in the remote protocol the thread-exited event doesn't
+    # appear to be pushed to GDB, instead we rely on GDB asking about the
+    # threads (which isn't great).
+    #
+    # So, what we do here is ask about thread 99, which hopefully shouldn't
+    # exist, however, in order to answer that question GDB has to grab the
+    # thread list from the remote, at which point GDB will spot that one of
+    # the threads has exited, and will tell us about it.
+    #
+    # However, we might be too quick sending the 'info threads 99' command,
+    # so, if we see the output of that command without any thread exited
+    # text, we wait for a short while and try again.  We wait for upto 5
+    # seconds (5 tries).  However, this might mean on a _really_ slow
+    # machine that the thread still hasn't exited.  I guess if we start
+    # seeing that then we can just update ATTEMPT_COUNT below.
+    set saw_thread_exited false
+    set saw_bp_deleted false
+    set attempt_count 5
+    gdb_test_multiple "info threads 99" "collect thread exited output" {
+	-re "info threads 99\r\n" {
+	    exp_continue
+	}
+
+	-re "^\\\[Thread \[^\r\n\]+ exited\\\]\r\n" {
+	    set saw_thread_exited true
+	    exp_continue
+	}
+
+	-re "^Thread-specific breakpoint $bpnum deleted -\
+	     thread $worker_thread no longer in the thread list\\.\r\n" {
+	    set saw_bp_deleted true
+	    exp_continue
+	}
+
+	-re "No threads match '99'\\.\r\n$gdb_prompt $" {
+	    if {!$saw_thread_exited && !$saw_bp_deleted && $attempt_count > 0} {
+		sleep 1
+		incr attempt_count -1
+		send_gdb "info threads 99\n"
+		exp_continue
+	    }
+
+	    gdb_assert { $saw_thread_exited && $saw_bp_deleted } $gdb_test_name
+	}
+    }
+} else {
+    # Collect the output from GDB telling us that the thread exited.
+    set saw_thread_exited false
+    gdb_test_multiple "" "collect thread exited output" {
+	-re "\\\[Thread \[^\r\n\]+ exited\\\]\r\n" {
+	    set saw_thread_exited true
+	    exp_continue
+	}
+
+	-re "^Thread-specific breakpoint $bpnum deleted -\
+	     thread $worker_thread no longer in the thread list\\.\r\n" {
+		 gdb_assert { $saw_thread_exited } \
+		     $gdb_test_name
+	}
+    }
+}
+
+# Check the thread-specific breakpoint is no longer present in 'info
+# breakpoints' output.
+check_for_thread_specific_breakpoint \
+    "check for thread-specific b/p before after exit" $bpnum false
+
+# Check the thread-specific breakpoint doesn't show up in the 'maint
+# info breakpoints' output.  And also that this doesn't cause GDB to
+# crash, which it did at one point.
+gdb_test_lines "maint info breakpoints" "" ".*" \
+    -re-not "breakpoint\\s+keep\\s+y\\s+$hex\\s+in main at "
+
+# Set the do_spin variable in the inferior.  This will cause it to drop out
+# of its spin loop and hit the next breakpoint.  Remember, at this point the
+# inferior is still executing.
+gdb_test "print do_spin = 0" "\\\$$decimal = 0"
+
+# Collect the notification that the inferior has stopped.
+gdb_test_multiple "" "wait for stop" {
+    -re "Thread $main_thread \[^\r\n\]+ hit Breakpoint ${breakpt_num},\
+	 breakpt \\(\\) \[^\r\n\]+\r\n$decimal\\s+\[^\r\n\]+\r\n" {
+	pass $gdb_test_name
+    }
+}

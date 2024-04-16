@@ -1,0 +1,126 @@
+# Copyright 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+standard_testfile main.c -dw.S
+
+# Make some DWARF for the test.
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    cu {} {
+ 	DW_TAG_compile_unit {
+                {DW_AT_language @DW_LANG_Ada95}
+                {DW_AT_name     foo.adb}
+                {DW_AT_comp_dir /tmp}
+        } {
+	    declare_labels integer_label array_elt_label array_label \
+                big_array_label struct_label
+
+            integer_label: DW_TAG_base_type {
+                {DW_AT_byte_size 4 DW_FORM_sdata}
+                {DW_AT_encoding  @DW_ATE_signed}
+                {DW_AT_name      integer}
+            }
+
+            array_elt_label: DW_TAG_subrange_type {
+                {DW_AT_lower_bound 0xe0 DW_FORM_data1}
+                {DW_AT_upper_bound 0x1f DW_FORM_data1}
+                {DW_AT_name        pck__item}
+                {DW_AT_type        :$integer_label}
+            }
+
+            DW_TAG_typedef {
+                {DW_AT_name pck__table}
+                {DW_AT_type :$array_label}
+            }
+
+	    array_label: DW_TAG_array_type {
+		{DW_AT_name pck__table}
+                {DW_AT_bit_stride 6 DW_FORM_data1}
+		{DW_AT_type :$array_elt_label}
+	    } {
+		DW_TAG_subrange_type {
+		    {DW_AT_type        :$integer_label}
+		    {DW_AT_lower_bound 0 DW_FORM_data1}
+		    {DW_AT_upper_bound 4 DW_FORM_data1}
+		}
+	    }
+
+            DW_TAG_typedef {
+                {DW_AT_name pck__big_table}
+                {DW_AT_type :$big_array_label}
+            }
+
+	    big_array_label: DW_TAG_array_type {
+		{DW_AT_name pck__big_table}
+                {DW_AT_byte_stride 1 DW_FORM_data1}
+		{DW_AT_type :$array_elt_label}
+	    } {
+		DW_TAG_subrange_type {
+		    {DW_AT_type        :$integer_label}
+		    {DW_AT_lower_bound 0 DW_FORM_data1}
+		    {DW_AT_upper_bound 4 DW_FORM_data1}
+		}
+	    }
+
+	    struct_label: DW_TAG_structure_type {
+		{name struct_type}
+		{byte_size 16 DW_FORM_sdata}
+	    } {
+		member {
+		    {name intfield}
+		    {type :$integer_label}
+		    {data_member_location 0 DW_FORM_sdata}
+		}
+		member {
+		    {name arrayfield}
+		    {type :$array_label}
+		    {data_member_location 4 DW_FORM_sdata}
+		}
+	    }
+
+	    DW_TAG_variable {
+		{name the_struct}
+		{external 1 DW_FORM_flag}
+		{location {
+		    DW_OP_const1u 1
+		    DW_OP_stack_value
+		    DW_OP_piece 4
+		    DW_OP_piece 12
+		} SPECIAL_expr}
+		{type :$struct_label}
+	    }
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	  [list $srcfile $asm_file] {nodebug}] } {
+    return -1
+}
+
+gdb_test_no_output "set language ada"
+
+gdb_test "ptype pck.table" \
+         "type = array \\(0 \\.\\. 4\\) of pck\\.item <packed: 6-bit elements>"
+
+gdb_test "ptype pck.big_table" \
+         "type = array \\(0 \\.\\. 4\\) of pck\\.item <packed: 8-bit elements>"
+
+gdb_test "print the_struct" \
+    "\\(intfield => 1, arrayfield => \\(0 => <optimized out>\\)\\)"

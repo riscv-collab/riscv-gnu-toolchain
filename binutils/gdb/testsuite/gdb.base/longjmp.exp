@@ -1,0 +1,227 @@
+# Copyright 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+#
+# Test support for stepping over longjmp.
+#
+
+
+standard_testfile .c
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug nowarnings}] != "" } {
+     untested "failed to compile"
+     return -1
+}
+
+proc do_test { with_probes } {
+    clean_restart ${::binfile}
+
+    if { !$with_probes } {
+	gdb_test "maint ignore-probes libc ^longjmp$"
+    }
+
+    if {![runto_main]} {
+	return 0
+    }
+
+    # With a libc with probes, all tests should pass.
+    #
+    # Without probes, we can still set a break on longjmp, but getting the longjmp
+    # target may not work, in the following cases:
+    # - gdbarch_get_longjmp_target_p (gdbarch) == 0: not implemented.
+    # - gdbarch_get_longjmp_target (gdbarch) == 0: for instance on amd64 if
+    #   tdep->jb_pc_offset == -1.
+    # - gdbarch_get_longjmp_target (gdbarch) != 0: if we have a glibc with
+    #   pointer mangling ( https://sourceware.org/glibc/wiki/PointerEncryption )
+    #   then we retrieve a mangled longjmp target that needs to be demangled.
+    #   For instance on amd64 with target board unix/-m32.
+    #
+    # Pointer demangling is currently not implemented for any target.
+    # For the amd64 case, this would require copying for instance this:
+    #   48 c1 ca 11             ror    $0x11,%rdx
+    #   64 48 33 14 25 30 00    xor    %fs:0x30,%rdx
+    # into a scratch space, save the register set, set %rdx to the mangled
+    # longjmp target, displaced-step through the two insn and read the
+    # demangled longjmp target from %rdx, and restore the register set.
+    #
+    # The failure mode in the first two cases is that the next degrades into a
+    # continue.  The failure mode in the latter case is a failure to set a
+    # breakpoint (matched by re_cannot_insert_bp) and a stop in longjmp.
+    #
+    # We detect the different failure modes and kfail these.
+
+    set have_longjmp_probe 0
+    gdb_test_multiple "info probes stap libc ^longjmp$" "" {
+	-re -wrap "No probes matched\\." {
+	    pass $gdb_test_name
+	}
+	-re -wrap "\r\nstap\[ \t\]+libc\[ \t\]+longjmp\[ \t\]+.*" {
+	    pass $gdb_test_name
+	    set have_longjmp_probe 1
+	}
+    }
+
+    if { $with_probes } {
+	if { !$have_longjmp_probe } {
+	    unsupported "longjmp probe required"
+	    return
+	}
+    } else {
+	gdb_assert { !$have_longjmp_probe }
+    }
+
+    # When using these line numbers in break linespecs, prefix each of these
+    # with "$subdir/$srcfile:" to avoid referring to a glibc file when stopped
+    # in __libc_siglongjmp or similar.
+    set bp_miss_step_1 [gdb_get_line_number "miss_step_1"]
+    set bp_miss_step_2 [gdb_get_line_number "miss_step_2"]
+
+    set bp_start_test_1 [gdb_get_line_number "patt1"]
+    set bp_start_test_2 [gdb_get_line_number "patt2"]
+    set bp_start_test_3 [gdb_get_line_number "patt3"]
+
+    set re_cannot_insert_bp \
+	[multi_line \
+	     "Warning:" \
+	     "Cannot insert breakpoint $::decimal\\." \
+	     "Cannot access memory at address $::hex"]
+
+    #
+    # Pattern 1 - simple longjmp.
+    #
+
+    with_test_prefix "pattern 1" {
+
+	with_test_prefix setup {
+	    delete_breakpoints
+
+	    gdb_test "break $::subdir/$::srcfile:$bp_start_test_1" \
+		"Breakpoint.*at.* file .*$::srcfile, line.*$bp_start_test_1.*" \
+		"breakpoint at pattern start"
+	    gdb_test "continue" "patt1.*" "continue to breakpoint at pattern start"
+
+	    # set safe-net break
+	    gdb_test "break $::subdir/$::srcfile:$bp_miss_step_1" \
+		"Breakpoint.*at.* file .*$::srcfile, line.*$bp_miss_step_1.*" \
+		"breakpoint at safety net"
+	}
+
+	gdb_test "next" "longjmps\\+\\+;.*" "next over setjmp"
+	gdb_test "next" "longjmp \\(env, 1\\);.*" "next to longjmp"
+
+	set msg "next over longjmp"
+	gdb_test_multiple "next" $msg {
+	    -re ".*patt1.*$::gdb_prompt $" {
+		pass $msg
+		gdb_test "next" "resumes\\+\\+.*" "next into else block"
+		gdb_test "next" "miss_step_1.*" "next into safety net"
+	    }
+	    -re "miss_step_1.*$::gdb_prompt $" {
+		if { $have_longjmp_probe } {
+		    fail $gdb_test_name
+		} else {
+		    kfail $gdb_test_name "gdb/26967"
+		}
+	    }
+	    -re -wrap "\r\n$re_cannot_insert_bp\r\n.*" {
+		if { $have_longjmp_probe } {
+		    fail $gdb_test_name
+		} else {
+		    kfail $gdb_test_name "gdb/26967"
+		}
+	    }
+	}
+    }
+
+    #
+    # Pattern 2 - longjmp from an inner function.
+    #
+
+    with_test_prefix "pattern 2" {
+
+	with_test_prefix setup {
+	    delete_breakpoints
+
+	    gdb_test "break $::subdir/$::srcfile:$bp_start_test_2" \
+		"Breakpoint.*at.* file .*$::srcfile, line.*$bp_start_test_2.*" \
+		"breakpoint at pattern start"
+	    gdb_test "continue" "patt2.*" "continue to breakpoint at pattern start"
+
+	    # set safe-net break
+	    gdb_test "break $::subdir/$::srcfile:$bp_miss_step_2" \
+		"Breakpoint.*at.* file .*$::srcfile, line.*$bp_miss_step_2.*" \
+		"breakpoint at safety net"
+	}
+
+	gdb_test "next" "call_longjmp.*" "next over setjmp"
+
+	set msg "next over call_longjmp"
+	gdb_test_multiple "next" $msg {
+	    -re ".*patt2.*$::gdb_prompt $" {
+		pass $msg
+
+		gdb_test "next" "resumes\\+\\+.*" "next into else block"
+		gdb_test "next" "miss_step_2.*" "next into safety net"
+	    }
+	    -re "miss_step_2.*$::gdb_prompt $" {
+		if { $have_longjmp_probe } {
+		    fail $gdb_test_name
+		} else {
+		    kfail $gdb_test_name "gdb/26967"
+		}
+	    }
+	    -re -wrap "\r\n$re_cannot_insert_bp\r\n.*" {
+		if { $have_longjmp_probe } {
+		    fail $gdb_test_name
+		} else {
+		    kfail $gdb_test_name "gdb/26967"
+		}
+	    }
+	}
+    }
+
+    #
+    # Pattern 3 - setjmp/longjmp inside stepped-over function.
+    #
+
+    with_test_prefix "pattern 3" {
+
+	with_test_prefix setup {
+	    delete_breakpoints
+
+	    gdb_test "break $::subdir/$::srcfile:$bp_start_test_3" \
+		"Breakpoint.*at.* file .*$::srcfile, line.*$bp_start_test_3.*" \
+		"breakpoint at pattern start"
+	    gdb_test "continue" "patt3.*" "continue to breakpoint at pattern start"
+	}
+
+	gdb_test_multiple "next" "next over pattern" {
+	    -re -wrap "longjmp caught.*" {
+		pass $gdb_test_name
+	    }
+	    -re -wrap "\r\n$re_cannot_insert_bp\r\n.*" {
+		if { $have_longjmp_probe } {
+		    fail $gdb_test_name
+		} else {
+		    kfail $gdb_test_name "gdb/26967"
+		}
+	    }
+	}
+    }
+}
+
+foreach_with_prefix with_probes { 0 1 } {
+    do_test $with_probes
+}

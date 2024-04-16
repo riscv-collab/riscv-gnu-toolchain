@@ -1,0 +1,80 @@
+# Copyright (C) 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.
+# It tests the mechanism exposing lazy strings to Guile.
+
+load_lib gdb-guile.exp
+
+require allow_guile_tests
+
+standard_testfile
+
+if { [prepare_for_testing ${testfile}.exp ${testfile} ${srcfile}] } {
+    return
+}
+
+#gdb_install_guile_utils
+#gdb_install_guile_module
+
+# The following tests require execution.
+
+if ![gdb_guile_runto_main] {
+    return
+}
+
+gdb_breakpoint [gdb_get_line_number "break here"]
+gdb_continue_to_breakpoint "break here"
+
+gdb_scm_test_silent_cmd "gu (define null (parse-and-eval \"null\"))" 1
+
+gdb_scm_test_silent_cmd "gu (define nullstr (value->lazy-string null #:length 0))" "create a null lazy string" 1
+gdb_test "gu (print (lazy-string-length nullstr))" "= 0" "null lazy string length"
+gdb_test "gu (print (lazy-string-address nullstr))" "= 0" "null lazy string address"
+gdb_test "gu (print (lazy-string-type nullstr))" "const char \\*" "null lazy string type"
+gdb_test "gu (print (lazy-string->value nullstr))" \
+    "Out of range: cannot create a value from NULL.*Error while executing Scheme code." \
+    "create value from NULL"
+gdb_test "gu (print (lazy-string->value (value->lazy-string null #:length 3)))" \
+    "Out of range: cannot create a lazy string with address 0x0, and a non-zero length.*Error while executing Scheme code." \
+    "null lazy string with non-zero length"
+gdb_test "gu (print (value->lazy-string null #:length -2))" \
+    "Out of range: invalid length.*Error while executing Scheme code." \
+    "bad length"
+
+foreach var_spec { { "ptr" "pointer" "const char \\*" -1 } \
+		   { "array" "array" "const char \\[6\\]" 6 } \
+		   { "typedef_ptr" "typedef pointer" "pointer" -1 } } {
+    set var [lindex $var_spec 0]
+    set value [lindex $var_spec 1]
+    set type [lindex $var_spec 2]
+    set length [lindex $var_spec 3]
+    with_test_prefix $var {
+	gdb_test "print $var" "\"$value\""
+	gdb_scm_test_silent_cmd "gu (define $var (history-ref 0))" "get value from history" 1
+	gdb_scm_test_silent_cmd "gu (define l$var (value->lazy-string $var))" "acquire lazy string" 1
+	gdb_test "gu (print (value-type $var))" "$type" "string type name equality"
+	gdb_test "gu (print (lazy-string-type l$var))" "$type" "lazy-string type name equality"
+	gdb_test "gu (print (lazy-string-length l$var))" "$length" "lazy string length"
+	gdb_test "gu (print (lazy-string->value l$var))" "\"$value\"" "lazy string value"
+	gdb_scm_test_silent_cmd "gu (define l2$var (value->lazy-string $var #:length 2))" "acquire lazy string, length 2" 1
+	gdb_test "gu (print (lazy-string-length l2$var))" "2" "lazy string length 2"
+	gdb_test "gu (print (lazy-string->value l2$var))" "\"[string range $value 0 1]\"" "lazy string length 2 value"
+	# This test will have to wait until gdb can handle it. There's no way,
+	# currently, to internally specify an array of length zero in the C
+	# language support.  PR 20786
+	#gdb_test "gu (print (lazy-string->value (value->lazy-string $var #:length 0)))" "\"\"" "empty lazy string value"
+    }
+}

@@ -1,0 +1,188 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile ".f90"
+load_lib "fortran.exp"
+
+require allow_fortran_tests
+
+if { [prepare_for_testing ${testfile}.exp ${testfile} ${srcfile} \
+     {debug f90 quiet}] } {
+	 return -1
+}
+
+if ![fortran_runto_main] {
+    perror "could not run to main"
+    return -1
+}
+
+# Depending on the compiler being used, the type names can be printed differently.
+set real [fortran_real4]
+set logical [fortran_logical4]
+
+set line1 [gdb_get_line_number "! Before vla allocation"]
+gdb_breakpoint $line1
+gdb_continue_to_breakpoint "line1" ".*$srcfile:$line1.*"
+
+gdb_test "whatis wp_vla" "type = Type waypoint, allocatable \\(:\\)" \
+    "whatis wp_vla before allocation"
+
+set line2 [gdb_get_line_number "! After value assignment"]
+gdb_breakpoint $line2
+gdb_continue_to_breakpoint "line2" ".*$srcfile:$line2.*"
+
+# test print of wp
+set test "p wp%coo"
+gdb_test_multiple "$test" "$test" {
+    -re " = \\(1, 2, 1\\)\r\n$gdb_prompt $" {
+      pass "$test"
+    }
+    -re "There is no member named coo.\r\n$gdb_prompt $" {
+      kfail "gcc/49475" "$test"
+    }
+}
+gdb_test "p wp%point%coo" " = \\(1, 2, 1\\)"
+gdb_test "p wp%point" " = \\( coo = \\(1, 2, 1\\) \\)"
+gdb_test "p wp" " = \\( point = \\( coo = \\(1, 2, 1\\) \\), angle = 100 \\)"
+
+gdb_test "whatis wp" "type = Type waypoint"
+set output_pass_wp [multi_line "type = Type, extends\\(point\\) :: waypoint" \
+			       "    Type point :: point" \
+			       "    $real :: angle" \
+			       "End Type waypoint(, allocatable)?"]
+set output_kfail_wp [multi_line "type = Type waypoint" \
+			        "    Type point :: point" \
+			        "    $real :: angle" \
+			        "End Type waypoint(, allocatable)?"]
+
+set test "ptype wp"
+gdb_test_multiple "$test" "$test" {
+    -re "$output_pass_wp\r\n$gdb_prompt $" {
+      pass "$test"
+    }
+    -re "$output_kfail_wp\r\n$gdb_prompt $" {
+      kfail "gcc/49475" "$test"
+    }
+}
+set test "ptype wp%coo"
+gdb_test_multiple "$test" "$test" {
+    -re "$real \\(3\\)\r\n$gdb_prompt $" {
+      pass "$test"
+    }
+    -re "There is no member named coo.\r\n$gdb_prompt $" {
+      kfail "gcc/49475" "$test"
+    }
+}
+gdb_test "ptype wp%point%coo" "$real \\(3\\)"
+
+# test print of fwp
+set test "p fwp%coo"
+gdb_test_multiple "$test" "$test" {
+    -re " = \\(1, 2, 2\\)\r\n$gdb_prompt $" {
+      pass "$test"
+    }
+    -re "There is no member named coo.\r\n$gdb_prompt $" {
+      kfail "gcc/49475" "$test"
+    }
+}
+gdb_test "p fwp%waypoint%point%coo" " = \\(1, 2, 2\\)"
+gdb_test "p fwp%waypoint%point" " = \\( coo = \\(1, 2, 2\\) \\)"
+gdb_test "p fwp%waypoint" \
+    " = \\( point = \\( coo = \\(1, 2, 2\\) \\), angle = 10 \\)"
+gdb_test "p fwp" \
+    " = \\( waypoint = \\( point = \\( coo = \\(1, 2, 2\\) \\), angle = 10 \\), is_fancy = \.TRUE\. \\)"
+
+set test "p fwp%angle"
+gdb_test_multiple "$test" "$test" {
+    -re " = 10\r\n$gdb_prompt $" {
+      pass "$test"
+    }
+    -re "There is no member named angle.\r\n$gdb_prompt $" {
+      kfail "gcc/49475" "$test"
+    }
+}
+
+gdb_test "whatis fwp" "type = Type fancywaypoint"
+set test "ptype fwp"
+
+set output_pass_fwp \
+    [multi_line "type = Type, extends\\(waypoint\\) :: fancywaypoint" \
+		"    Type waypoint :: waypoint" \
+		"    $logical :: is_fancy" \
+		"End Type fancywaypoint"]
+set output_kfail_fwp \
+    [multi_line "type = Type fancywaypoint" \
+		"    Type waypoint :: waypoint" \
+		"    $logical :: is_fancy" \
+		"End Type fancywaypoint"]
+
+gdb_test_multiple "$test" "$test" {
+    -re "$output_pass_fwp\r\n$gdb_prompt $" {
+	pass  "$test"
+    }
+    -re "$output_kfail_fwp\r\n$gdb_prompt $" {
+	kfail "gcc/49475" "$test"
+    }
+}
+
+set test "ptype fwp%coo"
+gdb_test_multiple "$test" "$test" {
+    -re "$real \\(3\\)\r\n$gdb_prompt $" {
+      pass "$test"
+    }
+    -re "There is no member named coo.\r\n$gdb_prompt $" {
+      kfail "gcc/49475" "$test"
+    }
+}
+gdb_test "ptype fwp%waypoint%point%coo" "$real \\(3\\)"
+
+# test print of wp_vla
+set test "p wp_vla(1)%coo"
+gdb_test_multiple "$test" "$test" {
+    -re " = \\(10, 12, 10\\)\r\n$gdb_prompt $" {
+      pass "$test"
+    }
+    -re "There is no member named coo.\r\n$gdb_prompt $" {
+      kfail "gcc/49475" "$test"
+    }
+}
+
+gdb_test "p wp_vla(1)%point%coo" " = \\(10, 12, 10\\)"
+gdb_test "p wp_vla(1)%point" " = \\( coo = \\(10, 12, 10\\) \\)"
+gdb_test "p wp_vla(1)" " = \\( point = \\( coo = \\(10, 12, 10\\) \\), angle = 101 \\)"
+
+gdb_test "whatis wp_vla" "type = Type waypoint, allocatable \\(3\\)" \
+    "whatis wp_vla after allocation"
+
+set test "ptype wp_vla"
+gdb_test_multiple "$test" "$test" {
+    -re "$output_pass_wp \\(3\\)\r\n$gdb_prompt $" {
+      pass "$test"
+    }
+    -re "$output_kfail_wp \\(3\\)\r\n$gdb_prompt $" {
+      kfail "gcc/49475" "$test"
+    }
+}
+set test "ptype wp_vla(1)%coo"
+gdb_test_multiple "$test" "$test" {
+    -re "$real \\(3\\)\r\n$gdb_prompt $" {
+      pass "$test"
+    }
+    -re "There is no member named coo.\r\n$gdb_prompt $" {
+      kfail "gcc/49475" "$test"
+    }
+}
+
+gdb_test "ptype wp_vla(1)%point%coo" "$real \\(3\\)"

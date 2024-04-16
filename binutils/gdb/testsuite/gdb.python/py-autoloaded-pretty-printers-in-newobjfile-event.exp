@@ -1,0 +1,92 @@
+# Copyright (C) 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It tests that Python pretty-printers
+# defined in a Python script that is autoloaded are registered when an event
+# handler for the new_objfile event is called.
+
+load_lib gdb-python.exp
+
+require allow_python_tests
+
+standard_testfile -main.cc
+
+set srcfile_lib "${testfile}-lib.cc"
+set python_event_handler_file "${srcdir}/${subdir}/${testfile}.py"
+set libname "lib${testfile}"
+set python_autoload_file "${srcdir}/${subdir}/${libname}.so-gdb.py"
+set binfile_lib [standard_output_file "${libname}.so"]
+
+# Compile library.
+if { [gdb_compile_shlib ${srcdir}/${subdir}/${srcfile_lib} ${binfile_lib} \
+      {debug c++}] != "" } {
+    return -1
+}
+
+# Compile main program.
+if { [gdb_compile ${srcdir}/${subdir}/${srcfile} \
+      ${binfile} \
+      executable \
+      [list debug c++ shlib=$binfile_lib]] != "" } {
+    return -1
+}
+
+clean_restart
+
+# Make the -gdb.py script available to gdb, it is automatically loaded by
+# gdb if it is put in the same directory as the library.
+set remote_python_autoload_file \
+    [gdb_remote_download host $python_autoload_file]
+
+gdb_test_no_output \
+    "set auto-load safe-path ${remote_python_autoload_file}" \
+    "set auto-load safe-path"
+
+# Load the Python file that defines a handler for the new_objfile event.
+set remote_python_event_handler_file\
+    [gdb_remote_download host $python_event_handler_file]
+gdb_test_no_output "source ${remote_python_event_handler_file}" "load python file"
+
+gdb_load ${binfile}
+gdb_load_shlib $binfile_lib
+
+if { ![runto_main] } {
+    return
+}
+
+if { [is_remote target ] } {
+    set target_sysroot 0
+    gdb_test_multiple  "show sysroot" "" {
+	-re -wrap "\r\nThe current system root is \"target:.*\"\\." {
+	    set target_sysroot 1
+	}
+	-re -wrap "" {
+	}
+    }
+
+    if { $target_sysroot } {
+	unsupported "sysroot start with target: -- auto-load not supported"
+	return
+    }
+}
+
+# Check that the new_objfile handler saw the pretty-printer.
+gdb_test "print all_good" " = true"
+
+# Check that the pretty-printer actually works.
+gdb_test "info pretty-printer" "my_library.*MyClassTestLib.*"
+gdb_breakpoint [gdb_get_line_number "break to inspect"]
+gdb_test "continue" "Breakpoint $decimal, main .*"
+gdb_test "print test" "MyClassTestLib object, id: 1.*"

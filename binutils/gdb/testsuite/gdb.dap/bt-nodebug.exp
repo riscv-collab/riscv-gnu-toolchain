@@ -1,0 +1,76 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test DAP 'bt' through a function without debuginfo.
+
+require allow_dap_tests
+
+load_lib dap-support.exp
+
+standard_testfile bt-main.c bt-inner.c
+
+if {[build_executable_from_specs $testfile.exp $testfile {} \
+	 $srcfile debug \
+	 $srcfile2 {}] == -1} {
+    return
+}
+
+if {[dap_launch $testfile] == ""} {
+    return
+}
+
+set obj [dap_check_request_and_response "set breakpoint on inner" \
+	     setFunctionBreakpoints \
+	     {o breakpoints [a [o name [s function_breakpoint_here]]]}]
+set fn_bpno [dap_get_breakpoint_number $obj]
+
+dap_check_request_and_response "start inferior" configurationDone
+dap_wait_for_event_and_check "inferior started" thread "body reason" started
+
+lassign [dap_wait_for_event_and_check "stopped at function breakpoint" stopped \
+	    "body reason" breakpoint \
+	    "body hitBreakpointIds" $fn_bpno] unused objs
+
+# The bug was that this request would fail.
+set obj [dap_check_request_and_response "backtrace" \
+	     stackTrace {o threadId [i 1]}]
+set frames [dict get [lindex $obj 0] body stackFrames]
+
+gdb_assert {[llength $frames] == 3} "three frames"
+
+gdb_assert {[dict get [lindex $frames 1] name] == "no_debug_info"} \
+    "name of no-debug frame"
+
+# Breakpoint can be set without source file information
+set obj [dap_check_request_and_response "set breakpoint on no_debug_info" \
+	    setFunctionBreakpoints \
+	    {o breakpoints [a [o name [s no_debug_info]]]}]
+set breakpoints [dict get [lindex $obj 0] body breakpoints]
+gdb_assert {[dict exists [lindex $breakpoints 0] instructionReference]} \
+    "breakpoint has instructionReference"
+
+# instructionReference is specified as a string, but it's form is not
+# otherwise given in the spec.  gdb always emits it as hex.  A bug
+# slipped in that caused this to be incorrect, so we test both parts
+# here; to test whether a string was given, we have to reach into the
+# TON form.
+set list_form [namespace eval ton::2list $last_ton]
+set ref [namespace eval ton::2list {
+    get $list_form body breakpoints 0 instructionReference
+}]
+gdb_assert {[regexp "^$hex\$" $ref]} \
+    "instructionReference is a hex string"
+
+dap_shutdown

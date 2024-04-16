@@ -1,0 +1,126 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test only works for native processes on GNU/Linux.
+if {[target_info gdb_protocol] != ""} {
+    return
+}
+require {istarget *-linux*}
+
+# Test relies on checking gdb debug output. Do not run if gdb debug is
+# enabled as any debug will be redirected to the log.
+require !gdb_debug_enabled
+
+standard_testfile
+
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" \
+	 executable debug] != "" } {
+    return -1
+}
+
+# Case 1: libthread_db fakes a single thread with th_unique == NULL.
+set thread_re1 "0 => $decimal => 0"
+# Case 2: libthread_db already initialized.
+set thread_re2 "$hex => $decimal => ${hex}(; errno = 0)?"
+# Match either of the two cases.
+set initial_thread_re "($thread_re1|$thread_re2)"
+
+with_test_prefix "user-initiated check" {
+
+    # User-initiated check with libthread_db not loaded.
+    clean_restart ${binfile}
+
+    gdb_test "maint show check-libthread-db" \
+	"Whether to check libthread_db at load time is off."
+
+    gdb_test_no_output "set stop-on-solib-events 1"
+    gdb_run_cmd
+    gdb_test "" \
+	".*Stopped due to shared library event.*no libraries added or removed.*"
+
+    gdb_test "maint check libthread-db" \
+	"No libthread_db loaded" \
+	"no libpthread.so loaded"
+
+    # User-initiated check with NPTL possibly uninitialized.
+    gdb_test "continue" \
+	[multi_line \
+	     "Stopped due to shared library event:" \
+	     "  Inferior loaded .*(libpthread|libc).*"]
+
+    gdb_test_sequence "maint check libthread-db" \
+	"libpthread.so possibly not initialized" \
+	[list \
+	     "\[\r\n\]+Running libthread_db integrity checks:" \
+	     "\[\r\n\]+\[ \]+Got thread $initial_thread_re ... OK" \
+	     "\[\r\n\]+libthread_db integrity checks passed."]
+
+    # User-initiated check with NPTL fully operational.
+    gdb_test_no_output "set stop-on-solib-events 0"
+    gdb_breakpoint break_here
+    gdb_continue_to_breakpoint break_here
+
+    gdb_test_sequence "maint check libthread-db" \
+	"libpthread.so fully initialized" {
+	    "\[\r\n\]+Running libthread_db integrity checks:"
+	    "\[\r\n\]+\[ \]+Got thread 0x\[1-9a-f\]\[0-9a-f\]+ => \[0-9\]+ => 0x\[1-9a-f\]\[0-9a-f\]+; errno = 23 ... OK"
+	    "\[\r\n\]+\[ \]+Got thread 0x\[1-9a-f\]\[0-9a-f\]+ => \[0-9\]+ => 0x\[1-9a-f\]\[0-9a-f\]+; errno = 42 ... OK"
+	    "\[\r\n\]+libthread_db integrity checks passed."
+	}
+}
+
+with_test_prefix "automated load-time check" {
+
+    # Automated load-time check with NPTL possibly uninitialized.
+    with_test_prefix "libpthread.so possibly not initialized" {
+	clean_restart ${binfile}
+
+	gdb_test_no_output "maint set check-libthread-db 1"
+	gdb_test_no_output "set debug libthread-db 1"
+	gdb_breakpoint break_here
+	gdb_run_cmd
+
+	gdb_test_sequence "" \
+	    "check debug libthread-db output" \
+	    [list \
+		 "\[\r\n\]+Running libthread_db integrity checks:" \
+		 "\[\r\n\]+\[ \]+Got thread $initial_thread_re ... OK" \
+		 "\[\r\n\]+libthread_db integrity checks passed." \
+		 "\[\r\n\]+\\\[Thread debugging using libthread_db enabled\\\]"]
+    }
+
+    # Automated load-time check with NPTL fully operational.
+    with_test_prefix "libpthread.so fully initialized" {
+	clean_restart ${binfile}
+
+	gdb_test_no_output "maint set check-libthread-db 1"
+	gdb_test_no_output "set debug libthread-db 1"
+
+	set test_spawn_id [spawn_wait_for_attach $binfile]
+	set testpid [spawn_id_get_pid $test_spawn_id]
+
+	gdb_test_sequence "attach $testpid" \
+	    "check debug libthread-db output" {
+		"\[\r\n\]+Running libthread_db integrity checks:"
+		"\[\r\n\]+\[ \]+Got thread 0x\[1-9a-f\]\[0-9a-f\]+ => \[0-9\]+ => 0x\[1-9a-f\]\[0-9a-f\]+ ... OK"
+		"\[\r\n\]+\[ \]+Got thread 0x\[1-9a-f\]\[0-9a-f\]+ => \[0-9\]+ => 0x\[1-9a-f\]\[0-9a-f\]+ ... OK"
+		"\[\r\n\]+libthread_db integrity checks passed."
+		"\[\r\n\]+[Thread debugging using libthread_db enabled]"
+	    }
+
+	gdb_exit
+	kill_wait_spawned_process $test_spawn_id
+    }
+}

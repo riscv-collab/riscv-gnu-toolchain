@@ -1,0 +1,154 @@
+# Copyright 2010-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test single stepping over Thumb-2 IT blocks.
+
+require {istarget arm*-*eabi*}
+
+standard_testfile .S
+
+if { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable debug] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+clean_restart $binfile
+
+if {![runto_main]} {
+    return -1
+}
+
+# Make sure that the compiler options allow Thumb-2.
+gdb_test_multiple "list" "list main" {
+    -re ".*@ No Thumb-2.*$gdb_prompt $" {
+	pass "list main"
+	untested "skipping tests due to lack of Thumb-2"
+	return -1
+    }
+    -re ".*@ Thumb-2 OK.*$gdb_prompt $" {
+	pass "list main"
+    }
+}
+
+proc test_it_block { func } {
+    global gdb_prompt
+    global software_step
+
+    if { ! [gdb_breakpoint "*${func}"] } {
+	unresolved "$func, IT block tests"
+	return
+    }
+
+    gdb_test "call (int) ${func}()" "Breakpoint.*@ Setup.*" "$func, call"
+
+    set expected 0
+    set reached 0
+    set steps 0
+    set ok 1
+    while { $ok } {
+	set ok 0
+	set msg "$func, stepi $steps"
+	gdb_test_multiple "stepi" "$msg" {
+	    -re ".*@ Setup.*$gdb_prompt $" {
+		pass "$msg"
+		set ok 1
+	    }
+	    -re ".*@ IT instruction, Expected == (\[0-9\]*)\r\n$gdb_prompt $" {
+		set expected $expect_out(1,string)
+		pass "$msg"
+		set ok 1
+	    }
+	    -re ".*@ Reached.*$gdb_prompt $" {
+		incr reached
+		pass "$msg"
+		set ok 1
+		if { [regexp {@ Reached, Set ([^\r\n]*)\r\n} $expect_out(0,string) dummy change] } {
+		    gdb_test "set $change" "" "$func, set $change"
+		}
+	    }
+	    -re ".*@ Not reached.*$gdb_prompt $" {
+		# An instruction in an IT block whose predicate is false when
+		# we reach it.  If using software single step, we should not
+		# stop here.
+		if { $software_step } {
+		    fail "$msg"
+		} else {
+		    pass "$msg"
+		    set ok 1
+		}
+	    }
+	    -re ".*@ Never reached.*$gdb_prompt $" {
+		# An instruction that should be branched over.
+		fail "$msg"
+	    }
+	    -re ".*@ Done.*$gdb_prompt $" {
+		pass "$msg"
+		if { $reached == $expected } {
+		    pass "$func, correct instructions reached"
+		} else {
+		    fail "$func, correct instructions reached"
+		}
+		if { [regexp {@ Done, Check ([^\r\n]*)\r\n} $expect_out(0,string) dummy check] } {
+		    gdb_test "print $check" ".* = 1" "$func, $check"
+		}
+	    }
+	}
+	if { ! $ok } {
+	    break
+	}
+	incr steps
+	continue
+    }
+
+    gdb_test "continue" "" "$func, continue"
+    return
+}
+
+proc test_it_break { ndx } {
+    global software_step
+
+    set line [gdb_get_line_number "@ Break ${ndx}"]
+
+    if { ! [gdb_breakpoint "${line}"] } {
+	unresolved "continue to breakpoint: test ${ndx}"
+	return
+    }
+
+    if { $software_step } {
+	gdb_continue_to_breakpoint "test ${ndx}" ".*@ Location ${ndx}.*"
+    } else {
+	gdb_continue_to_breakpoint "test ${ndx}" ".*@ Break ${ndx}.*"
+    }
+}
+
+# If we are using software single-stepping in GDB, then GDB will not
+# stop at conditional instructions with a false predicate during stepi.
+# If we are using a simulator or debug interface with hardware single
+# step, then GDB will stop at such instructions.
+if { [istarget arm*-linux*] } {
+    set software_step 1
+} else {
+    set software_step 0
+}
+
+for { set i 1 } { $i <= 8 } { incr i } {
+    test_it_block it_${i}
+}
+
+gdb_breakpoint "*it_breakpoints"
+gdb_test "call (int) it_breakpoints()" "Breakpoint.*"
+for { set i 1 } { $i <= 7 } { incr i } {
+    test_it_break ${i}
+}

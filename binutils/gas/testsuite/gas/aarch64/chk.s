@@ -1,0 +1,2 @@
+	.text
+	chkfeat x16

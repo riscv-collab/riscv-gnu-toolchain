@@ -1,0 +1,99 @@
+# Copyright 2019-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that GDB does not access the remote target's memory when
+# setting a breakpoint on a function that only exists in an inferior
+# that is not bound to the remote target.
+
+load_lib gdbserver-support.exp
+
+standard_testfile server.c
+
+require allow_gdbserver_tests
+
+if { [prepare_for_testing "failed to prepare" ${binfile} "${srcfile}" \
+	  {debug pthreads}] } {
+    return
+}
+set host_binfile [gdb_remote_download host $binfile]
+
+# Make sure we're disconnected, in case we're testing with an
+# extended-remote board, therefore already connected.
+gdb_test "disconnect" ".*"
+
+# Leave inferior 1 with the exec target, not connected.  Add another
+# inferior, and connect it to gdbserver.
+
+gdb_test "add-inferior" "Added inferior 2" \
+    "add inferior 2"
+gdb_test "inferior 2" "Switching to inferior 2.*" \
+    "switch to inferior 2"
+gdb_test "file ${host_binfile}" ".*" "load file in inferior 2"
+
+set target_exec [gdbserver_download_current_prog]
+
+# Start GDBserver.
+set res [gdbserver_start "" $target_exec]
+
+# Connect to GDBserver.
+set gdbserver_protocol [lindex $res 0]
+set gdbserver_gdbport [lindex $res 1]
+gdb_target_cmd $gdbserver_protocol $gdbserver_gdbport
+
+# Discard any symbol files that we have opened.
+set test "discard symbol table"
+gdb_test_multiple "file" $test {
+    -re "A program is being debugged already..*Are you sure you want to change the file.*y or n. $" {
+	gdb_test "y" ".*" $test \
+	    {Discard symbol table from `.*'\? \(y or n\) } "y"
+    }
+}
+
+# At this point:
+#
+# - inferior 1 has symbols, and is not connected to any target.
+# - inferior 2 has no symbols, and is connected to gdbserver.
+
+# Setting a breakpoint at some function by name should set a
+# breakpoint on inferior 1, since it has symbols, and should not
+# result in any access to inferior 2's remote target.
+
+foreach inf_sel {1 2} {
+    with_test_prefix "inf $inf_sel" {
+	gdb_test "inferior $inf_sel" "Switching to inferior $inf_sel.*" \
+	    "switch to inferior"
+
+	gdb_test_no_output "set debug remote 1"
+
+	gdb_test_multiple "break -q main" "set breakpoint" {
+	    -re "Sending packet: \\\$qXfer:auxv:read.*$gdb_prompt $" {
+		# Symbol lookup may access the target to read AUXV in
+		# order to determine the debug base for SVR4 linker
+		# namespaces.
+		xfail "$gdb_test_name"
+	    }
+	    -re "Sending packet.*$gdb_prompt $" {
+		fail "$gdb_test_name"
+	    }
+	    -re "^break -q main\r\nBreakpoint .* at .*$gdb_prompt $" {
+		pass "$gdb_test_name"
+	    }
+	}
+
+	gdb_test_no_output "set debug remote 0"
+
+	delete_breakpoints
+    }
+}

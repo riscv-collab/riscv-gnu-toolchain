@@ -1,0 +1,113 @@
+# Copyright (C) 2011-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that GDB doesn't inadvertently resume the stepped thread when a
+# signal arrives while stepping over the breakpoint that last caused a
+# stop, when the thread that hit that breakpoint is not the stepped
+# thread.
+
+# Test relies on checking gdb debug output. Do not run if gdb debug is
+# enabled as any debug will be redirected to the log.
+require !gdb_debug_enabled
+
+standard_testfile
+set executable ${testfile}
+
+require {!target_info exists gdb,nosignals}
+
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" \
+	 executable [list debug "incdir=${objdir}"]] != "" } {
+    return -1
+}
+
+proc get_value {var test} {
+    global expect_out
+    global gdb_prompt
+    global decimal
+
+    set value -1
+    gdb_test_multiple "print $var" "$test" {
+	-re ".*= ($decimal).*\r\n$gdb_prompt $" {
+	    set value $expect_out(1,string)
+	    pass "$test"
+        }
+    }
+    return ${value}
+}
+
+# Start with a fresh gdb.
+
+clean_restart $executable
+
+if ![runto_main] {
+    return -1
+}
+
+gdb_breakpoint [gdb_get_line_number "set wait-thread-2 breakpoint here"]
+gdb_continue_to_breakpoint "run to wait-thread-2 breakpoint"
+gdb_test "info threads" "" "info threads with thread 2"
+
+gdb_breakpoint [gdb_get_line_number "set wait-thread-3 breakpoint here"]
+gdb_continue_to_breakpoint "run to breakpoint"
+gdb_test "info threads" "" "info threads with thread 3"
+
+gdb_test "set scheduler-locking on"
+
+gdb_breakpoint [gdb_get_line_number "set breakpoint child_two here"]
+gdb_breakpoint [gdb_get_line_number "set breakpoint child_one here"]
+
+gdb_test "thread 3" "" "switch to thread 3 to run to its breakpoint"
+gdb_continue_to_breakpoint "run to breakpoint in thread 3"
+
+gdb_test "thread 2" "" "switch to thread 2 to run to its breakpoint"
+gdb_continue_to_breakpoint "run to breakpoint in thread 2"
+
+delete_breakpoints
+
+gdb_test "b *\$pc" "" "set breakpoint to be stepped over"
+# Make sure the first loop breaks without hitting the breakpoint
+# again.
+gdb_test "p *myp = 0" " = 0" "force loop break in thread 2"
+
+# We want "print" to make sure the target reports the signal to the
+# core.
+gdb_test "handle SIGUSR1 print nostop pass" "" ""
+
+gdb_test "thread 1" "" "switch to thread 1 to queue signal in thread 2"
+gdb_test "next 2" "pthread_join .*" "queue signal in thread 2"
+
+gdb_test "thread 3" "" "switch to thread 3 for stepping"
+set my_number [get_value "my_number" "get my_number"]
+set cnt_before [get_value "args\[$my_number\]" "get count before step"]
+gdb_test "set scheduler-locking off"
+
+# Make sure we're exercising the paths we want to.
+gdb_test "set debug infrun 1"
+
+set test "step"
+gdb_test_sequence $test $test -prompt "$gdb_prompt \\\[infrun\\\] fetch_inferior_event: exit\r\n$"  {
+    "need to step-over"
+    "resume_1: step=1,"
+    "signal arrived while stepping over breakpoint"
+    "stepped to a different line"
+    "callme"
+}
+
+set cnt_after [get_value "args\[$my_number\]" "get count after step"]
+
+# Test that GDB doesn't inadvertently resume the stepped thread when a
+# signal arrives while stepping over a breakpoint in another thread.
+
+gdb_assert { $cnt_before + 1 == $cnt_after } "stepped thread under control"

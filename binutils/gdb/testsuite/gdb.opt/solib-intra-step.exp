@@ -1,0 +1,98 @@
+# Copyright 2015-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile
+
+require allow_shlib_tests
+
+# Library file.
+set libname "${testfile}-lib"
+set srcfile_lib ${srcdir}/${subdir}/${libname}.c
+set binfile_lib [standard_output_file ${libname}.so]
+set lib_flags [list debug optimize=-O2]
+# Binary file.
+set testfile "${testfile}-main"
+set srcfile ${srcdir}/${subdir}/${testfile}.c
+set binfile [standard_output_file ${testfile}]
+set bin_flags [list debug shlib=${binfile_lib}]
+
+if { [gdb_compile_shlib ${srcfile_lib} ${binfile_lib} $lib_flags] != ""
+     || [gdb_compile ${srcfile} ${binfile} executable $bin_flags] != "" } {
+  untested "failed to compile"
+  return -1
+}
+
+clean_restart ${binfile}
+gdb_load_shlib $binfile_lib
+
+if {![runto_main]} {
+  return 0
+}
+
+set test "first-hit"
+gdb_test_multiple "step" $test {
+    -re -wrap " first-hit .*" {
+	pass $gdb_test_name
+    }
+    -re -wrap " first-retry .*" {
+	send_gdb "step\n"
+	exp_continue
+    }
+    -re -wrap "get_pc_thunk.*" {
+	send_gdb "step\n"
+	exp_continue
+    }
+}
+
+set in_second 0
+set test "second-hit"
+gdb_test_multiple "step" $test {
+    -re -wrap " first-retry .*" {
+	if { $in_second } {
+	    fail $gdb_test_name
+	} else {
+	    send_gdb "step\n"
+	    exp_continue
+	}
+    }
+    -re -wrap " first-hit .*" {
+	if { $in_second } {
+	    fail $gdb_test_name
+	} else {
+	    send_gdb "step\n"
+	    exp_continue
+	}
+    }
+    -re -wrap " second-hit .*" {
+	pass $gdb_test_name
+    }
+    -re -wrap " second-retry .*" {
+	set in_second 1
+	send_gdb "step\n"
+	exp_continue
+    }
+    -re -wrap "get_pc_thunk.*" {
+	set in_second 1
+	send_gdb "step\n"
+	exp_continue
+    }
+}
+
+if {![runto_main]} {
+  return 0
+}
+
+gdb_breakpoint "shlib_second"
+gdb_continue_to_breakpoint "second-hit" ".* (second-hit|second-retry) .*"

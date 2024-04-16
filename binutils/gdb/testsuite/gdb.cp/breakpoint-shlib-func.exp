@@ -1,0 +1,85 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Places a breakpoint on a function in a shared library before the
+# inferior has started.  GDB will place the breakpoint on the @plt
+# symbol in the main executable.
+#
+# When the inferior is started GDB will re-evaluate the breakpoint
+# location and move the breakpoint to the function implementation in
+# the shared library.
+#
+# Then, with the inferior started, delete all breakpoints, and
+# re-create the breakpoint on the shared library function, GDB should
+# place a single breakpoint on the function implementation in the
+# shared library.
+
+require allow_shlib_tests
+
+standard_testfile .cc -lib.cc
+
+set libobj [standard_output_file libfoo.so]
+if {[build_executable "build shared library" $libobj $srcfile2 \
+	 {debug c++ shlib}] != 0} {
+    return -1
+}
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile \
+	 [list debug c++ shlib=$libobj]]} {
+    return -1
+}
+
+gdb_load_shlib $libobj
+
+# Place the breakpoint before the shared library has been loaded, the
+# breakpoint should be placed on the @plt symbol.
+gdb_test "break foo" "Breakpoint $decimal at $hex"
+gdb_test "info breakpoints" "<foo\\(\\)@plt>"
+
+# This is used as an override for delete_breakpoints when we don't
+# want functions in gdb.exp to delete breakpoints behind the scenes
+# for us.
+proc do_not_delete_breakpoints {} {
+    # Just do nothing.
+}
+
+# Runto main, but don't delete all the breakpoints.
+with_override delete_breakpoints do_not_delete_breakpoints {
+    if {![runto_main]} {
+	return -1
+    }
+}
+
+# The breakpoint should now be showing in `foo` for real.
+gdb_test "info breakpoints" \
+    "\r\n$decimal\\s+\[^\r\n\]+ in foo\\(\\) at \[^\r\n\]+\r\n.*" \
+    "check breakpoints after starting the inferior"
+
+# Now we can delete the breakpoints.
+delete_breakpoints
+
+# And recreate the foo breakpoint, we should only get one location,
+# the actual location.
+gdb_test "break foo" "Breakpoint $decimal at \[^\r\n\]+" \
+    "recreate foo breakpoint"
+
+# Check the breakpoint was recreated correctly.
+gdb_test "info breakpoints" \
+    "\r\n$decimal\\s+\[^\r\n\]+ in foo\\(\\) at \[^\r\n\]+" \
+    "check breakpoints after recreation"
+
+# Continue to breakpoint in foo and confirm we stop in the expected
+# place.
+gdb_continue_to_breakpoint "breakpoint in foo" \
+    ".*/\\* Breakpoint in foo\\.  \\*/.*"

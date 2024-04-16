@@ -1,0 +1,178 @@
+# This testcase is part of GDB, the GNU debugger.
+#
+# Copyright 2013-2024 Free Software Foundation, Inc.
+#
+# Contributed by Intel Corp. <markus.t.metzger@intel.com>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require allow_btrace_tests
+
+# This test is stepping on instruction level.  To guarantee that we always
+# get the same execution trace, we use an assembly source file.
+#
+# We use different assembly sources based on the target architecture.
+#
+# Luckily, they are similar enough that a single test script can handle
+# both.
+if [info exists COMPILE] {
+    # make check RUNTESTFLAGS="gdb.btrace/stepi.exp COMPILE=1"
+    standard_testfile record_goto.c
+    lappend opts debug
+} elseif {[istarget "i?86-*-*"] || [istarget "x86_64-*-*"]} {
+	if {[is_amd64_regs_target]} {
+		standard_testfile x86_64-record_goto.S
+	} else {
+		standard_testfile i686-record_goto.S
+	}
+} else {
+    unsupported "target architecture not supported"
+    return -1
+}
+
+if [prepare_for_testing "failed to prepare" $testfile $srcfile {}] {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+global gdb_prompt
+
+proc check_replay_at { insn } {
+  gdb_test "info record" [multi_line \
+    "Active record target: record-btrace" \
+    ".*" \
+    "Recorded 40 instructions in 16 functions \\\(0 gaps\\\) for .*" \
+    "Replay in progress\.  At instruction $insn\." \
+    ] "check replay at $insn"
+}
+
+# trace the call to the test function
+with_test_prefix "record" {
+    gdb_test_no_output "record btrace"
+    gdb_test "next" ".*" "next.1"
+}
+
+# we start with stepping to make sure that the trace is fetched automatically
+with_test_prefix "fetch" {
+    gdb_test "reverse-stepi" ".*fun4\.5.*" "reverse-stepi.1"
+    gdb_test "reverse-stepi" ".*fun4\.5.*" "reverse-stepi.2"
+
+    # let's check where we are in the trace
+    check_replay_at 39
+}
+
+# let's step forward and check again
+with_test_prefix "stepi" {
+    gdb_test "stepi" ".*fun4\.5.*"
+    check_replay_at 40
+}
+
+# with the next step, we stop replaying
+with_test_prefix "end" {
+    gdb_test "stepi" ".*main\.3.*"
+    gdb_test "info record" [multi_line \
+      "Active record target: record-btrace" \
+      ".*" \
+      "Recorded 40 instructions in 16 functions \\\(0 gaps\\\) for \[^\\\r\\\n\]*" \
+			       ]
+}
+
+# let's try nexti
+with_test_prefix "reverse-nexti.1" {
+    gdb_test "reverse-nexti" ".*main\.2.*"
+    check_replay_at 1
+}
+
+# we can't reverse-nexti any further
+with_test_prefix "reverse-nexti.2" {
+    gdb_test "reverse-nexti" \
+	"No more reverse-execution history\.\r\n.*main\.2.*" \
+	"reverse-nexti.2"
+    check_replay_at 1
+}
+
+# but we can step back again
+with_test_prefix "nexti" {
+    gdb_test "nexti" ".*main\.3.*"
+    gdb_test "info record" [multi_line \
+      "Active record target: record-btrace" \
+      ".*" \
+      "Recorded 40 instructions in 16 functions \\\(0 gaps\\\) for \[^\\\r\\\n\]*" \
+			       ]
+}
+
+# let's step from a goto position somewhere in the middle
+with_test_prefix "goto" {
+    gdb_test "record goto 22" ".*fun3\.2.*"
+    with_test_prefix "goto 22" { check_replay_at 22 }
+
+    gdb_test "stepi" ".*fun1\.1.*" "stepi.3"
+    with_test_prefix "stepi to 23" { check_replay_at 23 }
+
+    gdb_test "reverse-stepi" ".*fun3\.2.*" "reverse-stepi.3"
+    with_test_prefix "reverse-stepi to 22" { check_replay_at 22 }
+
+    gdb_test "nexti" ".*fun3\.3.*"
+    with_test_prefix "nexti to 27" { check_replay_at 27 }
+
+    gdb_test "reverse-nexti" ".*fun3\.2.*" "reverse-nexti.3"
+    with_test_prefix "reverse-nexti to 22" { check_replay_at 22 }
+}
+
+# let's try to step off the left end
+with_test_prefix "goto begin" {
+    gdb_test "record goto begin" ".*main\.2.*"
+    check_replay_at 1
+
+    with_test_prefix "reverse-stepi" {
+	gdb_test "reverse-stepi" \
+	    "No more reverse-execution history\.\r\n.*main\.2.*" \
+	    "reverse-stepi.1"
+	gdb_test "reverse-stepi" \
+	    "No more reverse-execution history\.\r\n.*main\.2.*" \
+	    "reverse-stepi.2"
+	check_replay_at 1
+    }
+
+    with_test_prefix "reverse-nexti" {
+	gdb_test "reverse-nexti" \
+	    "No more reverse-execution history\.\r\n.*main\.2.*" \
+	    "reverse-nexti.1"
+	gdb_test "reverse-nexti" \
+	    "No more reverse-execution history\.\r\n.*main\.2.*" \
+	    "reverse-nexti.2"
+	check_replay_at 1
+    }
+
+    # we can step forward, though
+    with_test_prefix "stepi" {
+	gdb_test "stepi" ".*fun4\.1.*"
+	check_replay_at 2
+    }
+}
+
+# let's try to step off the left end again
+with_test_prefix "reverse-stepi" {
+    gdb_test "reverse-stepi" ".*main\.2.*" "reverse-stepi.1"
+    gdb_test "reverse-stepi" \
+	"No more reverse-execution history\.\r\n.*main\.2.*" \
+	"reverse-stepi.2"
+    gdb_test "reverse-stepi" \
+	"No more reverse-execution history\.\r\n.*main\.2.*" \
+	"reverse-stepi.3"
+    check_replay_at 1
+}

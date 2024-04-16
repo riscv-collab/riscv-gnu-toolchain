@@ -1,0 +1,108 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Ensure that 'layout asm' before starting the inferior puts us in the
+# asm layout and displays the disassembly for main.
+
+tuiterm_env
+
+standard_testfile tui-layout.c
+
+if {[build_executable "failed to prepare" ${testfile} ${srcfile}] == -1} {
+    return -1
+}
+
+# PPC currently needs a minimum window width of 90 to work correctly.
+set tui_asm_window_width 90
+
+Term::clean_restart 24 ${tui_asm_window_width} $testfile
+if {![Term::prepare_for_tui]} {
+    unsupported "TUI not supported"
+    return
+}
+
+# Helper proc, returns a count of the ' ' characters in STRING.
+proc count_whitespace { string } {
+    return [expr {[llength [split $string { }]] - 1}]
+}
+
+# This puts us into TUI mode, and should display the ASM window.
+Term::command_no_prompt_prefix "layout asm"
+Term::check_box_contents "check asm box contents" 0 0 ${tui_asm_window_width} 15 "<main>"
+
+# Scroll the ASM window down using the down arrow key.  In an ideal
+# world we'd like to use PageDown here, but currently our terminal
+# library doesn't support such advanced things.
+set testname "scroll to end of assembler"
+set down_count 0
+while (1) {
+    # Grab the second line, this is about to become the first line.
+    set line [Term::get_line 2]
+
+    # Except, if the second line is blank then we are at the end of
+    # the available asm output.  Pressing down again _shouldn't_
+    # change the output, however, if GDB is working, and we press down
+    # then the screen won't change, so the call to Term::wait_for
+    # below will just timeout.  So for now we avoid testing the edge
+    # case.
+    if {[regexp -- "^\\| +\\|$" $line]} {
+	# Second line is blank, we're at the end of the assembler.
+	pass $testname
+	break
+    }
+
+    # Send the down key to GDB.
+    send_gdb "\033\[B"
+    incr down_count
+    set re_line [string_to_regexp $line]
+    # Ignore whitespace mismatches.
+    regsub -all {\s+} $re_line {\s+} re_line
+    if {[Term::wait_for $re_line] \
+	    && [regexp $re_line [Term::get_line 1]]} {
+	# We scrolled successfully.
+    } else {
+	if {[count_whitespace ${line}] != \
+		[count_whitespace [Term::get_line 1]]} {
+	    # GDB's TUI assembler display will widen columns based on
+	    # the longest item that appears in a column on any line.
+	    # As we have just scrolled, and so revealed a new line, it
+	    # is possible that the width of some columns has changed.
+	    #
+	    # As a result it is possible that part of the line we were
+	    # expected to see in the output is now off the screen. And
+	    # this test will fail.
+	    #
+	    # This is unfortunate, but, right now, there's no easy way
+	    # to "lock" the format of the TUI assembler window.  The
+	    # only option appears to be making the window width wider,
+	    # this can be done by adjusting TUI_ASM_WINDOW_WIDTH.
+	    verbose -log "WARNING: The following failure is probably due to the TUI window"
+	    verbose -log "         width.  See the comments in the test script for more"
+	    verbose -log "         details."
+	}
+
+	fail "$testname (scroll failed)"
+	Term::dump_screen
+	break
+    }
+
+    if { $down_count > 250 } {
+	# Maybe we should accept this as a pass in case a target
+	# really does have loads of assembler to scroll through.
+	fail "$testname (too much assembler)"
+	Term::dump_screen
+	break
+    }
+}

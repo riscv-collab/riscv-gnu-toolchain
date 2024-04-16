@@ -1,0 +1,109 @@
+# Copyright 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the gdb testsuite
+
+# The allow_hw_watchpoint_tests checks if watchpoints are supported by the
+# processor.  On PowerPC, the check runs a small test program under gdb
+# to determine if the Power processor supports HW watchpoints.  The check
+# must be done before starting the test so as to not disrupt the execution
+# of the actual test.
+# Disable hardware watchpoints if the target does not support them.
+
+set allow_hw_watchpoint_tests_p [allow_hw_watchpoint_tests]
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+# Set a watchpoint watching EXPR.
+proc watch { expr } {
+    global decimal
+
+    set expr_re [string_to_regexp $expr]
+    gdb_test "watch $expr" \
+	"\(Hardware \)?\[Ww\]atchpoint $decimal: $expr_re"
+}
+
+# Continue inferior execution, expecting the watchpoint EXPR to be triggered
+# having old value OLD and new value NEW.
+proc expect_watchpoint { expr old new } {
+    with_test_prefix "$expr: $old->$new" {
+	set expr_re [string_to_regexp $expr]
+	gdb_test "print $expr" "\\$\\d+ = $old" "print expression before"
+	gdb_test "continue" "$expr_re\\s.*Old value = $old\\s+New value = $new\\s.*"
+	gdb_test "print $expr" "\\$\\d+ = $new" "print expression after"
+    }
+}
+
+# Check that -location watchpoints against bitfields trigger properly.
+proc test_watch_location {} {
+    with_test_prefix "-location watch against bitfields" {
+	if {![runto_main]} {
+	    return -1
+	}
+
+	watch "-location q.a"
+	watch "-location q.e"
+	expect_watchpoint "q.a" 0 1
+	expect_watchpoint "q.e" 0 5
+	expect_watchpoint "q.a" 1 0
+	expect_watchpoint "q.e" 5 4
+
+	# It'll execute a large amount of code with software watchpoint
+	# enabled, which means GDB will single stepping all the way
+	# through til the inferior exits.  Increase the timeout by a
+	# factor of 4.
+	with_timeout_factor 4 {
+	    gdb_continue_to_end
+	}
+    }
+}
+
+# Check that regular watchpoints against expressions involving
+# bitfields trigger properly.
+proc test_regular_watch {} {
+    with_test_prefix "regular watch against bitfields" {
+	if {![runto_main]} {
+	    return -1
+	}
+
+	watch "q.d + q.f + q.g"
+	expect_watchpoint "q.d + q.f + q.g" 0 4
+	expect_watchpoint "q.d + q.f + q.g" 4 10
+	expect_watchpoint "q.d + q.f + q.g" 10 3
+	expect_watchpoint "q.d + q.f + q.g" 3 2
+	expect_watchpoint "q.d + q.f + q.g" 2 1
+	expect_watchpoint "q.d + q.f + q.g" 1 0
+
+	# It'll execute a large amount of code with software watchpoint
+	# enabled, which means GDB will single stepping all the way
+	# through til the inferior exits.  Increase the timeout by a
+	# factor of 4.
+	with_timeout_factor 4 {
+	    gdb_continue_to_end
+	}
+    }
+}
+
+# Disable hardware watchpoints if the target does not support them.
+if {!$allow_hw_watchpoint_tests_p} {
+    gdb_test_no_output "set can-use-hw-watchpoints 0" ""
+}
+
+test_watch_location
+test_regular_watch

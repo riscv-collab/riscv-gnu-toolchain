@@ -1,0 +1,146 @@
+#   Copyright 1998-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test helps making sure QTro support doesn't regress.  If the
+# stub supports the newer qXfer:traceframe-info:read, then the QTro
+# paths in the stub are never exercised.  PR remote/15455 is an
+# example of a regression that unfortunately went unnoticed for long.
+
+load_lib trace-support.exp
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile {debug nopie}]} {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+# Check whether we're testing with the remote or extended-remote
+# targets, and whether the target supports tracepoints.
+
+if ![gdb_is_target_remote] {
+    return -1
+}
+
+if ![gdb_target_supports_trace] {
+    unsupported "current target does not support trace"
+    return -1
+}
+
+# Run a trace session, stop it, and then inspect the resulting trace
+# frame (IOW, returns while tfind mode is active).
+proc prepare_for_trace_disassembly { } {
+    global gdb_prompt
+    gdb_breakpoint "end" qualified
+
+    gdb_test "trace subr" "Tracepoint .*" \
+	"tracepoint at subr"
+
+    gdb_trace_setactions "define action" \
+	"" \
+	"collect parm" "^$"
+
+    gdb_test_no_output "tstart"
+
+    gdb_test "continue" ".*Breakpoint \[0-9\]+, end .*" \
+	"advance through tracing"
+
+    gdb_test "tstatus" ".*Collected 1 trace frame.*" \
+	"collected 1 trace frame"
+
+    gdb_test_no_output "tstop"
+
+    gdb_tfind_test "tfind start" "start" "0"
+}
+
+clean_restart $testfile
+runto_main
+
+# Trace once, issuing a tstatus, so that GDB tries
+# qXfer:trace-frame-info:read.
+prepare_for_trace_disassembly
+
+# Now check whether the packet is supported.
+set traceframe_info_supported -1
+set test "probe for traceframe-info support"
+gdb_test_multiple "show remote traceframe-info-packet" $test {
+    -re ".*Support for .* is \"auto\", currently (\[a-z\]*).*$gdb_prompt $" {
+	set status $expect_out(1,string)
+
+	if { $status == "enabled" } {
+	    set traceframe_info_supported 1
+	} else {
+	    set traceframe_info_supported 0
+	}
+
+	pass $test
+    }
+}
+if { $traceframe_info_supported == -1 } {
+    return -1
+}
+
+# Check whether we're testing with our own GDBserver.
+set is_gdbserver [target_is_gdbserver]
+if { $is_gdbserver == -1 } {
+    return -1
+}
+
+# Now disassemble (IOW, read from read-only memory) while inspecting a
+# trace frame, twice.  Once with qXfer:traceframe-info:read left to
+# auto, and once with it disabled, exercising the QTro fallback path
+# in the stub side.
+foreach tfinfo { auto off } {
+    with_test_prefix "qXfer:traceframe-info:read $tfinfo" {
+
+	clean_restart $testfile
+	runto_main
+	gdb_test \
+	    "set remote traceframe-info-packet $tfinfo" \
+	    "Support for the 'qXfer:traceframe-info:read' packet on the current remote target is set to *.*$tfinfo*.*"
+
+	prepare_for_trace_disassembly
+
+	set test "trace disassembly"
+	gdb_test_multiple "disassemble subr" $test {
+	    -re "<(\.\[0-9\]+|)>:.*End of assembler dump.*$gdb_prompt $" {
+		pass $test
+	    }
+	    -re "Cannot access memory.*$gdb_prompt $" {
+		if { $traceframe_info_supported == 0 } {
+		    # If qXfer:traceframe-info:read is not supported,
+		    # then there should be QTro support.
+		    fail $test
+		} elseif { $tfinfo == off && $is_gdbserver == 1 } {
+		    # We we're testing with GDBserver, we know both
+		    # qXfer:traceframe-info:read and QTro are
+		    # supported (although supporting the former only
+		    # would be sufficient), so issue a FAIL instead of
+		    # UNSUPPORTED, giving us better visibility of QTro
+		    # regressions.
+		    fail $test
+		} else {
+		    # Otherwise, qXfer:traceframe-info:read is
+		    # supported, making QTro optional, so this isn't
+		    # really a failure.
+		    unsupported "$test (no QTro support)"
+		}
+	    }
+	}
+    }
+}

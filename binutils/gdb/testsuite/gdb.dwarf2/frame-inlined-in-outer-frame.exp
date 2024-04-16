@@ -1,0 +1,122 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test unwinding when we have a frame inlined in the outer frame (in the sense
+# of frame.c:outer_frame_id).
+#
+# The conditions required to reproduce the original issue are:
+#
+#  1. Have an outer frame whose DWARF CFI explicitly says that the frame return
+#     address is undefined.
+#  2. A frame inlined in this other frame.
+#
+# Because of (1), the test has to be written in assembly with explicit CFI
+# directives.
+
+# Check if starti command is supported.
+require !use_gdb_stub
+
+load_lib dwarf.exp
+
+require dwarf2_support
+
+standard_testfile .S
+
+set dwarf_asm [standard_output_file dwarf-asm.S]
+Dwarf::assemble $dwarf_asm {
+    global srcfile
+
+    declare_labels foo_subprogram bar_subprogram
+    declare_labels stmt_list
+
+    # See the comment in the .S file for the equivalent C program this is meant
+    # to represent.
+
+    cu { label cu_label addr_size 4 } {
+	DW_TAG_compile_unit {
+	    {DW_AT_name $srcfile}
+	    {DW_AT_stmt_list $stmt_list DW_FORM_sec_offset}
+	    {DW_AT_language @DW_LANG_C99}
+	    {DW_AT_low_pc __cu_low_pc DW_FORM_addr}
+	    {DW_AT_high_pc __cu_high_pc DW_FORM_addr}
+	} {
+	    DW_TAG_subprogram {
+		{DW_AT_name "_start"}
+		{DW_AT_low_pc __start_low_pc DW_FORM_addr}
+		{DW_AT_high_pc __start_high_pc DW_FORM_addr}
+	    } {
+		DW_TAG_inlined_subroutine {
+		    {DW_AT_abstract_origin :$foo_subprogram}
+		    {DW_AT_low_pc __foo_low_pc DW_FORM_addr}
+		    {DW_AT_high_pc __foo_high_pc DW_FORM_addr}
+		    {DW_AT_call_file 1 DW_FORM_data1}
+		    {DW_AT_call_line 13 DW_FORM_data1}
+		} {
+		    DW_TAG_inlined_subroutine {
+			{DW_AT_abstract_origin :$bar_subprogram}
+			{DW_AT_low_pc __bar_low_pc DW_FORM_addr}
+			{DW_AT_high_pc __bar_high_pc DW_FORM_addr}
+			{DW_AT_call_file 1 DW_FORM_data1}
+			{DW_AT_call_line 7 DW_FORM_data1}
+		    }
+		}
+	    }
+
+	    foo_subprogram: DW_TAG_subprogram {
+		{DW_AT_name "foo"}
+		{DW_AT_prototyped 1 DW_FORM_flag_present}
+		{DW_AT_inline 0x1 DW_FORM_data1}
+	    }
+
+	    bar_subprogram: DW_TAG_subprogram {
+		{DW_AT_name "bar"}
+		{DW_AT_prototyped 1 DW_FORM_flag_present}
+		{DW_AT_inline 0x1 DW_FORM_data1}
+	    }
+	}
+    }
+
+    lines { } stmt_list {
+	global srcdir subdir srcfile
+
+	include_dir "/some/directory"
+	file_name "/some/directory/file.c" 0
+    }
+
+    aranges {} cu_label {
+	arange {} __cu_low_pc __cu_high_pc
+    }
+}
+
+if { [build_executable ${testfile}.exp ${testfile} "$srcfile $dwarf_asm" \
+      {additional_flags=-nostdlib additional_flags=-static}] != 0 } {
+    untested "failed to compile"
+    return
+}
+
+clean_restart $binfile
+
+if { [gdb_starti_cmd] != 0 } {
+    fail "failed to run to first instruction"
+    return
+}
+gdb_test "" "Program stopped.*" "starti prompt"
+
+gdb_test "frame" "in _start .*"
+
+gdb_test "stepi" "in foo .*" "step into foo"
+gdb_test "stepi" "in bar .*" "step into bar"
+gdb_test "stepi" "in foo .*" "step back into foo"
+gdb_test "stepi" "in _start .*" "step back into _start"

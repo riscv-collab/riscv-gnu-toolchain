@@ -1,0 +1,63 @@
+# Copyright (C) 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# GDB must always report the process's exit status based on the exit
+# status of the thread group leader thread.  Test that when multiple
+# threads exit simultaneously, GDB doesn't confuse the non-leader
+# threads' exit status for the process's exit status.  GDB used to
+# have a race condition that led to randomly handling this
+# incorrectly.
+#
+# Since the improper behavior is racy in nature, this test is not
+# expected to be able to reproduce the error reliably.  Multiple
+# executions (or increasing the number of iterations) might be
+# required to reproduce the error with a misbehaving GDB.
+
+if { ![istarget "*-*-linux*"] } {
+    return 0
+}
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile {debug pthreads}] == -1} {
+    return -1
+}
+
+for {set iteration 0} {$iteration < 10} {incr iteration} {
+    with_test_prefix "iteration=$iteration" {
+	if {![runto_main]} {
+	    return
+	}
+
+	gdb_test_multiple "continue" "" {
+	    -re -wrap "\\\[Inferior 1 \\(.*\\) exited with code 01\\\]" {
+		pass $gdb_test_name
+	    }
+
+	    -re -wrap "\\\[Inferior 1 \\(.*\\) exited with code $::decimal\\\]" {
+		set lkv [linux_kernel_version]
+
+		if { [llength $lkv] != 0 } {
+		    if { [version_compare {6 1 0} <= $lkv] } {
+			xfail "$gdb_test_name (PR 29965)"
+			return
+		    }
+		}
+
+		fail $gdb_test_name
+	    }
+	}
+    }
+}

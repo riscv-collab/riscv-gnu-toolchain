@@ -1,0 +1,104 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check the gdb.Architecture.register_groups functionality.
+
+load_lib gdb-python.exp
+require allow_python_tests
+standard_testfile py-arch.c
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+    return -1
+}
+
+if ![runto_main] {
+   return -1
+}
+
+# First, use 'maint print reggroups' to get a list of all register
+# groups.
+set groups {}
+set test "maint print reggroups"
+gdb_test_multiple $test $test {
+    -re ".*Group\[ \t\]+Type\[ \t\]+\r\n" {
+	exp_continue
+    }
+    -re "^ (\[^ \t\]+)\[ \t\]+\[^\r\n\]+\r\n" {
+	lappend groups $expect_out(1,string)
+	exp_continue
+    }
+    -re "^$gdb_prompt " {
+    }
+}
+gdb_assert {[llength $groups] > 0} \
+    "Found at least one register group"
+
+# Now get the same register names using Python API.
+gdb_py_test_silent_cmd \
+    "python frame = gdb.selected_frame()" "get frame" 0
+gdb_py_test_silent_cmd \
+    "python arch = frame.architecture()" "get arch" 0
+gdb_py_test_silent_cmd \
+    "python groups = list (arch.register_groups ())" \
+    "get register groups" 0
+gdb_py_test_silent_cmd \
+    "python groups = map (lambda obj: obj.name, groups)" \
+    "convert groups to names" 0
+
+set py_groups {}
+gdb_test_multiple "python print (\"\\n\".join (groups))" \
+    "register groups from python" {
+	-re "^python print \[^\r\n\]+\r\n" {
+	    exp_continue
+	}
+	-re "^(\[^\r\n\]+)\r\n" {
+	    lappend py_groups $expect_out(1,string)
+	    exp_continue
+	}
+	-re "^$gdb_prompt " {
+	}
+    }
+
+gdb_assert {[llength $py_groups] > 0} \
+    "Found at least one register group from python"
+gdb_assert {[llength $py_groups] == [llength $groups]} \
+    "Same numnber of registers groups found"
+
+set found_non_match 0
+for { set i 0 } { $i < [llength $groups] } { incr i } {
+    if {[lindex $groups $i] != [lindex $py_groups $i]} {
+	set found_non_match 1
+    }
+}
+gdb_assert { $found_non_match == 0 } "all register groups match"
+
+# Check that we get the same register group descriptors from two
+# different iterators.
+gdb_py_test_silent_cmd \
+    "python iter1 = arch.register_groups ()" \
+    "get first all register group iterator" 0
+gdb_py_test_silent_cmd \
+    "python iter2 = arch.register_groups ()" \
+    "get second all register group iterator" 0
+gdb_py_test_silent_cmd \
+    [multi_line_input \
+	 "python" \
+	 "for r1, r2 in zip(iter1, iter2):" \
+	 "  if (r1.name != r2.name):"\
+	 "    raise gdb.GdbError (\"miss-matched names\")" \
+	 "  if (r1 != r2):" \
+	 "    raise gdb.GdbError (\"miss-matched objects\")" \
+	 "end" ] \
+    "check names and objects match" 1

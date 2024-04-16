@@ -1,0 +1,362 @@
+# Copyright 2016-2024 Free Software Foundation, Inc.
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test spawns a few threads that immediately exit the whole
+# process.  On targets where the debugger needs to detach from each
+# thread individually (such as on the Linux kernel), the debugger must
+# handle the case of the process exiting while the detach is ongoing.
+#
+# Similarly, the process can also be killed from outside the debugger
+# (e.g., with SIGKILL), _before_ the user requests a detach.  The
+# debugger must likewise detach gracefully.
+#
+# The testcase actually builds two variants of the test program:
+# single-process, and multi-process.  In the multi-process variant,
+# the test program forks, and it's the fork child that spawns threads
+# that exit just while the process is being detached from.  The fork
+# parent waits for its child to exit, so if GDB fails to detach from
+# the child correctly, the parent hangs.  Because continuing the
+# parent can mask failure to detach from the child correctly (e.g.,
+# due to waitpid(-1,...) calls deep in the target layers managing to
+# reap the child), we try immediately detaching from the parent too,
+# and observing whether the parent exits via standard output.
+#
+# Normally, if testing with "target remote" against gdbserver, then
+# after detaching from all attached processes, gdbserver exits.
+# However, when gdbserver detaches from a process that is its own
+# direct child, gdbserver does not exit immediately.  Instead it
+# "joins" (waits for) the child, only exiting when the child itself
+# exits too.  Thus, on Linux, if gdbserver fails to detach from the
+# zombie child's threads correctly (or rather, reap them), it'll hang,
+# because the leader thread will only return an exit status after all
+# threads are reaped.  We test that as well.
+
+standard_testfile
+
+# Test that GDBserver exits.
+
+proc test_server_exit {} {
+    global server_spawn_id
+
+    set test "server exits"
+    gdb_expect {
+	-i $server_spawn_id
+	eof {
+	    pass $test
+	    wait -i $server_spawn_id
+	    unset server_spawn_id
+	}
+	timeout {
+	    fail "$test (timeout)"
+	}
+    }
+}
+
+# If RESULT is not zero, make the caller return.
+
+proc return_if_fail { result } {
+    if {$result != 0} {
+	return -code return
+    }
+}
+
+# Detach from a process, and ensure that it exits after detaching.
+# This relies on inferior I/O.  INF_OUTPUT_RE is the pattern that
+# matches the expected inferior output.
+
+proc detach_and_expect_exit {inf_output_re test} {
+    global decimal
+    global gdb_spawn_id
+    global inferior_spawn_id
+    global gdb_prompt
+
+    return_if_fail [gdb_test_multiple "detach" $test {
+	-re "Detaching from .*, process $decimal" {
+	}
+    }]
+
+    # Use an indirect spawn id list, and remove inferior spawn id from
+    # the expected output as soon as it matches, so that if
+    # $inf_inferior_spawn_id is $server_spawn_id and we're testing in
+    # "target remote" mode, the eof caused by gdbserver exiting is
+    # left for the caller to handle.
+    global daee_spawn_id_list
+    set daee_spawn_id_list "$inferior_spawn_id $gdb_spawn_id"
+
+    set saw_prompt 0
+    set saw_inf_exit 0
+    while { !$saw_prompt || ! $saw_inf_exit } {
+	# We don't know what order the interesting things will arrive in.
+	# Using a pattern of the form 'x|y|z' instead of -re x ... -re y
+	# ... -re z ensures that expect always chooses the match that
+	# occurs leftmost in the input, and not the pattern appearing
+	# first in the script that occurs anywhere in the input, so that
+	# we don't skip anything.
+	return_if_fail [gdb_test_multiple "" $test {
+	    -i daee_spawn_id_list
+	    -re "($inf_output_re)|($gdb_prompt )" {
+		if {[info exists expect_out(1,string)]} {
+		    verbose -log "saw inferior exit"
+		    set saw_inf_exit 1
+		    set daee_spawn_id_list "$gdb_spawn_id"
+		} elseif {[info exists expect_out(2,string)]} {
+		    verbose -log "saw prompt"
+		    set saw_prompt 1
+		    set daee_spawn_id_list "$inferior_spawn_id"
+		}
+		array unset expect_out
+	    }
+	}]
+    }
+
+    pass $test
+}
+
+# Run to _exit in the child.
+
+proc continue_to_exit_bp {} {
+    gdb_breakpoint "_exit" temporary
+    return [gdb_continue_to_breakpoint "_exit" ".*_exit.*"]
+}
+
+# If testing single-process, simply detach from the process.
+#
+# If testing multi-process, first detach from the child, then detach
+# from the parent and confirm that the parent exits, thus ensuring
+# we've detached from the child successfully, as the parent hangs in
+# its waitpid call otherwise.
+#
+# If connected with "target remote", make sure gdbserver exits.
+#
+# CMD indicates what to do with the parent after detaching the child.
+# Can be either "detach" to detach, or "continue", to continue to
+# exit.
+#
+# CHILD_EXIT indicates how is the child expected to exit.  Can be
+# either "normal" for normal exit, or "signal" for killed with signal
+# SIGKILL.
+#
+proc do_detach {multi_process cmd child_exit} {
+    global decimal
+    global server_spawn_id
+
+    if {$child_exit == "normal"} {
+	set continue_re "exited normally.*"
+	set inf_output_re "exited, status=0"
+    } elseif {$child_exit == "signal"} {
+	if {$multi_process} {
+	    set continue_re "exited with code 02.*"
+	} else {
+	    set continue_re "terminated with signal SIGKILL.*"
+	}
+	set inf_output_re "signaled, sig=9"
+    } else {
+	error "unhandled \$child_exit: $child_exit"
+    }
+
+    set is_remote [expr {[target_info exists gdb_protocol]
+			 && [target_info gdb_protocol] == "remote"}]
+
+    if {$multi_process} {
+	gdb_test "detach" "Detaching from .*, process $decimal\r\n\\\[Inferior $decimal \\(.*\\) detached\\\]" \
+	    "detach child"
+
+	gdb_test "inferior 1" "\[Switching to inferior $decimal\].*" \
+	    "switch to parent"
+
+	if {$cmd == "detach"} {
+	    # Make sure that detach works and that the parent process
+	    # exits cleanly.
+	    detach_and_expect_exit $inf_output_re "detach parent"
+	} elseif {$cmd == "continue"} {
+	    # Make sure that continuing works and that the parent process
+	    # exits cleanly.
+	    gdb_test "continue" $continue_re
+	} else {
+	    perror "unhandled command: $cmd"
+	}
+    } else {
+	if $is_remote {
+	    set extra "\r\nEnding remote debugging\."
+	} else {
+	    set extra ""
+	}
+	if {$cmd == "detach"} {
+	    gdb_test "detach" "Detaching from .*, process ${decimal}\r\n\\\[Inferior $decimal \\(.*\\) detached\\\]$extra"
+	} elseif {$cmd == "continue"} {
+	    gdb_test "continue" $continue_re
+	} else {
+	    perror "unhandled command: $cmd"
+	}
+    }
+
+    # When connected in "target remote" mode, the server should exit
+    # when there are no processes left to debug.
+    if { $is_remote && [info exists server_spawn_id]} {
+	test_server_exit
+    }
+}
+
+# Test detaching from a process that dies just while GDB is detaching.
+
+proc test_detach {multi_process cmd} {
+    with_test_prefix "detach" {
+	global binfile
+
+	clean_restart ${binfile}
+
+	if ![runto_main] {
+	    return -1
+	}
+
+	if {$multi_process} {
+	    gdb_test_no_output "set detach-on-fork off"
+	    gdb_test_no_output "set follow-fork-mode child"
+	}
+
+	# Run to _exit in the child.
+	return_if_fail [continue_to_exit_bp]
+
+	do_detach $multi_process $cmd "normal"
+    }
+}
+
+# Same as test_detach, except set a watchpoint before detaching.
+
+proc test_detach_watch {wp multi_process cmd} {
+    if { $wp == "hw" && ![allow_hw_watchpoint_tests] } {
+	unsupported "hw watchpoint"
+	return
+    }
+    with_test_prefix "watchpoint:$wp" {
+	global binfile decimal
+
+	clean_restart ${binfile}
+
+	if ![runto_main] {
+	    return -1
+	}
+
+	if {$multi_process} {
+	    gdb_test_no_output "set detach-on-fork off"
+	    gdb_test_no_output "set follow-fork-mode child"
+
+	    gdb_breakpoint "child_function" temporary
+	    gdb_continue_to_breakpoint "child_function" ".*"
+	}
+
+	if { $wp == "hw" } {
+	    # Set a watchpoint in the child.
+	    gdb_test "watch globalvar" ".* watchpoint $decimal: globalvar"
+
+	    # Continue to the _exit breakpoint.  This arms the watchpoint
+	    # registers in all threads.  Detaching will thus need to clear
+	    # them out, and handle the case of the thread disappearing
+	    # while doing that (on targets that need to detach from each
+	    # thread individually).
+	    return_if_fail [continue_to_exit_bp]
+	} else {
+	    # Force software watchpoints.
+	    gdb_test_no_output "set can-use-hw-watchpoints 0"
+
+	    # As above, but flip order, other wise things take too long.
+	    return_if_fail [continue_to_exit_bp]
+	    gdb_test "watch globalvar" "Watchpoint $decimal: globalvar"
+
+	    if { $multi_process == 0 && $cmd == "continue" } {
+		setup_kfail "gdb/28375" "*-*-*"
+	    }
+	}
+
+	do_detach $multi_process $cmd "normal"
+    }
+}
+
+# Test detaching from a process that dies _before_ GDB starts
+# detaching.
+
+proc test_detach_killed_outside {multi_process cmd} {
+    with_test_prefix "killed outside" {
+	global binfile
+
+	clean_restart ${binfile}
+
+	if ![runto_main] {
+	    return -1
+	}
+
+	gdb_test_no_output "set breakpoint always-inserted on"
+
+	if {$multi_process} {
+	    gdb_test_no_output "set detach-on-fork off"
+	    gdb_test_no_output "set follow-fork-mode child"
+	}
+
+	# Run to _exit in the child.
+	return_if_fail [continue_to_exit_bp]
+
+	set childpid [get_integer_valueof "mypid" -1]
+	if { $childpid == -1 } {
+	    untested "failed to extract child pid"
+	    return -1
+	}
+
+	remote_exec target "kill -9 ${childpid}"
+
+	# Give it some time to die.
+	sleep 2
+
+	do_detach $multi_process $cmd "signal"
+    }
+}
+
+# The test proper.  MULTI_PROCESS is true if testing the multi-process
+# variant.
+
+proc do_test {multi_process cmd} {
+    global testfile srcfile binfile
+
+    if {$multi_process && $cmd == "detach"
+	&& [target_info exists gdb,noinferiorio]} {
+	# This requires inferior I/O to tell whether both the parent
+	# and child exit successfully.
+	return
+    }
+
+    set binfile [standard_output_file ${testfile}-$multi_process-$cmd]
+    set options {debug pthreads}
+    if {$multi_process} {
+	lappend options "additional_flags=-DMULTIPROCESS"
+    }
+
+    if {[build_executable "failed to build" \
+	     $testfile-$multi_process-$cmd $srcfile $options] == -1} {
+	return -1
+    }
+
+    test_detach $multi_process $cmd
+    foreach wp {"sw" "hw"} {
+	test_detach_watch $wp $multi_process $cmd
+    }
+    test_detach_killed_outside $multi_process $cmd
+}
+
+foreach multi_process {0 1} {
+    set mode [expr {$multi_process ? "multi-process" : "single-process"}]
+    foreach cmd {"detach" "continue"} {
+	with_test_prefix "$mode: $cmd" {
+	    do_test $multi_process $cmd
+	}
+    }
+}

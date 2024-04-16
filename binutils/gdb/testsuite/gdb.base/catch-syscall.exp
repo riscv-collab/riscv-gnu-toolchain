@@ -1,0 +1,840 @@
+#   Copyright 1997-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+
+# This program tests the 'catch syscall' functionality.
+#
+# It was written by Sergio Durigan Junior <sergiodj@linux.vnet.ibm.com>
+# on September/2008.
+
+standard_testfile
+
+if  { [prepare_for_testing "failed to prepare" $testfile ${testfile}.c] } {
+     return -1
+}
+
+# Check target supports catch syscall or not.
+if {![runto_main]} {
+    return
+}
+
+set test "catch syscall"
+gdb_test_multiple $test $test {
+    -re "The feature \'catch syscall\' is not supported.*\r\n$gdb_prompt $" {
+	unsupported "catch syscall isn't supported"
+	return -1
+    }
+    -re ".*$gdb_prompt $" {
+	pass $test
+    }
+}
+
+set test "check catch syscall"
+gdb_test_multiple "continue" $test {
+    -re ".*Your system does not support this type\r\nof catchpoint.*$gdb_prompt $" {
+	unsupported "catch syscall isn't supported"
+	return -1
+    }
+    -re ".*Catchpoint.*$gdb_prompt $" {
+      pass $test
+    }
+}
+
+# Test-case for PR27313.  Verify that negative syscall numbers are refused.
+gdb_test "catch syscall -1" "Unknown syscall number '-1'\\."
+
+# All (but the last) syscalls from the example code.  It is filled in
+# proc setup_all_syscalls.
+set all_syscalls { }
+set all_syscalls_numbers { }
+
+# The last syscall (exit()) does not return, so
+# we cannot expect the catchpoint to be triggered
+# twice.  It is a special case.
+set last_syscall { }
+set last_syscall_number { }
+
+set vfork_syscalls "(vfork|clone2?)"
+
+set unknown_syscall_number { }
+
+# Internal procedure used to check if, after issuing a 'catch syscall'
+# command (without arguments), the 'info breakpoints' command displays
+# that '"any syscall"' is to be caught.
+proc check_info_bp_any_syscall {} {
+    # Verifying that the catchpoint appears in the 'info breakpoints'
+    # command, but with "<any syscall>".
+    set thistest "catch syscall appears in 'info breakpoints'"
+    gdb_test "info breakpoints" ".*catchpoint.*keep y.*syscall \"<any syscall>\".*" $thistest
+}
+
+# Internal procedure used to check if, after issuing a 'catch syscall X'
+# command (with arguments), the 'info breakpoints' command displays
+# that the syscall 'X' is to be caught.
+proc check_info_bp_specific_syscall { syscall } {
+    set thistest "syscall(s) $syscall appears in 'info breakpoints'"
+    gdb_test "info breakpoints" ".*catchpoint.*keep y.*syscall(\[(\]s\[)\])? (.)?${syscall}(.)?.*" $thistest
+}
+
+# Internal procedure used to check if, after issuing a 'catch syscall X'
+# command (with many arguments), the 'info breakpoints' command displays
+# that the syscalls 'X' are to be caught.
+proc check_info_bp_many_syscalls { syscalls } {
+    set filter_str ""
+
+    foreach name $syscalls {
+      set filter_str "${filter_str}${name}, "
+    }
+
+    set filter_str [ string trimright $filter_str ", " ]
+
+    set thistest "syscalls $filter_str appears in 'info breakpoints'"
+    gdb_test "info breakpoints" ".*catchpoint.*keep y.*syscalls (.)?${filter_str}(.)?.*" $thistest
+}
+
+# This procedure checks if there was a call to a syscall.  The optional
+# pattern can match syscalls that vary in implementation, like vfork.
+proc check_call_to_syscall { syscall { pattern "" } } {
+    global decimal
+
+    if { $pattern eq "" } {
+      set pattern "${syscall}"
+    }
+
+    set thistest "program has called $syscall"
+    gdb_test "continue" "Catchpoint $decimal \\(call to syscall .?${pattern}.?\\).*" $thistest
+}
+
+# This procedure checks if the syscall returned.  The optional pattern
+# can match syscalls that vary in implementation, like vfork.
+proc check_return_from_syscall { syscall { pattern "" } } {
+    global decimal
+
+    if { $pattern eq "" } {
+      set pattern "${syscall}"
+    }
+
+    set thistest "syscall $syscall has returned"
+    if { $pattern eq "execve" } {
+	gdb_test_multiple "continue" $thistest {
+	    -re -wrap "Catchpoint $decimal \\(returned from syscall ${pattern}\\).*" {
+		pass $thistest
+		return 1
+	    }
+	    -re -wrap ".*Breakpoint $decimal, main .*" {
+		# On Powerpc the kernel does not report the returned from
+		# syscall as expected by the test.  GDB bugzilla 28623.
+		if { [istarget "powerpc64*-linux*"] } {
+		    xfail $thistest
+		} else {
+		    fail $thistest
+		}
+		return 0
+	    }
+	}
+
+    } else {
+	gdb_test "continue" "Catchpoint $decimal \\(returned from syscall ${pattern}\\).*" $thistest
+	return 1
+    }
+}
+
+# Internal procedure that performs two 'continue' commands and checks if
+# a syscall call AND return occur.  The optional pattern can match
+# syscalls that vary in implementation, like vfork.
+proc check_continue { syscall { pattern "" } } {
+    # Testing if the 'continue' stops at the
+    # specified syscall_name.  If it does, then it should
+    # first print that the infeior has called the syscall,
+    # and after print that the syscall has returned.
+
+    # Testing if the inferior has called the syscall.
+    check_call_to_syscall $syscall $pattern
+    # And now, that the syscall has returned.
+    return [check_return_from_syscall $syscall $pattern]
+}
+
+# Inserts a syscall catchpoint with an argument.
+proc insert_catch_syscall_with_arg { syscall } {
+    global decimal
+
+    # Trying to set the catchpoint
+    set thistest "catch syscall with arguments ($syscall)"
+    gdb_test "catch syscall $syscall" "Catchpoint $decimal \\(syscall \'?${syscall}\'?( \[${decimal}\])?\\)" $thistest
+
+    check_info_bp_specific_syscall $syscall
+}
+
+# Inserts a syscall catchpoint with many arguments.
+proc insert_catch_syscall_with_many_args { syscalls numbers } {
+    global decimal
+
+    set catch [ join $syscalls " " ]
+    set filter_str ""
+
+    foreach name $syscalls number $numbers {
+      set filter_str "${filter_str}'${name}' \\\[${number}\\\] "
+    }
+
+    set filter_str [ string trimright $filter_str " " ]
+
+    # Trying to set the catchpoint
+    set thistest "catch syscall with arguments ($filter_str)"
+    gdb_test "catch syscall $catch" "Catchpoint $decimal \\(syscalls ${filter_str}\\).*" $thistest
+
+    check_info_bp_many_syscalls $syscalls
+}
+
+proc check_for_program_end {} {
+    # Deleting the catchpoints
+    delete_breakpoints
+
+    gdb_continue_to_end "" continue 1
+}
+
+proc test_catch_syscall_without_args {} {
+    global all_syscalls last_syscall vfork_syscalls unknown_syscall_number decimal
+
+    with_test_prefix "without arguments" {
+	# Trying to set the syscall.
+	gdb_test "catch syscall" "Catchpoint $decimal \\(any syscall\\)"
+
+	check_info_bp_any_syscall
+
+	# We have to check every syscall.
+	foreach name $all_syscalls {
+	    check_continue $name
+	}
+
+	check_continue "vfork" $vfork_syscalls
+
+	with_test_prefix "ENOSYS" {
+	    check_continue $unknown_syscall_number
+	}
+
+	# At last but not least, we check if the inferior has called
+	# the last (exit) syscall.
+	check_call_to_syscall $last_syscall
+
+	# Now let's see if the inferior correctly finishes.
+	check_for_program_end
+    }
+}
+
+proc test_catch_syscall_with_args {} {
+    with_test_prefix "with arguments" {
+	set syscall_name "close"
+	insert_catch_syscall_with_arg $syscall_name
+
+	# Can we continue until we catch the syscall?
+	check_continue $syscall_name
+
+	# Now let's see if the inferior correctly finishes.
+	check_for_program_end
+    }
+}
+
+proc test_catch_syscall_with_many_args {} {
+    with_test_prefix "with many arguments" {
+	global all_syscalls all_syscalls_numbers
+
+	insert_catch_syscall_with_many_args $all_syscalls $all_syscalls_numbers
+
+	# Can we continue until we catch the syscalls?
+	foreach name $all_syscalls {
+	    check_continue $name
+	}
+
+	# Now let's see if the inferior correctly finishes.
+	check_for_program_end
+    }
+}
+
+proc test_catch_syscall_with_wrong_args {} {
+    with_test_prefix "wrong args" {
+	# mlock is not called from the source
+	set syscall_name "mlock"
+	insert_catch_syscall_with_arg $syscall_name
+
+	# Now, we must verify if the program stops with a continue.
+	# If it doesn't, everything is right (since we don't have
+	# a syscall named "mlock" in it).  Otherwise, this is a failure.
+	set thistest "catch syscall with unused syscall ($syscall_name)"
+	gdb_continue_to_end $thistest continue 1
+    }
+}
+
+proc test_catch_syscall_restarting_inferior {} {
+    with_test_prefix "restarting inferior" {
+	set syscall_name "chroot"
+
+	with_test_prefix "entry" {
+	    insert_catch_syscall_with_arg $syscall_name
+
+	    # Let's first reach the entry of the syscall.
+	    check_call_to_syscall $syscall_name
+	}
+
+	with_test_prefix "entry/return" {
+	    # Now, restart the program.
+	    rerun_to_main
+
+	    # And check for entry/return.
+	    check_continue $syscall_name
+
+	    # Can we finish?
+	    check_for_program_end
+	}
+    }
+}
+
+proc test_catch_syscall_skipping_return {} {
+    with_test_prefix "skipping return" {
+	with_test_prefix "entry" {
+	    set syscall_name "write"
+
+	    insert_catch_syscall_with_arg $syscall_name
+
+	    # Let's first reach the entry of the syscall.
+	    check_call_to_syscall $syscall_name
+
+	    # Now purposely skip the syscall return.
+	    delete_breakpoints
+	    gdb_test "stepi" ".*" "step over syscall return"
+	}
+
+	# With a naive entry/return toggle, gdb will still think
+	# the target is due for a syscall return.
+
+	with_test_prefix "entry/return" {
+	    set syscall_name "read"
+
+	    insert_catch_syscall_with_arg $syscall_name
+
+	    # Check for entry first, then return.
+	    check_continue $syscall_name
+
+	    # Can we finish?
+	    check_for_program_end
+	}
+    }
+}
+
+proc test_catch_syscall_mid_vfork {} {
+    global gdb_prompt decimal vfork_syscalls
+
+    with_test_prefix "mid-vfork" {
+	# Verify that the system supports "catch vfork".
+	gdb_test "catch vfork" "Catchpoint $decimal \\(vfork\\)" "insert first vfork catchpoint"
+	gdb_test_multiple "continue" "continue to first vfork catchpoint" {
+	    -re ".*Your system does not support this type\r\nof catchpoint.*$gdb_prompt $" {
+		unsupported "continue to first vfork catchpoint"
+		return
+	    }
+	    -re ".*Catchpoint $decimal \\(vforked process $decimal\\).*$gdb_prompt $" {
+		pass "continue to first vfork catchpoint"
+	    }
+	}
+
+	# Check that we now reach vfork return only.
+	# (The actual syscall used varies by architecture.)
+	gdb_test "catch syscall" "Catchpoint $decimal \\(any syscall\\)"
+	check_return_from_syscall "vfork" $vfork_syscalls
+
+	# Can we finish?
+	check_for_program_end
+    }
+}
+
+proc test_catch_syscall_execve {} {
+    global gdb_prompt decimal
+
+    with_test_prefix "execve" {
+
+	# Tell the test program we want an execve.
+	gdb_test_no_output "set do_execve = 1"
+
+	# Check for entry/return across the execve, making sure that the
+	# syscall_state isn't lost when turning into a new process.
+	insert_catch_syscall_with_arg "execve"
+	if [check_continue "execve"] {
+	    # The check_continue test generates an XFAIL on Powerpc.  In
+	    # that case, gdb is already at main so don't do the continue.
+
+
+	    # Continue to main so extended-remote can read files as needed.
+	    # (Otherwise that "Reading" output confuses gdb_continue_to_end.)
+	    gdb_continue "main"
+	}
+
+	# Now can we finish?
+	check_for_program_end
+    }
+}
+
+proc test_catch_syscall_fail_nodatadir {} {
+    with_test_prefix "fail no datadir" {
+	# Sanitizing.
+	delete_breakpoints
+
+	# Make sure GDB doesn't load the syscalls xml from the system
+	# data directory.
+	gdb_test "set data-directory /the/path/to/nowhere" \
+	    "warning: /the/path/to/nowhere: .*"
+
+	# Testing to see if we receive a warning when calling "catch
+	# syscall" without XML support (without datadir).
+	set thistest "catch syscall displays a warning when there is no XML support"
+	gdb_test "catch syscall" \
+	    "warning: Could not load the syscall XML file.*warning: GDB will not be able to display syscall names nor to verify if.*any provided syscall numbers are valid.*Catchpoint .*(syscall).*" \
+	    $thistest
+
+	# Since the catchpoint was set, we must check if it's present
+	# in "info breakpoints" output.
+	check_info_bp_any_syscall
+
+	# Sanitizing.
+	delete_breakpoints
+    }
+}
+
+proc test_catch_syscall_group {} {
+    global decimal
+
+    set sysnum "\\\[${decimal}\\\]"
+
+    gdb_test "catch syscall g:process" \
+	"Catchpoint $decimal \\(syscalls (\'(clone|fork|execve|exit)\' $sysnum)+.*" \
+	"set catchpoint on a group of syscalls"
+
+    gdb_test "catch syscall group:process read" \
+	"Catchpoint $decimal \\(syscalls (\'(clone|fork|execve|exit)\' $sysnum)+.*read.*\\)" \
+	"set catchpoints on a group of syscalls and on a single syscall"
+
+    gdb_test "catch syscall group:" \
+	"Unknown syscall group ''\." \
+	"set catchpoints on an invalid group"
+
+    gdb_test "catch syscall g:junk" \
+	"Unknown syscall group 'junk'\." \
+	"set catchpoints on an unknown group."
+
+    gdb_test "complete catch syscall g:proc" \
+	"catch syscall g:process" \
+	"complete catch syscall group with 'g:' prefix"
+
+    gdb_test "complete catch syscall group:proc" \
+	"catch syscall group:process" \
+	"complete catch syscall group with 'group:' prefix"
+
+    gdb_test_sequence "complete catch syscall g" \
+	"complete catch syscall group suggests 'group:' prefix" {
+	    "group:descriptor" "group:file" "group:ipc" "group:memory"
+	    "group:network" "group:process" "group:signal"
+	}
+}
+
+proc do_syscall_tests {} {
+    # NOTE: We don't have to point gdb at the correct data-directory.
+    # For the build tree that is handled by INTERNAL_GDBFLAGS.
+
+    # Verify that the 'catch syscall' help is available
+    gdb_test "help catch syscall" "Catch system calls.*"
+
+    # Try to set a catchpoint to a nonsense syscall
+    set thistest "catch syscall to a nonsense syscall is prohibited"
+    gdb_test "catch syscall nonsense_syscall" "Unknown syscall name .*" $thistest
+
+    # Regression test for syscall completer bug.
+    gdb_test "complete catch syscall close chroo" \
+	"catch syscall close chroot" \
+	"complete catch syscall with multiple words"
+
+    # Testing the 'catch syscall' command without arguments.
+    # This test should catch any syscalls.
+    if {[runto_main]} { test_catch_syscall_without_args }
+
+    # Testing the 'catch syscall' command with arguments.
+    # This test should only catch the specified syscall.
+    if {[runto_main]} { test_catch_syscall_with_args }
+
+    # Testing the 'catch syscall' command with many arguments.
+    # This test should catch $all_syscalls.
+    if {[runto_main]} { test_catch_syscall_with_many_args }
+
+    # Testing the 'catch syscall' command with WRONG arguments.
+    # This test should not trigger any catchpoints.
+    if {[runto_main]} { test_catch_syscall_with_wrong_args }
+
+    # Testing the 'catch syscall' command during a restart of
+    # the inferior.
+    if {[runto_main]} { test_catch_syscall_restarting_inferior }
+
+    # Testing the 'catch syscall' command toggling off past a
+    # syscall return, then resuming entry/return as normal.
+    if {[runto_main]} { test_catch_syscall_skipping_return }
+
+    # Testing the 'catch syscall' command starting mid-vfork.
+    if {[runto_main]} { test_catch_syscall_mid_vfork }
+
+    # Testing that 'catch syscall' entry/return tracks across execve.
+    if {[runto_main]} { test_catch_syscall_execve }
+
+    # Testing if the 'catch syscall' command works when switching to
+    # different architectures on-the-fly (PR gdb/10737).
+    if {[istarget *-linux*] && [runto_main]} { test_catch_syscall_multi_arch }
+
+    # Testing the 'catch' syscall command for a group of syscalls.
+    if {[runto_main]} { test_catch_syscall_group }
+}
+
+proc test_catch_syscall_without_args_noxml {} {
+    with_test_prefix "without args noxml" {
+	# We will need the syscall names even not using it because we
+	# need to know know many syscalls are in the example file.
+	global decimal all_syscalls last_syscall_number unknown_syscall_number all_syscalls_numbers
+
+	delete_breakpoints
+
+	gdb_test "catch syscall" "Catchpoint .*(syscall).*"
+
+	# Now, we should be able to set a catchpoint, and GDB shall
+	# not display the warning anymore.
+	foreach name $all_syscalls number $all_syscalls_numbers {
+	    with_test_prefix "$name" {
+		check_continue $number
+	    }
+	}
+
+	check_continue "vfork" $decimal
+
+	with_test_prefix "ENOSYS" {
+	    check_continue $unknown_syscall_number
+	}
+
+	# At last but not least, we check if the inferior has called
+	# the last (exit) syscall.
+	check_call_to_syscall $last_syscall_number
+
+	delete_breakpoints
+    }
+}
+
+proc test_catch_syscall_with_args_noxml {} {
+    with_test_prefix "with args noxml" {
+	global all_syscalls_numbers
+
+	delete_breakpoints
+
+	# Inserting all syscalls numbers to be caught
+	foreach syscall_number $all_syscalls_numbers {
+	    insert_catch_syscall_with_arg $syscall_number
+	}
+
+	# Checking that all syscalls are caught.
+	foreach syscall_number $all_syscalls_numbers {
+	    check_continue $syscall_number
+	}
+
+	delete_breakpoints
+    }
+}
+
+proc test_catch_syscall_with_wrong_args_noxml {} {
+    with_test_prefix "with wrong args noxml" {
+	delete_breakpoints
+
+	# Even without XML support, GDB should not accept unknown
+	# syscall names for the catchpoint.
+	gdb_test "catch syscall nonsense_syscall" \
+	    "Unknown syscall name .nonsense_syscall.*"
+
+	delete_breakpoints
+    }
+}
+
+proc test_catch_syscall_multi_arch_1 {
+  arch1 arch2 syscall1_name syscall2_name syscall_number
+} {
+    global decimal
+
+    with_test_prefix "multiple targets: $arch1 vs $arch2" {
+	# We are not interested in loading any binary here, and in
+	# some systems (PowerPC, for example), if we load a binary
+	# there is no way to set other architecture.
+	gdb_exit
+	gdb_start
+
+	set supported 1
+	foreach arch [list $arch1 $arch2] {
+	    gdb_test_multiple "set architecture $arch" "" {
+		-re -wrap "Undefined item: \"$arch\"\\." {
+		    set supported 0
+		    unsupported $gdb_test_name
+		}
+		-re -wrap "The target architecture is set to \"$arch\"\\." {
+		}
+	    }
+	}
+	if { $supported == 0 } {
+	    return
+	}
+
+	gdb_test "set architecture $arch1" \
+	    "The target architecture is set to \"$arch1\"\\."
+
+	gdb_test "catch syscall $syscall_number" \
+	    "Catchpoint $decimal \\(syscall .${syscall1_name}. \\\[${syscall_number}\\\]\\)" \
+	    "insert catch syscall on syscall $syscall_number -- $syscall1_name on $arch1"
+
+	gdb_test "set architecture $arch2" \
+	    "The target architecture is set to \"$arch2\"\\."
+
+	gdb_test "catch syscall $syscall_number" \
+	    "Catchpoint $decimal \\(syscall .${syscall2_name}. \\\[${syscall_number}\\\]\\)" \
+	    "insert catch syscall on syscall $syscall_number -- $syscall2_name on $arch2"
+    }
+}
+
+proc test_catch_syscall_multi_arch {} {
+    global binfile
+
+    set arch1 "i386"
+    set arch2 "i386:x86-64"
+    set syscall1_name "exit"
+    set syscall2_name "write"
+    set syscall_number 1
+    test_catch_syscall_multi_arch_1 $arch1 $arch2 $syscall1_name \
+	$syscall2_name $syscall_number
+
+    set arch1 "powerpc:common"
+    set arch2 "powerpc:common64"
+    set syscall1_name "fstatat64"
+    set syscall2_name "newfstatat"
+    set syscall_number 291
+    test_catch_syscall_multi_arch_1 $arch1 $arch2 $syscall1_name \
+	$syscall2_name $syscall_number
+
+    set arch1 "sparc"
+    set arch2 "sparc:v9"
+    set syscall1_name "setresuid32"
+    set syscall2_name "setresuid"
+    set syscall_number 108
+    test_catch_syscall_multi_arch_1 $arch1 $arch2 $syscall1_name \
+	$syscall2_name $syscall_number
+
+    set arch1 "aarch64"
+    set arch2 "arm"
+    set syscall1_name "reboot"
+    set syscall2_name "_newselect"
+    set syscall_number 142
+    test_catch_syscall_multi_arch_1 $arch1 $arch2 $syscall1_name \
+	$syscall2_name $syscall_number
+
+    set arch1 "s390:31-bit"
+    set arch2 "s390:64-bit"
+    set syscall1_name "_newselect"
+    set syscall2_name "select"
+    set syscall_number 142
+    test_catch_syscall_multi_arch_1 $arch1 $arch2 $syscall1_name \
+	$syscall2_name $syscall_number
+
+    clean_restart $binfile
+}
+
+proc do_syscall_tests_without_xml {} {
+    # Make sure GDB doesn't load the syscalls xml from the system data
+    # directory.
+    gdb_test "set data-directory /the/path/to/nowhere" \
+	"warning: /the/path/to/nowhere: .*"
+
+    # Let's test if we can catch syscalls without XML support.
+    # We should succeed, but GDB is not supposed to print syscall names.
+    if {[runto_main]} { test_catch_syscall_without_args_noxml }
+
+    # The only valid argument "catch syscall" should accept is the
+    # syscall number, and not the name (since it can't translate a
+    # name to a number).
+    if {[runto_main]} { test_catch_syscall_with_args_noxml }
+
+    # Now, we'll try to provide a syscall name (valid or not) to the command,
+    # and expect it to fail.
+    if {[runto_main]} { test_catch_syscall_with_wrong_args_noxml }
+}
+
+# This procedure fills the vector "all_syscalls_numbers" with the proper
+# numbers for the used syscalls according to the architecture.
+proc fill_all_syscalls_numbers {} {
+    global all_syscalls_numbers unknown_syscall_number all_syscalls
+
+    foreach syscall $all_syscalls {
+	lappend all_syscalls_numbers [get_integer_valueof "${syscall}_syscall" -1]
+    }
+
+    set unknown_syscall_number [get_integer_valueof "unknown_syscall" -1]
+}
+
+# Set up the vector all_syscalls.  Returns 1 upon success, 0 upon failure.
+
+proc setup_all_syscalls {} {
+    global all_syscalls
+    global gdb_prompt
+    global decimal
+    global last_syscall last_syscall_number
+
+    # They are ordered according to the file, so do not change this.
+    lappend all_syscalls "close"
+    lappend all_syscalls "chroot"
+
+    if { ![runto_main] } {
+	return 0
+    }
+
+    # SYS_pipe doesn't exist on aarch64 kernel.
+    set test "check SYS_pipe"
+    set have_SYS_pipe 0
+    set SYS_pipe -1
+    gdb_test_multiple "p pipe_syscall" $test {
+	-re -wrap " = ($decimal)" {
+	    pass $test
+	    set have_SYS_pipe 1
+	    set SYS_pipe $expect_out(1,string)
+	}
+	-re -wrap "No symbol .*" {
+	    pass $test
+	}
+    }
+
+    set test "check SYS_pipe2"
+    set have_SYS_pipe2 0
+    set SYS_pipe2 -1
+    gdb_test_multiple "p pipe2_syscall" $test {
+	-re -wrap " = ($decimal)" {
+	    pass $test
+	    set have_SYS_pipe2 1
+	    set SYS_pipe2 $expect_out(1,string)
+	}
+	-re -wrap "No symbol .*" {
+	    pass $test
+	}
+    }
+
+    if { $have_SYS_pipe == 0 && $have_SYS_pipe2 == 0 } {
+	return 0
+    }
+
+    with_test_prefix "determine pipe syscall" {
+	set line [gdb_get_line_number "pipe (fd)"]
+	gdb_test "break $line"
+	gdb_continue_to_breakpoint "before pipe call"
+	if { $have_SYS_pipe } {
+	    gdb_test "catch syscall $SYS_pipe"
+	}
+	if { $have_SYS_pipe2 } {
+	    gdb_test "catch syscall $SYS_pipe2"
+	}
+	set ok 0
+	gdb_test_multiple "continue" "" {
+	    -re -wrap "Catchpoint $decimal \\(call to syscall (pipe|$SYS_pipe)\\).*" {
+		lappend all_syscalls pipe
+		pass $gdb_test_name
+		set ok 1
+	    }
+	    -re -wrap "Catchpoint $decimal \\(call to syscall (pipe2|$SYS_pipe2)\\).*" {
+		lappend all_syscalls pipe2
+		pass $gdb_test_name
+		set ok 1
+	    }
+	    -re -wrap "" {
+		fail $gdb_test_name
+	    }
+	}
+	if { ! $ok } {
+	    return 0
+	}
+    }
+
+    lappend all_syscalls "write"
+    lappend all_syscalls "read"
+
+    # Determine the right syscall to use for exit()
+    set test "check SYS_exit"
+    set have_SYS_exit 0
+    set SYS_exit -1
+    gdb_test_multiple "p exit_syscall" $test {
+	-re -wrap " = ($decimal)" {
+	    pass $test
+	    set have_SYS_exit 1
+	    set SYS_exit $expect_out(1,string)
+	}
+	-re -wrap "No symbol .*" {
+	    pass $test
+	}
+    }
+
+    set test "check SYS_exit_group"
+    set have_SYS_exit_group 0
+    set SYS_exit_group -1
+    gdb_test_multiple "p exit_group_syscall" $test {
+	-re -wrap " = ($decimal)" {
+	    pass $test
+	    set have_SYS_exit_group 1
+	    set SYS_exit_group $expect_out(1,string)
+	}
+	-re -wrap "No symbol .*" {
+	    pass $test
+	}
+    }
+
+    if { $have_SYS_exit == 0 && $have_SYS_exit_group == 0 } {
+	return 0
+    }
+
+    if { $have_SYS_exit } {
+	set last_syscall "exit"
+	set last_syscall_number $SYS_exit
+    } else {
+	set last_syscall "exit_group"
+	set last_syscall_number $SYS_exit_group
+    }
+    return 1
+}
+
+if { ![setup_all_syscalls] } {
+    return -1
+}
+
+# Fill all the syscalls numbers before starting anything.
+fill_all_syscalls_numbers
+
+# Execute the tests, using XML support
+gdb_exit
+if { [allow_xml_test] } {
+  clean_restart $binfile
+  do_syscall_tests
+
+  # Now, we have to see if GDB displays a warning when we
+  # don't set the data-directory but try to use catch syscall
+  # anyway.  For that, we must restart GDB first.
+  clean_restart $binfile
+  test_catch_syscall_fail_nodatadir
+}
+
+# Restart gdb
+clean_restart $binfile
+
+# Execute the tests, without XML support.  In this case, GDB will
+# only display syscall numbers, and not syscall names.
+do_syscall_tests_without_xml

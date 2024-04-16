@@ -1,0 +1,108 @@
+# Copyright (C) 2023-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that GDB correctly deallocates the window factory object (a)
+# when a window factory is replaced, and (b) during GDB shutdown.
+#
+# This test also ensures that when a new window is registered (via the
+# Python API) with the same name as an existing window, then the
+# previous window is replaced.
+
+load_lib gdb-python.exp
+
+tuiterm_env
+
+clean_restart
+
+require allow_tui_tests allow_python_tests
+
+set pyfile [gdb_remote_download host \
+		${srcdir}/${subdir}/${gdb_test_file_name}.py]
+
+Term::clean_restart 24 80
+if { ![Term::prepare_for_tui] } {
+    unsupported "TUI not supported"
+    return
+}
+
+gdb_test "source ${pyfile}" "Python script imported" \
+    "import python scripts"
+
+gdb_test "python register_window_factory('msg_1')" \
+    "Entering TestWindowFactory\\.__init__: msg_1"
+
+gdb_test "python register_window_factory('msg_2')" \
+    [multi_line \
+	 "Entering TestWindowFactory\\.__init__: msg_2" \
+	 "Entering TestWindowFactory\\.__del__: msg_1"]
+
+gdb_test_no_output "tui new-layout test test_window 1 cmd 1 status 1"
+
+# Load the custom window layout and ensure that the correct window
+# factory was used.
+with_test_prefix "msg_2" {
+    Term::command_no_prompt_prefix "layout test"
+    Term::check_box_contents "check test_window box" 0 0 80 15 \
+	"TestWindow \\(msg_2\\)"
+}
+
+# Replace the existing window factory with a new one, then switch
+# layouts so that GDB recreates the window, and check that the new
+# window factory was used.
+with_test_prefix "msg_3" {
+    Term::command "python register_window_factory('msg_3')"
+    Term::check_region_contents "check for python output" \
+	0 18 80 2 \
+	[multi_line \
+	     "Entering TestWindowFactory.__init__: msg_3\\s+" \
+	     "Entering TestWindowFactory.__del__: msg_2"]
+    Term::command "layout src"
+    Term::command "layout test"
+
+    Term::check_box_contents "check test_window box" 0 0 80 15 \
+	"TestWindow \\(msg_3\\)"
+}
+
+# Restart GDB, setup a TUI window factory, and then check that the
+# Python object is deallocated when GDB exits.
+with_test_prefix "call __del__ at exit" {
+    clean_restart
+
+    gdb_test "source ${pyfile}" "Python script imported" \
+	"import python scripts"
+
+    gdb_test "python register_window_factory('msg_1')" \
+	"Entering TestWindowFactory\\.__init__: msg_1"
+
+    gdb_test "python register_window_factory('msg_2')" \
+	[multi_line \
+	     "Entering TestWindowFactory\\.__init__: msg_2" \
+	     "Entering TestWindowFactory\\.__del__: msg_1"]
+
+    set saw_window_factory_del 0
+    gdb_test_multiple "quit" "" {
+	-re "^quit\r\n" {
+	    exp_continue
+	}
+	-re "^Entering TestWindowFactory.__del__: msg_2\r\n" {
+	    incr saw_window_factory_del
+	    exp_continue
+	}
+	eof {
+	    gdb_assert { $saw_window_factory_del == 1 }
+	    pass $gdb_test_name
+	}
+    }
+}

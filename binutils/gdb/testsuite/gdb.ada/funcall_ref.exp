@@ -1,0 +1,89 @@
+# Copyright 2008-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "ada.exp"
+
+require allow_ada_tests
+
+standard_ada_testfile foo
+
+# Note we don't test the "none" (no -fgnat-encodings option) scenario
+# here, because "all" and "minimal" cover the cases, and this way we
+# don't have to update the test when gnat changes its default.
+foreach_with_prefix scenario {all minimal} {
+    set flags [list debug additional_flags=-fgnat-encodings=$scenario]
+
+    if {[gdb_compile_ada "${srcfile}" "${binfile}-${scenario}" executable $flags] != ""} {
+	return -1
+    }
+
+    clean_restart ${testfile}-${scenario}
+
+    set bp_location [gdb_get_line_number "STOP" ${testdir}/foo.adb]
+    runto "foo.adb:$bp_location"
+
+    # Test printing and type-printing of a discriminated record that a function
+    # returns by reference.
+
+    # Currently, GCC describes such functions as returning pointers (instead of
+    # references).
+    set pass_re [multi_line "type = <ref> record" \
+		     "    n: natural;" \
+		     "    s: array \\(1 \\.\\. n\\) of character;" \
+		     "end record"]
+    # With DWARF we get debuginfo that could in theory show "1..n" for
+    # the range:
+    #     <3><1230>: Abbrev Number: 15 (DW_TAG_member)
+    #     <1231>   DW_AT_name        : n
+    # ...
+    #  <4><1257>: Abbrev Number: 18 (DW_TAG_subrange_type)
+    #     <1258>   DW_AT_type        : <0x126e>
+    #     <125c>   DW_AT_upper_bound : <0x1230>
+    # However, we don't currently record the needed information in the
+    # location batons.  In the meantime, we accept and kfail the
+    # compromise output.
+    set dwarf_kfail_re [multi_line "type = <ref> record" \
+			    "    n: natural;" \
+			    "    s: array \\(<>\\) of character;" \
+			    "end record"]
+    set unsupported_re [multi_line "type = access record" \
+			    "    n: natural;" \
+			    "    s: access array \\(1 \\.\\. n\\) of character;" \
+			    "end record"]
+    set supported 1
+    gdb_test_multiple "ptype get(\"Hello world!\")" "" {
+	-re -wrap $pass_re {
+	    pass $gdb_test_name
+	}
+	-re -wrap $dwarf_kfail_re {
+	    if {$scenario == "minimal"} {
+		setup_kfail "symbolic names in location batons" *-*-*
+	    }
+	    fail $gdb_test_name
+	    set supported 0
+	}
+	-re -wrap $unsupported_re {
+	    unsupported $gdb_test_name
+	    set supported 0
+	}
+    }
+
+    if { $supported == 0 } {
+	return 0
+    }
+
+    gdb_test "p get(\"Hello world!\")" \
+	"= \\(n => 12, s => \"Hello world!\"\\)"
+}

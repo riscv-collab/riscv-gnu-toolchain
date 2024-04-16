@@ -1,0 +1,66 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check that gdb doesn't hang or segfault on reading a DIE with a
+# specification/abstract_origin reference to itself.
+
+load_lib dwarf.exp
+
+require dwarf2_support
+
+standard_testfile main.c .S
+
+# Create the DWARF.
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    cu {} {
+	compile_unit {{language @DW_LANG_C_plus_plus}} {
+	    # Check handling of self-referencing DIE.
+	    declare_labels c1
+	    c1: class_type {
+		{name c1}
+		{specification :$c1}
+	    }
+
+	    # Check handling of self-referencing child DIE.  Regression test
+	    # for PR30799.
+	    declare_labels f1 abstract_f1 f1_l
+	    abstract_f1: subprogram {}
+	    f1: subprogram {
+		{MACRO_AT_func {main}}
+		{abstract_origin :$abstract_f1}
+	    } {
+		f1_l: label {
+		    {abstract_origin :$f1_l}
+		}
+	    }
+	}
+    }
+}
+
+if [prepare_for_testing "failed to prepare" $testfile "${asm_file} ${srcfile}" {}] {
+    return -1
+}
+
+set index [have_index $binfile]
+require {string eq $index ""}
+
+require !readnow
+
+gdb_test "maint print objfiles $testfile" \
+    "\r\n *qualified: *c1\r\n.*" \
+    "class c1 in cooked index"
+
+gdb_test "maint expand-symtabs"

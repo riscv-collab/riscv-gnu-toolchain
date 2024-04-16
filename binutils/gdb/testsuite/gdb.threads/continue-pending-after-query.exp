@@ -1,0 +1,90 @@
+# This testcase is part of GDB, the GNU debugger.
+#
+# Copyright 2013-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Regression test for a bug that would go like this:
+#
+# - Run to a breakpoint that is hit by two threads (A and B)
+#   simultaneously.
+#
+# - One of the breakpoint hits is processed (e.g., thread A) and
+#   causes a user-visible stop.  The other (thread B) is left pending.
+#
+# - The user deletes the breakpoint with "del", which causes a
+#   confirmation query.
+#
+# - By mistake, that would result in the target being left with async
+#   enabled, even though it wasn't to begin with.
+#
+# - GDB reacts to target async enablement by polling for target
+#   events.  As no thread is resumed the target replies
+#   TARGET_WAITKIND_NO_RESUMED.
+#
+# - The user continues the program, expecting it to exit.  The thread
+#   that has an event pending (thread B) is not really resumed.
+#
+# - But, nothing signals the event loop that there's a pending event
+#   waiting to be collected for thread B, so that event is never
+#   processed, thread B is never resumed and the program never exits.
+#
+# Ref: https://sourceware.org/ml/gdb-patches/2015-01/msg00592.html
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile {debug pthreads}] == -1} {
+    return -1
+}
+
+proc test {} {
+    global srcfile gdb_prompt
+
+    if ![runto_main] {
+	return -1
+    }
+
+    delete_breakpoints
+
+    set bp_line [gdb_get_line_number "set break here" $srcfile]
+
+    gdb_breakpoint "break_function"
+    gdb_continue_to_breakpoint "cont to break_function" ".*$srcfile:$bp_line\r\n.*"
+
+    # Do something that causes a query/secondary prompt.
+
+    set test "delete breakpoints, answer prompt"
+    set saw_prompt 0
+    gdb_test_multiple "delete breakpoints" $test {
+	-re "Delete all breakpoints.*y or n.*$" {
+	    set saw_prompt 1
+	    send_gdb "y\n"
+	    exp_continue
+	}
+	-re "$gdb_prompt $" {
+	    gdb_assert $saw_prompt $test
+	}
+    }
+
+    gdb_continue_to_end "" "continue" 1
+}
+
+# Test a few times to make sure an event is left pending.  At the time
+# of writing, the bug always triggers, but that might naturally depend
+# on machine.
+for {set i 1} {$i <= 10} {incr i} {
+    with_test_prefix "iter $i" {
+	test
+    }
+}

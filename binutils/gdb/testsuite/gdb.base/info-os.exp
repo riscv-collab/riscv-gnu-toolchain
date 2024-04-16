@@ -1,0 +1,177 @@
+# Copyright 2011-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile .c
+
+# This test is Linux-only.
+if {![istarget *-*-linux*]} {
+    unsupported "info-os.exp"
+    return -1
+}
+
+# Support for XML-output is needed to run this test.
+require allow_xml_test
+
+# Compile test program.
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile {debug pthreads}] } {
+    return -1
+}
+
+if {![runto_main]} {
+    return -1
+}
+
+# Get PID of test program.
+set inferior_pid ""
+set test "get inferior process ID"
+gdb_test_multiple "call ((int (*) (void)) getpid) ()" $test {
+    -re ".* = ($decimal).*$gdb_prompt $" {
+	set inferior_pid $expect_out(1,string)
+	pass $test
+    }
+}
+if {$inferior_pid == ""} {
+    untested "failed to get pid"
+    return
+}
+
+gdb_breakpoint ${srcfile}:[gdb_get_line_number "Set breakpoint here"]
+gdb_continue_to_breakpoint "Set breakpoint here"
+
+# Get keys and IDs of the IPC object instances.
+set shmkey -1
+set test "get shared memory key"
+gdb_test_multiple "print shmkey" $test {
+    -re ".* = ($decimal).*$gdb_prompt $" {
+	set shmkey $expect_out(1,string)
+	pass $test
+    }
+}
+set shmid -1
+set test "get shared memory ID"
+gdb_test_multiple "print shmid" $test {
+    -re ".* = ($decimal).*$gdb_prompt $" {
+	set shmid $expect_out(1,string)
+	pass $test
+    }
+}
+
+set semkey -1
+set test "get semaphore key"
+gdb_test_multiple "print semkey" $test {
+    -re ".* = ($decimal).*$gdb_prompt $" {
+	set semkey $expect_out(1,string)
+	pass $test
+    }
+}
+
+set semid -1
+set test "get semaphore ID"
+gdb_test_multiple "print semid" $test {
+    -re ".* = ($decimal).*$gdb_prompt $" {
+	set semid $expect_out(1,string)
+	pass $test
+    }
+}
+
+set msgkey -1
+set test "get message queue key"
+gdb_test_multiple "print msgkey" $test {
+    -re ".* = ($decimal).*$gdb_prompt $" {
+	set msgkey $expect_out(1,string)
+	pass $test
+    }
+}
+
+set msqid -1
+set test "get message queue ID"
+gdb_test_multiple "print msqid" $test {
+    -re ".* = ($decimal).*$gdb_prompt $" {
+	set msqid $expect_out(1,string)
+	pass $test
+    }
+}
+
+# Get port number of test socket.
+set port -1
+set test "get socket port number"
+gdb_test_multiple "print port" $test {
+    -re ".* = ($decimal).*$gdb_prompt $" {
+	set port $expect_out(1,string)
+	pass $test
+    }
+}
+
+# Act like gdb_test but prevent: +ERROR: internal buffer is full.
+
+proc expect_multiline { command expect test } {
+    global gdb_prompt
+
+    # Do not duplicate FAILs from gdb_test_multiple.
+    set found 0
+    set ok 0
+    gdb_test_multiple $command $test {
+	-re "^$expect *\r\n" {
+	    set found 1
+	    exp_continue
+	}
+	-re "^$gdb_prompt $" {
+	    if $found {
+		set ok 1
+	    }
+	    # Exit the loop.
+	}
+	-re "\r\n" {
+	    # Drop the buffer.
+	    exp_continue
+	}
+    }
+    gdb_assert { $ok } $test
+}
+
+# Test output of the 'info os' commands against the expected results.
+
+#                                     pid            user  command      cores
+expect_multiline "info os processes" "$inferior_pid +\\S+ +\\S*info-os +\[0-9,\]+" "get process list"
+
+#                                      pgid           leader   pid            command line
+expect_multiline "info os procgroups" "$inferior_pid +info-os +$inferior_pid +\\S*info-os" "get process groups"
+
+#                                   pid            command  tid   core
+expect_multiline "info os threads" "$inferior_pid +info-os +\\d+ +\\d+" "get threads"
+
+#                                 pid            command  fd    name
+expect_multiline "info os files" "$inferior_pid +info-os +\\d+ +/dev/null" "get file descriptors"
+
+#                                   local address  l-port remote addr r-port state  user family protocol
+expect_multiline "info os sockets" "0\\.0\\.0\\.0 +$port +0\\.0\\.0\\.0 +0 +LISTEN +\\S+ +INET +STREAM" "get internet-domain sockets"
+
+#                               key   shmid   perm size creator command last op  command  num attached  user  group  creator user  creator group  last shmat() time  last shmdt() time  last shmctl() time
+expect_multiline "info os shm" "$shmkey +$shmid +666 +4096 +info-os .*" "get shared-memory regions"
+
+#                                      key   semid   perm num semaphores  user  group  creator user  creator group  last semop() time  last semctl() time
+expect_multiline "info os semaphores" "$semkey +$semid +666 +1 .*" "get semaphores"
+
+#                               key   msqid   perm  num used bytes  num messages  last msgsnd() command  last msgrcv() command  user  group  creator user  creator group  last msgsnd() time  last msgrcv() time  last msgctl() time
+expect_multiline "info os msg" "$msgkey +$msqid +666 .*" "get message queues"
+
+gdb_test "info os unknown_entry" [multi_line \
+	"warning: Empty data returned by target.  Wrong osdata type\\\?" \
+	"Can not fetch data now."]
+
+# The SysV IPC primitives linger on after the creating process is killed
+# unless they are destroyed explicitly, so allow the test program to tidy
+# up after itself.
+gdb_test "continue" "exited.*"

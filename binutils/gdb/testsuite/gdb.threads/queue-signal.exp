@@ -1,0 +1,94 @@
+# Copyright (C) 2014-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile
+
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" \
+	 executable { debug }] != "" } {
+    return -1
+}
+
+clean_restart ${binfile}
+
+if ![runto_main] {
+   return 0
+}
+
+gdb_test "handle SIGUSR1 stop print pass"
+gdb_test "handle SIGUSR2 stop print pass"
+gdb_test "handle SIGABRT stop print pass"
+
+gdb_breakpoint "all_threads_running"
+gdb_continue_to_breakpoint "all_threads_running"
+
+# Find out which of threads 2,3 are for sigusr1,2.
+set sigusr1_thread 0
+set sigusr2_thread 0
+gdb_test "thread 2"
+gdb_test_multiple "bt" "determine thread functions" {
+    -re "sigusr1.*$gdb_prompt $" {
+	set sigusr1_thread 2
+	set sigusr2_thread 3
+    }
+    -re "sigusr2.*$gdb_prompt $" {
+	set sigusr1_thread 3
+	set sigusr2_thread 2
+    }
+}
+
+# No point in continuing if we couldn't figure out which thread is which.
+if { $sigusr1_thread == 0 } {
+    # FAIL already recorded.
+    return 0
+}
+
+# Advance each thread to where we want them one at a time.
+gdb_test_no_output "set scheduler-locking on"
+gdb_test_no_output "set var ready = 1"
+
+# Thread sigusr1_thread gets a SIGUSR1 which we leave alone.
+gdb_test "thread $sigusr1_thread" "" \
+    "switch to SIGUSR1 thread"
+gdb_test "continue" "SIGUSR1.*" \
+    "continue until we get SIGUSR1"
+
+# Inject SIGUSR2 into thread sigusr2_thread.
+gdb_test "thread $sigusr2_thread" ""  \
+    "switch to SIGUSR2 thread"
+gdb_test_no_output "queue-signal SIGUSR2"
+
+# The main thread gets SIGABRT which we then throw away.
+gdb_test "thread 1" ""
+gdb_test "continue" "SIGABRT.*"  \
+    "continue until we get SIGABRT"
+gdb_test_no_output "queue-signal 0"
+
+# Now let every thread run.
+gdb_test_no_output "set scheduler-locking off"
+
+gdb_breakpoint "all_threads_done"
+gdb_continue_to_breakpoint "all_threads_done"
+
+# Verify SIGUSR1, SIGUSR2 were received, and SIGABRT was discarded.
+gdb_test "p sigusr1_received" "= 1"
+gdb_test "p sigusr2_received" "= 1"
+gdb_test "p sigabrt_received" "= 0"
+
+# Before we finish up verify the queueing of nopass signals flags an error.
+gdb_test "queue-signal SIGINT" \
+  "Signal handling set to not pass this signal to the program."
+
+# Verify program is able to finish.
+gdb_continue_to_end

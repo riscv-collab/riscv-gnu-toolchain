@@ -1,0 +1,188 @@
+# Copyright (C) 2013-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+namespace eval PerfTest {
+    # The name of python file on build.
+    variable remote_python_file
+
+    # A private method to set up GDB for performance testing.
+    proc _setup_perftest {} {
+	variable remote_python_file
+	global srcdir subdir testfile
+
+	set remote_python_file [gdb_remote_download host ${srcdir}/${subdir}/${testfile}.py]
+
+	# Set sys.path for module perftest.
+	with_test_prefix "setup perftest" {
+	    gdb_test_no_output "python import os, sys"
+	    gdb_test_no_output \
+		"python sys.path.insert\(0, os.path.abspath\(\"${srcdir}/${subdir}/lib\"\)\)" \
+		"python sys.path.insert\(0, os.path.abspath\(\"\${srcdir}/${subdir}/lib\"\)\)"
+	    gdb_test_no_output \
+		"python exec (open ('${remote_python_file}').read ())" \
+		"python exec (open ('\${srcdir}/${subdir}/${testfile}.py').read ())"
+	}
+    }
+
+    # A private method to do some cleanups when performance test is
+    # finished.
+    proc _teardown_perftest {} {
+	variable remote_python_file
+
+	remote_file host delete $remote_python_file
+    }
+
+    # Compile source files of test case.  BODY is the tcl code to do
+    # actual compilation.  Return zero if compilation is successful,
+    # otherwise return non-zero.
+    proc compile {body} {
+	return [uplevel 2 $body]
+    }
+
+    # Run the startup code.  Return zero if startup is successful,
+    # otherwise return non-zero.
+    proc startup {body} {
+	return [uplevel 2 $body]
+    }
+
+    # Start up GDB.
+    proc startup_gdb {body} {
+	uplevel 2 $body
+    }
+
+    # Run the performance test.  Return zero if the run is successful,
+    # otherwise return non-zero.
+    proc run {body} {
+	global timeout
+	global GDB_PERFTEST_TIMEOUT
+
+	set oldtimeout $timeout
+	if { [info exists GDB_PERFTEST_TIMEOUT] } {
+	    set timeout $GDB_PERFTEST_TIMEOUT
+	} else {
+	    set timeout 3000
+	}
+	set result [uplevel 2 $body]
+
+	set timeout $oldtimeout
+	return $result
+    }
+
+    # The top-level interface to PerfTest.
+    # COMPILE is the tcl code to generate and compile source files.
+    # STARTUP is the tcl code to start up GDB.
+    # RUN is the tcl code to drive GDB to do some operations.
+    # Each of COMPILE, STARTUP, and RUN return zero if successful, and
+    # non-zero if there's a failure.
+
+    proc assemble {compile startup run} {
+	global GDB_PERFTEST_MODE
+
+	if ![info exists GDB_PERFTEST_MODE] {
+	    return
+	}
+
+	if { [string compare $GDB_PERFTEST_MODE "run"] != 0 } {
+	    if { [eval compile {$compile}] } {
+		untested "failed to compile"
+		return
+	    }
+	}
+
+	# Don't execute the run if GDB_PERFTEST_MODE=compile.
+	if { [string compare $GDB_PERFTEST_MODE "compile"] == 0} {
+	    return
+	}
+
+	verbose -log "PerfTest::assemble, startup ..."
+
+	if [eval startup {$startup}] {
+	    fail "startup"
+	    return
+	}
+
+	verbose -log "PerfTest::assemble, done startup"
+
+	_setup_perftest
+
+	verbose -log "PerfTest::assemble, run ..."
+
+	if [eval run {$run}] {
+	    fail "run"
+	}
+
+	verbose -log "PerfTest::assemble, run complete."
+
+	_teardown_perftest
+    }
+}
+
+# Return true if performance tests are to be run.
+
+proc allow_perf_tests { } {
+    global GDB_PERFTEST_MODE
+
+    if [info exists GDB_PERFTEST_MODE] {
+	if { "$GDB_PERFTEST_MODE" != "compile"
+	     && "$GDB_PERFTEST_MODE" != "run"
+	     && "$GDB_PERFTEST_MODE" != "both" } {
+	    error "Unknown value of GDB_PERFTEST_MODE."
+	    return 0
+	}
+
+	return 1
+    }
+
+    return 0
+}
+
+# Given a list of tcl strings, return the same list as the text form of a
+# python list.
+
+proc tcl_string_list_to_python_list { l } {
+    proc quote { text } {
+	return "\"$text\""
+    }
+    set quoted_list ""
+    foreach elm $l {
+	lappend quoted_list [quote $elm]
+    }
+    return "([join $quoted_list {, }])"
+}
+
+# Helper routine for PerfTest::assemble "run" step implementations.
+# Issues the "python ${OBJ}.run()" command, and consumes GDB output
+# line by line.  Issues a FAIL if the command fails with a Python
+# error.  Issues a PASS on success.  MESSAGE is an optional message to
+# be printed.  If this is omitted, then the pass/fail messages use the
+# command string as the message.
+
+proc gdb_test_python_run {obj {message ""}} {
+    global gdb_prompt
+
+    set saw_error 0
+    gdb_test_multiple "python ${obj}.run()" $message {
+	-re "Error while executing Python code\\." {
+	    set saw_error 1
+	    exp_continue
+	}
+	-re "\[^\r\n\]*\r\n" {
+	    exp_continue
+	}
+	-re "$gdb_prompt $" {
+	    gdb_assert {!$saw_error} $gdb_test_name
+	}
+    }
+}

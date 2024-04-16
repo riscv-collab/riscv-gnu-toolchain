@@ -1,0 +1,93 @@
+# Copyright 2013-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile .cc
+
+require allow_cplus_tests
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile {debug c++}]} {
+    return -1
+}
+
+if {![runto_main]} {
+    return -1
+}
+
+if {[skip_libstdcxx_probe_tests]} {
+    untested "could not find libstdc++ stap probe"
+    return -1
+}
+
+proc do_continue_to_catchpoint {name} {
+    global gdb_prompt
+
+    gdb_test_multiple "continue" $name {
+	-re "Continuing.*Catchpoint \[0-9\].*\r\n$gdb_prompt $" {
+	    pass $name
+	}
+    }
+}
+
+proc do_exceptprint_tests {prefix output} {
+    with_test_prefix $prefix {
+	do_continue_to_catchpoint "continue to throw"
+	gdb_test "print \$_exception" " = $output" \
+	    "print exception value at throw"
+
+	do_continue_to_catchpoint "continue to catch"
+	gdb_test "print \$_exception" " = $output" \
+	    "print exception value at catch"
+	
+	do_continue_to_catchpoint "continue to rethrow"
+	gdb_test "print \$_exception" " = $output" \
+	    "print exception value at rethrow"
+
+	do_continue_to_catchpoint "continue to final catch"
+    }
+}
+
+gdb_test "catch catch" "Catchpoint \[0-9\]+ \\(catch\\)"
+gdb_test "catch throw" "Catchpoint \[0-9\]+ \\(throw\\)"
+gdb_test "catch rethrow" "Catchpoint \[0-9\]+ \\(rethrow\\)"
+
+do_exceptprint_tests string "$hex \"hi bob\""
+do_exceptprint_tests int 23
+do_exceptprint_tests struct "{mv = 77}"
+do_exceptprint_tests "reference to struct" "{mv = 77}"
+
+
+delete_breakpoints
+
+if {![runto_main]} {
+    return -1
+}
+
+with_test_prefix "2nd run" {
+    gdb_test "catch catch int if \$_exception == 23" \
+	"Catchpoint \[0-9\]+ \\(catch\\)" \
+	"catch catch"
+    gdb_test "catch throw int if \$_exception == 23" \
+	"Catchpoint \[0-9\]+ \\(throw\\)" \
+	"catch throw"
+    gdb_test "catch rethrow int if \$_exception == 23" \
+	"Catchpoint \[0-9\]+ \\(rethrow\\)" \
+	"catch rethrow"
+}
+
+# This tests both the case where the regular expression does not
+# match, and the case where it does.
+with_test_prefix "2nd run" {
+    do_exceptprint_tests int 23
+}

@@ -1,0 +1,102 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2007-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test attaching to already-running programs using extended-remote.
+
+load_lib gdbserver-support.exp
+load_lib trace-support.exp
+
+standard_testfile
+
+require allow_gdbserver_tests
+
+require can_spawn_for_attach
+
+if {[build_executable "failed to prepare" $testfile $srcfile debug]} {
+    return -1
+}
+
+# Run the test.  TARGET_NON_STOP and TARGET_ASYNC should be 'on'
+# or 'off'.  TO_DISABLE should be either the empty string, or
+# something that can be passed to gdbserver's --disable-packet command
+# line option.
+proc run_test { target_async target_non_stop to_disable } {
+    save_vars { ::GDBFLAGS } {
+	append ::GDBFLAGS " -ex \"maint set target-non-stop $target_non_stop\""
+	append ::GDBFLAGS " -ex \"maintenance set target-async ${target_async}\""
+
+	# If GDB and GDBserver are both running locally, set the sysroot to avoid
+	# reading files via the remote protocol.
+	if { ![is_remote host] && ![is_remote target] } {
+	    set ::GDBFLAGS "$::GDBFLAGS -ex \"set sysroot\""
+	}
+
+	clean_restart $::binfile
+    }
+
+    # Make sure we're disconnected, in case we're testing with an
+    # extended-remote board, therefore already connected.
+    gdb_test "disconnect" ".*"
+
+    if {[gdb_target_supports_trace]} {
+	# Test predefined TSVs are uploaded.
+	gdb_test_sequence "info tvariables" "check uploaded tsv" {
+	    "\[\r\n\]+Name\[\t \]+Initial\[\t \]+Current"
+	    "\[\r\n\]+\\\$trace_timestamp 0"
+	}
+    }
+
+    set target_exec [gdbserver_download_current_prog]
+    if { $to_disable != "" } {
+	set gdbserver_opts "--disable-packet=${to_disable}"
+    } else {
+	set gdbserver_opts ""
+    }
+    gdbserver_start_extended $gdbserver_opts
+
+    gdb_test_no_output "set remote exec-file $target_exec" "set remote exec-file"
+
+    set test_spawn_id [spawn_wait_for_attach $::binfile]
+    set testpid [spawn_id_get_pid $test_spawn_id]
+
+    gdb_test "attach $testpid" \
+	"Attaching to program: .*, process $testpid.*(in|at).*" \
+	"attach to remote program 1"
+
+    gdb_test "backtrace" ".*main.*" "backtrace 1"
+
+    gdb_test "detach" "Detaching from program.*process.*"
+    gdb_test "backtrace" "No stack\\." "backtrace with no program"
+
+    gdb_test "attach $testpid" \
+	"Attaching to program: .*, process $testpid.*(in|at).*" \
+	"attach to remote program 2"
+    gdb_test "backtrace" ".*main.*" "backtrace 2"
+
+    gdb_test "kill" "" "kill" "Kill the program being debugged. .y or n. " "y"
+    gdb_test_no_output "monitor exit"
+
+    kill_wait_spawned_process $test_spawn_id
+}
+
+foreach_with_prefix target_async {"on" "off" } {
+    foreach_with_prefix target_non_stop {"off" "on"} {
+	foreach_with_prefix to_disable { "" Tthread T } {
+	    run_test ${target_async} ${target_non_stop} $to_disable
+	}
+    }
+}

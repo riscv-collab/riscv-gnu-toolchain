@@ -1,0 +1,135 @@
+#   Copyright 1998-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file was written by Michael Snyder (msnyder@cygnus.com)
+
+load_lib "trace-support.exp"
+
+standard_testfile actions.c
+require gdb_trace_common_supports_arch
+if { [gdb_compile "$srcdir/$subdir/$srcfile" $binfile \
+	  executable {debug nowarnings}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+clean_restart $binfile
+runto_main
+
+if {![gdb_target_supports_trace]} {
+    unsupported "current target does not support trace"
+    return 1
+
+}
+
+# If testing on a remote host, download the source file.
+# remote_download host $srcdir/$subdir/$srcfile
+
+
+#
+# test passcount dynamically (live target)
+#
+
+set baseline [gdb_find_recursion_test_baseline $srcfile]
+
+if {$baseline == -1} {
+    fail "could not find gdb_recursion_test function"
+    return
+}
+
+# define relative source line numbers:
+# all subsequent line numbers are relative to this first one (baseline)
+
+set testline2  [expr $baseline +  4]
+set testline3  [expr $baseline +  5]
+set testline4  [expr $baseline +  6]
+
+#
+# test passcount command semantics (live test)
+#
+
+## Set three tracepoints with three different passcounts.
+## Verify that the experiment stops after the one with the 
+## lowest passcount is hit.
+
+gdb_delete_tracepoints
+set tdp2 [gdb_gettpnum "$testline2"]
+set tdp3 [gdb_gettpnum "$testline3"]
+set tdp4 [gdb_gettpnum "$testline4"]
+if {$tdp2 <= 0 || $tdp3 <= 0 || $tdp4 <= 0} {
+    fail "setting tracepoints"
+    return
+}
+
+gdb_test "passcount 4 $tdp2" "Setting tracepoint $tdp2's passcount to 4" \
+	"4.5: set passcount for tracepoint $tdp2"
+gdb_test "passcount 2 $tdp3" "Setting tracepoint $tdp3's passcount to 2" \
+	"4.5: set passcount for tracepoint $tdp3"
+gdb_test "passcount 3 $tdp4" "Setting tracepoint $tdp4's passcount to 3" \
+	"4.5: set passcount for tracepoint $tdp4"
+
+gdb_test "tstart" ".*" ""
+
+gdb_breakpoint "end" qualified
+gdb_test "continue" \
+    "Continuing.*Breakpoint $decimal, end.*" \
+    "run trace experiment"
+gdb_test "tstop" ".*" ""
+
+with_test_prefix "trace_frame -1" {
+    gdb_test "tfind none" ".*"
+    gdb_test "printf \"x \%d x\\n\", \$trace_frame" "x -1 x" \
+	"print \$trace_frame"
+}
+
+with_test_prefix "trace_frame 0" {
+    gdb_test "tfind tracepoint $tdp2" ".*"
+    gdb_test "printf \"x \%d x\\n\", \$trace_frame" "x 0 x" \
+	"print \$trace_frame"
+}
+
+with_test_prefix "trace_frame 1" {
+    gdb_test "tfind tracepoint $tdp3" ".*"
+    gdb_test "printf \"x \%d x\\n\", \$trace_frame" "x 1 x" \
+	"print \$trace_frame"
+}
+
+with_test_prefix "trace_frame 2" {
+    gdb_test "tfind tracepoint $tdp4" ".*"
+    gdb_test "printf \"x \%d x\\n\", \$trace_frame" "x 2 x" \
+	"print \$trace_frame"
+}
+
+with_test_prefix "trace_frame 3" {
+    gdb_test "tfind tracepoint $tdp2" ".*"
+    gdb_test "printf \"x \%d x\\n\", \$trace_frame" "x 3 x" \
+	"print \$trace_frame"
+}
+
+with_test_prefix "trace_frame 4" {
+    gdb_test "tfind tracepoint $tdp3" ".*"
+    gdb_test "printf \"x \%d x\\n\", \$trace_frame" "x 4 x" \
+	"print \$trace_frame"
+}
+
+## We should now be at the last frame, because this frame's passcount
+## should have caused collection to stop.  If we do a tfind now, 
+## it should fail.
+
+gdb_test "tfind" "failed to find.*" "4.5: dynamic passcount test"
+
+# Finished!
+gdb_test "tfind none" ".*"
+

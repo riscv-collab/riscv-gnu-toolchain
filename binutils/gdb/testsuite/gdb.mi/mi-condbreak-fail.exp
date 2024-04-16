@@ -1,0 +1,109 @@
+# Copyright (C) 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check that when GDB fails to evaluate the condition of a conditional
+# breakpoint we only get one *stopped notification.  In this test case
+# the breakpoint condition fails due to receiving a signal (SIGSEGV).
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+standard_testfile
+
+if [build_executable ${testfile}.exp ${binfile} ${srcfile}] {
+    return -1
+}
+
+# Create a breakpoint with a condition that invokes an inferior
+# function call, that will segfault.  Run until GDB hits the
+# breakpoint and check how GDB reports the failed condition check.
+#
+# UNWIND_ON_SIGNAL is either 'on' or 'off'.  This is used to configure
+# GDB's 'set unwindonsignal' setting.
+
+proc run_test { unwind_on_signal } {
+
+    if {[mi_clean_restart $::binfile]} {
+	return
+    }
+
+    if {[mi_runto_main] == -1} {
+	return
+    }
+
+    mi_gdb_test "-gdb-set unwindonsignal ${unwind_on_signal}" {\^done} \
+	"set unwind-on-signal"
+
+    # Create the conditional breakpoint.
+    set bp_location [gdb_get_line_number "Set breakpoint here"]
+    mi_create_breakpoint "-c \"cond_fail ()\" $::srcfile:$bp_location" \
+	"insert conditional breakpoint" \
+	-func foo -file ".*$::srcfile" -line "$bp_location" \
+	-cond "cond_fail \\(\\)"
+
+    # Number of the previous breakpoint.
+    set bpnum [mi_get_valueof "/d" "\$bpnum" "INVALID" \
+		   "get number for breakpoint"]
+
+    # The line where we expect the inferior to crash.
+    set crash_linenum [gdb_get_line_number "Crash here"]
+
+    # Run the inferior and wait for it to stop.
+    mi_send_resuming_command "exec-continue" "continue the inferior"
+
+    if {$unwind_on_signal} {
+	mi_gdb_test "" \
+	    [multi_line \
+		 "&\"Error in testing condition for breakpoint $bpnum:\\\\n\"" \
+		 "&\"The program being debugged received signal SIGSEGV, Segmentation fault\\\\n\"" \
+		 "&\"while in a function called from GDB\\.  GDB has restored the context\\\\n\"" \
+		 "&\"to what it was before the call\\.  To change this behavior use\\\\n\"" \
+		 "&\"\\\\\"set unwindonsignal off\\\\\"\\.  Evaluation of the expression containing\\\\n\"" \
+		 "&\"the function \\(cond_fail\\) will be abandoned\\.\\\\n\"" \
+		 "=breakpoint-modified,bkpt={number=\"$bpnum\",type=\"breakpoint\",\[^\r\n\]+times=\"1\",\[^\r\n\]+}" \
+		 "~\"\\\\n\"" \
+		 "~\"Breakpoint $bpnum, foo \\(\\) at \[^\r\n\]+/${::srcfile}:${bp_location}\\\\n\"" \
+		 "~\"${bp_location}\\\\t\[^\r\n\]+Set breakpoint here\\.\[^\r\n\]+\\\\n\"" \
+		 "\\*stopped,reason=\"breakpoint-hit\",disp=\"keep\",bkptno=\"$bpnum\",frame=\\{addr=\"$::hex\",func=\"foo\"\\,args=\\\[\\\],file=\"\[^\r\n\]+\",fullname=\"\[^\r\n\]+\",line=\"$bp_location\",\[^\r\n\]+}\[^\r\n\]+"] \
+	    "wait for stop"
+
+	mi_info_frame "check the current frame" \
+	    -level 0 -func foo -line $bp_location
+    } else {
+	mi_gdb_test "" \
+	    [multi_line \
+		 "~\"\\\\nProgram\"" \
+		 "~\" received signal SIGSEGV, Segmentation fault\\.\\\\n\"" \
+		 "~\"$::hex in cond_fail \\(\\) at \[^\r\n\]+\"" \
+		 "~\"${crash_linenum}\\\\t\\s+return \\*p;\[^\r\n\]+\\\\n\"" \
+		 "\\*stopped,reason=\"signal-received\",signal-name=\"SIGSEGV\"\[^\r\n\]+frame=\\{addr=\"$::hex\",func=\"cond_fail\",args=\\\[\\\],file=\"\[^\r\n\]+\",fullname=\"\[^\r\n\]+\",line=\"$crash_linenum\",\[^\r\n\]+\\}\[^\r\n\]+" \
+		 "&\"Error in testing condition for breakpoint $bpnum:\\\\n\"" \
+		 "&\"The program being debugged was signaled while in a function called from GDB\\.\\\\n\"" \
+		 "&\"GDB remains in the frame where the signal was received\\.\\\\n\"" \
+		 "&\"To change this behavior use \\\\\"set unwindonsignal on\\\\\"\\.\\\\n\"" \
+		 "&\"Evaluation of the expression containing the function\\\\n\"" \
+		 "&\"\\(cond_fail\\) will be abandoned\\.\\\\n\"" \
+		 "&\"When the function is done executing, GDB will silently stop\\.\\\\n\"" \
+		 "=breakpoint-modified,bkpt={number=\"$bpnum\",type=\"breakpoint\",\[^\r\n\]+times=\"1\",\[^\r\n\]+}"] \
+	    "wait for stop"
+
+	mi_info_frame "check the current frame" \
+	    -level 0 -func cond_fail -line $crash_linenum
+    }
+}
+
+foreach_with_prefix unwind_on_signal { off on } {
+    run_test $unwind_on_signal
+}

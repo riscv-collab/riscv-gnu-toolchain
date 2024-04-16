@@ -1,0 +1,94 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "ada.exp"
+
+require allow_ada_tests
+
+# GCC with commit ff9baa5f1c5 ("DWARF: make it possible to emit debug info for
+# declarations only") is required.  The commit makes sure that file-scope
+# function and variable declarations are emitted in dwarf.  This allows the
+# description of imported entries, making them available to the debugger.
+require {expr [gcc_major_version] >= 8}
+
+standard_ada_testfile prog
+
+set cfile "inc"
+set csrcfile ${srcdir}/${subdir}/${testdir}/${cfile}.c
+set cobject [standard_output_file ${cfile}.o]
+
+if {[gdb_compile "${csrcfile}" "${cobject}" object debug] != ""} {
+    untested "could not compile C file"
+    return
+}
+if {[gdb_compile_ada "${srcfile}" "${binfile}" executable \
+	 [list debug additional_flags=-largs \
+	      additional_flags=${cobject} additional_flags=-margs]] != ""} {
+    return -1
+}
+
+clean_restart ${testfile}
+
+set bp_location [gdb_get_line_number "BREAK" ${testdir}/prog.adb]
+runto "prog.adb:$bp_location"
+
+gdb_test "print ordinary_var" " = 78"
+
+gdb_test "print imported_var" " = 42"
+gdb_test "print imported_var_ada" " = 42"
+gdb_test "print local_imported_var" " = 42"
+gdb_test "print pkg.imported_var_ada" " = 42"
+
+gdb_test "print pkg.exported_var_ada" " = 99"
+gdb_test "print exported_var_ada" " = 99"
+
+# This passes with gcc 10 but fails with gcc 9.  With gcc 9, we have:
+#   <1><1659>: Abbrev Number: 4 (DW_TAG_subprogram)
+#      <165a>   DW_AT_external    : 1
+#      <165a>   DW_AT_name        : pkg__imported_func_ada
+#      <165e>   DW_AT_decl_file   : 2
+#      <165f>   DW_AT_decl_line   : 22
+#      <1660>   DW_AT_decl_column : 13
+#      <1661>   DW_AT_linkage_name: imported_func
+#      <1665>   DW_AT_type        : <0x1669>
+# and with gcc 10 instead:
+#   <1><1670>: Abbrev Number: 4 (DW_TAG_subprogram)
+#      <1671>   DW_AT_external    : 1
+#      <1671>   DW_AT_name        : pkg__imported_func_ada
+#      <1675>   DW_AT_decl_file   : 2
+#      <1676>   DW_AT_decl_line   : 22
+#      <1677>   DW_AT_decl_column : 13
+#      <1678>   DW_AT_linkage_name: imported_func
+#      <167c>   DW_AT_type        : <0x1680>
+#      <1680>   DW_AT_declaration : 1
+# The fact that things start to work when adding the DW_AT_declaration is
+# consistent with what is described in commit ff9baa5f1c5, so xfail this
+# (without pinpointing it to a specific gcc PR or commit).
+if { [gcc_major_version] < 10 } {
+    setup_xfail *-*-*
+}
+gdb_breakpoint "pkg.imported_func_ada" message
+gdb_breakpoint "imported_func" message
+if { [gcc_major_version] < 10 } {
+    setup_xfail *-*-*
+}
+gdb_breakpoint "imported_func_ada" message
+
+gdb_breakpoint "local_imported_func" message
+gdb_breakpoint "pkg.exported_func_ada" message
+gdb_breakpoint "exported_func_ada" message
+gdb_breakpoint "exported_func" message
+
+gdb_test "print copy" " = 42"

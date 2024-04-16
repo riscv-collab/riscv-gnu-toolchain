@@ -1,0 +1,94 @@
+# This testcase is part of GDB, the GNU debugger.
+#
+# Copyright 2019-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that GDB can correctly read the binary and shared libraries
+# with different sysroot setups: local and "target:".
+
+load_lib gdbserver-support.exp
+
+require allow_gdbserver_tests
+
+standard_testfile
+if {[build_executable "failed to prepare" $testfile $srcfile "additional_flags=--no-builtin"] == -1} {
+    return -1
+}
+
+set target_binfile [gdb_remote_download target $binfile]
+set host_binfile [gdb_remote_download host $binfile]
+
+# Run once with sysroot set to the local filesystem and once set to the remote
+# target.
+set modes {}
+if { ( ![is_remote host] && ![is_remote target ] )
+     || [board_info host name] == [board_info target name] } {
+    # Local means that gdb and gdbserver look at the same file system.  That's
+    # not the case for remote host or remote target, unless
+    # remote host == remote target.
+    lappend modes "local"
+}
+lappend modes "remote"
+
+foreach_with_prefix sysroot $modes {
+    global srcdir
+    global subdir
+    global binfile
+
+    if { $sysroot == "local" } {
+	set sysroot_command "/"
+	set reading_symbols "Reading symbols from $host_binfile..."
+	set timeout_factor 1
+    } else {
+	set sysroot_command "target:"
+	set reading_symbols "Reading .*$target_binfile from remote target..."
+	set timeout_factor 5
+    }
+
+    # Reading debug info from the remote target can take a bit of time, so
+    # increase the timeout in that case.
+    with_timeout_factor $timeout_factor {
+	# Restart GDB.
+	clean_restart
+
+	# Make sure we're disconnected, in case we're testing with an
+	# extended-remote board, therefore already connected.
+	gdb_test "disconnect" ".*"
+
+	# Start GDBserver.
+	set res [gdbserver_start "" $target_binfile]
+	set gdbserver_protocol [lindex $res 0]
+	set gdbserver_gdbport [lindex $res 1]
+
+	# Set the sysroot.
+	gdb_test_no_output "set sysroot $sysroot_command"
+
+	# Connect to gdbserver, making sure GDB reads in the binary correctly.
+	set test "connect to remote and read binary"
+	if {[gdb_target_cmd $gdbserver_protocol $gdbserver_gdbport $reading_symbols] == 0} {
+	    pass $test
+	} else {
+	    fail $test
+	}
+
+	gdb_breakpoint main
+	gdb_test "continue" "Breakpoint $decimal.* main.*" "continue to main"
+
+	# Test that we can stop inside a library.
+	gdb_breakpoint printf
+	gdb_test "continue" "Breakpoint $decimal.* (__)?printf.*" \
+	    "continue to printf"
+    }
+}

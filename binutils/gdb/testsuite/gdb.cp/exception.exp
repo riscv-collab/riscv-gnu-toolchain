@@ -1,0 +1,179 @@
+# Copyright 1997-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the gdb testsuite.
+# tests for exception-handling support
+# Written by Satish Pai <pai@apollo.hp.com> 1997-07-23
+# Rewritten by Michael Chastain <mec.gnu@mindspring.com> 2004-01-08
+
+# This file used to have two copies of the tests with different
+# compiler flags for hp-ux.  Instead, the user should set CXXOPTS
+# or run runtest with --target_board unix/gdb:debug_flags="..."
+# to choose the compiler flags.
+#
+# The interesting compiler flags are: "aCC +A -Wl,-a,-archive" .
+# Static-linked executables use a different mechanism to get the
+# address of the notification hook in the C++ support library.
+
+set ws	"\[\r\n\t \]+"
+set nl	"\[\r\n\]+"
+
+require allow_stl_tests
+
+standard_testfile .cc
+ 
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile {debug c++}]} {
+    return -1
+}
+
+# Set a catch catchpoint
+
+gdb_test "catch catch" "Catchpoint \[0-9\]+ \\(catch\\)" \
+    "catch catch (before inferior run)"
+
+# Set a throw catchpoint
+
+gdb_test "catch throw" "Catchpoint \[0-9\]+ \\(throw\\)" \
+    "catch throw (before inferior run)"
+
+# Set a rethrow catchpoint
+
+gdb_test "catch rethrow" "Catchpoint \[0-9\]+ \\(rethrow\\)" \
+    "catch rethrow (before inferior run)"
+
+
+set re_head	"Num${ws}Type${ws}Disp${ws}Enb${ws}Address${ws}What"
+set re_2_bp	"1${ws}catchpoint${ws}keep${ws}y${ws}exception catch"
+set re_3_bp	"2${ws}catchpoint${ws}keep${ws}y${ws}exception throw"
+set re_4_bp	"3${ws}catchpoint${ws}keep${ws}y${ws}exception rethrow"
+
+set name "info breakpoints (before inferior run)"
+gdb_test_multiple "info breakpoints" $name {
+    -re "$re_head${ws}$re_2_bp${ws}$re_3_bp${ws}$re_4_bp\r\n$gdb_prompt $" {
+	pass $name
+    }
+    -re ".*$gdb_prompt $"
+      {
+	fail $name
+      }
+}
+
+gdb_test "tbreak -q main" "Temporary breakpoint 4.*" \
+    "Set temporary breakpoint at main"
+
+set ok 0
+gdb_run_cmd
+gdb_test_multiple "" "run to main" {
+    -re "Temporary breakpoint 4,.*$gdb_prompt $" {
+	pass "run to main"
+	set ok 1
+    }
+}
+
+if { !$ok } {
+    return
+}
+
+set name "info breakpoints (after inferior run)"
+gdb_test_multiple "info breakpoints" $name {
+    -re "$re_head${ws}$re_2_bp${ws}$re_3_bp${ws}$re_4_bp\r\n$gdb_prompt $" {
+	pass $name
+    }
+    -re ".*$gdb_prompt $"
+      {
+	send_user "\n---\n$expect_out(buffer)\n---\n"
+	fail $name
+      }
+}
+
+gdb_test "break catcher" "Breakpoint \[0-9\]+ at.*"
+
+# Get the first exception thrown
+       
+gdb_test "continue"  \
+    "Continuing.${ws}Catchpoint \[0-9\]+ \\(exception thrown\\).*" \
+    "continue to first throw"
+
+# Backtrace from the throw point.
+# This should get to user code.
+
+set name "backtrace after first throw"
+gdb_test_multiple "backtrace" $name {
+    -re ".*#\[0-9\]+.*\[\[:<:\]\]__cxa_throw\[\[:>:\]\].*#\[0-9\]+${ws}$hex (\\\[PAC\\\] )?in foo \\(i=20\\) at .*${srcfile}:\[0-9\]+\r\n#\[0-9\]+${ws}$hex in main \\(.*\\) at .*${srcfile}:\[0-9\]+\r\n$gdb_prompt $" {
+	# Either __cxxabiv1::__cxa_throw or __cxa_throw can be printed
+	# depending on debug info presence.
+	pass $name
+    }
+}
+
+# Continue to the catch.
+
+gdb_test "continue" \
+    "Continuing.${ws}Catchpoint \[0-9\]+ \\(exception caught\\).*" \
+    "continue to first catch"
+
+# Backtrace from the catch point.
+# This should get to user code.
+
+set name "backtrace after first catch"
+gdb_test_multiple "backtrace" $name {
+    -re ".*#\[0-9\]+.*\[\[:<:\]\]__cxa_begin_catch\[\[:>:\]\].*#\[0-9\]+${ws}$hex (\\\[PAC\\\] )?in main \\(.*\\) at .*$srcfile:\[0-9\]+\r\n$gdb_prompt $" {
+	pass $name
+    }
+}
+
+# Continue to breakpoint on catcher.
+gdb_test "continue" ".*catcher \\(x=13\\).*" "continue to catcher for the first time"
+
+# Continue to second throw.
+
+gdb_test "continue" \
+    "Continuing.${ws}Catchpoint \[0-9\]+ \\(exception thrown\\).*" \
+    "continue to second throw"
+
+# Backtrace from the throw point.
+# This should get to user code.
+
+set name "backtrace after second throw"
+gdb_test_multiple "backtrace" $name {
+    -re ".*#\[0-9\]+.*\[\[:<:\]\]__cxa_throw\[\[:>:\]\].*#\[0-9\]+${ws}$hex (\\\[PAC\\\] )?in foo \\(i=20\\) at .*${srcfile}:\[0-9\]+\r\n#\[0-9\]+${ws}$hex in main \\(.*\\) at .*${srcfile}:\[0-9\]+\r\n$gdb_prompt $" {
+	pass $name
+    }
+}
+
+# Continue to second catch.
+
+gdb_test "continue" \
+    "Continuing.${ws}Catchpoint \[0-9\]+ \\(exception caught\\).*" \
+    "continue to second catch"
+
+# Backtrace from the catch point.
+# This should get to user code.
+
+set name "backtrace after second catch"
+gdb_test_multiple "backtrace" $name {
+    -re ".*#\[0-9\]+.*\[\[:<:\]\]__cxa_begin_catch\[\[:>:\]\].*#\[0-9\]+${ws}$hex (\\\[PAC\\\] )?in main \\(.*\\) at .*$srcfile:\[0-9\]+\r\n$gdb_prompt $" {
+	pass $name
+    }
+}
+
+# Continue to breakpoint on catcher.
+gdb_test "continue" ".*catcher \\(x=13\\).*" "continue to catcher for the second time"
+
+
+# Continue to the re-throw.
+
+gdb_test "continue" "Catchpoint \[0-9\]+.*exception rethrown.*" \
+    "continue to rethrow"

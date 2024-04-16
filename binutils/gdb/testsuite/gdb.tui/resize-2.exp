@@ -1,0 +1,89 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test TUI resizing using maint screen info command.
+
+require allow_tui_tests
+
+tuiterm_env
+
+Term::clean_restart 24 80
+set screen_dim { 0 0 80 24 }
+
+# Use a layout with just a command window.
+gdb_test "tui new-layout command-layout cmd 1"
+
+if {![Term::prepare_for_tui]} {
+    unsupported "TUI not supported"
+    return 0
+}
+
+# Enter TUI.
+Term::command_no_prompt_prefix "layout command-layout"
+
+proc check_width { what n } {
+    set re "Number of characters $what thinks are in a line is $n"
+    Term::check_region_contents "$what width $n" {*}$::screen_dim $re
+}
+
+# Check that curses has the correct notion of screen width.
+Term::command "maint info screen"
+check_width curses 80
+check_width gdb 80
+
+# Resize with TUI enabled, wait for the resize message.
+Term::resize 40 90
+set screen_dim { 0 0 90 40 }
+
+# Check that curses has the correct notion of screen width after resize.
+Term::command "maint info screen"
+check_width curses 90
+check_width gdb 90
+
+# Temporarily disable TUI.
+gdb_test_multiple "tui disable" "" {
+    -re "$gdb_prompt $" {
+	pass $gdb_test_name
+    }
+}
+
+# Resize with TUI disabled, so don't wait for the resize message.
+Term::resize 24 80 0
+set screen_dim { 0 0 80 24 }
+gdb_test_multiple "" "two prompt redisplays after resize" {
+    -re "\r.*$gdb_prompt \r.*$gdb_prompt $" {
+	pass $gdb_test_name
+    }
+}
+
+# At this point, curses still thinks the width is 90.  This doesn't look
+# harmful because TUI is disabled.
+gdb_test "maint info screen" \
+    "\r\nNumber of characters curses thinks are in a line is 90.\\r\n.*" \
+    "curses width after resize with TUI disabled"
+
+# Re-enable TUI.
+send_gdb "tui enable\n"
+# The "tui enable" command is issued on the CLI screen, on the TUI we have the
+# last command issued there: "tui disable".
+Term::wait_for "tui disable"
+
+# Check that curses has the correct notion of screen width after screen resize
+# with TUI disabled.
+Term::command "maint info screen"
+with_test_prefix again {
+    check_width curses 80
+    check_width gdb 80
+}

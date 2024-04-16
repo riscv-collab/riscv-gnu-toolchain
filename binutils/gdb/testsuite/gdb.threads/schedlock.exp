@@ -1,0 +1,314 @@
+# Copyright (C) 1996-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file was written by Daniel Jacobowitz <drow@mvista.com>
+# (parts based on pthreads.exp by Fred Fish (fnf@cygnus.com).
+#
+# This test covers the various forms of "set scheduler-locking".
+
+# This test requires sending ^C to interrupt the running target.
+
+require {!target_info exists gdb,nointerrupts}
+
+standard_testfile
+
+# The number of threads, including the main thread.
+set NUM 2
+
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable debug] != "" } {
+    return -1
+}
+
+# Now we can proceed with the real testing.
+
+# Get the current contents of the `args` array in the test program.
+# Description is appended to the test message.
+
+proc get_args { description } {
+    global gdb_prompt
+    global NUM
+
+    set pattern "(\[0-9\]+)"
+    for {set i 1} {[expr $i < $NUM]} {incr i} {
+	append pattern ", (\[0-9\]+)"
+    }
+
+    set test "listed args ($description)"
+    gdb_test_multiple "print args" $test {
+	-re "\\\$\[0-9\]+ = {$pattern}.*$gdb_prompt $" {
+	    pass $test
+
+	    set result ""
+	    for {set i 1} {[expr $i <= $NUM]} {incr i} {
+		lappend result $expect_out($i,string)
+	    }
+	    return $result
+	}
+    }
+}
+
+proc stop_process { description } {
+  global gdb_prompt
+
+  # For this to work we must be sure to consume the "Continuing."
+  # message first, or GDB's signal handler may not be in place.
+  after 1000 {send_gdb "\003"}
+  gdb_expect {
+    -re "Thread .* received signal SIGINT.*$gdb_prompt $"
+      {
+	pass $description
+      }
+    timeout
+      {
+	fail "$description (timeout)"
+      }
+  }
+}
+
+proc get_current_thread { description } {
+    global gdb_prompt
+
+    set test "find current thread ($description)"
+
+    gdb_test_multiple "bt" $test {
+	-re "thread_function \\(arg=0x(\[0-9\])\\).*$gdb_prompt $" {
+	    pass $test
+	    return $expect_out(1,string)
+	}
+    }
+    return ""
+}
+
+# Make sure we're stopped in the loop, in one of the non-main threads.
+
+proc goto_loop { msg } {
+    gdb_breakpoint [concat [gdb_get_line_number "schedlock.exp: main loop"] " if arg != 0"]
+
+    set test "return to loop"
+    if {$msg != ""} {
+	set test "$test ($msg)"
+    }
+    gdb_continue_to_breakpoint $test
+    delete_breakpoints
+}
+
+proc my_continue { msg } {
+    set test "continue ($msg)"
+    gdb_test_multiple "continue" $test {
+	-re "Continuing" {
+	    pass $test
+	}
+    }
+
+    stop_process "stop all threads ($msg)"
+
+    goto_loop $msg
+}
+
+# Use CMD to step the loop 10 times.  CMD may be "step" or "next".
+
+proc step_ten_loops { cmd } {
+    global gdb_prompt
+
+    for {set i 0} {[expr $i < 10]} {set i [expr $i + 1]} {
+	set other_step 0
+	set test "$cmd to increment ($i)"
+	gdb_test_multiple $cmd $test {
+	    -re ".*myp\\) \\+\\+;\[\r\n\]+$gdb_prompt $" {
+		pass $test
+	    }
+	    -re "$gdb_prompt $" {
+		if {$other_step == 0} {
+		    set other_step 1
+		    send_gdb "$cmd\n"
+		    exp_continue
+		} else {
+		    fail $test
+		    # FIXME cascade?
+		}
+	    }
+	}
+    }
+}
+
+clean_restart
+
+# We'll need this when we send_gdb a ^C to GDB.  Need to do it before we
+# run the program and gdb starts saving and restoring tty states.
+gdb_test "shell stty intr '^C'" ".*"
+
+gdb_load ${binfile}
+
+gdb_test_no_output "set print sevenbit-strings"
+gdb_test_no_output "set width 0"
+
+runto_main
+
+# See if scheduler locking is available on this target.
+global gdb_prompt
+gdb_test_multiple "set scheduler-locking off" "scheduler locking set to none" {
+    -re "Target .* cannot support this command" {
+	unsupported "target does not support scheduler locking"
+	return
+    }
+    -re "$gdb_prompt $" {
+	pass "scheduler locking set to none"
+    }
+    timeout {
+	unsupported "target does not support scheduler locking (timeout)"
+	return
+    }
+}
+
+gdb_breakpoint [gdb_get_line_number "schedlock.exp: last thread start"]
+gdb_continue_to_breakpoint "all threads started"
+
+set start_args [get_args "before initial"]
+
+# First make sure that all threads are alive.
+my_continue "initial"
+
+set cont_args [get_args "after initial"]
+
+set bad 0
+for {set i 0} {[expr $i < $NUM]} {set i [expr $i + 1]} {
+  if {[lindex $start_args $i] == [lindex $cont_args $i]} {
+    incr bad
+  }
+}
+if { $bad == 0 } {
+  pass "all threads alive"
+} else {
+  fail "all threads alive ($bad/$NUM did not run)"
+}
+
+# Compare the previous thread and args with the current thread and
+# args.  Check that we didn't switch threads, and that the threads
+# incremented their args counter the amounts expected.  CMD is the
+# command being tested.  BEFORE_THREAD is the thread that was selected
+# before the command was run.  BEFORE_ARGS is the value of the
+# thread's args before the command was run.  LOCKED indicates whether
+# we expect threads other than the selected thread remained locked.
+
+proc check_result { cmd before_thread before_args locked } {
+    global NUM
+
+    # Make sure we're still in the same thread.
+    set newthread [get_current_thread "after"]
+
+    set test "$cmd does not change thread"
+    if {$before_thread == $newthread} {
+	pass "$test"
+    } else {
+	fail "$test (switched to thread $newthread)"
+    }
+
+    set after_args [get_args "after"]
+
+    set test "current thread advanced"
+    if { $locked } {
+	set test "$test - locked"
+    } else {
+	set test "$test - unlocked"
+    }
+
+    set num_other_threads 0
+    for {set i 0} {$i < $NUM} {incr i} {
+	if {[lindex $before_args $i] == [lindex $after_args $i]} {
+	    if {$i == $before_thread} {
+		fail "$test (didn't run)"
+	    }
+	} else {
+	    if {$i == $before_thread} {
+		if {$cmd == "continue"
+		    || [lindex $before_args $i] == [expr [lindex $after_args $i] - 10]} {
+		    pass "$test"
+		} else {
+		    fail "$test (wrong amount)"
+		}
+	    } else {
+		incr num_other_threads
+	    }
+	}
+    }
+
+    if { $locked } {
+	gdb_assert {$num_other_threads == 0} "other threads didn't run - locked"
+    } else {
+	gdb_assert {$num_other_threads > 0} "other threads ran - unlocked"
+    }
+}
+
+with_test_prefix "schedlock=on: cmd=continue" {
+    # Use whichever we stopped in.
+    set curthread [get_current_thread "before"]
+
+    # Test continue with scheduler locking.
+    gdb_test "set scheduler-locking on" ""
+
+    my_continue "with lock"
+
+    check_result "continue" $curthread $cont_args 1
+}
+
+# Test stepping/nexting with different modes of scheduler locking.
+proc test_step { schedlock cmd call_function } {
+    global NUM
+
+    gdb_test_no_output "set scheduler-locking off"
+    goto_loop ""
+
+    set curthread [get_current_thread "before"]
+
+    # No need to set to off again.  This avoids a duplicate message.
+    if {$schedlock != "off"} {
+	gdb_test_no_output "set scheduler-locking $schedlock"
+    }
+
+    gdb_test "print call_function = $call_function" \
+	" = $call_function"
+
+    set before_args [get_args "before"]
+
+    step_ten_loops $cmd
+
+    if { $schedlock == "on" || $schedlock == "step" } {
+	set locked 1
+    } else {
+	set locked 0
+    }
+
+    check_result $cmd $curthread $before_args $locked
+}
+
+# Test stepping/nexting with different modes of scheduler locking.
+foreach schedlock {"off" "step" "on"} {
+    with_test_prefix "schedlock=$schedlock" {
+	with_test_prefix "cmd=step" {
+	    test_step $schedlock "step" 0
+	}
+	with_test_prefix "cmd=next" {
+	    # In GDB <= 7.9, with schedlock "step", "next" would
+	    # unlock threads when stepping over a function call.  This
+	    # exercises "next" with and without a function call.  WRT
+	    # "schedlock step", "next" should behave just like "step".
+	    foreach call_function {0 1} {
+		with_test_prefix "call_function=$call_function" {
+		    test_step $schedlock "next" $call_function
+		}
+	    }
+	}
+    }
+}

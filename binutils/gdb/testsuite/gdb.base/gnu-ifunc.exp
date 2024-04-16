@@ -1,0 +1,400 @@
+# Copyright (C) 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+require allow_shlib_tests allow_ifunc_tests
+
+standard_testfile .c
+set staticexecutable ${testfile}-static
+set staticbinfile [standard_output_file ${staticexecutable}]
+
+set libfile "${testfile}-lib"
+set libsrc ${libfile}.c
+
+set final_file "${testfile}-final"
+set final_src ${final_file}.c
+
+# Return the binary suffix appended to program and library names to
+# make each testcase variant unique.
+proc make_binsuffix {resolver_attr resolver_debug final_debug} {
+    return "$resolver_attr-$resolver_debug-$final_debug"
+}
+
+# Compile the testcase.  RESOLVER_ATTR is true if we're testing with
+# an ifunc resolver that has a different name from the user symbol,
+# specified with GCC's __attribute__ ifunc.  RESOLVER_DEBUG is true
+# iff the resolver was compiled with debug info.  FINAL_DEBUG is true
+# iff the target function was compiled with debug info.
+proc build {resolver_attr resolver_debug final_debug} {
+    global srcdir subdir srcfile binfile
+    global libsrc lib_so libfile
+    global exec_opts executable
+    global hex gdb_prompt
+    global final_file final_src
+
+    set suffix [make_binsuffix $resolver_attr $resolver_debug $final_debug]
+
+    set lib_so [standard_output_file ${libfile}-$suffix.so]
+    # $lib_o must not have {debug}, it would override the STT_GNU_IFUNC ELF markers.
+    set lib_o [standard_output_file ${libfile}-$suffix.o]
+
+    set exec_opts [list debug shlib=$lib_so]
+
+    set lib_opts {}
+    set final_opts {}
+
+    # Force lazy binding so we don't resolve everything at process startup.
+    lappend exec_opts "ldflags=-Wl,-z,lazy"
+    lappend lib_opts "ldflags=-Wl,-z,lazy"
+
+    if {$resolver_attr} {
+	lappend lib_opts "additional_flags=-DIFUNC_RESOLVER_ATTR"
+    }
+
+    if {$resolver_debug} {
+	lappend lib_opts "debug"
+    }
+
+    if {$final_debug} {
+	lappend final_opts "debug"
+    }
+
+    set final_o [standard_output_file $final_file-$suffix.o]
+
+    if { [gdb_compile_shlib ${srcdir}/${subdir}/$libsrc \
+	      $lib_so $lib_opts] != ""
+	 || [gdb_compile ${srcdir}/${subdir}/$final_src \
+		 $final_o object $final_opts] != ""
+	 || [gdb_compile [list ${srcdir}/${subdir}/$srcfile $final_o] \
+		 $binfile-$suffix executable $exec_opts] != ""} {
+	untested "failed to compile testcase"
+	return 0
+    }
+
+    return 1
+}
+
+# Test setting a breakpoint on a ifunc function before and after the
+# ifunc is resolved.  For the description of RESOLVER_ATTR,
+# RESOLVER_DEBUG and FINAL_DEBUG, see the "build" procedure above.
+proc_with_prefix set-break {resolver_attr resolver_debug final_debug} {
+    global binfile libfile lib_so
+    global hex decimal
+    global gdb_prompt
+
+    set suffix [make_binsuffix $resolver_attr $resolver_debug $final_debug]
+
+    set lib_so [standard_output_file ${libfile}-$suffix.so]
+    clean_restart $binfile-$suffix
+    gdb_load_shlib ${lib_so}
+
+    if {![runto_main]} {
+	return 1
+    }
+
+    gdb_breakpoint [gdb_get_line_number "break-at-call"]
+    gdb_continue_to_breakpoint "break-at-call" ".*break-at-call.*"
+
+    set ws "\[ \t\]+"
+    set dot "\\.?"
+
+    if {$resolver_attr} {
+	set gnu_ifunc_resolver "gnu_ifunc_resolver"
+    } else {
+	set gnu_ifunc_resolver "gnu_ifunc"
+    }
+
+    if {!$resolver_debug} {
+	set gnu_ifunc_resolver "${dot}${gnu_ifunc_resolver}"
+    }
+
+    if {!$final_debug} {
+	set final "${dot}final"
+    } else {
+	set final "final"
+    }
+
+    with_test_prefix "before resolving" {
+	delete_breakpoints
+	gdb_test "break gnu_ifunc" \
+	    "Breakpoint $decimal at gnu-indirect-function resolver at $hex"
+	gdb_test "info breakpoints" \
+	    "$decimal${ws}STT_GNU_IFUNC resolver${ws}keep${ws}y${ws}$hex <${gnu_ifunc_resolver}>"
+
+	# Make the breakpoint conditional on a condition that always
+	# fails.  This is so that when the ifunc-resolver breakpoint
+	# triggers, GDB resumes the program immediately.
+	gdb_test_no_output "condition \$bpnum 0"
+    }
+
+    global final_src
+
+    with_test_prefix "resolve" {
+	gdb_breakpoint [gdb_get_line_number "break-at-exit"]
+	gdb_continue_to_breakpoint "break-at-exit" ".*break-at-exit.*"
+    }
+
+    with_test_prefix "after resolving" {
+	if {!$final_debug} {
+	    # Set a breakpoint both at the ifunc, and at the ifunc's
+	    # target.  GDB should resolve both to the same address.
+	    # Start with the ifunc's target.
+	    set addr "-"
+	    set test "break final"
+	    # Extract the address without the leading "0x", because
+	    # addresses in "info break" output include leading 0s
+	    # (like "0x0000ADDR").
+	    set hex_number {[0-9a-fA-F][0-9a-fA-F]*}
+	    gdb_test_multiple $test $test {
+		-re "Breakpoint .* at 0x($hex_number)\r\n$gdb_prompt $" {
+		    set addr $expect_out(1,string)
+		    pass $test
+		}
+	    }
+
+	    # Now set a break at the ifunc.
+	    gdb_test "break gnu_ifunc" "Breakpoint .* at 0x$addr"
+	    set location "$decimal${ws}breakpoint${ws}keep${ws}y${ws}0x0*$addr${ws}<${final}\\+.*>"
+	} else {
+	    set lineno -1
+	    set test "break final"
+	    gdb_test_multiple $test $test {
+		-re "Breakpoint .* at $hex: file .*$final_src, line ($decimal)\\.\r\n$gdb_prompt $" {
+		    set lineno $expect_out(1,string)
+		    pass $test
+		}
+	    }
+	    gdb_test "break gnu_ifunc" "Breakpoint .* at $hex: file .*$final_src, line $lineno\\."
+	    set location "$decimal${ws}breakpoint${ws}keep${ws}y${ws}$hex in final at .*$final_src:$lineno"
+	}
+
+	# The first location here is for the breakpoint that was set
+	# before the ifunc was resolved.  It should be resolved by
+	# now, and it should have the exact same address/line as the
+	# other two locations.
+	gdb_test "info breakpoints" "$location\r\n.*$location\r\n$location"
+    }
+}
+
+# Misc GNU ifunc tests.  For the description of RESOLVER_ATTR,
+# RESOLVER_DEBUG and FINAL_DEBUG, see the "build" procedure above.
+proc misc_tests {resolver_attr resolver_debug final_debug} {
+    global srcdir subdir srcfile binfile
+    global libsrc lib_so libfile
+    global exec_opts executable
+    global hex gdb_prompt
+    global final_file final_src
+
+    set suffix [make_binsuffix $resolver_attr $resolver_debug $final_debug]
+
+    if {$resolver_attr} {
+	set gnu_ifunc_resolver "gnu_ifunc_resolver"
+    } else {
+	set gnu_ifunc_resolver "gnu_ifunc"
+    }
+
+    set dot "\\.?"
+
+    if {!$resolver_debug} {
+	set gnu_ifunc_resolver "${dot}${gnu_ifunc_resolver}"
+    }
+
+    if {!$final_debug} {
+	set final "${dot}final"
+    } else {
+	set final "final"
+    }
+
+    # Start with a fresh gdb.
+
+    clean_restart $binfile-$suffix
+    gdb_load_shlib ${lib_so}
+
+    if {![runto_main]} {
+	return 1
+    }
+
+    # The "if" condition is artifical to test regression of a former patch.
+    gdb_breakpoint "[gdb_get_line_number "break-at-nextcall"] if i && (int) gnu_ifunc (i) != 42"
+
+    gdb_breakpoint [gdb_get_line_number "break-at-call"]
+    gdb_continue_to_breakpoint "break-at-call" ".*break-at-call.*"
+
+    # Test GDB will automatically indirect the call.
+
+    if {!$resolver_debug && !$final_debug} {
+	# Do the test that is supposed to succeed first, to make sure
+	# elf_gnu_ifunc_record_cache is empty.  This excercises PR28224.
+	gdb_test "p (int) gnu_ifunc (3)" " = 4"
+
+	gdb_test "p gnu_ifunc()" \
+	    "'${dot}final' has unknown return type; cast the call to its declared return type"
+	gdb_test "p gnu_ifunc (3)" \
+	    "'${dot}final' has unknown return type; cast the call to its declared return type"
+    } else {
+	# Do the test that is supposed to succeed first, see above.
+	gdb_test "p gnu_ifunc (3)" " = 4"
+
+	gdb_test "p gnu_ifunc()" "Too few arguments in function call\\."
+    }
+
+    # Test that the resolver received its argument.
+
+    set actual_hwcap "0x0"
+    set test "info auxv"
+    gdb_test_multiple $test $test {
+	-re "\r\n\\d+\\s+AT_HWCAP\[^\r\n\]+($hex)\r\n.*$gdb_prompt $" {
+	    set actual_hwcap $expect_out(1,string)
+	}
+	-re ".*$gdb_prompt $" {
+	    pass "$test (no HWCAP)"
+	}
+    }
+
+    gdb_test "p/x resolver_hwcap" "= $actual_hwcap" "resolver received HWCAP"
+
+    # Test GDB will skip the gnu_ifunc resolver on first call.
+
+    # Even if the resolver has debug info, stepping into an ifunc call
+    # should skip the resolver.
+    if {!$final_debug} {
+	# Make GDB stop stepping even if it steps into a function with
+	# no debug info.
+	gdb_test_no_output "set step-mode on"
+	gdb_test "step" "$hex in ${dot}final \\\(\\\)"
+    } else {
+	gdb_test "step" "\r\nfinal .*"
+    }
+
+    # Test GDB will not break before the final chosen implementation.
+
+    # Also test a former patch regression:
+    # Continuing.
+    # Error in testing condition for breakpoint NUM:
+    # Attempt to take address of value not located in memory.
+    #
+    # Breakpoint 2, main () at ./gdb.base/gnu-ifunc.c:33
+
+    gdb_test "continue" \
+	"Continuing.\r\n\r\nBreakpoint .* (at|in) .*break-at-nextcall.*" \
+	"continue to break-at-nextcall"
+
+    gdb_breakpoint "gnu_ifunc"
+
+    gdb_continue_to_breakpoint "nextcall gnu_ifunc"
+
+    gdb_test "frame" \
+	"#0 +(0x\[0-9a-f\]+ in +)?${final} \\(.*" "nextcall gnu_ifunc skipped"
+
+    # Check any commands not doing an inferior call access the address of the
+    # STT_GNU_IFUNC resolver, not the target function.
+
+    if {[istarget powerpc64-*] && [is_lp64_target]} {
+	# With only minimal symbols GDB provides the function descriptors.  With
+	# full debug info the function code would be displayed.
+    }
+
+    gdb_test "p gnu_ifunc" \
+	" = {<text gnu-indirect-function variable, no debug info>} 0x\[0-9a-f\]+ <${gnu_ifunc_resolver}>" \
+	"p gnu_ifunc executing"
+    gdb_test "info sym gnu_ifunc" \
+	"${gnu_ifunc_resolver} in section .*" \
+	"info sym gnu_ifunc executing"
+
+    set test "info addr gnu_ifunc"
+    if {!$resolver_attr && $resolver_debug} {
+	gdb_test_multiple $test $test {
+	    -re "Symbol \"gnu_ifunc\" is a function at address (0x\[0-9a-f\]+).*$gdb_prompt $" {
+		pass $test
+	    }
+	}
+    } else {
+	gdb_test_multiple $test $test {
+	    -re "Symbol \"gnu_ifunc\" is at (0x\[0-9a-f\]+) in .*$gdb_prompt $" {
+		pass $test
+	    }
+	}
+    }
+    gdb_test "info sym $expect_out(1,string)" \
+	"${gnu_ifunc_resolver} in section .*" \
+	"info sym <gnu_ifunc-address>"
+
+    # Test calling the resolver directly instead of the ifunc symbol.
+    # Can only do that if the ifunc and the ifunc resolver have
+    # different names.
+    if {$resolver_attr} {
+	if {$resolver_debug} {
+	    if {[istarget powerpc64-*] && [is_lp64_target]} {
+		gdb_test "p gnu_ifunc_resolver(0)" \
+		    " = \\(int \\(\\*\\)\\(int\\)\\) @$hex: $hex <${final}>"
+	    } else {
+		gdb_test "p gnu_ifunc_resolver(0)" \
+		    " = \\(int \\(\\*\\)\\(int\\)\\) $hex <final>"
+	    }
+	} else {
+	    gdb_test "p gnu_ifunc_resolver(0)" \
+		"'${gnu_ifunc_resolver}' has unknown return type; cast the call to its declared return type"
+	    gdb_test "p (void *) gnu_ifunc_resolver(0)" \
+		" = \\(void \\*\\) $hex <${final}>"
+	}
+    }
+}
+
+# Test all the combinations of:
+#
+# - An ifunc resolver with the same name as the ifunc symbol vs an
+#   ifunc resolver with a different name as the ifunc symbol.
+#
+# - ifunc resolver compiled with and without debug info.  This ensures
+#   that GDB understands that a function not a regular function by
+#   looking at the STT_GNU_IFUNC type in the elf symbols.  DWARF has
+#   no way to express the STT_GNU_IFUNC type.
+#
+# - ifunc target function (resolved) compiled with and without debug
+#   info.
+foreach_with_prefix resolver_attr {0 1} {
+    foreach_with_prefix resolver_debug {0 1} {
+	foreach_with_prefix final_debug {0 1} {
+	    if { [build $resolver_attr $resolver_debug $final_debug] != 0 } {
+		misc_tests $resolver_attr $resolver_debug $final_debug
+		set-break $resolver_attr $resolver_debug $final_debug
+	    }
+	}
+    }
+}
+
+# Test statically linked ifunc resolving during inferior start.
+# https://bugzilla.redhat.com/show_bug.cgi?id=624967
+
+with_test_prefix "static" {
+    # Compile $staticbinfile separately as it may exit on error
+    # (ld/12595).
+
+    set lib_o [standard_output_file ${libfile}.o]
+    set final_o [standard_output_file ${final_file}.o]
+    if { [gdb_compile ${srcdir}/${subdir}/$libsrc $lib_o object {}] != ""
+	 || [gdb_compile ${srcdir}/${subdir}/$final_src $final_o object {}] != ""
+	 || [gdb_compile "${srcdir}/${subdir}/$srcfile $lib_o $final_o" \
+		 $staticbinfile executable {debug}] != "" } {
+	untested "failed to compile second testcase"
+	return -1
+    }
+
+    clean_restart $staticexecutable
+
+    gdb_breakpoint "gnu_ifunc"
+    gdb_breakpoint "main"
+    gdb_run_cmd
+    gdb_test "" "Breakpoint \[0-9\]*, main .*" "static gnu_ifunc"
+}

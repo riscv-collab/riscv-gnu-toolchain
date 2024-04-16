@@ -1,0 +1,134 @@
+# Copyright (C) 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  It tests a pretty printer that
+# calls an inferior function by hand, triggering a Use-after-Free bug
+# (PR gdb/28856).
+
+load_lib gdb-python.exp
+
+require allow_python_tests
+
+standard_testfile
+
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile debug] } {
+    untested "failed to compile"
+    return -1
+}
+
+# This proc restarts GDB, makes the inferior reach the desired spot - marked
+# by a comment in the .c file - and turns on the pretty printer for testing.
+# Starting with a new GDB is important because the test may crash GDB.  The
+# return values are here to avoid us trying to test the pretty printer if
+# there was a problem getting to main.
+proc start_test { breakpoint_comment } {
+    global srcdir subdir testfile binfile
+
+    # Start with a fresh gdb.
+    # This is important because the test can crash GDB.
+
+    clean_restart ${binfile}
+
+    if {![runto_main]} {
+	untested "couldn't run to breakpoint"
+	return -1
+    }
+
+    # Let GDB get to the return line.
+    gdb_breakpoint [gdb_get_line_number ${breakpoint_comment} ${testfile}.c ]
+    gdb_continue_to_breakpoint ${breakpoint_comment} ".*"
+
+    set remote_python_file [gdb_remote_download host ${srcdir}/${subdir}/${testfile}.py]
+    gdb_test_no_output "source ${remote_python_file}" "load python file"
+
+    return 0
+}
+
+# Start by testing the "run" command, it can't leverage start_test
+with_test_prefix "run to frame" {
+    if {![runto_main]} {
+	untested "couldn't run to main"
+    }
+
+    set remote_python_file [gdb_remote_download host ${srcdir}/${subdir}/${testfile}.py]
+    gdb_test_no_output "source ${remote_python_file}" "load python file"
+
+    gdb_breakpoint [gdb_get_line_number "TAG: final frame" ${testfile}.c]
+    gdb_continue_to_breakpoint "TAG: final frame" ".*"
+}
+
+# Testing the backtrace command.
+with_test_prefix "frame print" {
+    if { [start_test "TAG: final frame"] == 0 } {
+	gdb_test "backtrace -frame-arguments all" [multi_line \
+	"#0 .*g \\(mt=mytype is .*\\, depth=0\\).*"\
+	"#1 .*g \\(mt=mytype is .*\\, depth=1\\).*"\
+	"#2 .*g \\(mt=mytype is .*\\, depth=2\\).*"\
+	"#3 .*g \\(mt=mytype is .*\\, depth=3\\).*"\
+	"#4 .*g \\(mt=mytype is .*\\, depth=4\\).*"\
+	"#5 .*g \\(mt=mytype is .*\\, depth=5\\).*"\
+	"#6 .*g \\(mt=mytype is .*\\, depth=6\\).*"\
+	"#7 .*g \\(mt=mytype is .*\\, depth=7\\).*"\
+	"#8 .*g \\(mt=mytype is .*\\, depth=8\\).*"\
+	"#9 .*g \\(mt=mytype is .*\\, depth=9\\).*"\
+	"#10 .*g \\(mt=mytype is .*\\, depth=10\\).*"\
+	"#11 .*main \\(\\).*"] \
+	"backtrace test"
+    }
+}
+
+# Test the "info frame" command
+with_test_prefix "info frame" {
+    if { [start_test "TAG: first frame"] == 0 } {
+	gdb_test "info frame" "mytype is $hex \"hello world\".*"
+    }
+}
+
+# Testing the down command.
+with_test_prefix "frame movement down" {
+    if { [start_test "TAG: first frame"] == 0 } {
+	gdb_test "up" [multi_line "#1 .*in main \\(\\) at .*" ".*outside the frame.*"]
+	gdb_test "down" [multi_line "#0\\s+g \\(mt=mytype is .*\\, depth=10\\).*" ".*first frame.*"]
+    }
+}
+
+# Testing the up command.
+with_test_prefix "frame movement up" {
+    if { [start_test "TAG: final frame"] == 0 } {
+	gdb_test "up" [multi_line "#1 .*in g \\(mt=mytype is .*\\, depth=1\\).*" ".*first frame.*"]
+    }
+}
+
+# Testing the finish command.
+with_test_prefix "frame exit through finish" {
+    if { [start_test "TAG: final frame"] == 0 } {
+	gdb_test "finish" [multi_line ".*.*g \\(mt=mytype is .*\\, depth=0\\).*" ".*g \\(mt=mytype is .*\\, depth=1\\).*" ".*"]
+    }
+}
+
+# Testing the step command.
+with_test_prefix "frame enter through step" {
+    if { [start_test "TAG: outside the frame"] == 0 } {
+	gdb_test "step" [multi_line "g \\(mt=mytype is .*\\, depth=10\\).*" "41.*if \\(depth \\<= 0\\)"]
+    }
+}
+
+# Testing the continue command.
+with_test_prefix "frame enter through continue" {
+    if { [start_test "TAG: outside the frame"] == 0 } {
+	gdb_breakpoint [gdb_get_line_number "TAG: first frame" ${testfile}.c ]
+	gdb_continue_to_breakpoint "TAG: first frame" ".*TAG: first frame.*"
+    }
+}

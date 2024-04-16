@@ -1,0 +1,264 @@
+# Copyright 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.  
+# This test tests the restoration of various kinds of machine state
+# to their original values with a process record log.  We will execute
+# the program forward while it changes various types of data, and
+# then execute it backward to see if their values get restored.
+#
+# The types of machine state (data) that are tested are:
+#   register variable
+#   auto variable
+#   function static variable
+#   module static variable
+#   module global variable
+#
+# TODO:
+# various, possibly including...
+#   .bss variable, .data variable, ...
+#   shared library variable
+#   heap variable (pointer)...
+#   overlay variables...
+#   Test forward replay
+#
+
+# This test suitable only for process record-replay
+require supports_process_record
+
+standard_testfile machinestate.c ms1.c
+set precsave [standard_output_file machinestate.precsave]
+
+if { [prepare_for_testing "failed to prepare" $testfile \
+	  [list $srcfile $srcfile2]] } {
+    return -1
+}
+
+set newline "\[\r\n\]+"
+
+set beginmain [gdb_get_line_number " begin main " $srcfile]
+set endmain   [gdb_get_line_number " end main "   $srcfile]
+
+# Test begins
+
+runto_main
+
+# Activate process record/replay
+gdb_test_no_output "record" "turn on process record"
+
+gdb_test "break $endmain" \
+    "Breakpoint $decimal at .*$srcfile, line $endmain\." \
+    "breakpoint at end of main"
+
+gdb_test "continue" "Breakpoint .* end main .*" "run to end of main"
+
+gdb_test "record save $precsave" \
+    "Saved core file $precsave with execution log\."  \
+    "save process recfile"
+
+gdb_test "kill" "" "kill process, prepare to debug log file" \
+    "Kill the program being debugged\\? \\(y or n\\) " "y"
+
+gdb_test "record restore $precsave" \
+    "Restored records from core file .*" \
+    "reload prec save file"
+
+# Proceed to end of main
+
+gdb_test "break $endmain" \
+    "Breakpoint.* file .*$srcfile, line $endmain.*" \
+    "break at end of main"
+
+gdb_test_multiple "continue" "go to end of main forward" {
+    -re ".*Breakpoint $decimal,.*$srcfile:$endmain.*$gdb_prompt $"  {
+	pass "go to end of main forward"
+    }
+    -re "No more reverse-execution history.* end main .*$gdb_prompt $" {
+	pass "go to end of main forward"
+    }
+}
+
+###
+###
+###
+
+# Now run backward to each of several points where data is changed.
+#
+
+# Module global variable, reverse
+with_test_prefix "module global variable, reverse" {
+    set breakloc [gdb_get_line_number \
+		      "module_global_state: set breakpoint here" $srcfile]
+
+    gdb_test "tbreak $breakloc" "$srcfile, line $breakloc.*"
+    gdb_test "reverse-continue" "$srcfile:$breakloc.*" "reverse to $breakloc"
+
+    gdb_test "print aglobal" " = 0"  "module global reverse-breakpoint"
+    gdb_test "step"          " module global post-change .*"
+    gdb_test "print aglobal" " = 1"  "module global forward past bp"
+    gdb_test "reverse-step"  "$newline$breakloc.*"
+    gdb_test "print aglobal" " = 0"  "module global reverse-step to bp"
+}
+
+# Module static variable, reverse
+with_test_prefix "module static variable, reverse" {
+    set breakloc [gdb_get_line_number \
+		      "module_static_state: set breakpoint here" $srcfile]
+
+    gdb_test "tbreak $breakloc" "$srcfile, line $breakloc.*"
+    gdb_test "reverse-continue" "$srcfile:$breakloc.*" "reverse to $breakloc"
+
+    gdb_test "print astatic" " = 0"  "module static reverse-breakpoint"
+    gdb_test "step"          " module static post-change .*"
+    gdb_test "print astatic" " = 1"  "module static forward"
+    gdb_test "reverse-step"  "$newline$breakloc.*"
+    gdb_test "print astatic" " = 0"  "module static reverse-step"
+}
+
+# Function static variable, reverse
+with_test_prefix "function static variable, reverse" {
+    set breakloc [gdb_get_line_number \
+		      "function_static_state: set breakpoint here" $srcfile]
+
+    gdb_test "tbreak $breakloc" "$srcfile, line $breakloc.*"
+    gdb_test "reverse-continue" "$srcfile:$breakloc.*" "reverse to $breakloc"
+
+    gdb_test "print a"      " = 0"  "function static reverse-breakpoint"
+    gdb_test "step"         " function static post-change .*"
+    gdb_test "print a"      " = 1"  "function static forward"
+    gdb_test "reverse-step" "$newline$breakloc.*"
+    gdb_test "print a"      " = 0"  "function static reverse-step"
+}
+
+# Auto variable, reverse
+with_test_prefix "auto variable, reverse" {
+    set breakloc [gdb_get_line_number \
+		      "auto_state: set breakpoint here" $srcfile]
+
+    gdb_test "tbreak $breakloc" "$srcfile, line $breakloc.*"
+    gdb_test "reverse-continue" "$srcfile:$breakloc.*" "reverse to $breakloc"
+
+    gdb_test "print a"      " = 0"  "auto var reverse-breakpoint"
+    gdb_test "step"         " auto post-change .*"
+    gdb_test "print a"      " = 1"  "auto var forward"
+    gdb_test "reverse-step" "$newline$breakloc.*"
+    gdb_test "print a"      " = 0"  "auto var reverse-step"
+}
+
+# Register variable, reverse
+with_test_prefix "register variable, reverse" {
+    set breakloc [gdb_get_line_number \
+		      "register_state: set breakpoint here" $srcfile]
+
+    gdb_test "tbreak $breakloc" "$srcfile, line $breakloc.*"
+    gdb_test "reverse-continue" "$srcfile:$breakloc.*" "reverse to $breakloc"
+
+    gdb_test "print a"      " = 0"  "register var reverse-breakpoint"
+    gdb_test "step"         " register post-change .*"
+    gdb_test "print a"      " = 1"  \
+	"register var step post-change, first time"
+    gdb_test "reverse-step" "$newline$breakloc.*"
+    gdb_test "print a"      " = 0"  "register var reverse step-to"
+}
+
+# Proceed to beginning of main
+
+gdb_test "tbreak $beginmain" ".*$srcfile, line $beginmain.*" \
+    "tbreak at beginning of main"
+gdb_test "reverse-continue"  ".*$srcfile:$beginmain.*" "reverse to main"
+
+# Now repeat tests while replaying forward.
+
+# Register variable, forward
+with_test_prefix "register variable, forward" {
+    set breakloc [gdb_get_line_number \
+		      "register_state: set breakpoint here" $srcfile]
+
+    gdb_test "tbreak $breakloc" "$srcfile, line $breakloc.*"
+    gdb_test "continue"         "$srcfile:$breakloc.*" "forward to $breakloc"
+
+    gdb_test "print a"      " = 0"  "register var forward-breakpoint"
+    gdb_test "reverse-step" "hide.*"
+    gdb_test "step"         "$newline$breakloc.*" "step, 1"
+    gdb_test "print a"      " = 0"  "register var forward step-to"
+    gdb_test "step"         " register post-change .*" "step, 2"
+    gdb_test "print a"      " = 1" \
+	"register var step post-change, second time"
+}
+
+# Auto variable, forward
+with_test_prefix "auto variable, forward" {
+    set breakloc [gdb_get_line_number \
+		      "auto_state: set breakpoint here" $srcfile]
+
+    gdb_test "tbreak $breakloc" "$srcfile, line $breakloc.*"
+    gdb_test "continue"         "$srcfile:$breakloc.*" "forward to $breakloc"
+
+    gdb_test "print a"      " = 0"  "auto var forward-breakpoint"
+    gdb_test "reverse-step" "hide.*"
+    gdb_test "step"         "$newline$breakloc.*" "step, 1"
+    gdb_test "print a"      " = 0"  "auto var forward step-to"
+    gdb_test "step"         " auto post-change .*" "step, 2"
+    gdb_test "print a"      " = 1"  "auto var step post-change"
+}
+
+# Function static variable, forward
+with_test_prefix "function static variable, forward" {
+    set breakloc [gdb_get_line_number \
+		      "function_static_state: set breakpoint here" $srcfile]
+
+    gdb_test "tbreak $breakloc" "$srcfile, line $breakloc.*"
+    gdb_test "continue"         "$srcfile:$breakloc.*" "forward to $breakloc"
+
+    gdb_test "print a"      " = 0"  "function static forward-breakpoint"
+    gdb_test "reverse-step" "hide.*"
+    gdb_test "step"         "$newline$breakloc.*" "step, 1"
+    gdb_test "print a"      " = 0"  "function static forward step-to"
+    gdb_test "step"         " function static post-change .*" "step, 2"
+    gdb_test "print a"      " = 1"  "function static step post-change"
+}
+
+# Module static variable, forward
+with_test_prefix "module static variable, forward" {
+    set breakloc [gdb_get_line_number \
+		      "module_static_state: set breakpoint here" $srcfile]
+
+    gdb_test "tbreak $breakloc" "$srcfile, line $breakloc.*"
+    gdb_test "continue"         "$srcfile:$breakloc.*" "forward to $breakloc"
+
+    gdb_test "print astatic" " = 0"  "module static forward-breakpoint"
+    gdb_test "reverse-step"  "hide.*"
+    gdb_test "step"          "$newline$breakloc.*" "step, 1"
+    gdb_test "print astatic" " = 0"  "module static forward step-to"
+    gdb_test "step"          " module static post-change .*" "step, 2"
+    gdb_test "print astatic" " = 1"  "module static step post-change"
+}
+
+# Module global variable, forward
+with_test_prefix "module global variable, forward" {
+    set breakloc [gdb_get_line_number \
+		      "module_global_state: set breakpoint here" $srcfile]
+
+    gdb_test "tbreak $breakloc" "$srcfile, line $breakloc.*"
+    gdb_test "continue"         "$srcfile:$breakloc.*" "forward to $breakloc"
+
+    gdb_test "print aglobal" " = 0"  "module global forward-breakpoint"
+    gdb_test "reverse-step"  "hide.*"
+    gdb_test "step"          "$newline$breakloc.*" "step, 1"
+    gdb_test "print aglobal" " = 0"  "module global forward step-to"
+    gdb_test "step"          " module global post-change .*" "step, 2"
+    gdb_test "print aglobal" " = 1"  "module global step post-change"
+}
+

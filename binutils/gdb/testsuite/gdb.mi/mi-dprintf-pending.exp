@@ -1,0 +1,74 @@
+# Copyright 2015-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test checks if dprintf prints correctly when it's resolved from
+# pending state.
+# See PR breakpoints/16465.
+
+load_lib mi-support.exp
+
+require allow_shlib_tests
+
+standard_testfile mi-dprintf-pending.c
+
+set libfile1 "mi-dprintf-pendshr"
+set libsrc1  $srcdir/$subdir/$libfile1.c
+set lib_sl1  [standard_output_file $libfile1.sl]
+set lib_opts debug
+set exec_opts [list debug shlib=$lib_sl1 shlib_load]
+
+if {[gdb_compile_shlib $libsrc1 $lib_sl1 $lib_opts] != ""} {
+    untested "failed to compile shared library"
+    return -1
+}
+
+if {[gdb_compile $srcdir/$subdir/$srcfile $binfile executable $exec_opts] != ""} {
+    untested "failed to compile"
+    return -1
+}
+
+if {[mi_clean_restart $binfile]} {
+    return
+}
+
+mi_load_shlibs $lib_sl1
+
+set bp_location1 [gdb_get_line_number "set breakpoint 1 here"]
+
+# Set pending dprintf via MI.
+set bp [mi_make_breakpoint_pending -number "1" -type "dprintf" \
+	    -disp "keep" -enabled "y" -pending "pendfunc1" \
+	    -original-location "pendfunc1"]
+mi_gdb_test "-dprintf-insert -f pendfunc1 \"hello\"" \
+    ".*\\^done,$bp" "mi set dprintf"
+
+mi_create_breakpoint $bp_location1 "mi insert breakpoint bp_location1" \
+    -type "breakpoint" -line $bp_location1 -file ".*$srcfile"
+
+mi_run_cmd
+
+set msg "mi dprintf"
+gdb_expect {
+    -re ".*~\"hello\"" {
+	pass $msg
+    }
+    -re ".*$mi_gdb_prompt$" {
+	fail $msg
+    }
+    timeout {
+	fail $msg
+    }
+}
+mi_expect_stop ".*" "main" ".*" ".*$srcfile" "$bp_location1" "" "$msg stop"

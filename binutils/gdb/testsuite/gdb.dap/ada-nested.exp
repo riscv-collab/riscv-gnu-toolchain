@@ -1,0 +1,95 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check the scope of a nested function.
+
+load_lib ada.exp
+load_lib dap-support.exp
+
+require allow_ada_tests allow_dap_tests
+
+standard_ada_testfile prog
+
+if {[gdb_compile_ada "${srcfile}" "${binfile}" executable \
+	 {debug additional_flags=-gnata}] != ""} {
+    return -1
+}
+
+if {[dap_launch $binfile] == ""} {
+    return
+}
+
+set line [gdb_get_line_number "STOP"]
+set obj [dap_check_request_and_response "set breakpoint" \
+	     setBreakpoints \
+	     [format {o source [o path [%s]] \
+			  breakpoints [a [o line [i %d]]]} \
+		  [list s $srcfile] $line]]
+set fn_bpno [dap_get_breakpoint_number $obj]
+
+dap_check_request_and_response "start inferior" configurationDone
+
+dap_wait_for_event_and_check "stopped at breakpoint" stopped \
+    "body reason" breakpoint \
+    "body hitBreakpointIds" $fn_bpno
+
+set bt [lindex [dap_check_request_and_response "backtrace" stackTrace \
+		    {o threadId [i 1]}] \
+	    0]
+set frame_id [dict get [lindex [dict get $bt body stackFrames] 0] id]
+
+set scopes [dap_check_request_and_response "get scopes" scopes \
+		[format {o frameId [i %d]} $frame_id]]
+set scopes [dict get [lindex $scopes 0] body scopes]
+
+# This is what the implementation does, so we can assume it, but check
+# just in case something changes.
+lassign $scopes args locals _ignore
+gdb_assert {[dict get $args name] == "Arguments"} "argument scope"
+gdb_assert {[dict get $locals name] == "Locals"} "local scope"
+
+set num_vars [dict get $locals namedVariables]
+# Some versions of GNAT emit an extra 'x' in scope.
+gdb_assert {$num_vars == 3 || $num_vars == 4} "correct number of locals"
+
+set num [dict get $locals variablesReference]
+set refs [lindex [dap_check_request_and_response "fetch variables" \
+		      "variables" \
+		      [format {o variablesReference [i %d] count [i %d]} \
+			   $num $num_vars]] \
+	      0]
+
+foreach var [dict get $refs body variables] {
+    set name [dict get $var name]
+
+    switch $name {
+	"i" {
+	    gdb_assert {[dict get $var value] == "1"} "check value of i"
+	}
+	"x" - "x #2" {
+	    # Some versions of GNAT erroneously emit a duplicate 'x'.
+	    # Work around it here.
+	    gdb_assert {[dict get $var value] == "12"} "check value of $name"
+	}
+	"outer_arg" {
+	    gdb_assert {[dict get $var value] == "1"} "check value of outer_arg"
+	}
+	default {
+	    fail "unknown variable $name"
+	}
+    }
+}
+
+dap_shutdown

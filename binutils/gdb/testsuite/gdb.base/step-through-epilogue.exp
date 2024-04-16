@@ -1,0 +1,98 @@
+#   Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test is used to confirm that GDB is able to step, stopping at an
+# epilogue line, then step out of the function.
+
+standard_testfile
+
+if { ![have_epilogue_line_info] } {
+    untested "This test doesn't work with this compiler"
+    return
+}
+
+if { [prepare_for_testing "failed to prepare" $testfile \
+			  {step-through-epilogue.c}] } {
+    untested "failed to prepare"
+    return
+}
+
+if { ![runto_main] } {
+    untested "couldn't run to main"
+    return
+}
+
+proc step_till_epilogue_multiply {} {
+    gdb_test "step" ".*return a . b;.*" "step into multiply"
+    gdb_test "step" \
+	     "$::decimal\\s+\\\}\[^\r\n\]+Epilogue line of multiply.*" \
+	     "stop at the epilogue of multiply"
+}
+
+proc step_till_epilogue_square {} {
+    gdb_test "step" ".*return multiply.*" "step into square"
+    step_till_epilogue_multiply
+    gdb_test "step" \
+	     "$::decimal\\s+\\\}\[^\r\n\]+Epilogue line of square.*" \
+	     "stop at epilogue of square"
+}
+
+with_test_prefix "multiply" {
+    step_till_epilogue_multiply
+    gdb_test "step" "x = square \\(2\\);" "leave function"
+}
+
+with_test_prefix "square" {
+    step_till_epilogue_square
+    gdb_test "step" ".*x = multiply \\(square \\(1\\), square \\(2\\)\\);.*"\
+	"leave function"
+}
+
+# Some gcc versions can mess this test by requiring extra steps in a
+# few locations.  We dynamically test if we're in one such versions in the
+# the first argument, and use that to see if extra steps are needed to
+# finish the second argument
+set midway_return false
+
+with_test_prefix "square, first argument" {
+    step_till_epilogue_square
+    gdb_test_multiple "step" "step back to main" {
+	-re -wrap "multiply \\(square \\(1\\), square \\(2\\)\\);" {
+	    set midway_return true
+	    gdb_send "step\n"
+	    exp_continue
+	}
+
+	-re -wrap "return multiply.*" {
+	    pass $gdb_test_name
+	}
+    }
+}
+with_test_prefix "square, second argument" {
+    step_till_epilogue_multiply
+    gdb_test "step" \
+	     "$::decimal\\s+\\\}\[^\r\n\]+Epilogue line of square.*" \
+	     "stop at epilogue of square"
+    if {$midway_return} {
+	gdb_test "step"\
+	    ".*x = multiply \\(square \\(1\\), square \\(2\\)\\);.*"\
+	    "step back to main"
+    }
+}
+
+with_test_prefix "multiply with function args" {
+    step_till_epilogue_multiply
+    gdb_test "step" ".*return 0;.*" "leave last function"
+}

@@ -1,0 +1,87 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This file is part of GDB.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that the "set amdgpu precise-memory" setting is per-inferior, and
+# inherited by an inferior created using the clone-inferior command.
+
+load_lib rocm.exp
+
+require allow_hipcc_tests
+
+clean_restart
+
+set test_python [allow_python_tests]
+
+proc test_per_inferior { } {
+    gdb_test "show amdgpu precise-memory" \
+	"AMDGPU precise memory access reporting is off \\(currently disabled\\)." \
+	"show initial value, inferior 1"
+    if $::test_python {
+	gdb_test "python print(gdb.parameter(\"amdgpu precise-memory\"))" \
+	    "False" \
+	    "show initial value using Python, inferior 1"
+    }
+    gdb_test_no_output "set amdgpu precise-memory" \
+	"set on inferior 1"
+    gdb_test "show amdgpu precise-memory" \
+	"AMDGPU precise memory access reporting is on \\(currently disabled\\)." \
+	"show new value, inferior 1"
+    if $::test_python {
+	gdb_test "python print(gdb.parameter(\"amdgpu precise-memory\"))" \
+	    "True" \
+	    "show new value using Python, inferior 1"
+    }
+
+    gdb_test "add-inferior" "Added inferior 2"
+    gdb_test "inferior 2" "Switching to inferior 2 .*"
+
+    gdb_test "show amdgpu precise-memory" \
+	"AMDGPU precise memory access reporting is off \\(currently disabled\\)." \
+	"show initial value, inferior 2"
+    if $::test_python {
+	gdb_test "python print(gdb.parameter(\"amdgpu precise-memory\"))" \
+	    "False" \
+	    "show initial value using Python, inferior 2"
+    }
+}
+
+proc test_copy_precise_memory_on_clone {precise_memory} {
+    set value $precise_memory
+    if {$precise_memory == "unspecified"} {
+	set value off
+    }
+
+    clean_restart
+    gdb_test "show amdgpu precise-memory" "is off.*" \
+	"show default amdgpu precise-memory"
+    if {$precise_memory != "unspecified"} {
+	gdb_test_no_output "set amdgpu precise-memory $value"
+	gdb_test "show amdgpu precise-memory" "is $value.*" \
+		 "show amdgpu precise-memory on original inferior"
+    }
+
+    gdb_test "clone-inferior" "Added inferior 2.*"
+    gdb_test "inferior 2"
+    gdb_test "show amdgpu precise-memory" "is $value.*" \
+	"show amdgpu precise-memory on cloned inferior"
+}
+
+test_per_inferior
+
+foreach_with_prefix precise_memory { unspecified on off } {
+    test_copy_precise_memory_on_clone $precise_memory
+}

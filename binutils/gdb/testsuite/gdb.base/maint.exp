@@ -1,0 +1,517 @@
+# Copyright 1998-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file was written by Elena Zannoni (ezannoni@cygnus.com)
+
+# this file tests maintenance commands and help on those.
+
+# source file used is break.c
+
+
+#maintenance check-psymtabs -- Check consistency of psymtabs vs symtabs
+#maintenance check-symtabs -- Check consistency of symtabs
+#maintenance expand-symtabs -- Expand symtabs matching a file regexp
+#maintenance set -- Set GDB internal variables used by the GDB maintainer
+#maintenance show -- Show GDB internal variables used by the GDB maintainer
+#maintenance dump-me -- Get fatal error; make debugger dump its core
+#maintenance print -- Maintenance command for printing GDB internal state
+#maintenance info -- Commands for showing internal info about the program being debugged
+#maintenance internal-error -- Give GDB an internal error.
+#
+#maintenance print dummy-frames -- Print the dummy frame stack
+#maintenance print statistics -- Print statistics about internal gdb state
+#maintenance print objfiles -- Print dump of current object file definitions
+#maintenance print psymbols -- Print dump of current partial symbol definitions
+#maintenance print msymbols -- Print dump of current minimal symbol definitions
+#maintenance print symbols -- Print dump of current symbol definitions
+#maintenance print type -- Print a type chain for a given symbol
+#maintenance print unwind -- Print unwind table entry at given address
+#
+#
+#maintenance info breakpoints -- Status of all breakpoints
+#
+
+
+
+standard_testfile break.c break1.c
+
+if {[prepare_for_testing "failed to prepare" $testfile \
+	 [list $srcfile $srcfile2] {debug nowarnings}]} {
+    return -1
+}
+
+set readnow_p [readnow]
+
+# The commands we test here produce many lines of output; disable "press
+# <return> to continue" prompts.
+gdb_test_no_output "set height 0"
+
+# Tests that require that no program is running
+
+gdb_file_cmd ${binfile}
+
+# Test for a regression where this command would internal-error if the
+# program wasn't running.  If there's a lot of registers then this
+# might overflow expect's buffers, so process the output line at a
+# time.
+set saw_registers 0
+set saw_headers 0
+set test "maint print registers"
+gdb_test_multiple $test $test {
+    -re "\[^\r\n\]+Name\[^\r\n\]+Nr\[^\r\n\]+Rel\[^\r\n\]+Offset\[^\r\n\]+Size\[^\r\n\]+Type\[^\r\n\]+\r\n" {
+	set saw_headers 1
+	exp_continue
+    }
+    -re "^\[^\r\n\]+\[0-9\]+\[^\r\n\]+\[0-9\]+\[^\r\n\]+\[0-9\]+\[^\r\n\]+\[0-9\]+\[^\r\n\]+\r\n" {
+        set saw_registers 1
+        exp_continue
+    }
+    -re "^\\*\[0-9\]+\[^\r\n\]+\r\n" {
+        exp_continue
+    }
+    -re "$gdb_prompt $" {
+        gdb_assert { $saw_registers && $saw_headers } $test
+    }
+}
+
+# Test "mt expand-symtabs" here as it's easier to verify before we
+# run the program.
+gdb_test_no_output "mt set per on" "mt set per on for expand-symtabs"
+gdb_test_multiple "mt expand-symtabs $subdir/break\[.\]c$" \
+    "mt expand-symtabs" {
+	-re "#compunits: (1|2) \\(\[+\](0|1|2)\\),.*$gdb_prompt $" {
+	    # This should expand at most two primary symtabs.
+	    # "Normally" it will not expand any, because the symtab
+	    # holding "main" will already have been expanded, but if the
+	    # file is compiled with -fdebug-types-section then a second primary
+	    # symtab for break.c will be created for any types.
+	    pass "$gdb_test_name"
+	}
+	-re "#compunits: ($decimal) \\(\[+\]0\\),.*$gdb_prompt $" {
+	    if { $readnow_p } {
+		pass "$gdb_test_name"
+	    } else {
+		fail "$gdb_test_name"
+	    }
+	}
+    }
+gdb_test "mt set per off" ".*" "mt set per off for expand-symtabs"
+
+# Tests that can or should be done with a running program
+
+gdb_load ${binfile}
+
+if {![runto_main]} {
+    return
+}
+
+# If we're using .gdb_index or .debug_names there will be no psymtabs.
+set have_gdb_index [ exec_has_index_section ${binfile} ]
+
+# There also won't be any psymtabs if we read the index from the index cache.
+# We can detect this by looking if the index-cache is enabled and if the number
+# of cache misses is 0.
+set index_cache_misses -1
+gdb_test_multiple "show index-cache stats" "check index cache stats" {
+    -re ".*Cache misses \\(this session\\): (\\d+)\r\n.*$gdb_prompt $" {
+	set index_cache_misses $expect_out(1,string)
+    }
+}
+
+set using_index_cache 0
+gdb_test_multiple "show index-cache enabled" "check index cache status" {
+    -re ".*is off.\r\n$gdb_prompt $" {
+	set using_index_cache 0
+    }
+    -re ".*is on.\r\n$gdb_prompt $" {
+	set using_index_cache 1
+    }
+}
+
+if { $index_cache_misses == 0 && $using_index_cache } {
+    set have_gdb_index 1
+}
+
+set have_psyms [expr ! ( $have_gdb_index || $readnow_p )]
+
+#
+# this command does not produce any output
+# unless there is some problem with the symtabs and psymtabs
+# so that branch will really never be covered in this tests here!!
+#
+# When there is a problem, there may be loads of output, which can
+# overwhelm the expect buffer. Splitting it seems to fix those
+# issues.
+
+set seen_command false
+gdb_test_multiple "maint check-psymtabs" "" {
+    -re "^maint check-psymtabs\r\n" {
+	set seen_command true
+	exp_continue
+    }
+
+    -re "^$gdb_prompt $" {
+	gdb_assert { $seen_command } $gdb_test_name
+    }
+
+    -re "^\[^\r\n\]+\r\n" {
+	exp_continue
+    }
+}
+
+# This command does not produce any output unless there is some problem
+# with the symtabs, so that branch will really never be covered in the
+# tests here!!
+gdb_test_no_output "maint check-symtabs"
+
+# Test per-command stats.
+gdb_test_no_output "maint set per-command on"
+set decimal "\[0-9\]+"
+set time_fmt "${decimal}-${decimal}-${decimal} ${decimal}:${decimal}:${decimal}\\.${decimal}"
+gdb_test "pwd" \
+    "${time_fmt} - command started\r\n.*\r\n${time_fmt} - command finished\r\nCommand execution time: \[0-9.\]+ \\(cpu\\), \[0-9.\]+ \\(wall\\)\[\r\n\]+Space used: $decimal \\(\\+$decimal for this command\\)\[\r\n\]+#symtabs: $decimal \\(\\+$decimal\\), #compunits: $decimal \\(\\+$decimal\\), #blocks: $decimal \\(\\+$decimal\\)"
+gdb_test "maint set per-command off" \
+    "${time_fmt} - command started"
+
+# The timeout value is raised, because printing all the symbols and
+# statistical information about Cygwin and Windows libraries takes a lot
+# of time.
+if [istarget "*-*-cygwin*"] {
+	set oldtimeout $timeout
+	set timeout [expr $timeout + 500]
+}
+
+set re \
+    [list \
+	 "Statistics for\[^\n\r\]*maint\[^\n\r\]*:" \
+	 "  Number of \"minimal\" symbols read: $decimal" \
+	 "  Number of \"full\" symbols read: $decimal" \
+	 "  Number of \"types\" defined: $decimal" \
+	 "  Number of symbol tables: $decimal" \
+	 "  Number of symbol tables with line tables: $decimal" \
+	 "  Number of symbol tables with blockvectors: $decimal" \
+	 "(  Number of \"partial\" symbols read: $decimal" \
+	 ")?(  Number of psym tables \\(not yet expanded\\): $decimal" \
+	 ")?(  Total memory used for psymbol cache: $decimal" \
+	 ")?(  Number of read CUs: $decimal" \
+	 "  Number of unread CUs: $decimal" \
+	 ")?  Total memory used for objfile obstack: $decimal" \
+	 "  Total memory used for BFD obstack: $decimal" \
+	 "  Total memory used for string cache: $decimal" \
+	 ""]
+
+set re [multi_line {*}$re]
+gdb_test_lines "maint print statistics" "" $re
+
+# There aren't any ...
+gdb_test_no_output "maint print dummy-frames"
+
+
+
+# To avoid timeouts, we avoid expects with many .* patterns that match
+# many lines.  Instead, we keep track of which milestones we've seen
+# in the output, and stop when we've seen all of them.
+
+set header 0
+set psymtabs 0
+set cooked_index 0
+set symtabs 0
+set cmd "maint print objfiles"
+set re "maint"
+gdb_test_multiple "$cmd $re" "$cmd" -lbl {
+    -re "\r\nObject file.*maint($EXEEXT)?:  Objfile at ${hex}" {
+	set header 1
+	exp_continue
+    }
+    -re "\r\nCooked index" {
+	set cooked_index 1
+	exp_continue
+    }
+    -re "\r\nPsymtabs:\[\r\t \]+" {
+	set psymtabs 1
+	exp_continue
+    }
+    -re "\r\nSymtabs:\[\r\t \]+\n" {
+	set symtabs 1
+	exp_continue
+    }
+    -re -wrap "" {
+	pass $gdb_test_name
+    }
+}
+
+proc maint_pass_if {val name} {
+    if $val { pass $name } else { fail $name }
+}
+
+maint_pass_if $header   "maint print objfiles: header"
+if {$cooked_index} {
+    set have_psyms 0
+}
+if { $have_psyms } {
+    maint_pass_if $psymtabs "maint print objfiles: psymtabs"
+}
+maint_pass_if $symtabs  "maint print objfiles: symtabs"
+
+if { $have_psyms } {
+    set psymbols_output [standard_output_file psymbols_output]
+    set psymbols_output_re [string_to_regexp $psymbols_output]
+    set test_list [list \
+		       "maint print psymbols -source" \
+		       "maint print psymbols -source ${srcdir}/${subdir}/${srcfile} $psymbols_output" \
+		       "maint print psymbols -pc" \
+		       "maint print psymbols -pc main $psymbols_output"]
+    foreach { test_name command } $test_list {
+	gdb_test_no_output "$command" "collecting data for $test_name"
+	gdb_test_multiple "shell grep 'main.*function' $psymbols_output" "" {
+		-re -wrap ".main., function, $hex.*" {
+		    pass "$test_name (pattern 1)"
+		}
+		-re -wrap ".*main.  .., function, $hex.*" {
+		    pass "$test_name (pattern 2)"
+		}
+	}
+	gdb_test "shell rm -f $psymbols_output" ".*" \
+	    "${test_name}: shell rm -f psymbols_output"
+    }
+}
+
+
+set msymbols_output [standard_output_file msymbols_output]
+set msymbols_output_re [string_to_regexp $msymbols_output]
+gdb_test_no_output "maint print msymbols -objfile ${binfile} $msymbols_output" \
+    "print msymbols to file, with absolute path"
+gdb_test "shell grep factorial $msymbols_output" \
+    "\\\[ *$decimal\\\] \[tT\]\[ \t\]+$hex \\.?factorial.*" \
+    "maint print msymbols, absolute pathname"
+gdb_test "shell rm -f $msymbols_output" ".*" "remove absolute path msymbols"
+
+# Check that maint print msymbols allows relative pathnames
+set mydir [pwd]
+gdb_test "cd [standard_output_file {}]" \
+    "Working directory .*\..*" \
+    "cd to objdir"
+
+gdb_test_no_output "maint print msymbols -objfile ${testfile} $msymbols_output"\
+    "print msymbols to file, with relative path"
+gdb_test "shell grep factorial $msymbols_output" \
+    "\\\[ *$decimal\\\] \[tT\]\[ \t\]+$hex \\.?factorial.*" \
+    "maint print msymbols, relative pathname"
+gdb_test "shell rm -f msymbols_output" ".*" "remove relative path msymbols"
+
+gdb_test "cd ${mydir}" \
+    "Working directory [string_to_regexp ${mydir}]\..*" \
+    "cd to mydir"
+
+
+# Request symbols for one particular source file so that we don't try to
+# dump the symbol information for the entire C library - over 500MB nowadays
+# for GNU libc.
+
+set symbols_output [standard_output_file symbols_output]
+set symbols_output_re [string_to_regexp $symbols_output]
+set test_list [list \
+		   "maint print symbols -source" \
+		   "maint print symbols -source ${srcdir}/${subdir}/${srcfile} $symbols_output" \
+		   "maint print symbols -pc" \
+		   "maint print symbols -pc main $symbols_output"]
+foreach { test_name command } $test_list {
+    gdb_test_no_output "$command" "$test_name generate"
+    gdb_test "shell grep 'main(.*block' $symbols_output"\
+	"int main\\(int, char \\*\\*, char \\*\\*\\); block.*"\
+	"$test_name read"
+    gdb_test "shell rm -f $symbols_output" ".*" \
+	"$test_name: shell rm -f symbols_output"
+}
+
+set msg "maint print type"
+gdb_test_multiple "maint print type argc" $msg {
+    -re "type node $hex\r\nname .int. \\($hex\\)\r\ncode $hex \\(TYPE_CODE_INT\\)\r\nlength \[24\]\r\nobjfile $hex\r\ntarget_type $hex\r\npointer_type $hex\r\nreference_type $hex\r\ntype_chain $hex\r\ninstance_flags $hex\r\nflags\r\nnfields 0 $hex\r\n$gdb_prompt $" {
+        pass $msg
+    }
+}
+
+if [istarget "hppa*-*-11*"] {
+    setup_xfail hppa*-*-*11* CLLbs14860
+    gdb_test_multiple "maint print unwind &main" "maint print unwind" {
+        -re ".*unwind_table_entry \\($hex\\):\r\n\tregion_start = $hex <main>\r\n\tregion_end = $hex <main\\+\[0-9\]*>\r\n\tflags = Args_stored Save_RP\r\n\tRegion_description = $hex\r\n\tEntry_FR = $hex\r\n\tEntry_GR = $hex\r\n\tTotal_frame_size = $hex\r\n$gdb_prompt $" {
+	    pass "maint print unwind"
+	}
+        -re ".*unwind_table_entry \\($hex\\):\r\n\tregion_start = $hex <main>\r\n\tregion_end = $hex <main\\+\[0-9\]*>\r\n\tflags = Args_stored Save_RP\r\n\tFLD = $hex\r\n\tFLD = $hex\r\n\tFLD = $hex\r\n\tFLD = $hex\r\n$gdb_prompt $" {
+	    xfail "maint print unwind"
+	}
+    }
+}
+
+set oldtimeout $timeout
+set timeout [expr $timeout + 300]
+
+set bp_location6 [gdb_get_line_number "set breakpoint 6 here"]
+
+gdb_test_multiple "maint info breakpoints" "maint info breakpoints" {
+    -re "Num\[ \t\]+Type\[ \t\]+Disp\[ \t\]+Enb\[ \t\]+Address\[ \t\]+What\r\n1\[ \t\]+breakpoint\[ \t\]+keep\[ \t\]+y\[ \t\]+$hex\[ \t\]+in main at.*break.c:$bp_location6 inf 1\r\n\[ \t\]+breakpoint already hit 1 time\r\n.*$gdb_prompt $" {
+	pass "maint info breakpoints"
+    }
+    -re "Num\[ \t\]+Type\[ \t\]+Disp\[ \t\]+Enb\[ \t\]+Address\[ \t\]+What\r\n1\[ \t\]+breakpoint\[ \t\]+keep\[ \t\]+y\[ \t\]+$hex in main at.*break.c:$bp_location6 sspace 1\r\n\[ \t\]+breakpoint already hit 1 time\r\n-1\[ \t\]+shlib events\[ \t\]+keep\[ \t\]+y\[ \t\]+$hex.*breakpoint already hit.*$gdb_prompt $" {
+	pass "maint info breakpoints (with shlib events)"
+    }
+}
+
+gdb_test "maint print" \
+    "List.*unambiguous\\..*" \
+    "maint print w/o args" 
+
+gdb_test "maint info" \
+    "List.*unambiguous\\..*" \
+    "maint info w/o args"
+
+gdb_test "maint" \
+    "List.*unambiguous\\..*" \
+    "maint w/o args"
+
+# Test that "main info line-table" w/o a file name shows the symtab for
+# $srcfile.
+set saw_srcfile 0
+gdb_test_multiple "maint info line-table" \
+    "maint info line-table w/o a file name" {
+    -re "symtab: \[^\n\r\]+${srcfile} \\(\\(struct symtab \\*\\) $hex\\)\r\nlinetable: \\(\\(struct linetable \\*\\) $hex\\):\r\nINDEX\[ \t\]+LINE\[ \t\]+REL-ADDRESS\[ \t\]+UNREL-ADDRESS\[^\r\n\]*\r\n" {
+	set saw_srcfile 1
+	exp_continue
+    }
+    -re "symtab: \[^\n\r\]+ \\(\\(struct symtab \\*\\) $hex\\)\r\nlinetable: \\(\\(struct linetable \\*\\) $hex\\):\r\nINDEX\[ \t\]+LINE\[ \t\]+REL-ADDRESS\[ \t\]+UNREL-ADDRESS\[^\r\n\]*\r\n" {
+	# Match each symtab to avoid overflowing expect's buffer.
+	exp_continue
+    }
+    -re "symtab: \[^\n\r\]+ \\(\\(struct symtab \\*\\) $hex\\)\r\nlinetable: \\(\\(struct linetable \\*\\) 0x0\\):\r\nNo line table.\r\n" {
+	# For symtabs with no linetable.
+	exp_continue
+    }
+    -re "^$decimal\[ \t\]+$decimal\[ \t\]+$hex\[ \t\]+$hex\[^\r\n\]*\r\n" {
+	# Line table entries can be long too:
+	#
+	#  INDEX    LINE ADDRESS
+	#  0          29 0x00000000004006f6
+	#  1          30 0x00000000004006fa
+	#  2          31 0x0000000000400704
+	#  3          42 0x0000000000400706
+	#  4          43 0x0000000000400719
+	#  5          44 0x0000000000400722
+	#  6          45 0x0000000000400740
+	#  (...)
+	#  454       129 0x00007ffff7df1d28
+	#  455       END 0x00007ffff7df1d3f
+	#
+	# Match each line to avoid overflowing expect's buffer.
+	exp_continue
+    }
+    -re "^$decimal\[ \t\]+END\[ \t\]+$hex\[ \t\]+$hex\[^\r\n\]*\r\n" {
+	# Matches an end marker in the above.
+	exp_continue
+    }
+    -re "^\r\n" {
+	# Empty line between tables.
+	exp_continue
+    }
+    -re "^$gdb_prompt $" {
+	gdb_assert $saw_srcfile $gdb_test_name
+    }
+}
+
+gdb_test "maint info line-table ${srcfile}" \
+    "symtab: \[^\n\r\]+${srcfile}.*INDEX.*LINE.*ADDRESS.*" \
+    "maint info line-table with filename of current symtab"
+
+if { ! $readnow_p } {
+    gdb_test_no_output "maint info line-table ${srcfile2}" \
+	[join \
+	     "maint info line-table with filename of symtab that is not" \
+	     " currently expanded"]
+}
+
+gdb_test_no_output "maint expand-symtabs"
+
+gdb_test "maint info line-table ${srcfile2}" \
+    "symtab: \[^\n\r\]+${srcfile2}.*INDEX.*LINE.*ADDRESS.*" \
+    "maint info line-table with filename of symtab that is not current"
+
+gdb_test_no_output "maint info line-table xxx.c" \
+    "maint info line-table with invalid filename"
+
+set timeout $oldtimeout
+
+# Just check that the DWARF unwinders control flag is visible.
+gdb_test "maint show dwarf unwinders" \
+    "The DWARF stack unwinders are currently (on|off)\\."
+
+#============test help on maint commands
+
+test_prefix_command_help {"maint info" "maintenance info"} {
+    "Commands for showing internal info about the program being debugged\\.\[\r\n\]+"
+}
+
+test_prefix_command_help {"maint print" "maintenance print"} {
+    "Maintenance command for printing GDB internal state\\.\[\r\n\]+"
+}
+
+test_prefix_command_help {"maint" "maintenance"} {
+    "Commands for use by GDB maintainers\\.\[\r\n\]+"
+    "Includes commands to dump specific internal GDB structures in\[\r\n\]+"
+    "a human readable form, to cause GDB to deliberately dump core, etc\\.\[\r\n\]+"
+}
+
+#set oldtimeout $timeout
+#set timeout [expr $timeout + 300]
+
+gdb_test_multiple "maint dump-me" "maint dump-me" {
+    -re "Should GDB dump core.*\\(y or n\\) $" {
+	gdb_test "n" ".*" "maint dump-me"
+    }
+    -re "Undefined maintenance command: .*$gdb_prompt $" {
+	# Command 'maint dump-me' is registered on non-win32 host.
+	unsupported "maint dump-me"
+    }
+}
+
+send_gdb "maint internal-error\n"
+gdb_expect {
+    -re "A problem internal to GDB has been detected" {
+	pass "maint internal-error"
+	if [gdb_internal_error_resync] {
+	    pass "internal-error resync"
+	} else {
+	    fail "internal-error resync"
+	}
+    }
+    -re ".*$gdb_prompt $" {
+	fail "maint internal-error"
+	untested "internal-error resync"
+    }
+    timeout {
+	fail "maint internal-error (timeout)"
+	untested "internal-error resync"
+    }
+}
+
+#set timeout $oldtimeout
+
+# Test that the commands work without an argument.  For this test, we
+# don't need an inferior loaded/running.  See PR gdb/21164.
+gdb_exit
+gdb_start
+gdb_test_no_output "maint print symbols"
+gdb_test_no_output "maint print msymbols"
+gdb_test_no_output "maint print psymbols"
+
+gdb_exit

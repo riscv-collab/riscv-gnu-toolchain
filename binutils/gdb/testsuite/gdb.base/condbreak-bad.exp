@@ -1,0 +1,125 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test defining bad conditions for breakpoints.
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" ${binfile} ${srcfile}]} {
+    return
+}
+
+set bp_location [gdb_get_line_number "break-here"]
+gdb_breakpoint "$bp_location"
+set bpnum [get_integer_valueof "\$bpnum" 0 "get bpnum"]
+
+# Define a 'bad' condition.  The breakpoint should stay unconditional.
+gdb_test "cond $bpnum gibberish" \
+    "No symbol \"gibberish\" in current context." \
+    "attempt a bad condition"
+
+set fill "\[^\r\n\]*"
+
+gdb_test "info break" \
+    [multi_line \
+	 "Num${fill}What" \
+	 "${decimal}${fill}breakpoint${fill}keep y${fill}:${bp_location}"] \
+    "breakpoint is unconditional"
+
+# Now define a valid condition.  Attempt to override that with a 'bad'
+# condition again.  The condition should be preserved.
+with_test_prefix "with run" {
+    gdb_test_no_output "cond $bpnum a == 10"
+
+    gdb_test "cond $bpnum gibberish" \
+	"No symbol \"gibberish\" in current context." \
+	"attempt a bad condition"
+
+    gdb_test "info break" \
+	[multi_line \
+	     "Num${fill}What" \
+	     "${decimal}${fill}breakpoint${fill}keep y${fill}:${bp_location}" \
+	     "${fill}stop only if a == 10${fill}"] \
+	"breakpoint condition is preserved"
+
+    # Run the code.  We should hit the breakpoint, because the
+    # condition evaluates to true.
+
+    gdb_run_cmd
+    gdb_test "" ".*reakpoint .*, main .*${srcfile}.*" "run to the bp"
+}
+
+# Restart.  Repeat the test above after the program has started.
+# This is needed to check a scenario where the breakpoints are no
+# longer re-inserted due to solib events.  Note that runto_main
+# deletes the breakpoints.
+with_test_prefix "with continue 1" {
+    if {![runto_main]} {
+	return -1
+    }
+
+    gdb_breakpoint "$bp_location"
+    set bpnum [get_integer_valueof "\$bpnum" 0 "get bpnum"]
+
+    gdb_test_no_output "cond $bpnum a == 10"
+
+    gdb_test "cond $bpnum gibberish" \
+	"No symbol \"gibberish\" in current context." \
+	"attempt a bad condition"
+
+    # Resume.  We should hit the breakpoint, because the
+    # condition evaluates to true.
+    gdb_continue_to_breakpoint "${srcfile}:${bp_location}"
+}
+
+# Repeat with a condition that evaluates to false.
+with_test_prefix "with continue 2" {
+    if {![runto_main]} {
+	return -1
+    }
+
+    gdb_breakpoint "$bp_location"
+    set bpnum [get_integer_valueof "\$bpnum" 0 "get bpnum"]
+
+    gdb_test_no_output "cond $bpnum a == 999"
+    
+    gdb_test "cond $bpnum gibberish" \
+	"No symbol \"gibberish\" in current context." \
+	"attempt a bad condition"
+
+    # Resume.  We should *not* hit the breakpoint, because the
+    # condition evaluates to false.
+    gdb_continue_to_end
+}
+
+# Repeat with a condition that contains junk at the end.
+with_test_prefix "with junk" {
+    if {![runto_main]} {
+	return -1
+    }
+
+    gdb_breakpoint "$bp_location"
+    set bpnum [get_integer_valueof "\$bpnum" 0 "get bpnum"]
+
+    gdb_test_no_output "cond $bpnum a == 999"
+
+    gdb_test "cond $bpnum a == 10 if" \
+	"Junk at end of expression" \
+	"attempt a bad condition"
+
+    # Resume.  We should *not* hit the breakpoint, because the
+    # condition evaluates to false.
+    gdb_continue_to_end
+}

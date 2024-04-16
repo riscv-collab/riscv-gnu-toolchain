@@ -1,0 +1,89 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This file is part of GDB.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Verify handling of a GPU program that does a (v)fork + exec to execute
+# a non-GPU program.
+
+load_lib rocm.exp
+
+require allow_hipcc_tests
+
+standard_testfile -execer.cpp -execee.cpp
+
+set srcfile_execer "$srcfile"
+set srcfile_execee "$srcfile2"
+set binfile_execee "$binfile-execee"
+
+# Compile two versions of execer, one that uses fork and one that uses vfork.
+foreach_with_prefix fork_func { fork vfork } {
+    set opts [list debug hip additional_flags=-DFORK=$fork_func \
+	additional_flags=-DEXECEE="${::binfile_execee}"]
+    if {[build_executable "failed to prepare" ${::binfile}-execer-${fork_func} \
+	    $srcfile_execer $opts]} {
+	return
+    }
+}
+
+if {[build_executable "failed to prepare" $binfile_execee $srcfile_execee \
+	{debug}]} {
+    return
+}
+
+proc do_test { detach-on-fork follow-fork-mode fork_func } {
+    # In this case, the parent can't execute, as it's blocked in
+    # vfork.  Skip it.
+    if { ${detach-on-fork} == "off"
+	 && ${follow-fork-mode} == "parent"
+	 && ${fork_func} == "vfork" } {
+	return
+    }
+
+    with_rocm_gpu_lock {
+	clean_restart ${::binfile}-execer-${fork_func}
+
+	gdb_test_no_output "set detach-on-fork ${detach-on-fork}"
+	gdb_test_no_output "set follow-fork-mode ${follow-fork-mode}"
+
+	if { ${follow-fork-mode} == "parent" } {
+	    runto break_here_execer allow-pending message
+	    gdb_continue_to_end "continue parent to end" "continue" 1
+
+	    if { ${detach-on-fork} == "off" } {
+		gdb_test "inferior 2" "Switching to inferior 2 .*"
+		gdb_continue_to_end "continue child to end" "continue" 1
+	    }
+	} elseif { ${follow-fork-mode} == "child" } {
+	    runto break_here_execee allow-pending message
+	    gdb_continue_to_end "continue child to end" "continue" 1
+
+	    if { ${detach-on-fork} == "off" } {
+		gdb_test "inferior 1" "Switching to inferior 1 .*"
+		gdb_continue_to_end "continue parent to end" "continue" 1
+	    }
+	} else {
+	    error "unexpected follow-fork-mode value: ${follow-fork-mode}"
+	}
+    }
+}
+
+foreach_with_prefix detach-on-fork { on off } {
+    foreach_with_prefix follow-fork-mode { parent child } {
+	foreach_with_prefix fork_func { fork vfork } {
+	    do_test ${detach-on-fork} ${follow-fork-mode} $fork_func
+	}
+    }
+}

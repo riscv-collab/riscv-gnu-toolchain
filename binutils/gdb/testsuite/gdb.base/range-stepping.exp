@@ -1,0 +1,223 @@
+# Copyright 2013-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "range-stepping-support.exp"
+
+standard_testfile
+set executable $testfile
+
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile {debug}] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+if ![gdb_range_stepping_enabled] {
+    unsupported "range stepping not supported by the target"
+    return -1
+}
+
+# Check that range stepping can step a range of multiple instructions.
+
+with_test_prefix "multi insns" {
+
+    gdb_breakpoint [gdb_get_line_number "location 1"]
+    gdb_continue_to_breakpoint "location 1"
+
+    set pc_before_stepping ""
+    set test "pc before stepping"
+    gdb_test_multiple "print/x \$pc" $test {
+	-re "\\\$$decimal = (\[^\r\n\]*)\r\n$gdb_prompt $" {
+	    set pc_before_stepping $expect_out(1,string)
+	    pass $test
+	}
+    }
+
+    # When "next" is executed, GDB should send one vCont;s and vCont;r
+    # and receive two stop replies:
+    #
+    # --> vCont;s  (step over breakpoint)
+    # <-- T05
+    # --> vCont;rSTART,END  (range step)
+    # <-- T05
+    set result [exec_cmd_expect_vCont_count "next" 1]
+    if { $result } {
+	# This is the first range-stepping test, and the simplest
+	# one.  If it fails, probably the rest of the tests would
+	# fail too, and the huge number of rsp packets in the test
+	# with the time-consuming loop would blow up the gdb.log file.
+	# Skip the rest of the tests.
+	return
+    }
+
+    set pc_after_stepping ""
+    set msg "pc after stepping"
+    gdb_test_multiple "print/x \$pc" $msg {
+	-re "\\\$$decimal = (\[^\r\n\]*)\r\n$gdb_prompt $" {
+	    set pc_after_stepping $expect_out(1,string)
+	    pass $msg
+	}
+    }
+
+    # There should be at least two instructions between
+    # PC_BEFORE_STEPPING and PC_AFTER_STEPPING.
+    gdb_test "disassemble ${pc_before_stepping},${pc_after_stepping}" \
+	"${hex} <main\\+${decimal}>:.*${hex} <main\\+${decimal}>:.*" \
+	"stepped multiple insns"
+}
+
+# Check that range stepping can step over a function.
+
+with_test_prefix "step over func" {
+
+    set line_num [gdb_get_line_number "location 2"]
+    gdb_test "where" "main \\(\\) at .*${srcfile}:${line_num}.*"
+
+    # It's expected to get three stops and two 'vCont;r's.  In the C
+    # code, the line of C source produces roughly the following
+    # instructions:
+    #
+    # addr1:
+    #  insn1
+    #  insn2
+    #  ...
+    #  call func1
+    # addr2:
+    #  ...
+    #  insn3
+    # addr3:
+    #  insn4
+    #
+    # Something like this will happen:
+    # --> vCont;rADDR1,ADDR3  (range step from ADDR1 to ADDR3)
+    # <-- T05  (target single-stepped to func, which is out of the step range)
+    # --> $Z0,ADDR2  (place step-resume breakpoint at ADDR2)
+    # --> vCont;c  (resume)
+    # <-- T05  (target stops at ADDR2)
+    # --> vCont;rADDR1,ADDR3  (continues range stepping)
+    # <-- T05
+    exec_cmd_expect_vCont_count "next" 2
+}
+
+# Check that breakpoints interrupt range stepping correctly.
+
+with_test_prefix "breakpoint" {
+    gdb_breakpoint "func1"
+    # Something like this will happen:
+    # --> vCont;rADDR1,ADDR3
+    # <-- T05  (target single-steps to func1, which is out of the step range)
+    # --> $Z0,ADDR2  (step-resume breakpoint at ADDR2)
+    # --> vCont;c  (resume)
+    # <-- T05  (target hits the breakpoint at func1)
+    exec_cmd_expect_vCont_count "next" 1
+
+    gdb_test "backtrace" "#0 .* func1 .*#1 .* main .*" \
+	"backtrace from func1"
+
+    # A cancelled range step should not confuse the following
+    # execution commands.
+    exec_cmd_expect_vCont_count "stepi" 0
+    gdb_test "finish" ".*"
+    gdb_test "next" ".*"
+    delete_breakpoints
+}
+
+# Check that range stepping works well even when there's a loop in the
+# step range.
+
+with_test_prefix "loop" {
+
+    # GDB should send one vCont;r and receive one stop reply:
+    # --> vCont;rSTART,END  (range step)
+    # <-- T05
+    exec_cmd_expect_vCont_count "next" 1
+
+    # Confirm the loop completed.
+    gdb_test "print a" " = 15"
+    gdb_test "print e" " = 105"
+}
+
+# Check that range stepping works well even when the target's PC was
+# already within the loop's body.
+
+with_test_prefix "loop 2" {
+    # Stepi into the loop body.  15 should be large enough to make
+    # sure the program stops within the loop's body.
+    gdb_test "stepi 15" ".*"
+    # GDB should send one vCont;r and receive one stop reply:
+    # --> vCont;rSTART,END  (range step)
+    # <-- T05
+    exec_cmd_expect_vCont_count "next" 1
+
+    # Confirm the loop completed.
+    gdb_test "print a" " = 15"
+    gdb_test "print e" " = 105"
+}
+
+# Check that range stepping works well even when it is interrupted by
+# ctrl-c.
+
+if ![target_info exists gdb,nointerrupts] {
+    with_test_prefix "interrupt" {
+	gdb_test_no_output "set debug remote 1"
+
+	send_gdb "next\n"
+	sleep 1
+	send_gdb "\003"
+
+	# GDB should send one vCont;r and receive one stop reply for
+	# SIGINT:
+	# --> vCont;rSTART,END  (range step)
+	# <-- T02  (SIGINT)
+
+	set vcont_r_counter 0
+
+	set test "send ctrl-c to GDB"
+	gdb_test_multiple "" $test {
+	    -re "vCont;r\[^\r\n\]*\.\.\." {
+		incr vcont_r_counter
+		exp_continue
+	    }
+	    -re "Program received signal SIGINT.*$gdb_prompt $" {
+		pass $test
+	    }
+	}
+	gdb_test_no_output "set debug remote 0"
+
+	# Check the number of 'vCont;r' packets.
+	if { $vcont_r_counter == 1 } {
+	    pass "${test}: 1 vCont;r"
+	} else {
+	    fail "${test}: 1 vCont;r"
+	}
+
+	# Break the loop earlier and continue range stepping.
+	gdb_test "set variable c = 0"
+	exec_cmd_expect_vCont_count "next" 1
+    }
+}
+
+# Check that range stepping doesn't break software watchpoints.  With
+# those, GDB needs to be notified of all single-steps, to evaluate
+# whether the watched value changes at each step.
+with_test_prefix "software watchpoint" {
+    gdb_test "step" "soft-watch.*" "step into multiple instruction line"
+    # A software watchpoint at PC makes the thread stop before the
+    # whole line range is over (after one single-step, actually).
+    gdb_test "watch \$pc" ".*" "set watchpoint"
+    gdb_test "step" "soft-watch.*" "step still in same line"
+}

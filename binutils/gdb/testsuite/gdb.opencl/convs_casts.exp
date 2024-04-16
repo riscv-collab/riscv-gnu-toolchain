@@ -1,0 +1,93 @@
+# Copyright 2010-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+#
+# Contributed by Ken Werner <ken.werner@de.ibm.com>.
+#
+# Tests GDBs support for OpenCL type conversions and casts.
+
+load_lib opencl.exp
+
+require allow_opencl_tests
+
+set testfile "convs_casts"
+set clprogram [remote_download target ${srcdir}/${subdir}/${testfile}.cl]
+
+# Compile the generic OpenCL host app
+if { [gdb_compile_opencl_hostapp "${clprogram}" "${testfile}" "" ] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+# Load the OpenCL app
+clean_restart ${testfile}
+
+# Set breakpoint at the OpenCL kernel
+gdb_test "tbreak testkernel" \
+    "" \
+    "Set pending breakpoint" \
+    ".*Function \"testkernel\" not defined.*Make breakpoint pending.*y or \\\[n\\\]. $" \
+    "y"
+
+gdb_run_cmd
+gdb_test "" ".*reakpoint.*1.*testkernel.*" "run"
+
+# Continue to the marker
+gdb_breakpoint [gdb_get_line_number "marker" "${clprogram}"]
+gdb_continue_to_breakpoint "marker"
+
+# Retrieve some information about availability of OpenCL extensions
+set have_cl_khr_fp64 [get_integer_valueof "have_cl_khr_fp64" 0]
+set have_cl_khr_fp16 [get_integer_valueof "have_cl_khr_fp16" 0]
+
+proc vec_casts { name } {
+  global have_cl_khr_fp16 have_cl_khr_fp64
+  set types {"char" "uchar" "short" "ushort" "int" "uint" "long" "ulong" "half" "float" "double"}
+  set len [llength ${types}]
+
+  for {set i 0} {$i < ${len}} {incr i} {
+    set type [lindex ${types} $i]
+
+    gdb_test "print/d (${type}2)${name}" " = \\{123, 123\\}"
+    gdb_test "print/d (${type}3)${name}" " = \\{123, 123, 123\\}"
+    gdb_test "print/d (${type}4)${name}" " = \\{123, 123, 123, 123\\}"
+    gdb_test "print/d (${type}8)${name}" " = \\{123, 123, 123, 123, 123, 123, 123, 123\\}"
+    gdb_test "print/d (${type}16)${name}" " = \\{123 <repeats 16 times>\\}"
+
+    gdb_test "ptype (${type}2)${name}" "${type}2"
+    gdb_test "ptype (${type}3)${name}" "${type}3"
+    gdb_test "ptype (${type}4)${name}" "${type}4"
+    gdb_test "ptype (${type}8)${name}" "${type}8"
+    gdb_test "ptype (${type}16)${name}" "${type}16"
+  }
+}
+
+vec_casts "c"
+vec_casts "uc"
+vec_casts "s"
+vec_casts "us"
+vec_casts "i"
+vec_casts "ui"
+vec_casts "l"
+vec_casts "ul"
+if { ${have_cl_khr_fp16} } {
+  vec_casts "h"
+}
+vec_casts "f"
+if { ${have_cl_khr_fp64} } {
+  vec_casts "d"
+}
+
+# Delete the OpenCL program source
+remote_file target delete ${clprogram}

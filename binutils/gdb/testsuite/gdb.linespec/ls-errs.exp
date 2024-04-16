@@ -1,0 +1,272 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Tests for linespec errors with C and C++.
+
+# The test proper.  LANG is either C or C++.
+
+proc do_test {lang} {
+    global testfile srcfile error_messages compiler_info
+
+    standard_testfile
+    set exefile $testfile
+    if [info exists compiler_info] {
+	# Unsetting compiler_info allows us to switch compilers
+	# used by prepare_for_testing.
+        unset compiler_info
+    }
+    set options {debug}
+
+    if {$lang == "C++"} {
+	if {![allow_cplus_tests]} {
+	    return 0
+	}
+	# Build ".c" source file with g++.
+	lappend options "c++"
+    }
+
+    if {[prepare_for_testing "failed to prepare" $exefile $srcfile $options]} {
+	return -1
+    }
+
+    # Turn off the pending breakpoint queries.
+    gdb_test_no_output "set breakpoint pending off"
+
+    # Turn off completion limiting
+    gdb_test_no_output "set max-completions unlimited"
+
+    if {![runto_main]} {
+	return 0
+    }
+
+    # Run to a location in the file.
+    set bp_location [gdb_get_line_number "set breakpoint here"]
+
+    gdb_test "break $srcfile:$bp_location" \
+    "Breakpoint.*at.* file .*$srcfile, line $bp_location\\." \
+    "breakpoint line number in file"
+
+    gdb_continue_to_breakpoint "$bp_location"
+
+    # Common error message format strings.
+    array set error_messages {
+	invalid_file "No source file named %s."
+	invalid_function "Function \"%s\" not defined."
+	invalid_var_or_func
+	    "Undefined convenience variable or function \"%s\" not defined."
+	invalid_function_f "Function \"%s\" not defined in \"%s\"."
+	invalid_var_or_func_f \
+	    "Undefined convenience variable or function \"%s\" not defined in \"%s\"."
+	invalid_label "No label \"%s\" defined in function \"%s\"."
+	invalid_parm "invalid linespec argument, \"%s\""
+	invalid_offset "No line %d in the current file."
+	invalid_offset_f "No line %d in file \"%s\"."
+	malformed_line_offset "malformed line offset: \"%s\""
+	source_incomplete \
+	    "Source filename requires function, label, or line offset."
+	unexpected "malformed linespec error: unexpected %s"
+	unexpected_opt "malformed linespec error: unexpected %s, \"%s\""
+	unmatched_quote "unmatched quote"
+	garbage "Garbage '%s' at end of command"
+    }
+
+    # We intentionally do not use gdb_breakpoint for these tests.
+
+    # Break at 'linespec' and expect the message in ::error_messages
+    # indexed by msg_id with the associated args.
+    proc test_break {linespec msg_id args} {
+	global error_messages
+
+	gdb_test "break $linespec" [string_to_regexp \
+				    [eval format \$error_messages($msg_id) \
+				     $args]] \
+	    "'break $linespec'"
+    }
+
+    # Some commonly used whitespace tests around ':'.
+    set spaces [list \
+		    ":" \
+		    ": " \
+		    " :" \
+		    " : " \
+		    "  :  " \
+		   ]
+
+    # A list of invalid offsets.
+    set invalid_offsets [list -100 +500 1000]
+
+    # Try some simple, invalid linespecs involving spaces.
+    foreach x $spaces {
+	test_break $x unexpected "colon"
+    }
+
+    # Test invalid filespecs starting with offset.  This is done
+    # first so that default offsets are tested.
+    foreach x $invalid_offsets {
+	set offset $x
+
+	# Relative offsets are relative to the current line.  Adjust
+	# expected offset from error message accordingly.
+	if {[string index $x 0] == "+" || [string index $x 0] == "-"} {
+	    incr offset $bp_location
+	}
+	test_break $x invalid_offset $offset
+	test_break "-line $x" invalid_offset $offset
+    }
+
+    # Test offsets with trailing tokens w/ and w/o spaces.
+    foreach x $spaces {
+	test_break "3$x" unexpected "colon"
+	test_break "+10$x" unexpected "colon"
+	test_break "-10$x" unexpected "colon"
+    }
+
+    foreach x {1 +1 +100 -10} {
+	test_break "3 $x" unexpected_opt "number" $x
+	test_break "-line 3 $x" garbage $x
+	test_break "+10 $x" unexpected_opt "number" $x
+	test_break "-line +10 $x" garbage $x
+	test_break "-10 $x" unexpected_opt "number" $x
+	test_break "-line -10 $x" garbage $x
+    }
+
+    foreach x {3 +10 -10} {
+	test_break "$x foo" unexpected_opt "string" "foo"
+	test_break "-line $x foo" garbage "foo"
+    }
+
+    # Test invalid linespecs starting with filename.
+    # It's OK to use the ".c" extension for the C++ test
+    # since the extension doesn't affect GDB's lookup.
+    set invalid_files [list "this_file_doesn't_exist.c" \
+			    "this file has spaces.c" \
+			    "\"file::colons.c\"" \
+			    "'file::colons.c'" \
+			    "\"this \"file\" has quotes.c\"" \
+			    "'this \"file\" has quotes.c'" \
+			    "'this 'file' has quotes.c'" \
+			    "\"this 'file' has quotes.c\"" \
+			    "\"spaces: and :colons.c\"" \
+			    "'more: :spaces: :and  colons::.c'" \
+			    "C:/nonexist-with-windrive.c"]
+
+    foreach x $invalid_files {
+	# Remove any quoting from FILENAME for the error message.
+	test_break "$x:3" invalid_file [string trim $x \"']
+    }
+    foreach x [list "this_file_doesn't_exist.c" \
+		    "file::colons.c" \
+		    "'file::colons.c'"] {
+	test_break "-source $x -line 3" invalid_file [string trim $x \"']
+    }
+
+    # Test that option lexing stops at whitespace boundaries, except
+    # when lexing function names, where we want to handle setting
+    # breakpoints on e.g., "int template_function<int>()".
+    test_break "-source this file has spaces.c -line 3" source_incomplete
+    test_break "-function ret_type tmpl_function" \
+	invalid_function "ret_type tmpl_function"
+    test_break "-source $srcfile -function ret_type tmpl_function" \
+	       invalid_function_f "ret_type tmpl_function" $srcfile
+
+    test_break "-function main -label label whitespace" \
+	       invalid_label "label" "main"
+
+    # Test unmatched quotes.
+    foreach x {"\"src-file.c'" "'src-file.c"} {
+	test_break "$x:3" unmatched_quote
+    }
+
+    test_break $srcfile invalid_function $srcfile
+    foreach x {"foo" " foo" " foo "} {
+	# Trim any leading/trailing whitespace for error messages.
+	test_break "$srcfile:$x" invalid_function_f [string trim $x] $srcfile
+	test_break "-source $srcfile -function $x" \
+		   invalid_function_f [string trim $x] $srcfile
+	test_break "$srcfile:main:$x" invalid_label [string trim $x] "main"
+	test_break "-source $srcfile -function main -label $x" \
+		   invalid_label [string trim $x] "main"
+    }
+
+    foreach x $spaces {
+	test_break "$srcfile$x" unexpected "end of input"
+	test_break "$srcfile:main$x" unexpected "end of input"
+    }
+
+    test_break "${srcfile}::" invalid_function "${srcfile}::"
+    test_break "$srcfile:3 1" unexpected_opt "number" "1"
+    test_break "-source $srcfile -line 3 1" garbage "1"
+    test_break "$srcfile:3 +100" unexpected_opt "number" "+100"
+    test_break "-source $srcfile -line 3 +100" garbage "+100"
+    test_break "$srcfile:3 -100" unexpected_opt "number" "-100"
+    test_break "$srcfile:3 foo" unexpected_opt "string" "foo"
+    test_break "-source $srcfile -line 3 foo" garbage "foo"
+
+    foreach x $invalid_offsets {
+	test_break "$srcfile:$x" invalid_offset_f $x $srcfile
+	test_break "\"$srcfile:$x\"" invalid_offset_f $x $srcfile
+	test_break "'$srcfile:$x'" invalid_offset_f $x $srcfile
+	test_break "-source $srcfile -line $x" invalid_offset_f $x $srcfile
+    }
+    test_break "-source $srcfile -line -x" malformed_line_offset "-x"
+
+    # Test invalid filespecs starting with function.
+    foreach x {"foobar" "foo::bar" "foo.bar" "foo ." "foo bar" "foo 1" \
+	       "foo 0" "foo +10" "foo -10" "foo +100" "foo -100"} {
+	test_break $x invalid_function $x
+	test_break "-function \"$x\"" invalid_function $x
+    }
+
+    foreach x $spaces {
+	test_break "main${x}there" invalid_label "there" "main"
+	test_break "main:here${x}" unexpected "end of input"
+    }
+
+    foreach_with_prefix x {"3" "+100" "-100" "foo"} {
+	test_break "main 3" invalid_function "main 3"
+	test_break "-function \"main $x\"" invalid_function "main $x"
+	if {$x == "foo"} {
+	    test_break "main:here $x" unexpected_opt "string" $x
+	} else {
+	    test_break "main:here $x" unexpected_opt "number" $x
+	}
+
+	test_break "-function main -label \"here $x\"" \
+		   invalid_label "here $x" "main"
+    }
+
+    foreach x {"if" "task" "thread"} {
+	test_break $x invalid_function $x
+    }
+
+    test_break "'main.c'flubber" unexpected_opt "string" "flubber"
+    test_break "'main.c',21" invalid_function "main.c"
+    test_break "'main.c' " invalid_function "main.c"
+    test_break "'main.c'3" unexpected_opt "number" "3"
+    test_break "'main.c'+3" unexpected_opt "number" "+3"
+
+    # Test undefined convenience variables.
+    set x {$zippo}
+    test_break $x invalid_var_or_func $x
+    test_break "$srcfile:$x" invalid_var_or_func_f $x $srcfile
+
+    # Explicit linespec-specific tests
+    test_break "-source $srcfile" source_incomplete
+    test_break "-source $srcfile main" source_incomplete
+}
+
+foreach_with_prefix lang {"C" "C++"} {
+    do_test ${lang}
+}

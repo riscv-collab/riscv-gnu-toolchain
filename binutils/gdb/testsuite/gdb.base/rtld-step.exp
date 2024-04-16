@@ -1,0 +1,146 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.	See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test stepping through a runtime loader / dynamic linker (RTLD):
+#
+# While it'd be nice to have a test which steps through an actual
+# runtime loader / dynamic linker, constructing such a test would be
+# non-portable; we would need to know implementation details such
+# as the names of some of the symbols and the order of calls to
+# various functions that implement the RTLD.  So, instead, we'll use a
+# program which doesn't even pretend to implement this functionality,
+# but which will instead be invoked in the same fashion (for ELF
+# binaries anyway) as would be expected for an ELF-based RTLD.
+#
+# To that end, we have two programs, one which will pretend to be an
+# RTLD and the other which will be caused to use the pretend RTLD.
+#
+# When the main program is run, the pretend/fake RTLD is run instead,
+# due to it being specified as the ELF interpreter for the main
+# program.  Within GDB, we then attempt to do some simple debugging
+# involving 'step', 'next', and 'finish'.
+
+# This test can't be run on targets lacking shared library support
+# or for non-ELF targets.  (We're not really testing or building
+# shared libraries here, but having a RTLD implies having shared
+# libraries on the target.)
+require allow_shlib_tests is_elf_target
+
+# (Pretend) RTLD file names and flags:
+set rtld_basename ${::gdb_test_file_name}-rtld
+set srcfile_rtld ${srcdir}/${subdir}/${rtld_basename}.c
+set binfile_rtld [standard_output_file ${rtld_basename}]
+
+# Placing 'pie' in the flag list (for rtld_flags) doesn't work, but
+# using -static-pie -FPIE in additional_flags does.  Apparently, when
+# 'pie' is listed, gdb_compile will (on Linux) use both -fPIE and
+# -pie.	 Testing shows that use of -pie creates a dynamically linked
+# executable when either a static or static-pie executable is desired
+# instead.  (This is probably fragile.)
+#
+# While developing this code on Fedora Linux, it was found that (only)
+# the flags -static-pie -fPIE were needed for Fedora 35 through Fedora
+# 38.  The source file rtld-step-rtld.c didn't need the _start()
+# function either.  And, better still, it was possible to call
+# printf() to output progress messages in the pretend/fake RTLD. 
+# Sadly, these output statements had to be removed in order to obtain
+# code which would work on other Linux distributions / releases.
+#
+# When testing against earlier versions of Fedora, RHEL 9, and
+# also Ubuntu 22.04, that short flag list didn't work.	For these
+# linux releases, it was found that -nostdlib -lc were also required.
+# Due to the use of -nostdlib, a _start() function had to be added
+# to the RTLD code.
+#
+# Finally, on FreeBSD, it was found that in order to end up with a
+# statically linked executable, -static was also needed.
+# Unfortunately, when attempting to run the rtld-step-main under GDB
+# on FreeBSD 13.1, this message was/is encountered:
+#
+# ELF interpreter /path/to/rtld-step-rtld not found, error 22
+#
+# So, sadly, this test does not currently work on FreeBSD.  If you try
+# to make it work on FreeBSD, you'll probably need to enable the
+# declarations for __progname and environ in rtld-step-rtld.c.
+#
+# If this test becomes broken at some point in the future, you might
+# try removing -static from the flags below as it is not needed for
+# Linux.
+#
+# Also, because the RTLD is static, you'll need static versions of
+# libc/glibc installed on your system.  (A message such as "cannot
+# find -lc" is a clue that you're missing a static version of libc.)
+
+set rtld_flags [list debug additional_flags=[list -static-pie -fPIE \
+						  -nostdlib -static -lc]]
+
+if { ![gdb_can_simple_compile static-pie-static-libc \
+	   "void _start (void) { _exit (0); }" \
+	   executable $rtld_flags] } {
+    set reason "-static-pie not supported or static libc missing"
+    untested "failed to compile ($reason)"
+    return -1
+}
+
+# Main program file names and flags:
+set main_basename ${::gdb_test_file_name}-main
+set srcfile_main ${srcdir}/${subdir}/${main_basename}.c
+set binfile_main [standard_output_file ${main_basename}]
+set main_flags [list debug additional_flags="-Wl,--dynamic-linker=${binfile_rtld}"]
+
+# Compile pretend RTLD:
+if { [gdb_compile ${srcfile_rtld} ${binfile_rtld} executable $rtld_flags] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+# Compile main program:
+if { [gdb_compile ${srcfile_main} ${binfile_main} executable $main_flags] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+clean_restart ${binfile_main}
+
+if {![runto_main]} {
+    return 0
+}
+
+# Running the command 'info sharedlibrary' should output a path to
+# the pretend/fake RTLD along with the address range.  Check that
+# this path is present and, if so, extract the address range.
+gdb_test_multiple "info sharedlibrary" "" {
+    -re -wrap "($hex)\[ \t\]+($hex)\[ \t\]+Yes\[ \t\]+$fullname_syntax$rtld_basename" {
+	set rtld_lower $expect_out(1,string)
+	set rtld_upper $expect_out(2,string)
+	pass $gdb_test_name
+    }
+}
+
+# Fetch PC value.
+set pc [get_hexadecimal_valueof "\$pc" 0]
+
+# Verify that PC is in the address range of the pretend/fake RTLD.
+gdb_assert { $rtld_lower <= $pc && $pc < $rtld_upper } "pc is in rtld"
+
+gdb_test "next" {bar \(\);} "next over foo 0"
+gdb_test "step" {bar \(\) at.*foo \(1\);.*} "step into bar"
+gdb_test "step" {baz \(.*?\);} "step into foo 1"
+gdb_test "finish" {Run till exit.*bar \(\).*baz.*} "finish out of foo 1"
+gdb_test "next" {foo \(2\);} "next over baz in bar"
+gdb_test "step" {baz \(.*?\);} "step into foo 2"
+gdb_test "next" "\}" "next over baz in foo"
+gdb_test "step" "bar \\(\\).*}" "step out of foo back into bar"
+
+gdb_continue_to_end

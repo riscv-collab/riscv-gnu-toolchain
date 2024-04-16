@@ -1,0 +1,172 @@
+# Copyright 1999-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test essential Machine interface (MI) operations
+#
+# Verify that, using the MI, we can create, update, delete variables.
+#
+
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+standard_testfile var-cmd.c
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+if {[mi_clean_restart $binfile]} {
+    return
+}
+
+mi_runto do_block_tests
+
+# step to "cb = 12;"
+mi_step_to "do_block_tests" "" "var-cmd.c" \
+    [gdb_get_line_number "cb = 12;"] \
+    "step at do_block_test 0"
+
+# Test: c_variable-3.2
+# Desc: create cb and foo
+mi_create_varobj "cb" "cb" "create local variable cb"
+
+mi_gdb_test "-var-create foo * foo" \
+       "\\^error,msg=\"-var-create: unable to create variable object\"" \
+       "try to create local variable foo"
+
+# step to "foo = 123;"
+mi_step_to "do_block_tests" "" "var-cmd.c" \
+    [gdb_get_line_number "foo = 123;"] \
+    "step at do_block_test 1"
+
+
+# Be paranoid and assume 3.2 created foo
+mi_gdb_test "-var-delete foo" \
+	"\\^error,msg=\"Variable object not found\"" \
+	"delete var foo 1"
+
+
+# Test: c_variable-3.3
+# Desc: create foo
+mi_create_varobj "foo" "foo" "create local variable foo"
+
+# step to "foo2 = 123;"
+mi_step_to "do_block_tests" "" "var-cmd.c" \
+    [gdb_get_line_number "foo2 = 123;"] \
+    "step at do_block_test 2"
+
+# Test: c_variable-3.4
+# Desc: check foo, cb changed
+mi_gdb_test "-var-update *" \
+	"\\^done,changelist=\\\[\{name=\"foo\",in_scope=\"true\",type_changed=\"false\",has_more=\"0\"\},\{name=\"cb\",in_scope=\"true\",type_changed=\"false\",has_more=\"0\"\}\\\]" \
+	"update all vars: cb foo changed"
+
+# step to "foo = 321;"
+mi_step_to "do_block_tests" "" "var-cmd.c" \
+    [gdb_get_line_number "foo = 321;"] \
+    "step at do_block_test 3"
+
+# Test: c_variable-3.5
+# Desc: create inner block foo
+mi_create_varobj "inner_foo" "foo" "create local variable inner_foo"
+
+# step to "foo2 = 0;"
+mi_step_to "do_block_tests" "" "var-cmd.c" \
+    [gdb_get_line_number "foo2 = 0;"] \
+    "step at do_block_test 4"
+
+# Test: c_variable-3.6
+# Desc: create foo2
+mi_create_varobj "foo2" "foo2" "create local variable foo2"
+
+# Test: c_variable-3.7
+# Desc: check that outer foo in scope and inner foo out of scope
+# Note: also a known gdb problem
+setup_xfail *-*-*
+mi_gdb_test "-var-update inner_foo" \
+	"\\^done,changelist=\{FIXME\}" \
+	"update inner_foo: should be out of scope: KNOWN PROBLEM"
+clear_xfail *-*-*
+
+setup_xfail *-*-*
+mi_gdb_test "-var-evaluate-expression inner_foo" \
+	"\\^done,value=\{FIXME\}" \
+	"evaluate inner_foo: should be out of scope: KNOWN PROBLEM"
+clear_xfail *-*-*
+
+mi_gdb_test "-var-update foo" \
+	"\\^done,changelist=\\\[\\\]" \
+	"update foo: did not change"
+
+mi_gdb_test "-var-delete inner_foo" \
+	"\\^done,ndeleted=\"1\"" \
+	"delete var inner_foo"
+
+# step to "foo = 0;"
+mi_step_to "do_block_tests" "" "var-cmd.c" \
+    [gdb_get_line_number "foo = 0;"] \
+    "step at do_block_test 5"
+
+# Test: c_variable-3.8
+# Desc: check that foo2 out of scope (known gdb problem)
+setup_xfail *-*-*
+mi_gdb_test "-var-update foo2" \
+	"\\^done,changelist=\{FIXME\}" \
+	"update foo2: should be out of scope: KNOWN PROBLEM"
+clear_xfail *-*-*
+
+# step to "cb = 21;"
+mi_step_to "do_block_tests" "" "var-cmd.c" \
+    [gdb_get_line_number "cb = 21;"] \
+    "step at do_block_test 6"
+
+# Test: c_variable-3.9
+# Desc: check that only cb is in scope (known gdb problem)
+setup_xfail *-*-*
+mi_gdb_test "-var-update foo2" \
+	"\\^done,changelist=\\\[FIXME\\\]" \
+	"update foo2 should be out of scope: KNOWN PROBLEM"
+clear_xfail *-*-*
+setup_xfail *-*-*
+mi_gdb_test "-var-update foo" \
+	"\\^done,changelist=\{FIXME\}" \
+	"update foo should be out of scope: KNOWN PROBLEM"
+clear_xfail *-*-*
+mi_gdb_test "-var-update cb" \
+	"\\^done,changelist=\\\[\\\]" \
+	"update cb"
+
+# Test: c_variable-3.10
+# Desc: names of editable variables
+#gdbtk_test c_variable-3.10 {names of editable variables} {
+#  editable_variables
+#} {{foo cb foo2} {}}
+
+# Done with block tests
+mi_gdb_test "-var-delete foo" \
+	"\\^done,ndeleted=\"1\"" \
+	"delete var foo 2"
+
+mi_gdb_test "-var-delete foo2" \
+	"\\^done,ndeleted=\"1\"" \
+	"delete var foo2"
+
+mi_gdb_test "-var-delete cb" \
+	"\\^done,ndeleted=\"1\"" \
+	"delete var cb"
+
+mi_gdb_exit

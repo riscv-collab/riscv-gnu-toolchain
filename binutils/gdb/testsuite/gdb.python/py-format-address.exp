@@ -1,0 +1,176 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib gdb-python.exp
+require allow_python_tests
+standard_testfile
+
+foreach func_name { foo bar } {
+    if {[build_executable "build binary with ${func_name} function" \
+	     "$testfile-${func_name}" $srcfile \
+	     [list debug \
+		  nopie \
+		  additional_flags=-DFUNCTION_NAME=${func_name}]] == -1} {
+	return -1
+    }
+}
+
+set binary_foo [standard_output_file "${testfile}-foo"]
+set binary_bar [standard_output_file "${testfile}-bar"]
+
+clean_restart $binary_foo
+
+if ![runto_main] {
+   return -1
+}
+
+# Check the gdb.format_address method when using the default values
+# for the program space and architecture (these will be selected based
+# on the current inferior).
+set main_addr [get_hexadecimal_valueof "&main" "UNKNOWN"]
+set next_addr [format 0x%x [expr $main_addr + 1]]
+
+foreach_with_prefix symbol_filename { on off } {
+    gdb_test_no_output "set print symbol-filename ${symbol_filename}"
+
+    if { $symbol_filename == "on" } {
+	set filename_pattern " at \[^\r\n\]+/${srcfile}:$decimal"
+    } else {
+	set filename_pattern ""
+    }
+
+    gdb_test "python print(\"Got: \" + gdb.format_address($main_addr))" \
+	"Got: $main_addr <main${filename_pattern}>" \
+	"gdb.format_address, result should have no offset"
+
+    gdb_test "python print(\"Got: \" + gdb.format_address($next_addr))" \
+	"Got: $next_addr <main\\+1${filename_pattern}>" \
+	"gdb.format_address, result should have an offset"
+}
+
+if {![is_address_zero_readable]} {
+    gdb_test "python print(\"Got: \" + gdb.format_address(0))" \
+	"Got: 0x0" \
+	"gdb.format_address for address 0"
+}
+
+# Now check that gdb.format_address will accept the program space and
+# architecture arguments correctly.
+gdb_test_no_output "python inf = gdb.selected_inferior()"
+
+# First, pass both arguments, this should be fine.
+gdb_test "python print(\"Got: \" + gdb.format_address($main_addr, inf.progspace, inf.architecture()))" \
+    "Got: $main_addr <main>" \
+    "gdb.format_address passing program space and architecture"
+
+# Now pass the program space and architecture as None.
+# First, pass both arguments, this should be fine.
+gdb_test "python print(\"Got: \" + gdb.format_address($main_addr, None, None))" \
+    "Got: $main_addr <main>" \
+    "gdb.format_address passing program space and architecture as None"
+
+# Now forget the architecture, this should fail.
+gdb_test "python print(\"Got: \" + gdb.format_address($main_addr, inf.progspace))" \
+    [multi_line \
+	 "ValueError: The architecture and progspace arguments must both be supplied" \
+	 "Error while executing Python code\\."] \
+    "gdb.format_address passing program space only"
+
+gdb_test "python print(\"Got: \" + gdb.format_address($main_addr, inf.progspace, None))" \
+    [multi_line \
+	 "ValueError: The architecture and progspace arguments must both be supplied" \
+	 "Error while executing Python code\\."] \
+    "gdb.format_address passing real program space, but architecture is None"
+
+# Now skip the program space argument.
+gdb_test "python print(\"Got: \" + gdb.format_address($main_addr, architecture=inf.architecture()))" \
+    [multi_line \
+	 "ValueError: The architecture and progspace arguments must both be supplied" \
+	 "Error while executing Python code\\."] \
+    "gdb.format_address passing architecture only"
+
+gdb_test "python print(\"Got: \" + gdb.format_address($main_addr, None, inf.architecture()))" \
+    [multi_line \
+	 "ValueError: The architecture and progspace arguments must both be supplied" \
+	 "Error while executing Python code\\."] \
+    "gdb.format_address passing real architecture, but progspace is None"
+
+# Now, before we add a second inferior, lets just check we can format
+# the address of 'foo' correctly.
+set foo_addr [get_hexadecimal_valueof "&foo" "UNKNOWN"]
+
+gdb_test "python print(\"Got: \" + gdb.format_address($foo_addr, inf.progspace, inf.architecture()))" \
+    "Got: $foo_addr <foo>" \
+    "gdb.format_address for foo, with just one inferior"
+
+# Now lets add a second inferior, using a slightly different
+# executable, select that inferior, and capture a reference to the
+# inferior in a Python object.
+gdb_test "add-inferior -exec ${binary_bar}" ".*" \
+    "add a second inferior running the bar executable"
+gdb_test "inferior 2" ".*"
+gdb_test_no_output "python inf2 = gdb.selected_inferior()"
+
+# Now we can test formatting an address from inferior 1.
+gdb_test "python print(\"Got: \" + gdb.format_address($foo_addr, inf.progspace, inf.architecture()))" \
+    "Got: $foo_addr <foo>" \
+    "gdb.format_address for foo, while inferior 2 is selected"
+
+# Grab the address of 'bar'.  Hopefully this will be the same address
+# as 'foo', but if not, that's not the end of the world, the test just
+# wont be quite as tough.
+set bar_addr [get_hexadecimal_valueof "&bar" "UNKNOWN"]
+
+# Now format the address of bar using the default inferior and
+# architecture, this should display the 'bar' symbol rather than
+# 'foo'.
+gdb_test "python print(\"Got: \" + gdb.format_address($bar_addr))" \
+    "Got: $bar_addr <bar>" \
+    "gdb.format_address for bar, while inferior 2 is selected"
+
+# And again, but this time, specificy the program space and
+# architecture.
+gdb_test "python print(\"Got: \" + gdb.format_address($bar_addr, inf2.progspace, inf2.architecture()))" \
+    "Got: $bar_addr <bar>" \
+    "gdb.format_address for bar, while inferior 2 is selected, pass progspace and architecture"
+
+# Reselect inferior 1, and then format an address from inferior 2.
+gdb_test "inferior 1" ".*"
+gdb_test "python print(\"Got: \" + gdb.format_address($bar_addr, inf2.progspace, inf2.architecture()))" \
+    "Got: $bar_addr <bar>" \
+    "gdb.format_address for bar, while inferior 1 is selected, pass progspace and architecture"
+
+# Try pasing incorrect object types for program space and architecture.
+gdb_test "python print(\"Got: \" + gdb.format_address($bar_addr, inf2.progspace, inf2.progspace))" \
+    [multi_line \
+	 "TypeError: The architecture argument is not a gdb.Architecture object" \
+	 "Error while executing Python code\\."] \
+    "gdb.format_address pass wrong object type for architecture"
+
+gdb_test "python print(\"Got: \" + gdb.format_address($bar_addr, inf2.architecture(), inf2.architecture()))" \
+    [multi_line \
+	 "TypeError: The progspace argument is not a gdb.Progspace object" \
+	 "Error while executing Python code\\."] \
+    "gdb.format_address pass wrong object type for progspace"
+
+# Now invalidate inferior 2's program space, and try using that.
+gdb_test "python pspace = inf2.progspace"
+gdb_test "python arch = inf2.architecture()"
+gdb_test "remove-inferior 2"
+gdb_test "python print(\"Got: \" + gdb.format_address($bar_addr, pspace, arch))" \
+    [multi_line \
+	 "ValueError: The progspace argument is not valid" \
+	 "Error while executing Python code\\."] \
+    "gdb.format_address called with an invalid program space"

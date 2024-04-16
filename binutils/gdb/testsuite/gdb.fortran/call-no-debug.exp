@@ -1,0 +1,108 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/> .
+
+# Test calling Fortran functions that are compiled without debug
+# information.
+
+require allow_fortran_tests
+
+standard_testfile call-no-debug-prog.f90 call-no-debug-func.f90
+load_lib fortran.exp
+
+if {[prepare_for_testing_full "failed to prepare" \
+	 [list ${binfile} [list debug f90] \
+	      $srcfile [list debug f90] \
+	      $srcfile2 [list nodebug f90]]]} {
+    return -1
+}
+
+# Find a possibly mangled version of NAME, a function we want to call
+# that has no debug information available.  We hope that the mangled
+# version of NAME contains the pattern NAME, and so we use 'info
+# functions' to find a possible suitable symbol.
+#
+# If no suitable function is found then return the empty string.
+proc find_mangled_name { name } {
+    global hex gdb_prompt
+
+    set into_non_debug_symbols false
+    set symbol_name "*unknown*"
+    gdb_test_multiple "info function $name" "" {
+	-re ".*Non-debugging symbols:\r\n" {
+	    set into_non_debug_symbols true
+	    exp_continue
+	}
+	-re "$hex.*\[ \t\]+(\[^\r\n\]+)\r\n" {
+	    set symbol_name $expect_out(1,string)
+	    exp_continue
+	}
+	-re "^$gdb_prompt $" {
+	    # Done.
+	}
+    }
+
+    # If we couldn't find a suitable symbol name return the empty
+    # string.
+    if { $symbol_name == "*unknown*" } {
+	return ""
+    }
+
+    return $symbol_name
+}
+
+# Sample before before starting the exec, in order to avoid picking up symbols
+# from shared libs.
+set some_func [find_mangled_name "some_func"]
+set string_func [find_mangled_name "string_func"]
+
+if ![fortran_runto_main] {
+    return -1
+}
+
+# Call the function SOME_FUNC, that takes a single integer and returns
+# an integer.  As the function has no debug information then we have
+# to pass the integer argument as '&1' so that GDB will send the
+# address of an integer '1' (as Fortran arguments are pass by
+# reference).
+set symbol_name $some_func
+if { $symbol_name == "" } {
+    untested "couldn't find suitable name for 'some_func'"
+} else {
+    gdb_test "ptype ${symbol_name}" "type = <unknown return type> \\(\\)"
+    gdb_test "print ${symbol_name} (&1)" \
+	"'${symbol_name}' has unknown return type; cast the call to its declared return type"
+    gdb_test "print (integer) ${symbol_name} (&1)" " = 2"
+}
+
+# Call the function STRING_FUNC which takes an assumed shape character
+# array (i.e. a string), and returns an integer.
+#
+# At least for gfortran, passing the string will pass both the data
+# pointer and an artificial argument, the length of the string.
+#
+# The compiled program is expecting the address of the string, so we
+# prefix that argument with '&', but the artificial length parameter
+# is pass by value, so there's no need for '&' in that case.
+set symbol_name $string_func
+if { $symbol_name == "" } {
+    untested "couldn't find suitable name for 'string_func'"
+} else {
+    gdb_test "ptype ${symbol_name}" "type = <unknown return type> \\(\\)"
+    gdb_test "print ${symbol_name} (&'abcdefg', 3)" \
+	"'${symbol_name}' has unknown return type; cast the call to its declared return type"
+    gdb_test_stdio "call (integer) ${symbol_name} (&'abcdefg', 3)" \
+	" abc" \
+	"\\\$\\d+ = 0"
+}

@@ -1,0 +1,199 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Create an example function that contains both addresses marked as
+# statements and addresses marked as non-statements, and then
+# disassemble the function.
+#
+# Of particular interest is how 'disassemble /m' handles the
+# non-statement addresses, we want to ensure that these addresses are
+# included in the disassembly output.  For completeness we test both
+# 'disassemble /m' and 'disassemble /s'.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+# The .c files use __attribute__.
+require is_c_compiler_gcc
+
+# Reuse many of the test source files from dw2-inline-header-1.exp.
+standard_testfile dw2-inline-header-lbls.c dw2-inline-header.S \
+    dw2-inline-header.c
+
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    global srcdir subdir srcfile srcfile3
+    declare_labels lines_label
+
+    get_func_info main
+
+    cu {} {
+	compile_unit {
+	    {producer "gcc" }
+	    {language @DW_LANG_C}
+	    {name ${srcfile3}}
+	    {low_pc 0 addr}
+	    {stmt_list ${lines_label} DW_FORM_sec_offset}
+	} {
+	    subprogram {
+		{external 1 flag}
+		{MACRO_AT_func {main}}
+	    }
+	}
+    }
+
+    lines {version 2 default_is_stmt 1} lines_label {
+	include_dir "${srcdir}/${subdir}"
+	file_name "$srcfile3" 1
+
+	program {
+	    DW_LNE_set_address $main_start
+	    DW_LNS_advance_line 15
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_2
+	    DW_LNS_negate_stmt
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_3
+	    DW_LNS_advance_line 1
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_4
+	    DW_LNS_negate_stmt
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_5
+	    DW_LNS_negate_stmt
+	    DW_LNS_copy
+
+	    DW_LNE_set_address line_label_6
+	    DW_LNS_advance_line 1
+	    DW_LNS_negate_stmt
+	    DW_LNS_copy
+
+	    DW_LNE_set_address $main_end
+	    DW_LNS_copy
+	    DW_LNE_end_sequence
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	  [list $srcfile $asm_file] {nodebug} ] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+# Global lines array, maps lines numbers to the list of addresses
+# associated with that line in the debug output.
+array set lines {}
+
+# Look in the global LINES array and check that the disassembly for
+# line LINENUM includes the address of LABEL.
+proc check_disassembly_results { linenum label } {
+    global lines
+
+    set address [get_hexadecimal_valueof "&${label}" "__unknown__"]
+    set testname "check_disassembly_results $linenum $label"
+    if {![info exists lines($linenum)]} {
+	fail "$testname (no disassembly for $linenum)"
+	return
+    }
+
+    # Use a loop to compare the addresses as the addresses extracted
+    # from the disassembly output can be padded with zeros, while the
+    # address of the label will not be padded.
+    set addrs $lines($linenum)
+    foreach a $addrs {
+	if { $a == $address } {
+	    pass $testname
+	    return
+	}
+    }
+    fail $testname
+}
+
+foreach_with_prefix opt { m s } {
+    # Disassemble 'main' and split up the disassembly output.  We
+    # build an associative array, for each line number store the list
+    # of addresses that were part of its disassembly output.
+    #
+    # LINENUM is the line we are currently collecting the disassembly
+    # addresses for, and ADDRS is the list of addresses collected for
+    # this line.
+    set linenum -1
+    set addrs {}
+
+    # Clear the global associative array used to hold the results.
+    unset lines
+    array set lines {}
+
+    gdb_test_multiple "disassemble /${opt} main" "" {
+	-re "Dump of assembler code for function main:\r\n" {
+	    exp_continue
+	}
+
+	-re "^\[^\r\n\]+${srcfile3}:" {
+	    exp_continue
+	}
+
+	-re "^(\\d+)\\s+\[^\r\n\]+\r\n" {
+	    if { $linenum != -1 } {
+		set lines($linenum) $addrs
+		set addrs {}
+	    }
+	    set linenum $expect_out(1,string)
+	    exp_continue
+	}
+
+	-re "^(?:=>)?\\s*($hex)\\s*\[^\r\n\]+\r\n" {
+	    set address $expect_out(1,string)
+	    lappend addrs $address
+	    exp_continue
+	}
+
+	-re "^\\s*\r\n" {
+	    exp_continue
+	}
+
+	-re "^End of assembler dump\\.\r\n" {
+	    if { $linenum != -1 } {
+		set lines($linenum) $addrs
+		set linenum -1
+		set addrs {}
+	    }
+	    exp_continue
+	}
+
+	-re "^$gdb_prompt $" {
+	    # All done.
+	}
+    }
+
+    # Now check that each label we expect to be associated with each line
+    # shows up in the disassembly output.
+    check_disassembly_results 16 "line_label_1"
+    check_disassembly_results 16 "line_label_2"
+    check_disassembly_results 17 "line_label_3"
+    check_disassembly_results 17 "line_label_4"
+    check_disassembly_results 17 "line_label_5"
+    check_disassembly_results 18 "line_label_6"
+}

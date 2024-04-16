@@ -1,0 +1,170 @@
+# This testcase is part of GDB, the GNU debugger.
+#
+# Copyright 2021-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+#
+# Test shared libraries loaded into different namespaces with dlmopen().
+#
+# We test that GDB shows the correct number of instances of the libraries
+# the test loaded while unloading them one-by-one.
+
+require allow_dlmopen_tests
+
+standard_testfile
+
+set basename_lib dlmopen-lib
+set srcfile_lib $srcdir/$subdir/$basename_lib.c
+set binfile_lib1 [standard_output_file $basename_lib.1.so]
+set binfile_lib2 [standard_output_file $basename_lib.2.so]
+set srcfile_lib_dep $srcdir/$subdir/$basename_lib-dep.c
+set binfile_lib_dep [standard_output_file $basename_lib-dep.so]
+
+if { [gdb_compile_shlib $srcfile_lib_dep $binfile_lib_dep {debug}] != "" } {
+    untested "failed to prepare shlib"
+    return -1
+}
+
+if { [gdb_compile_shlib $srcfile_lib $binfile_lib1 \
+	  [list debug shlib_load libs=$binfile_lib_dep]] != "" } {
+    untested "failed to prepare shlib"
+    return -1
+}
+
+if { [gdb_compile_shlib $srcfile_lib $binfile_lib2 \
+	  [list debug shlib_load libs=$binfile_lib_dep]] != "" } {
+    untested "failed to prepare shlib"
+    return -1
+}
+
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile \
+	  [list additional_flags=-DDSO1_NAME=\"$binfile_lib1\" \
+	       additional_flags=-DDSO2_NAME=\"$binfile_lib2\" \
+	       shlib_load debug]] } {
+    return -1
+}
+
+if { ![runto_main] } {
+    return -1
+}
+
+# Check that 'info shared' show NUM occurrences of DSO.
+proc check_dso_count { dso num } {
+    global gdb_prompt hex
+
+    set count 0
+    gdb_test_multiple "info shared" "info shared" {
+	-re "$hex  $hex  Yes \[^\r\n\]*$dso\r\n" {
+	    # use longer form so debug remote does not interfere
+	    set count [expr $count + 1]
+	    exp_continue
+	}
+	-re "$gdb_prompt " {
+	    verbose -log "library: $dso, expected: $num, found: $count"
+	    gdb_assert {$count == $num} "$gdb_test_name"
+	}
+    }
+}
+
+# The DSO part of the test.  We run it once per DSO call.
+proc test_dlmopen_one { ndso1 ndso2 exp_glob } {
+    global srcfile_lib srcfile_lib basename_lib bp_inc
+
+    # Try to reach the breakpoint in the dynamically loaded library.
+    gdb_continue_to_breakpoint "cont to bp.inc" \
+	".*$srcfile_lib:$bp_inc\r\n.*"
+
+    # We opened all DSOs initially and close them one by one.
+    with_test_prefix "dso 1" { check_dso_count $basename_lib.1.so $ndso1 }
+    with_test_prefix "dso 2" { check_dso_count $basename_lib.2.so $ndso2 }
+
+    # This might help debugging.
+    gdb_test "info breakpoints" ".*"
+    gdb_test "print \$pc" ".*"
+
+    # We expect different instances of GDB_DLMOPEN_GLOB per DSO.
+    gdb_test "print amount" "= $exp_glob"
+    gdb_test "print gdb_dlmopen_glob" "= $exp_glob"
+
+    # Modify that DSO's instance, which should leave the others intact.
+    gdb_test "print &gdb_dlmopen_glob" "= .*"
+    gdb_test "print gdb_dlmopen_glob = -1" "= -1"
+}
+
+# The actual test.  We run it twice.
+proc test_dlmopen {} {
+    global srcfile basename_lib bp_main
+
+    # Note that when loading dlmopen-lib.1.so and dlmopen-lib.2.so into
+    # the same namespace, dlmopen-lib-dep.so is loaded only once, so in
+    # this case, the changes to gdb_dlmopen_glob inside test_dlmopen_one
+    # will actually be visible.
+    #
+    # Hence, we supply the expected value of this variable as argument to
+    # test_dlmopen_one.
+    with_test_prefix "dlmopen 1" { test_dlmopen_one 3 1 1 }
+    with_test_prefix "dlmopen 2" { test_dlmopen_one 2 1 1 }
+    with_test_prefix "dlmopen 3" { test_dlmopen_one 1 1 1 }
+    with_test_prefix "dlmopen 4" { test_dlmopen_one 0 1 -1 }
+
+    with_test_prefix "main" {
+	# Try to reach the breakpoint in the dynamically loaded library.
+	gdb_continue_to_breakpoint "cont to bp.main" \
+	    ".*$srcfile:$bp_main\r\n.*"
+
+	# The library should not be listed.
+	with_test_prefix "dso 1" { check_dso_count $basename_lib.1.so 0 }
+	with_test_prefix "dso 2" { check_dso_count $basename_lib.2.so 0 }
+    }
+}
+
+# Remove the pause.  We only need it for the attach test.
+gdb_test "print wait_for_gdb = 0" "\\\$1 = 0"
+
+# Break in the to-be-loaded library and at the end of main.
+set bp_inc [gdb_get_line_number "bp.inc" $srcfile_lib]
+set bp_main [gdb_get_line_number "bp.main" $srcfile]
+
+delete_breakpoints
+gdb_breakpoint $srcfile_lib:$bp_inc allow-pending
+gdb_breakpoint $srcfile:$bp_main
+
+test_dlmopen
+
+# Try the same again when attaching after dlmopen().
+require can_spawn_for_attach
+
+clean_restart $binfile
+
+# Start the test program.
+set test_spawn_id [spawn_wait_for_attach $binfile]
+set testpid [spawn_id_get_pid $test_spawn_id]
+
+# Attach.
+if { ![gdb_attach $testpid] } {
+    return
+}
+
+with_test_prefix "attach" {
+    # Remove the pause.  We no longer need it.
+    gdb_test "print wait_for_gdb = 0" "\\\$1 = 0"
+
+    # Set the same breakpoints again.  This time, however, we do not allow the
+    # breakpoint to be pending since the library has already been loaded.
+    gdb_breakpoint $srcfile_lib:$bp_inc
+    gdb_breakpoint $srcfile:$bp_main
+
+    test_dlmopen
+}

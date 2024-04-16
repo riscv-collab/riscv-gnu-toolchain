@@ -1,0 +1,190 @@
+# Copyright 2015-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile "vla.f90"
+load_lib "fortran.exp"
+
+require allow_fortran_tests
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile} \
+     {debug f90 quiet}] } {
+    return -1
+}
+
+if ![fortran_runto_main] {
+    return -1
+}
+
+# Depending on the compiler being used,
+# the type names can be printed differently.
+set real [fortran_real4]
+
+# Try to access values in non allocated VLA
+gdb_breakpoint [gdb_get_line_number "vla1-init"]
+gdb_continue_to_breakpoint "vla1-init"
+gdb_test "print vla1" " = <not allocated>" "print non-allocated vla1"
+gdb_test "print &vla1" \
+  " = \\\(PTR TO -> \\\( $real, allocatable \\\(:,:,:\\\) \\\)\\\) $hex" \
+  "print non-allocated &vla1"
+gdb_test "print vla1(1,1,1)" "no such vector element \\\(vector not allocated\\\)" \
+  "print member in non-allocated vla1 (1)"
+gdb_test "print vla1(101,202,303)" \
+  "no such vector element \\\(vector not allocated\\\)" \
+  "print member in non-allocated vla1 (2)"
+gdb_test "print vla1(5,2,18)=1" "no such vector element \\\(vector not allocated\\\)" \
+  "set member in non-allocated vla1"
+
+# Try to access value in allocated VLA
+gdb_breakpoint [gdb_get_line_number "vla2-allocated"]
+gdb_continue_to_breakpoint "vla2-allocated"
+# Many instructions to be executed when step over this line, and it is
+# slower in remote debugging.  Increase the timeout to avoid timeout
+# fail.
+with_timeout_factor 15 {
+    gdb_test "next" "\\d+(\\t|\\s)+vla1\\\(3, 6, 9\\\) = 42" \
+	"step over value assignment of vla1"
+}
+gdb_test "print &vla1" \
+  " = \\\(PTR TO -> \\\( $real, allocatable \\\(10,10,10\\\) \\\)\\\) $hex" \
+  "print allocated &vla1"
+gdb_test "print vla1(3, 6, 9)" " = 1311" "print allocated vla1(3,6,9)"
+gdb_test "print vla1(1, 3, 8)" " = 1311" "print allocated vla1(1,3,8)"
+gdb_test "print vla1(9, 9, 9) = 999" " = 999" \
+  "print allocated vla1(9,9,9)=999"
+
+# Try to access values in allocated VLA after specific assignment
+gdb_breakpoint [gdb_get_line_number "vla1-filled"]
+gdb_continue_to_breakpoint "vla1-filled"
+gdb_test "print vla1(3, 6, 9)" " = 42" \
+  "print allocated vla1(3,6,9) after specific assignment (filled)"
+gdb_test "print vla1(1, 3, 8)" " = 1001" \
+  "print allocated vla1(1,3,8) after specific assignment (filled)"
+gdb_test "print vla1(9, 9, 9)" " = 999" \
+  "print allocated vla1(9,9,9) after assignment in debugger (filled)"
+
+# Try to access values in undefined pointer to VLA (dangling)
+gdb_test "print pvla" " = <not associated>" "print undefined pvla"
+gdb_test "print &pvla" \
+  " = \\\(PTR TO -> \\\( $real \\\(:,:,:\\\) \\\)\\\) $hex" \
+  "print non-associated &pvla"
+gdb_test "print pvla(1, 3, 8)" "no such vector element \\\(vector not associated\\\)" \
+  "print undefined pvla(1,3,8)"
+
+# Try to access values in pointer to VLA and compare them
+gdb_breakpoint [gdb_get_line_number "pvla-associated"]
+gdb_continue_to_breakpoint "pvla-associated"
+gdb_test "print &pvla" \
+  " = \\\(PTR TO -> \\\( $real \\\(10,10,10\\\) \\\)\\\) $hex" \
+  "print associated &pvla"
+gdb_test "print pvla(3, 6, 9)" " = 42" "print associated pvla(3,6,9)"
+gdb_test "print pvla(1, 3, 8)" " = 1001" "print associated pvla(1,3,8)"
+gdb_test "print pvla(9, 9, 9)" " = 999" "print associated pvla(9,9,9)"
+
+# Fill values to VLA using pointer and check
+gdb_breakpoint [gdb_get_line_number "pvla-re-associated"]
+gdb_continue_to_breakpoint "pvla-re-associated"
+gdb_test "print pvla(5, 45, 20)" \
+  " = 1" "print pvla(5, 45, 20) after filled using pointer"
+gdb_test "print vla2(5, 45, 20)" \
+  " = 1" "print vla2(5, 45, 20) after filled using pointer"
+gdb_test "print pvla(7, 45, 14)" " = 2" \
+  "print pvla(7, 45, 14) after filled using pointer"
+gdb_test "print vla2(7, 45, 14)" " = 2" \
+  "print vla2(7, 45, 14) after filled using pointer"
+
+# Try to access values of deassociated VLA pointer
+gdb_breakpoint [gdb_get_line_number "pvla-deassociated"]
+gdb_continue_to_breakpoint "pvla-deassociated"
+gdb_test "print pvla(5, 45, 20)" \
+  "no such vector element \\\(vector not associated\\\)" \
+  "print pvla(5, 45, 20) after deassociated"
+gdb_test "print pvla(7, 45, 14)" \
+  "no such vector element \\\(vector not associated\\\)" \
+  "print pvla(7, 45, 14) after dissasociated"
+gdb_test "print pvla" " = <not associated>" \
+  "print vla1 after deassociated"
+
+# Try to access values of deallocated VLA
+gdb_breakpoint [gdb_get_line_number "vla1-deallocated"]
+gdb_continue_to_breakpoint "vla1-deallocated"
+gdb_test "print vla1(3, 6, 9)" "no such vector element \\\(vector not allocated\\\)" \
+  "print allocated vla1(3,6,9) after specific assignment (deallocated)"
+gdb_test "print vla1(1, 3, 8)" "no such vector element \\\(vector not allocated\\\)" \
+  "print allocated vla1(1,3,8) after specific assignment (deallocated)"
+gdb_test "print vla1(9, 9, 9)" "no such vector element \\\(vector not allocated\\\)" \
+  "print allocated vla1(9,9,9) after assignment in debugger (deallocated)"
+
+
+# Try to assign VLA to user variable
+clean_restart ${testfile}
+
+if {![fortran_runto_main]} {
+    return
+}
+gdb_breakpoint [gdb_get_line_number "vla2-allocated"]
+gdb_continue_to_breakpoint "vla2-allocated, second time"
+# Many instructions to be executed when step over this line, and it is
+# slower in remote debugging.  Increase the timeout to avoid timeout
+# fail.
+with_timeout_factor 15 {
+    gdb_test "next" "\\d+.*vla1\\(3, 6, 9\\) = 42" "next (1)"
+}
+
+gdb_test_no_output "set \$myvar = vla1" "set \$myvar = vla1"
+gdb_test "print \$myvar" \
+  " = \\( *\\( *\\( *1311, *1311, *1311,\[()1311, .\]*\\)" \
+  "print \$myvar set to vla1"
+
+gdb_test "next" "\\d+.*vla1\\(1, 3, 8\\) = 1001" "next (2)"
+gdb_test "print \$myvar(3,6,9)" " = 1311"
+
+gdb_breakpoint [gdb_get_line_number "pvla-associated"]
+gdb_continue_to_breakpoint "pvla-associated, second time"
+gdb_test_no_output "set \$mypvar = pvla" "set \$mypvar = pvla"
+gdb_test "print \$mypvar(1,3,8)" " = 1001"
+
+# deallocate pointer and make sure user defined variable still has the
+# right value.
+gdb_breakpoint [gdb_get_line_number "pvla-deassociated"]
+gdb_continue_to_breakpoint "pvla-deassociated, second time"
+gdb_test "print \$mypvar(1,3,8)" " = 1001" \
+  "print \$mypvar(1,3,8) after deallocated"
+
+gdb_breakpoint [gdb_get_line_number "vla1-neg-bounds-v1"]
+gdb_continue_to_breakpoint "vla1-neg-bounds-v1"
+with_test_prefix "negative bounds" {
+    gdb_test "print vla1(-2,-5,-3)" " = 1"
+    gdb_test "print vla1(-2,-3,-1)" " = -231"
+    gdb_test "print vla1(-3,-5,-3)" "no such vector element"
+    gdb_test "print vla1(-2,-6,-3)" "no such vector element"
+    gdb_test "print vla1(-2,-5,-4)" "no such vector element"
+    gdb_test "print vla1(0,-2,-1)" "no such vector element"
+    gdb_test "print vla1(-1,-1,-1)" "no such vector element"
+    gdb_test "print vla1(-1,-2,0)" "no such vector element"
+}
+
+gdb_breakpoint [gdb_get_line_number "vla1-neg-bounds-v2"]
+gdb_continue_to_breakpoint "vla1-neg-bounds-v2"
+with_test_prefix "negative lower bounds, positive upper bounds" {
+    gdb_test "print vla1(-2,-5,-3)" " = 2"
+    gdb_test "print vla1(-2,-3,-1)" " = 2"
+    gdb_test "print vla1(-2,-4,-2)" " = -242"
+    gdb_test "print vla1(-3,-5,-3)" "no such vector element"
+    gdb_test "print vla1(-2,-6,-3)" "no such vector element"
+    gdb_test "print vla1(-2,-5,-4)" "no such vector element"
+    gdb_test "print vla1(2,2,1)" "no such vector element"
+    gdb_test "print vla1(1,3,1)" "no such vector element"
+    gdb_test "print vla1(1,2,2)" "no such vector element"
+}

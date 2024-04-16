@@ -1,0 +1,61 @@
+# Copyright (C) 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test-case tests that continuing an inferior that has been killed
+# using an external sigkill does not make gdb misbehave.
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile \
+	 {pthreads debug}] == -1} {
+    return -1
+}
+
+if { ![runto "all_started"] } {
+    return -1
+}
+delete_breakpoints
+
+set testpid [get_valueof "" "pid" -1 "get pid of inferior"]
+if { $testpid == -1 } {
+    return -1
+}
+remote_exec target "kill -9 ${testpid}"
+
+# Give it some time to die.
+sleep 2
+
+set regs_msg "(Couldn't get registers|Unable to fetch general registers)"
+set no_such_process_msg "$regs_msg: No such process\."
+set killed_msg "Program terminated with signal SIGKILL, Killed\."
+set no_longer_exists_msg "The program no longer exists\."
+set not_being_run_msg "The program is not being run\."
+
+gdb_test_multiple "continue" "prompt after first continue" {
+    -re "Continuing\.\r\n$no_such_process_msg\r\n$gdb_prompt " {
+	pass $gdb_test_name
+	# Saw $no_such_process_msg.  The bug condition was triggered, go
+	# check for it.
+	gdb_test_multiple "" "messages" {
+	    -re ".*$killed_msg.*$no_longer_exists_msg\r\n" {
+		pass $gdb_test_name
+		gdb_test "continue" $not_being_run_msg "second continue"
+	    }
+	}
+    }
+    -re -wrap ".*$killed_msg.*$no_longer_exists_msg" {
+	pass $gdb_test_name
+    }
+}

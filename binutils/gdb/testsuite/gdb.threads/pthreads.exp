@@ -1,0 +1,354 @@
+# Copyright (C) 1996-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file was written by Fred Fish. (fnf@cygnus.com)
+
+# This test requires sending ^C to interrupt the running target.
+require {!target_info exists gdb,nointerrupts}
+
+standard_testfile
+
+# regexp for "horizontal" text (i.e. doesn't include newline or
+# carriage return)
+set horiz "\[^\n\r\]*"
+
+if {[istarget "*-*-linux"]} {
+    set target_cflags "-D_MIT_POSIX_THREADS"
+} else {
+    set target_cflags ""
+}
+
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable debug] != "" } {
+    return -1
+}
+
+clean_restart ${binfile}
+
+gdb_test_no_output "set print sevenbit-strings"
+#gdb_test_no_output "set print address off"
+gdb_test_no_output "set width 0"
+
+# We'll need this when we send_gdb a ^C to GDB.  Need to do it before we
+# run the program and gdb starts saving and restoring tty states.
+gdb_test "shell stty intr '^C'" ".*"
+
+proc all_threads_running {} {
+    global gdb_prompt
+    global srcfile
+
+    # Reset all the counters to zero.
+    gdb_test_no_output "set var common_routine::hits=0"
+    gdb_test_no_output "set var common_routine::from_thread1=0"
+    gdb_test_no_output "set var common_routine::from_thread2=0"
+    gdb_test_no_output "set var common_routine::from_main=0"
+    gdb_test_no_output "set var common_routine::full_coverage=0"
+
+    # Disable all breakpoints.
+    gdb_test_no_output "disable"
+
+    # Set up a breakpoint that will cause us to stop when we have
+    # been called 15 times.  This should be plenty of time to allow
+    # every thread to run at least once, since each thread sleeps for
+    # one second between calls to common_routine.
+    gdb_test "tbreak common_routine if hits >= 15" ".*"
+
+    # Start all the threads running again and wait for the inferior
+    # to stop.  Since no other breakpoints are set at this time
+    # we should stop only when we have been previously called 15 times.
+
+    set return_me 1
+
+    gdb_test_multiple "continue" "continue until common routine run 15 times" {
+	-re "Continuing.*common_routine.*at.*$srcfile.*$gdb_prompt $" {
+	    set return_me 0
+	}
+    }
+
+    if {$return_me == 1} {
+	return 0
+    }
+
+    # Check that we stopped when we actually expected to stop, by
+    # verifying that there have been 15 previous hits.
+
+    # NOTE: Because of synchronization behavior, it is possible for
+    # more than one thread to increment "hits" between one breakpoint
+    # trap and the next.  So stopping after 16 or 17 hits should be
+    # considered acceptable.
+
+    gdb_test_multiple "p common_routine::hits" \
+	"stopped before calling common_routine 15 times" {
+	    -re ".*= 15\r\n$gdb_prompt $" {
+		pass "stopped before calling common_routine 15 times"
+	    }
+	    -re ".*= 16\r\n$gdb_prompt $" {
+		pass "stopped before calling common_routine 15 times (16 times)"
+	    }
+	    -re ".*= 17\r\n$gdb_prompt $" {
+		pass "stopped before calling common_routine 15 times (17 times)"
+	    }
+	}
+
+    # Also check that all of the threads have run, which will only be true
+    # if the full_coverage variable is set.
+
+    set return_me 1
+    gdb_test_multiple "p common_routine::full_coverage" \
+	"some threads didn't run" {
+	    -re ".* = 1.*$gdb_prompt $" {
+	    }
+	    -re ".* = 0.*$gdb_prompt $" {
+		fail "some threads didn't run"
+		set return_me 0
+	    }
+	}
+
+    # Looks fine, return success.
+    return $return_me
+}
+
+proc test_startup {} {
+    global srcdir srcfile gdb_prompt expect_out
+    global horiz
+    global main_id thread1_id thread2_id
+
+    # We should be able to do an info threads before starting any others.
+    set return_me 1
+    gdb_test_multiple "info threads" "info threads" {
+	-re ".*Thread.*main.*$gdb_prompt $" {
+	    pass "info threads"
+	    set return_me 0
+	}
+	-re "\r\n$gdb_prompt $" {
+	    unsupported "gdb does not support pthreads for this machine"
+	}
+    }
+
+    if {$return_me == 1} {
+	return 0
+    }
+
+    # Extract the thread id number of main thread from "info threads" output.
+    gdb_test_multiple "info threads" "get main thread id" {
+	-re "(\[0-9\]+)(${horiz}Thread${horiz}main.*)($gdb_prompt $)" {
+	}
+    }
+
+    set main_id $expect_out(1,string)
+
+    # Check that we can continue and create the first thread.
+    gdb_test "break thread1" "Breakpoint .* file .*$srcfile.*"
+    gdb_test "continue" \
+	    "Continuing.*Breakpoint .*, thread1 \\(arg=0xfeedface\\).*at.*$srcfile.*" \
+	    "Continue to creation of first thread"
+    gdb_test_no_output "disable"
+
+    # Extract the thread id number of thread 1 from "info threads" output.
+    gdb_test_multiple "info threads" "get thread 1 id" {
+	-re "(\[0-9\]+)(${horiz}Thread${horiz}thread1.*)($gdb_prompt $)" {
+	}
+    }
+
+    set thread1_id $expect_out(1,string)
+
+    # Check that we can continue and create the second thread,
+    # ignoring the first thread for the moment.
+    gdb_test "break thread2" "Breakpoint .* file .*$srcfile.*"
+    gdb_test "continue" \
+	    "Continuing.*Breakpoint .*, thread2 \\(arg=0xdeadbeef\\).*at.*$srcfile.*" \
+	    "continue to creation of second thread"
+
+    # Extract the thread id number of thread 2 from "info threads" output.
+    gdb_test_multiple "info threads" "get thread 2 id" {
+	-re "(\[0-9\]+)(${horiz}Thread${horiz}thread2.*)($gdb_prompt $)" {
+	}
+    }
+
+    set thread2_id $expect_out(1,string)
+
+    return 1
+}
+
+proc check_control_c {} {
+    global gdb_prompt
+
+    # Verify that all threads are running.
+    with_test_prefix "after startup" {
+	if {[all_threads_running]} {
+	    pass "all threads running after startup"
+	}
+    }
+
+    # Send a continue followed by ^C to the process to stop it.
+    gdb_test_multiple "continue" "continue with all threads running" {
+	-re "Continuing." {
+	    pass "continue with all threads running"
+	}
+    }
+    after 2000
+    send_gdb "\003"
+    set description "Stopped with a ^C"
+    gdb_expect {
+	-re "Thread .* received signal SIGINT.*$gdb_prompt $" {
+	    pass $description
+	}
+	-re "Quit.*$gdb_prompt $" {
+	    pass $description
+	}
+	timeout {
+	    fail "$description (timeout)"
+	    return 1
+	}
+    }
+    gdb_test "bt" ".*"
+
+    # Verify that all threads can be run again after a ^C stop.
+    with_test_prefix "after continue" {
+	if {[all_threads_running]} {
+	    pass "all threads running after continuing from ^C stop"
+	}
+    }
+    return 0
+}
+
+proc check_backtraces {} {
+    global gdb_prompt main_id thread1_id thread2_id
+
+    # Check that the "thread apply N backtrace" command works
+
+    gdb_test "thread apply $main_id backtrace" \
+	    ".* in main \\(argc=.*, argv=.*\\).*" \
+	    "check backtrace from main thread"
+    gdb_test "thread apply $thread1_id backtrace" \
+	    ".* in thread1 \\(arg=0xfeedface\\).*" \
+	    "check backtrace from thread 1"
+    gdb_test "thread apply $thread2_id backtrace" \
+	    ".* in thread2 \\(arg=0xdeadbeef\\).*" \
+	    "check backtrace from thread 2"
+
+    # Check that we can apply the backtrace command to all
+    # three threads with a single gdb command
+
+    gdb_test "thread apply $main_id $thread1_id $thread2_id bt" \
+	    ".* in main .* in thread1 .* in thread2.*" \
+	    "apply backtrace command to all three threads"
+
+    # Check that we can do thread specific backtraces
+    # This also tests that we can do thread specific breakpoints.
+
+    gdb_test "break common_routine thread $thread2_id" \
+	    "Breakpoint .* at 0x.* file .* line .*" \
+	    "set break at common_routine in thread 2"
+
+    gdb_test_multiple "continue" "continue to bkpt at common_routine in thread 2" {
+	-re "Breakpoint .* common_routine \\(arg=2\\).*$gdb_prompt $" {
+	    pass "continue to bkpt at common_routine in thread 2"
+	    gdb_test "backtrace" \
+		"#0.*common_routine \\(arg=2\\).*#1.*thread2.*" \
+		"backtrace from thread 2 bkpt in common_routine"
+	}
+	-re "Breakpoint .* common_routine \\(arg=0\\).*$gdb_prompt $" {
+	    fail "continue to bkpt at common_routine in thread 2 (arg=0)"
+	}
+	-re "Breakpoint .* common_routine \\(arg=1\\).*$gdb_prompt $" {
+	    fail "continue to bkpt at common_routine in thread 2 (arg=1)"
+	}
+    }
+}
+
+proc check_qcs {} {
+    set any "\[^\r\n\]*"
+    set ws "\[ \t\]\+"
+    set number "\[0-9]\+"
+
+    # Check -c (continue) and -s (silently continue) flags.
+    gdb_test "thread apply $::thread1_id $::thread2_id p notfound" \
+	[multi_line \
+	     "" \
+	     "Thread $::thread1_id ${any}" \
+	     "No symbol \\\"notfound\\\" in current context." \
+	    ] \
+	"run a failing command that aborts thread apply"
+
+    gdb_test "thread apply $::thread1_id $::thread2_id -c p notfound" \
+	[multi_line \
+	     "" \
+	     "Thread $::thread1_id ${any}" \
+	     "No symbol \\\"notfound\\\" in current context." \
+	     "" \
+	     "Thread $::thread2_id ${any}" \
+	     "No symbol \\\"notfound\\\" in current context." \
+	    ] \
+	"run a failing command, -c to continue"
+
+    with_test_prefix "silent flag" {
+	foreach_with_prefix cmd_and_args {
+	    "thread apply all -s frame apply all -s"
+	    "tfaas"
+	    "taas faas"} {
+		set cmd "$cmd_and_args p i"
+		gdb_test $cmd \
+		    [multi_line \
+			 "" \
+			 "Thread $::thread2_id ${any}" \
+			 "#${number}${ws}${any} in thread2 ${any}" \
+			 "\\\$\[0-9]+ = ${number}${any}" \
+			 "" \
+			 "Thread $::thread1_id ${any}" \
+			 "#${number}${ws}${any} in thread1 ${any}" \
+			 "\\\$\[0-9]+ = ${number}${any}" \
+			] \
+		    "run a failing command except in one frame of thread 2,3, -s to silently continue"
+	    }
+    }
+
+    # Check quietness.
+    gdb_test "thread apply all -s -q frame apply all -s p i" \
+	[multi_line \
+	     "#${number}${ws}${any} in thread2 ${any}" \
+	     "\\\$\[0-9]+ = ${number}${any}" \
+	     "#${number}${ws}${any} in thread1 ${any}" \
+	     "\\\$\[0-9]+ = ${number}${any}" \
+	    ] \
+	"run a failing command except in one frame of thread 2,3, -s to silently continue.  Do not show thread information"
+
+    gdb_test "thread apply all -s -q frame apply all -s -q p i" \
+	[multi_line \
+	     "\\\$\[0-9]+ = ${number}${any}" \
+	     "\\\$\[0-9]+ = ${number}${any}" \
+	    ] \
+	"run a failing command except in one frame of thread 2,3, -s to silently continue.  Do not show thread and frame info"
+
+    # Check invalid flag combinations and errors.
+    gdb_test "thread apply all -c -s p 1" \
+	"thread apply all: -c and -s are mutually exclusive" \
+	"check -c and -s cannot be used simultaneously"
+    gdb_test "taas" "Please specify a command to apply on all threads" \
+	"missing command for taas"
+    gdb_test "tfaas" "Please specify a command to apply on all frames of all threads" \
+	"missing command for tfaas"
+
+}
+
+if {[runto_main]} {
+    if {[test_startup]} {
+	if {[check_control_c]} {
+	    warning "Could not stop child with ^C; skipping rest of tests.\n"
+	    return
+	}
+	check_backtraces
+	check_qcs
+    }
+}

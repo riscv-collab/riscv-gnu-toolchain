@@ -1,0 +1,90 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the gdb testsuite.
+
+# Test that GDB tolerates being started with libSegFault.so preloaded
+# with LD_PRELOAD, and that GDB warns about a custom SIGSEGV custom
+# handler.  See PR gdb/18653
+# <https://sourceware.org/bugzilla/show_bug.cgi?id=18653#c7>.
+
+# We cannot expect remote hosts to see environment variables set on
+# the local machine.
+require {!is_remote host}
+
+# Spawn GDB with LIB preloaded with LD_PRELOAD.  CMDLINE_OPTS are
+# command line options passed to GDB.
+
+proc gdb_spawn_with_ld_preload {lib cmdline_opts} {
+    global env
+
+    save_vars { env(LD_PRELOAD) env(ASAN_OPTIONS)} {
+	if { ![info exists env(LD_PRELOAD) ]
+	     || $env(LD_PRELOAD) == "" } {
+	    set env(LD_PRELOAD) "$lib"
+	} else {
+	    append env(LD_PRELOAD) ":$lib"
+	}
+
+	# Prevent address sanitizer error:
+	# ASan runtime does not come first in initial library list; you should
+	# either link runtime to your application or manually preload it with
+	# LD_PRELOAD.
+	set_sanitizer_default ASAN_OPTIONS verify_asan_link_order 0
+
+	gdb_spawn_with_cmdline_opts $cmdline_opts
+    }
+}
+
+proc test_libsegfault {} {
+    global gdb_prompt
+
+    set libsegfault "libSegFault.so"
+
+    # When started normally, if libSegFault.so is preloaded, GDB
+    # should warn about not being able to propagate the signal
+    # disposition of SIGSEGV.
+    gdb_exit
+    gdb_spawn_with_ld_preload $libsegfault ""
+
+    set test "gdb emits custom handler warning"
+    gdb_test_multiple "" $test {
+	-re "cannot be preloaded.*\r\n$gdb_prompt $" {
+	    # Glibc 2.22 outputs:
+	    # ERROR: ld.so: object 'libSegFault.so' from LD_PRELOAD cannot be preloaded (cannot open shared object file): ignored.
+	    untested "cannot preload libSegFault.so"
+	    return
+	}
+	-re "Found custom handler.*won't be propagated.*\r\n$gdb_prompt $" {
+	    pass $test
+	}
+    }
+
+    # "-q" should disable the warning, though.
+    gdb_exit
+    gdb_spawn_with_ld_preload $libsegfault "-q"
+
+    set test "quiet suppresses custom handler warning"
+    gdb_test_multiple "" $test {
+	-re "^$gdb_prompt $" {
+	    pass $test
+	}
+    }
+}
+
+save_vars { ::INTERNAL_GDBFLAGS } {
+    set ::INTERNAL_GDBFLAGS [string map {"-q" ""} $::INTERNAL_GDBFLAGS]
+    test_libsegfault
+}

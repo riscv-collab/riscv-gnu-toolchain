@@ -1,0 +1,100 @@
+# Copyright 2013-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile lspec.cc
+
+require allow_cplus_tests
+
+set opts {debug c++}
+set objfile1 [standard_output_file ${testfile}one.o]
+set objfile2 [standard_output_file ${testfile}two.o]
+
+if { [file pathtype $objdir] == "relative" } {
+    untested "objdir $objdir should be absolute"
+    return
+}
+
+with_cwd $srcdir/${subdir}/base/one {
+    if { [gdb_compile "thefile.cc" $objfile1 object $opts] != "" } {
+	untested "compilation failed"
+	return
+    }
+}
+
+with_cwd $srcdir/${subdir}/base/two {
+    if { [gdb_compile "thefile.cc" $objfile2 object $opts] != "" } {
+	untested "compilation failed"
+	return
+    }
+}
+
+if { [gdb_compile "$srcdir/${subdir}/$srcfile $objfile1 $objfile2" \
+		  $binfile executable $opts] != "" } {
+    return -1
+}
+
+clean_restart ${testfile}
+
+gdb_test_no_output "set multiple-symbols ask"
+
+gdb_test_no_output "set filename-display absolute"
+set cmd "break twodup"
+set test "break twodup absolute"
+gdb_test_multiple $cmd $test {
+    -re "^$cmd\r\n\\\[0\\\] cancel\r\n\\\[1\\\] all\r\n\\\[2\\\] \[^\r\n\]+base.one.thefile\\.cc:twodup\\\(\\\)\r\n\\\[3\\\] \[^\r\n\]+base.two.thefile\\.cc:twodup\\\(\\\)\r\n> $" {
+	pass $test
+    }
+}
+gdb_test "0" "canceled"
+
+gdb_test_no_output "set filename-display relative"
+
+set cmd "break twodup"
+set test "break twodup relative"
+gdb_test_multiple $cmd $test {
+    -re "^$cmd\r\n\\\[0\\\] cancel\r\n\\\[1\\\] all\r\n\\\[2\\\] thefile\\.cc:twodup\\\(\\\)\r\n\\\[3\\\] thefile\\.cc:twodup\\\(\\\)\r\n> $" {
+	pass $test
+    }
+}
+gdb_test "2" "^Breakpoint \[0-9\]+ at 0x\[0-9a-f\]+: file thefile\\.cc, line \[0-9a-f\]+\\."
+
+gdb_breakpoint "body_elsewhere"
+
+gdb_run_cmd
+gdb_test "" "Breakpoint \[0-9\]+, twodup \\(\\) at thefile.cc:\[0-9\]+\r\n.*" "expect breakpoint"
+
+gdb_test "info source" "\r\nLocated in \[^\r\n\]+base.one.thefile\\.cc\r\n.*"
+
+gdb_continue_to_breakpoint "body_elsewhere" ".* body_elsewhere marker .*"
+
+delete_breakpoints
+
+set cmd "break twodup"
+set test "break twodup relative other"
+gdb_test_multiple $cmd $test {
+    -re "^$cmd\r\n\\\[0\\\] cancel\r\n\\\[1\\\] all\r\n\\\[2\\\] thefile\\.cc:twodup\\\(\\\)\r\n\\\[3\\\] thefile\\.cc:twodup\\\(\\\)\r\n> $" {
+	pass $test
+    }
+}
+gdb_test "3" "^Breakpoint \[0-9\]+ at 0x\[0-9a-f\]+: file thefile\\.cc, line \[0-9a-f\]+\\."
+
+gdb_breakpoint "body_elsewhere"
+
+gdb_run_cmd
+gdb_test "" "Breakpoint \[0-9\]+, twodup \\(\\) at thefile.cc:\[0-9\]+\r\n.*" "expect breakpoint other"
+
+gdb_test "info source" "\r\nLocated in \[^\r\n\]+.base.two.thefile\\.cc\r\n.*" "info source other"
+
+gdb_continue_to_breakpoint "body_elsewhere other" ".* body_elsewhere marker .*"

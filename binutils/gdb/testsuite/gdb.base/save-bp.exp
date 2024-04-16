@@ -1,0 +1,107 @@
+# Copyright (C) 2011-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile .c
+
+if { [prepare_for_testing "failed to prepare" ${testfile} $srcfile] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+# Delete all breakpoints so that the "runto_main" breakpoint above
+# does not interfere with our testing.
+delete_breakpoints
+
+# Insert a bunch of breakpoints... The goal is to create breakpoints
+# that we are going to try to save in a file and then reload.  So
+# try to create a good variety of them.
+gdb_breakpoint "break_me"
+
+set loc_bp2 [gdb_get_line_number "BREAK HERE"]
+gdb_breakpoint ${srcfile}:${loc_bp2}
+
+set loc_bp3 [gdb_get_line_number "thread-specific"]
+gdb_breakpoint "${srcfile}:${loc_bp3} thread 1"
+
+set loc_bp4 [gdb_get_line_number "condition"]
+gdb_breakpoint "${srcfile}:${loc_bp4} if i == 1"
+
+set loc_bp5 [gdb_get_line_number "with commands"]
+gdb_breakpoint ${srcfile}:${loc_bp5}
+gdb_test "commands\nsilent\nend" "End with.*" "add breakpoint commands"
+
+gdb_test "dprintf ${srcfile}:${loc_bp5},\"At foo entry\\n\"" "Dprintf .*"
+
+set loc_bp8 [gdb_get_line_number "Return line"]
+gdb_breakpoint "${srcfile}:${loc_bp8}"
+gdb_test_no_output {disable $bpnum}
+
+# Now, save the breakpoints into a file...
+if {[is_remote host]} {
+    set bps bps
+} else {
+    set bps [standard_output_file bps]
+}
+remote_file host delete "$bps"
+gdb_test "save breakpoint $bps" "" "save breakpoint bps"
+
+# Now start a new debugger session...
+clean_restart $testfile
+if ![runto_main] {
+    return -1
+}
+# Delete all breakpoints so that the "runto_main" breakpoint above
+# does not interfere with our testing.
+delete_breakpoints
+
+# ... and restore the breakpoints.
+gdb_test "source $bps" "" "source bps"
+
+# Now, verify that all breakpoints have been created correctly...
+set bp_row_start "\[0-9\]+ +breakpoint +keep +y +0x\[0-9a-f\]+ +in"
+set disabled_row_start "\[0-9\]+ +breakpoint +keep +n +0x\[0-9a-f\]+ +in"
+set dprintf_row_start "\[0-9\]+ +dprintf +keep +y +0x\[0-9a-f\]+ +in"
+gdb_test_sequence "info break" "info break" [list				\
+  "\[\r\n\]+Num +Type +Disp +Enb +Address +What"				\
+  "\[\r\n\]+$bp_row_start break_me at \[^\r\n\]*$srcfile:\[0-9\]+"		\
+  "\[\r\n\]+$bp_row_start main at \[^\r\n\]*$srcfile:$loc_bp2"			\
+  "\[\r\n\]+$bp_row_start main at \[^\r\n\]*$srcfile:$loc_bp3"			\
+  "\[\r\n\]+\[ \t]+stop only in thread 1"					\
+  "\[\r\n\]+$bp_row_start main at \[^\r\n\]*$srcfile:$loc_bp4"			\
+  "\[\r\n\]+\[ \t\]+stop only if i == 1( \\((host|target) evals\\))?"		\
+  "\[\r\n\]+$bp_row_start main at \[^\r\n\]*$srcfile:$loc_bp5"			\
+  "\[\r\n\]+\[ \t\]+silent"							\
+  "\[\r\n\]+$dprintf_row_start main at \[^\r\n\]*$srcfile:$loc_bp5"		\
+  "\[\r\n\]+\[ \t\]+printf"							\
+  "\[\r\n\]+$disabled_row_start main at \[^\r\n\]*$srcfile:$loc_bp8"		\
+]
+
+# Copy the saved breakpoints file to the local machine (if necessary),
+# and then check its contents.
+if {[is_remote host]} {
+    set bps [remote_upload host bps [standard_output_file bps]]
+}
+set fh [open $bps]
+set lines [split [read $fh] "\n"]
+close $fh
+
+with_test_prefix "in bps file" {
+    gdb_assert {[lsearch -regexp $lines "break ${srcfile}:${loc_bp2}$"] != -1} \
+	"check for general breakpoint"
+    gdb_assert {[lsearch -regexp $lines "break ${srcfile}:${loc_bp3} thread 1\\.1"] != -1} \
+	"check for thread-specific breakpoint"
+}

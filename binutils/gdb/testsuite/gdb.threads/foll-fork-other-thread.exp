@@ -1,0 +1,172 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test catching a vfork/fork in one thread, and then doing a "next" in
+# another thread, in different combinations of "set follow-fork
+# parent/child", and other execution modes.
+
+standard_testfile
+
+# Line where to stop the main thread.
+set break_here_line [gdb_get_line_number "break here"]
+
+# Build executables, one for each fork flavor.
+foreach_with_prefix fork_func {fork vfork} {
+    set opts [list debug pthreads additional_flags=-DFORK_FUNC=${fork_func}]
+    if { [build_executable "failed to prepare" \
+	    ${testfile}-${fork_func} ${srcfile} $opts] } {
+	return
+    }
+}
+
+# Run the test with the given parameters:
+#
+#   - FORK_FUNC: fork flavor, "fork" or "vfork".
+#   - FOLLOW: "set follow-fork" value, either "parent" or "child".
+#   - TARGET-NON-STOP: "maintenance set target-non-stop" value, "auto", "on" or
+#     "off".
+#   - NON-STOP: "set non-stop" value, "on" or "off".
+#   - DISPLACED-STEPPING: "set displaced-stepping" value, "auto", "on" or "off".
+
+proc do_test { fork_func follow target-non-stop non-stop displaced-stepping } {
+    save_vars { ::GDBFLAGS } {
+	append ::GDBFLAGS " -ex \"maintenance set target-non-stop ${target-non-stop}\""
+	append ::GDBFLAGS " -ex \"set non-stop ${non-stop}\""
+	clean_restart ${::binfile}-${fork_func}
+    }
+
+    gdb_test_no_output "set displaced-stepping ${displaced-stepping}"
+
+    if { ![runto_main] } {
+	return
+    }
+
+    delete_breakpoints
+
+    gdb_test "catch $fork_func" "Catchpoint .*"
+
+    # Verify that the catchpoint is mentioned in an "info breakpoints",
+    # and further that the catchpoint mentions no process id.
+    gdb_test "info breakpoints" \
+	".*catchpoint.*keep y.*fork" \
+	"info breakpoints before fork"
+
+    gdb_test "continue" \
+	"Catchpoint \[0-9\]* \\(.?forked process \[0-9\]*\\),.*" \
+	"explicit child follow, catch fork"
+
+    # Verify that the catchpoint is mentioned in an "info breakpoints",
+    # and further that the catchpoint managed to capture a process id.
+    gdb_test "info breakpoints" \
+	".*catchpoint.*keep y.*fork, process.*" \
+	"info breakpoints after fork"
+
+    gdb_test "thread 1" "Switching to .*"
+
+    gdb_test_no_output "set scheduler-locking on"
+
+    # Advance the next-ing thread to the point where we'll execute the
+    # next.
+    gdb_test "break $::srcfile:$::break_here_line" "Breakpoint $::decimal at $::hex.*"
+    gdb_test "continue" "hit Breakpoint $::decimal, main.*"
+
+    # Disable schedlock and step.  The pending fork should no longer
+    # be pending afterwards.
+
+    gdb_test "set scheduler-locking off"
+
+    # Make sure GDB doesn't try to step over the breakpoint at PC
+    # first, we want to make sure that GDB doesn't lose focus of the
+    # step/next in this thread.  A breakpoint would make GDB switch
+    # focus anyhow, thus hide a potential bug.
+    delete_breakpoints
+
+    gdb_test_no_output "set follow-fork $follow"
+
+    set any "\[^\r\n\]*"
+
+    if {$follow == "child"} {
+
+	# For fork, GDB detaches from the parent at follow-fork time.
+	# For vfork, GDB detaches from the parent at child exit/exec
+	# time.
+	if {$fork_func == "fork"} {
+	    set detach_parent \
+		[multi_line \
+		     "\\\[Detaching after $fork_func from parent process $any\\\]" \
+		     "\\\[Inferior 1 $any detached\\\]"]
+	} else {
+	    set detach_parent ""
+	}
+
+	gdb_test "next" \
+	    [multi_line \
+		 "\\\[Attaching after $any $fork_func to child $any\\\]" \
+		 "\\\[New inferior 2 $any\\\]" \
+		 "$detach_parent.*warning: Not resuming: switched threads before following fork child\\." \
+		 "\\\[Switching to $any\\\]" \
+		 ".*"] \
+	    "next aborts resumption"
+
+	# The child should be stopped inside the fork implementation
+	# in the runtime.  Exactly at which instruction/function is
+	# system dependent, but we can check that our
+	# "gdb_forker_thread" function appears in the backtrace.
+	gdb_test "bt" " in gdb_forker_thread ${any} at ${any}${::srcfile}:.*"
+
+	# The child is now thread 1.
+	gdb_test "print \$_thread" " = 1"
+
+	if {$fork_func == "fork"} {
+	    gdb_test "continue" \
+		[multi_line \
+		     "Continuing." \
+		     "\\\[Inferior 2 \\\(process $any\\\) exited normally\\\]"] \
+		"continue to exit"
+	} else {
+	    gdb_test "continue" \
+		[multi_line \
+		     "Continuing." \
+		     "\\\[Detaching vfork parent process $any after child exit\\\]" \
+		     "\\\[Inferior 1 \\\(process $any\\\) detached\\\]" \
+		     "\\\[Inferior 2 \\\(process $any\\\) exited normally\\\]"] \
+		"continue to exit"
+	}
+    } else {
+	gdb_test "next" \
+	    "\\\[Detaching after $fork_func from child process ${any}\\\].* other line .*" \
+	    "next to other line"
+
+	gdb_test "print \$_thread" " = 1"
+
+	gdb_test "continue" \
+	    [multi_line \
+		 "Continuing." \
+		 "\\\[Inferior 1 \\\(process $any\\\) exited normally\\\]"] \
+	    "continue to exit"
+    }
+}
+
+foreach_with_prefix fork_func {fork vfork} {
+    foreach_with_prefix follow {child} {
+	foreach_with_prefix target-non-stop {auto on off} {
+	    foreach_with_prefix non-stop {off} {
+		foreach_with_prefix displaced-stepping {auto on off} {
+		    do_test ${fork_func} ${follow} ${target-non-stop} ${non-stop} ${displaced-stepping}
+		}
+	    }
+	}
+    }
+}

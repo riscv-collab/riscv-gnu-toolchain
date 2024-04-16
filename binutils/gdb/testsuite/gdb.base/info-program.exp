@@ -1,0 +1,136 @@
+# Copyright 1997-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test "info program".
+#
+# We build both single-threaded and multi-threaded programs so that if
+# the target doesn't support multi-threading, we still exercise the
+# command.
+#
+# With the multi-threaded program, we test that in all-stop mode, GDB
+# prints information about the last thread that stopped, not the
+# current thread.  In non-stop mode, the command always prints info
+# about the selected thread, so we test that.
+
+standard_testfile
+
+# Run the test with the given parameters:
+#
+#   - THREADS: threads flavor, either single-threaded or
+#              multi-threaded.
+#   - NON-STOP: "set non-stop" value, "on" or "off".
+
+proc do_test { threads non-stop } {
+    save_vars { ::GDBFLAGS } {
+	append ::GDBFLAGS " -ex \"set non-stop ${non-stop}\""
+	clean_restart $::binfile-$threads
+    }
+
+    gdb_test "info program" \
+	"The program being debugged is not being run." \
+	"info program before run"
+
+    if { ![runto done] } {
+	return -1
+    }
+
+    if {${non-stop} == "on"} {
+	set thread_line "Selected"
+    } else {
+	set thread_line "Last stopped for"
+    }
+
+    gdb_test "info program" \
+	[multi_line \
+	     "$thread_line thread 1 (\[^\r\n\]+)\\." \
+	     ".*" \
+	     "Program stopped at $::hex\." \
+	     "It stopped at breakpoint $::decimal\." \
+	     "Type \"info stack\" or \"info registers\" for more information\."] \
+	"info program after run to main"
+
+    # We don't really care where this step lands, so long as GDB reports
+    # that the inferior stopped  due to a step in the subsequent test.
+    gdb_test "next" ".*" "step before info program"
+
+    gdb_test "info program" \
+	[multi_line \
+	     "$thread_line thread 1 (\[^\r\n\]+)\\." \
+	     ".*" \
+	     "Program stopped at $::hex\." \
+	     "It stopped after being stepped\." \
+	     "Type \"info stack\" or \"info registers\" for more information\."] \
+	"info program after next"
+
+    if {$threads == "mt"} {
+	gdb_test "thread 2" "\\\[Switching to thread 2 .*"
+
+	if {${non-stop} == "on"} {
+	    gdb_test "info program" \
+		[multi_line \
+		     "$thread_line thread 2 (\[^\r\n\]+)\\." \
+		     "Selected thread is running\\."] \
+		"info program after next, other thread"
+	} else {
+	    gdb_test "info program" \
+		[multi_line \
+		     "$thread_line thread 1 (\[^\r\n\]+)\\." \
+		     ".*" \
+		     "Program stopped at $::hex\." \
+		     "It stopped after being stepped\." \
+		     "Type \"info stack\" or \"info registers\" for more information\."] \
+		"info program after next, other thread"
+	}
+    }
+
+    gdb_test "kill" "" "kill program" \
+	"Kill the program being debugged.*y or n. $" "y"
+
+    gdb_test "info program" "The program being debugged is not being run." \
+	"info program, after kill"
+
+    if { ![runto done] } {
+	return -1
+    }
+
+    delete_breakpoints
+
+    gdb_test "info program" \
+	[multi_line \
+	     "$thread_line thread 1 (\[^\r\n\]+)\\." \
+	     ".*" \
+	     "Program stopped at $::hex\." \
+	     "It stopped at a breakpoint that has since been deleted\." \
+	     "Type \"info stack\" or \"info registers\" for more information\."] \
+	"info program after deleting all breakpoints"
+}
+
+# Build executables and test them, one for each
+# single-thread/multi-thread flavor.
+foreach_with_prefix threads {st mt} {
+    set opts {debug}
+    if {$threads == "mt"} {
+	lappend opts pthreads "additional_flags=-DUSE_THREADS"
+    }
+
+    if { [build_executable "failed to prepare $threads" \
+	    ${testfile}-${threads} ${srcfile} $opts] } {
+	continue
+    }
+
+    foreach_with_prefix non-stop {on off} {
+	do_test ${threads} ${non-stop}
+    }
+}

@@ -1,0 +1,88 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test is equivalent to amd64-pseudo-unwind, but specific to ARM.  We
+# use the raw register d8 which is 64 bits long.  We use pseudo register s16,
+# which is the low 32 bits of d8.
+
+if { ![istarget arm*-*-* ] } {
+    verbose "Skipping arm pseudo register unwind."
+    return
+}
+
+standard_testfile arm-pseudo-unwind.c arm-pseudo-unwind-asm.S
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	"${srcfile} ${srcfile2}" {debug additional_flags=-marm}] } {
+    return -1
+}
+
+clean_restart ${binfile}
+
+if ![runto_main] then {
+    fail "could not run to main"
+}
+
+gdb_breakpoint break_here_asm temporary
+gdb_continue_to_breakpoint "continue to callee"
+
+# Verify the value of d8/s16 in the inner frame (callee).
+with_test_prefix "callee, before change" {
+    gdb_test "p/x \$d8" " = 0x2021222324252627"
+    gdb_test "p/x \$s16" " = 0x24252627"
+}
+
+# Verify that we can change the value of the pseudo register (s16) in the inner
+# frame (callee).
+gdb_test_no_output "set \$s16 = 1.0"
+
+# Verify the value of d8/s16 in the inner frame (callee) after the change.
+with_test_prefix "callee, after change" {
+    gdb_test "p/x \$d8" " = 0x202122233f800000"
+    gdb_test "p/x \$s16" " = 0x3f800000"
+}
+
+# Go up one frame (to caller), and do the same.
+gdb_test "up"
+
+# Verify the value of d8/s16 in the outer frame (caller).
+with_test_prefix "caller, before change" {
+    gdb_test "p/x \$d8" " = 0x1011121314151617"
+    gdb_test "p/x \$s16" " = 0x14151617"
+}
+
+# Verify that we can change the value of the pseudo register (s16) in the outer
+# frame (caller).
+gdb_test_no_output "set \$s16 = 2.0"
+
+# Verify the value of d8/s16 in the outer frame (caller) after the change.
+with_test_prefix "caller, after change" {
+    gdb_test "p/x \$d8" " = 0x1011121340000000"
+    gdb_test "p/x \$s16" " = 0x40000000"
+}
+
+# Go back to frame 0 (callee), check that the change to the outer frame didn't
+# mess up anything there.
+gdb_test "down"
+with_test_prefix "callee, after change in caller" {
+    gdb_test "p/x \$d8" " = 0x202122233f800000"
+    gdb_test "p/x \$s16" " = 0x3f800000"
+}
+
+# Verify that the value of the saved d8 we changed is correctly seen by the
+# inferior.
+gdb_breakpoint break_here_c temporary
+gdb_continue_to_breakpoint "continue to break_here_c"
+gdb_test "p/x value" " = 0x1011121340000000"

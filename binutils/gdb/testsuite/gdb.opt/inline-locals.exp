@@ -1,0 +1,155 @@
+# Copyright 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile .c inline-markers.c
+
+if {[prepare_for_testing "failed to prepare" $testfile \
+	 [list $srcfile $srcfile2] {debug additional_flags=-Winline}]} {
+    return -1
+}
+
+runto_main
+
+get_debug_format
+if { [skip_inline_var_tests] } {
+    untested inline-bt.exp
+    return
+}
+
+set no_frames [skip_inline_frame_tests]
+
+set line1 [gdb_get_line_number "set breakpoint 1 here" ${srcfile2}]
+gdb_breakpoint $srcfile2:$line1
+
+gdb_test "continue" ".*set breakpoint 1 here.*" "continue to bar 1"
+
+gdb_test "continue" ".*set breakpoint 1 here.*" "continue to bar 2"
+
+if { ! $no_frames } {
+    gdb_test "backtrace" "#0  bar.*#1  .*func1.*#2  .*main.*" \
+	"backtrace from bar 2"
+    gdb_test "up" "#1  .*func1 .* at .*" "up from bar 2"
+    gdb_test "info frame" ".*inlined into frame.*" "func1 inlined 2"
+    set pass_re "array = \\{0 <repeats 64 times>\\}"
+    set kfail_re [multi_line $pass_re \
+		      "array = <optimized out>"]
+    gdb_test_multiple "info locals" "info locals above bar 2" {
+	-re -wrap $pass_re {
+	    pass $gdb_test_name
+	}
+	-re -wrap $kfail_re {
+	    kfail gdb/25695 $gdb_test_name
+	}
+    }
+
+    set msg "info args above bar 2"
+    gdb_test_multiple "info args" $msg {
+	-re "arg1 = $decimal\r\n$gdb_prompt $" {
+	    pass $msg
+	}
+	-re "arg1 = <optimized out>\r\n$gdb_prompt $" {
+	    # GCC 4.3 and later lose location information for arg1.  GCC 4.2 is OK.
+	    if { [test_compiler_info "gcc-4-3-*"]  || [test_compiler_info "gcc-4-4-*"]} {
+		setup_xfail *-*-*
+	    }
+	    fail $msg
+	}
+    }
+} else {
+    gdb_test "up" "#1  .*main .* at .*" "up from bar 2"
+    gdb_test "info locals" ".*arg1 = 0.*" "info locals above bar 2"
+}
+
+# Make sure that locals on the stack are found.  This is an array to
+# prevent it from living in a register.
+gdb_test "print array\[0\]" "\\\$$decimal = 0" "print local 2"
+
+if { ! $no_frames } {
+    # Verify that we do not print out variables from the inlined
+    # function's caller.
+    gdb_test "print val" "No symbol \"val\" in current context\\." \
+	"print out of scope local"
+}
+
+# Repeat the tests from a depth of two inlined functions, and with a
+# more interesting value in the local array.
+gdb_test "continue" ".*set breakpoint 1 here.*" "continue to bar 3"
+if { ! $no_frames } {
+    gdb_test "backtrace" "#0  bar.*#1  .*func1.*#2  .*func2.*#3  .*main.*" \
+	"backtrace from bar 3"
+    gdb_test "up" "#1  .*func1 .* at .*" "up from bar 3"
+    gdb_test "info frame" ".*inlined into frame.*" "func1 inlined 3"
+    set pass_re "array = {$decimal, \[^\r\n\]*}"
+    set kfail_re [multi_line $pass_re \
+		      "array = <optimized out>"]
+    gdb_test_multiple "info locals" "info locals above bar 3" {
+	-re -wrap $pass_re {
+	    pass $gdb_test_name
+	}
+	-re -wrap $kfail_re {
+	    kfail gdb/25695 $gdb_test_name
+	}
+    }
+
+    set msg "info args above bar 3"
+    gdb_test_multiple "info args" $msg {
+	-re "arg1 = $decimal\r\n$gdb_prompt $" {
+	    pass $msg
+	}
+	-re "arg1 = <optimized out>\r\n$gdb_prompt $" {
+	    # GCC 4.3 and later lose location information for arg1.  GCC 4.2 is OK.
+	    if { [test_compiler_info "gcc-4-3-*"]  || [test_compiler_info "gcc-4-4-*"]} {
+		setup_xfail *-*-*
+	    }
+	    fail $msg
+	}
+    }
+} else {
+    gdb_test "up" "#1  .*main .* at .*" "up from bar 3"
+    gdb_test "info locals" ".*arg1 = 1.*" "info locals above bar (3a)"
+    gdb_test "info locals" ".*arg2 = 184.*" "info locals above bar (3b)"
+}
+
+gdb_test "print array\[0\]" "\\\$$decimal = 184" "print local 3"
+
+# Test printing scoped local variables.
+
+proc check_scoped_locals {bp_label pass_re} {
+    global srcfile
+
+    set locals_bp [gdb_get_line_number $bp_label ${srcfile}]
+    gdb_breakpoint $srcfile:$locals_bp
+
+    gdb_continue_to_breakpoint "$bp_label" ".*$srcfile:$locals_bp.*"
+    set kfail_re [multi_line $pass_re ".*<optimized out>"]
+    gdb_test_multiple "info locals" "scoped info locals at $bp_label" {
+	-re -wrap $pass_re {
+	    pass $gdb_test_name
+	}
+	-re -wrap $kfail_re {
+	    if {[test_compiler_info {gcc-[0-8]-*-*}]} {
+		kfail gdb/25695 $gdb_test_name
+	    } else {
+		fail $gdb_test_name
+	    }
+	}
+    }
+}
+
+if {! $no_frames } {
+    check_scoped_locals "bp for locals 1" "loc2 = 20\r\nloc1 = 10"
+    check_scoped_locals "bp for locals 2" "loc3 = 30\r\nloc2 = 20\r\nloc1 = 10"
+    check_scoped_locals "bp for locals 3" "loc1 = 10"
+}

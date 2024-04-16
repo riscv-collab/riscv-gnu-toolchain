@@ -1,0 +1,100 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test '-break-insert --qualified' and C++ wildmatching.
+#
+# The goal is not to test GDB functionality, which is done by other
+# tests, but to verify the correct output response to MI operations.
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+standard_testfile .cc
+
+if {[build_executable $testfile.exp $testfile $srcfile {c++ debug}] == -1} {
+     untested "failed to compile"
+     return -1
+}
+
+set loc_ns_func_line [gdb_get_line_number "location NS::func here"]
+set loc_foo_func_line [gdb_get_line_number "location foo::func here"]
+set loc_func_line [gdb_get_line_number "location func here"]
+
+proc test_break_qualified {} {
+    global hex
+    global loc_ns_func_line loc_foo_func_line loc_func_line
+
+    # We have three functions called "func" in the program.  Check
+    # that --qualified only picks the one explicitly specified.
+
+    set bps {}
+    set test "--qualified func"
+    lappend bps [mi_create_breakpoint $test $test \
+		     -func "func\\(char\\)" \
+		     -file ".*mi-break-qualified.cc" \
+		     -line $loc_func_line]
+
+    set test "--qualified NS::func"
+    lappend bps [mi_create_breakpoint $test $test \
+		     -func "NS::func\\(int\\)" \
+		     -file ".*mi-break-qualified.cc" \
+		     -line $loc_ns_func_line]
+
+    set test "--qualified foo::func"
+    lappend bps [mi_create_breakpoint $test $test \
+		     -func "foo::func\\(long\\)" \
+		     -file ".*mi-break-qualified.cc" \
+		     -line $loc_foo_func_line]
+
+    # Also check that without --qualified, we get a breakpoint with a
+    # location for each of the functions called "func" in the program.
+
+    # Small helper wrapper around mi_make_breakpoint_loc.
+    proc make_loc_re {func line_no} {
+	global hex
+
+	return [mi_make_breakpoint_loc \
+		  -enabled "y" \
+		  -func "$func" \
+		  -file ".*mi-break-qualified.cc" \
+		  -line="$line_no"]
+    }
+
+    set loc1 [make_loc_re "NS::func\\(int\\)" $loc_ns_func_line]
+    set loc2 [make_loc_re "foo::func\\(long\\)" $loc_foo_func_line]
+    set loc3 [make_loc_re "func\\(char\\)" $loc_func_line]
+
+    set test "func"
+    set bp [mi_create_breakpoint_multi $test $test \
+		-original-location "func" \
+		-locations "\\\[$loc1,$loc2,$loc3\\\]"]
+
+    lappend bps $bp
+
+    # List the breakpoints.
+    mi_gdb_test "666-break-list" \
+	"666\\\^done,[mi_make_breakpoint_table $bps]" \
+	"list of breakpoints"
+
+    mi_gdb_test "777-break-delete" \
+	    "777\\^done" \
+	    "delete temp breakpoints"
+}
+
+if {[mi_clean_restart $binfile]} {
+    return
+}
+
+test_break_qualified

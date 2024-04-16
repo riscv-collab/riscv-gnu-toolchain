@@ -1,0 +1,225 @@
+# Copyright 2018-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test DW_TAG_variant_part and DW_TAG_variant.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use
+# gas.
+require dwarf2_support
+
+standard_testfile .c .S
+
+# Make some DWARF for the test.
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    upvar cu_lang cu_lang
+
+    declare_labels uinteger_label float_label int8_label
+    declare_labels discr_1_label discr_2_label discr_3_label
+    declare_labels one_label two_label
+
+    # Creating a CU with 4-byte addresses lets this test link on
+    # both 32- and 64-bit machines.
+    cu { addr_size 4 } {
+	compile_unit {
+	    {name file1.txt}
+	    {language @DW_LANG_Rust}
+	} {
+            uinteger_label: DW_TAG_base_type {
+                {DW_AT_byte_size 4 DW_FORM_sdata}
+                {DW_AT_encoding  @DW_ATE_unsigned}
+                {DW_AT_name      {unsigned integer}}
+            }
+
+            int8_label: DW_TAG_base_type {
+                {DW_AT_byte_size 1 DW_FORM_sdata}
+                {DW_AT_encoding  @DW_ATE_signed}
+                {DW_AT_name      i8}
+            }
+
+	    float_label: base_type {
+		{name float}
+		{encoding @DW_ATE_float}
+		{byte_size 4 DW_FORM_sdata}
+	    }
+
+	    one_label: structure_type {
+		{name One}
+		{byte_size 4 DW_FORM_sdata}
+	    } {
+		member {
+		    {name __0}
+		    {type :$uinteger_label}
+		    {data_member_location 0 data1}
+		}
+	    }
+
+	    two_label: structure_type {
+		{name Two}
+		{byte_size 4 DW_FORM_sdata}
+	    } {
+		member {
+		    {name __0}
+		    {type :$float_label}
+		    {data_member_location 0 data1}
+		}
+	    }
+
+	    structure_type {
+		{name Simple}
+		{byte_size 8 DW_FORM_sdata}
+	    } {
+		variant_part {
+		    {discr :$discr_1_label DW_FORM_ref4}
+		} {
+		    discr_1_label: member {
+			{type :$uinteger_label}
+			{data_member_location 0 data1}
+			{artificial 1 DW_FORM_flag_present}
+		    }
+
+		    variant {
+			{discr_value 23 udata}
+		    } {
+			member {
+			    {type :$one_label}
+			    {data_member_location 4 data1}
+			}
+		    }
+
+		    variant {
+			{discr_value 1 udata}
+		    } {
+			member {
+			    {type :$two_label}
+			    {data_member_location 4 data1}
+			}
+		    }
+		}
+	    }
+
+	    structure_type {
+		{name Defaulted}
+		{byte_size 8 DW_FORM_sdata}
+	    } {
+		variant_part {
+		    {discr :$discr_2_label DW_FORM_ref4}
+		} {
+		    discr_2_label: member {
+			{type :$uinteger_label}
+			{data_member_location 0 data1}
+			{artificial 1 DW_FORM_flag_present}
+		    }
+
+		    variant {
+		    } {
+			member {
+			    {type :$one_label}
+			    {data_member_location 4 data1}
+			}
+		    }
+
+		    variant {
+			{discr_value 1 udata}
+		    } {
+			member {
+			    {type :$two_label}
+			    {data_member_location 4 data1}
+			}
+		    }
+		}
+	    }
+
+	    structure_type {
+		{name Univariant}
+		{byte_size 8 DW_FORM_sdata}
+	    } {
+		variant_part {
+		} {
+		    variant {
+		    } {
+			member {
+			    {type :$one_label}
+			    {data_member_location 4 data1}
+			}
+		    }
+		}
+	    }
+
+	    # Rust won't emit a negative discriminant like this, but
+	    # we want to test the code path anyway.
+	    structure_type {
+		{name Negative}
+		{byte_size 8 DW_FORM_sdata}
+	    } {
+		variant_part {
+		    {discr :$discr_3_label DW_FORM_ref4}
+		} {
+		    discr_3_label: member {
+			{type :$int8_label}
+			{data_member_location 0 data1}
+			{artificial 1 DW_FORM_flag_present}
+		    }
+
+		    variant {
+			{discr_value -1 sdata}
+		    } {
+			member {
+			    {type :$one_label}
+			    {data_member_location 4 data1}
+			}
+		    }
+
+		    # Make this the default value so we'll see an
+		    # incorrect result if we mishandle signed
+		    # discriminants.
+		    variant {
+		    } {
+			member {
+			    {type :$two_label}
+			    {data_member_location 4 data1}
+			}
+		    }
+		}
+	    }
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	  [list $srcfile $asm_file] debug] } {
+    return -1
+}
+
+if ![runto func] {
+    return -1
+}
+
+# Get the values into history so we can use it from Rust.
+gdb_test "print (void *) buffer" "\\\$1 = .void .. $hex .buffer."
+gdb_test "print (void *) buffer2" "\\\$2 = .void .. $hex .buffer2."
+
+gdb_test "set language rust"
+gdb_test "print *(\$1 as *mut Simple)" " = One\\(23\\)" \
+    "print as Simple"
+gdb_test "print *(\$1 as *mut Defaulted)" " = One\\(23\\)" \
+    "print as Defaulted"
+gdb_test "print *(\$1 as *mut Univariant)" " = One\\(23\\)" \
+    "print as Univariant"
+
+gdb_test "print *(\$2 as *mut Negative)" " = One\\(23\\)" \
+    "print as Negative"

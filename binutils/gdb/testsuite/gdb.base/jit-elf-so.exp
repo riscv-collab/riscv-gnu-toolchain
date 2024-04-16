@@ -1,0 +1,166 @@
+# Copyright 2011-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# The same tests as in jit.exp, but loading JITer itself from a shared
+# library.
+
+require allow_shlib_tests
+
+load_lib jit-elf-helpers.exp
+
+# Increase this to see more detail.
+set test_verbose 0
+
+# The "real" main of this test, which loads jit-elf-main
+# as a shared library.
+set main_loader_basename jit-elf-dlmain
+set main_loader_srcfile ${srcdir}/${subdir}/${main_loader_basename}.c
+set main_loader_binfile [standard_output_file ${main_loader_basename}]
+
+# The main code that loads and registers JIT objects.
+set main_solib_basename jit-elf-main
+set main_solib_srcfile ${srcdir}/${subdir}/${main_solib_basename}.c
+set main_solib_binfile [standard_output_file ${main_solib_basename}.so]
+
+# The shared library that gets loaded as JIT objects.
+set jit_solib_basename jit-elf-solib
+set jit_solib_srcfile ${srcdir}/${subdir}/${jit_solib_basename}.c
+
+# Compile the testcase shared library loader.
+#
+# OPTIONS is passed to gdb_compile when compiling the binary.
+#
+# On success, return 0.
+# On failure, return -1.
+proc compile_jit_dlmain {options} {
+    global main_loader_srcfile main_loader_binfile main_loader_basename
+    set options [concat $options debug]
+
+    if { [gdb_compile ${main_loader_srcfile} ${main_loader_binfile} \
+	    executable $options] != "" } {
+	untested "failed to compile ${main_loader_basename}.c as an executable"
+	return -1
+    }
+
+    return 0
+}
+
+# Run $main_loader_binfile and load $main_solib_binfile in
+# GDB.  Check jit-related debug output and matches `info function`
+# output for a jit loaded function using MATCH_STR.
+#
+# SOLIB_BINFILES_TARGETS is a list of shared libraries to pass
+# as arguments when running $main_loader_binfile.
+# MATCH_STR is a regular expression that output of `info function`
+# must match.
+proc one_jit_test {solib_binfiles_target match_str} {
+    set count [llength $solib_binfiles_target]
+    with_test_prefix "one_jit_test-$count" {
+	global test_verbose
+	global main_loader_binfile main_loader_srcfile
+	global main_solib_binfile main_solib_binfile_target main_solib_srcfile
+
+	clean_restart $main_loader_binfile
+	gdb_locate_shlib $main_solib_binfile
+
+	# This is just to help debugging when things fail
+	if {$test_verbose > 0} {
+	    gdb_test "set debug jit 1"
+	}
+
+	if { ![runto_main] } {
+	    return
+	}
+
+	gdb_breakpoint [gdb_get_line_number "break here before-dlopen" \
+			    $main_loader_srcfile]
+	gdb_continue_to_breakpoint "break here before-dlopen"
+	gdb_test_no_output "set var jit_libname = \"$main_solib_binfile_target\"" \
+	    "setting library name"
+
+	gdb_breakpoint [gdb_get_line_number "break here after-dlopen" \
+			$main_loader_srcfile]
+	gdb_continue_to_breakpoint "break here after-dlopen"
+
+	set line [gdb_get_line_number {break here 0} $main_solib_srcfile]
+	gdb_breakpoint "$main_solib_srcfile:$line"
+	gdb_continue_to_breakpoint "break here 0"
+
+	# Poke desired values directly into inferior instead of using "set args"
+	# because "set args" does not work under gdbserver.
+	gdb_test_no_output "set var argc=[expr $count + 1]" "forging argc"
+	gdb_test_no_output "set var argv=fake_argv" "forging argv"
+	for {set i 1} {$i <= $count} {incr i} {
+	    set binfile_target [lindex $solib_binfiles_target [expr $i-1]]
+	    gdb_test_no_output "set var argv\[$i\]=\"${binfile_target}\"" \
+		"forging argv\[$i\]"
+	}
+
+	set line [gdb_get_line_number {break here 1} $main_solib_srcfile]
+	gdb_breakpoint "$main_solib_srcfile:$line"
+	gdb_continue_to_breakpoint "break here 1"
+
+	gdb_test "info function jit_function" "$match_str"
+
+	# This is just to help debugging when things fail
+	if {$test_verbose > 0} {
+	    gdb_test "maintenance print objfiles"
+	    gdb_test "maintenance info break"
+	}
+
+	set line [gdb_get_line_number {break here 2} $main_solib_srcfile]
+	gdb_breakpoint "$main_solib_srcfile:$line"
+	gdb_continue_to_breakpoint "break here 2"
+
+	# All jit librares must have been unregistered
+	gdb_test "info function jit_function" \
+	    "All functions matching regular expression \"jit_function\":" \
+	    "info function jit_function after unregistration"
+    }
+}
+
+# Compile the main code (which loads the JIT objects) as a shared library.
+if { [compile_jit_elf_main_as_so $main_solib_srcfile $main_solib_binfile \
+	{additional_flags="-DMAIN=jit_dl_main"}] < 0 } {
+    return
+}
+
+set main_solib_binfile_target \
+    [gdb_download_shlib $main_solib_binfile]
+
+# Compile the "real" main for this test.
+if { [compile_jit_dlmain {shlib_load}] < 0 } {
+    return
+}
+
+# Compile two shared libraries to use as JIT objects.
+set jit_solibs_target [compile_and_download_n_jit_so \
+		      $jit_solib_basename $jit_solib_srcfile 2]
+if { $jit_solibs_target == -1 } {
+    return
+}
+
+one_jit_test [lindex $jit_solibs_target 0] "${hex}  jit_function_0001"
+one_jit_test $jit_solibs_target "${hex}  jit_function_0001\[\r\n\]+${hex}  jit_function_0002"
+
+foreach solib $jit_solibs_target {
+    # We don't intend to load the .so as a JIT debuginfo reader, but we
+    # need some handy file name for a completion test.
+    set input [string range $solib 0 [expr { [string length $solib] - 2 }]]
+    gdb_test \
+	"complete jit-reader-load [standard_output_file $input]" \
+	"jit-reader-load \[^\r\n\]*$solib" \
+	"test jit-reader-load filename completion [file tail $solib]"
+}

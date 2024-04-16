@@ -1,0 +1,23 @@
+.*: Assembler messages:
+.*: Error: unrecognized opcode `cv.mac t4,t2,t0', extension `xcvmac' required
+.*: Error: unrecognized opcode `cv.msu t4,t2,t0', extension `xcvmac' required
+.*: Error: unrecognized opcode `cv.muls t4,t2,t0', extension `xcvmac' required
+.*: Error: unrecognized opcode `cv.mulhhs t4,t2,t0', extension `xcvmac' required
+.*: Error: unrecognized opcode `cv.mulsn t4,t2,t0,4', extension `xcvmac' required
+.*: Error: unrecognized opcode `cv.mulhhsn t4,t2,t0,16', extension `xcvmac' required
+.*: Error: unrecognized opcode `cv.mulsrn t4,t2,t0,10', extension `xcvmac' required
+.*: Error: unrecognized opcode `cv.mulhhsrn t4,t2,t0,17', extension `xcvmac' required
+.*: Error: unrecognized opcode `cv.mulu t4,t2,t0', extension `xcvmac' required
+.*: Error: unrecognized opcode `cv.mulhhu t4,t2,t0', extension `xcvmac' required
+.*: Error: unrecognized opcode `cv.mulun t4,t2,t0,7', extension `xcvmac' required
+.*: Error: unrecognized opcode `cv.mulhhun t4,t2,t0,16', extension `xcvmac' required
+.*: Error: unrecognized opcode `cv.mulurn t4,t2,t0,11', extension `xcvmac' required
+.*: Error: unrecognized opcode `cv.mulhhurn t4,t2,t0,9', extension `xcvmac' required
+.*: Error: unrecognized opcode `cv.macsn t4,t2,t0,24', extension `xcvmac' required
+.*: Error: unrecognized opcode `cv.machhsn t4,t2,t0,11', extension `xcvmac' required
+.*: Error: unrecognized opcode `cv.macsrn t4,t2,t0,9', extension `xcvmac' required
+.*: Error: unrecognized opcode `cv.machhsrn t4,t2,t0,24', extension `xcvmac' required
+.*: Error: unrecognized opcode `cv.macun t4,t2,t0,27', extension `xcvmac' required
+.*: Error: unrecognized opcode `cv.machhun t4,t2,t0,18', extension `xcvmac' required
+.*: Error: unrecognized opcode `cv.macurn t4,t2,t0,25', extension `xcvmac' required
+.*: Error: unrecognized opcode `cv.machhurn t4,t2,t0,5', extension `xcvmac' required

@@ -1,0 +1,155 @@
+# Copyright 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+# This file is part of the GDB testsuite.  It tests 'until' and 
+# 'advance' in precord logfile.
+
+# This test suitable only for process record-replay
+require supports_process_record
+
+standard_testfile until-reverse.c ur1.c
+set precsave [standard_output_file until.precsave]
+
+if { [prepare_for_testing "failed to prepare" $testfile \
+	  [list $srcfile $srcfile2]] } {
+    return -1
+}
+
+set bp_location1  [gdb_get_line_number "set breakpoint 1 here"]
+set bp_location7  [gdb_get_line_number "set breakpoint 7 here"]
+set bp_location8  [gdb_get_line_number "set breakpoint 8 here" "$srcfile2"]
+set bp_location19 [gdb_get_line_number "set breakpoint 19 here"]
+set bp_location20 [gdb_get_line_number "set breakpoint 20 here"]
+set bp_location21 [gdb_get_line_number "set breakpoint 21 here"]
+
+runto_main
+
+# Activate process record/replay
+gdb_test_no_output "record" "turn on process record"
+
+set end_of_main [gdb_get_line_number "set breakpoint 10a here" ]
+gdb_test "break $end_of_main" \
+    "Breakpoint $decimal at .*$srcfile, line $end_of_main\." \
+    "breakpoint at end of main"
+
+# This can take awhile.
+with_timeout_factor 20 {
+    gdb_test_multiple "continue" "run to end of main" {
+	-wrap -re "Breakpoint .* set breakpoint 10a here .*" {
+	    pass $gdb_test_name
+	}
+	-wrap -re "Process record does not support instruction 0xfae64 at.*" {
+	    kfail "gdb/25038" $gdb_test_name
+	    return -1
+	}
+    }
+}
+
+# So can this, against gdbserver, for example.
+
+with_timeout_factor 10 {
+    gdb_test "record save $precsave" \
+	"Saved core file $precsave with execution log\."  \
+	"save process recfile"
+}
+
+gdb_test "kill" "" "kill process, prepare to debug log file" \
+    "Kill the program being debugged\\? \\(y or n\\) " "y"
+
+gdb_test "record restore $precsave" \
+    "Restored records from core file .*" \
+    "reload core file"
+
+# Verify that plain vanilla "until <location>" works.
+#
+gdb_test "until $bp_location1" \
+    "main .* at .*:$bp_location1.*" \
+    "until line number"
+
+# Advance up to factorial, outer invocation
+#
+gdb_test "advance factorial" \
+    "factorial .value=6..*$srcfile:$bp_location7.*" \
+    "advance to factorial"
+
+# At this point, 'until' should continue the inferior up to when all the
+# inner invocations of factorial() are completed and we are back at this
+# frame.
+#
+gdb_test "until $bp_location19" \
+    "factorial .value=720.*${srcfile}:$bp_location19.*" \
+    "until factorial, recursive function"
+
+# Finish out to main scope
+#
+gdb_test "finish" \
+    "main .*$srcfile:.*" \
+    "finish to main"
+
+# Advance to a function called by main (marker2)
+#
+gdb_test "advance marker2" \
+    "marker2 .a=43.*$srcfile2:$bp_location8.*" \
+    "advance to marker2"
+
+# Now issue an until with another function, not called by the current
+# frame, as argument. This should not work, i.e. the program should
+# stop at main, the caller, where we put the 'guard' breakpoint.
+#
+set test_msg "until func, not called by current frame"
+gdb_test_multiple "until marker3" "$test_msg" {
+    -re "main .*at .*${srcfile}:$bp_location20.*$gdb_prompt $" {
+	pass "$test_msg"
+    }
+    -re "main .*at .*${srcfile}:$bp_location21.*$gdb_prompt $" {
+	pass "$test_msg"
+    }
+}
+
+###
+###
+###
+
+# Set reverse execution direction
+
+gdb_test_no_output "set exec-dir reverse" "set reverse execution"
+
+#
+# We should now be at main, after the return from marker2.
+# "Advance" backward into marker2.
+#
+
+gdb_test "advance marker2" \
+    "marker2 .a=43.*$srcfile2:$bp_location8.*" \
+    "reverse-advance to marker2"
+
+# Finish out to main scope (backward)
+
+gdb_test "finish" \
+    " in main .*$srcfile:$bp_location20.*" \
+    "reverse-finish from marker2"
+
+# Advance backward to last line of factorial (outer invocation)
+
+gdb_test "advance $bp_location19" \
+    "factorial .value=720.*${srcfile}:$bp_location19.*" \
+    "reverse-advance to final return of factorial"
+
+# Now do "until" across the recursive calls, 
+# ending up in the same frame where we are now.
+
+gdb_test "until $bp_location7" \
+    "factorial .value=6..*$srcfile:$bp_location7.*" \
+    "reverse-until to entry of factorial"

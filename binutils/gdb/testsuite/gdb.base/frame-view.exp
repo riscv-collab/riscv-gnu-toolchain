@@ -1,0 +1,109 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test the "frame view" family of commands.
+
+standard_testfile
+
+if { [build_executable "failed to prepare" \
+	  ${testfile} ${srcfile} {debug pthreads}] } {
+    return
+}
+
+# If WITH_PRETTY_PRINTER is true, load pretty printers for the function
+# parameter types, in which we do an inferior call.  This is meant to test
+# that the frame_info_ptr correctly reinflates frames created using
+# "select-frame view".
+
+proc test_select_frame_view { with_pretty_printer } {
+    clean_restart $::binfile
+
+    if { $with_pretty_printer } {
+	require allow_python_tests
+    }
+
+    if { ![runto_main] } {
+	return
+    }
+
+    if { $with_pretty_printer } {
+	set remote_python_file \
+	    [gdb_remote_download host "${::srcdir}/${::subdir}/${::testfile}.py"]
+	gdb_test_no_output "source ${remote_python_file}" "load python file"
+    }
+
+    # Stop thread 2 at a baz.
+    gdb_test "break baz"
+    gdb_test "continue" "Thread 2.*hit Breakpoint $::decimal, baz .*"
+
+    # Grab the stack pointer and pc of thread 2's frame.
+    set frame_sp ""
+    set frame_pc ""
+
+    gdb_test_multiple "info frame" "" {
+	-re -wrap ".*frame at ($::hex):.*" {
+	    set frame_sp $expect_out(1,string)
+	    pass $gdb_test_name
+	}
+    }
+
+    gdb_test_multiple "print/x \$pc" "" {
+	-re -wrap " = ($::hex)" {
+	    set frame_pc $expect_out(1,string)
+	    pass $gdb_test_name
+	}
+    }
+
+    if { $frame_sp == "" || $frame_pc == "" } {
+	# Something must have failed and logged a failure above.
+	return
+    }
+
+    # Select thread 2's frame in thread 1.
+    gdb_test "thread 1" "Switching to thread 1 .*"
+    gdb_test_no_output "select-frame view $frame_sp $frame_pc" \
+	"select thread 2 frame from thread 1"
+
+    if { $with_pretty_printer } {
+	# When the pretty printer does its infcall, it is done on the currently
+	# selected thread, thread 1 here.  However, other threads are resumed
+	# at the same time.  This causes thread 2 to exit during that infcall,
+	# leading to this weirdness:
+	#
+	#     frame^M
+	#     #0  baz (z=[Thread 0x7ffff7cc26c0 (LWP 417519) exited]^M
+	#     hohoho) at /home/simark/src/binutils-gdb/gdb/testsuite/gdb.base/frame-view.c:35^M
+	#     35        return z.n + 2;^M
+	#
+	# Avoid that by setting scheduler-locking on.
+	gdb_test_no_output "set scheduler-locking on"
+
+	set z1_pattern "hahaha"
+	set z2_pattern "hohoho"
+    } else {
+	set z1_pattern "\\.\\.\\."
+	set z2_pattern "\\.\\.\\."
+    }
+
+    # Verify that the "frame" command does not change the selected frame.
+    # There used to be a bug where the "frame" command would lose the
+    # selection of user-created frames.
+    gdb_test "frame" "#0  baz \\(z1=$z1_pattern, z2=$z2_pattern\\).*" "frame"
+    gdb_test "frame" "#0  baz \\(z1=$z1_pattern, z2=$z2_pattern\\).*" "frame again"
+}
+
+foreach_with_prefix with_pretty_printer {false true} {
+    test_select_frame_view $with_pretty_printer
+}

@@ -1,0 +1,307 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test "whatis"/"ptype" of different typedef types, and of expressions
+# involving casts to/from different typedefs.
+#
+# Particularly, when "whatis" is given a type name directly, it should
+# strip one (and only one) typedef level.  Otherwise, it should not
+# strip any typedef at all.  GDB used to incorrectly strip typedefs of
+# expressions involving casts to typedef types.  E.g., (gdb) print
+# (int_typedef)0" shall result in a value of type "int_typedef", not
+# "int".
+
+standard_testfile
+
+# Prepare for testing in language LANG.  Lang can be "c" or "c++".
+
+proc prepare {lang} {
+    global srcfile testfile
+
+    if [target_info exists no_long_long] {
+	set options [list debug additional_flags=-DNO_LONG_LONG]
+    } else {
+	set options [list debug]
+    }
+
+    if {$lang == "c++"} {
+	lappend options c++
+	set out $testfile-cxx
+    } else {
+	set out $testfile-c
+    }
+
+    if { [prepare_for_testing "failed to prepare" \
+	      ${out} [list $srcfile] $options] } {
+	return 0
+    }
+
+    if {![runto_main]} {
+	return 0
+    }
+
+    return 1
+}
+
+# The following list is layed out as a table.  It is composed by
+# sub-lists (lines), with each line representing one whatis/ptype
+# test.  The sub-list (line) elements (columns) are (in order):
+#
+# EXP - The user expression passed to whatis/ptype.
+#
+# WHATIS - What "whatis" should print.
+#
+# If the EXP column is a type name, then this will be the same type,
+# with one (and only one) typedef level removed.  Otherwise, this is
+# the type of the expression on the first column, with all typedefs
+# preserved.
+#
+# PTYPE - What "ptype" should print.
+#
+# This is always the type of the input type/expression stripped from
+# all typedefs.
+#
+# LANGUAGE - If the line is language-specific, which language.
+#
+# This can be "c" or "c++".
+#
+# Columns in the table represent:
+     # EXP                # whatis           # ptype           # language
+set table {
+    {"void_typedef"       "void"              "void"}
+    {"void_typedef2"      "void_typedef"      "void"}
+
+    {"int_typedef"        "int"              "int"}
+    {"int_typedef2"       "int_typedef"      "int"}
+    {"v_int_typedef"      "int_typedef"      "int"}
+    {"v_int_typedef2"     "int_typedef2"     "int"}
+
+    {"float_typedef"      "float"            "float"}
+    {"float_typedef2"     "float_typedef"    "float"}
+    {"v_float_typedef"    "float_typedef"    "float"}
+    {"v_float_typedef2"   "float_typedef2"   "float"}
+
+    {"double_typedef"     "double"           "double"}
+    {"double_typedef2"    "double_typedef"   "double"}
+    {"v_double_typedef"   "double_typedef"   "double"}
+    {"v_double_typedef2"  "double_typedef2"  "double"}
+
+    {"long_double_typedef"    "long double"           "long double"}
+    {"long_double_typedef2"   "long_double_typedef"   "long double"}
+    {"v_long_double_typedef"  "long_double_typedef"   "long double"}
+    {"v_long_double_typedef2" "long_double_typedef2"  "long double"}
+
+    {"colors_typedef"     "(enum )?colors"   "enum colors( : unsigned int)? {red, green, blue}"}
+    {"colors_typedef2"    "colors_typedef"   "enum colors( : unsigned int)? {red, green, blue}"}
+    {"v_colors_typedef"   "colors_typedef"   "enum colors( : unsigned int)? {red, green, blue}"}
+    {"v_colors_typedef2"  "colors_typedef2"  "enum colors( : unsigned int)? {red, green, blue}"}
+
+    {"func_ftype"         "void \\(void\\)"  "void \\(void\\)"}
+    {"func_ftype2"        "func_ftype"       "void \\(void\\)"}
+
+    {"func_ftype *"       "func_ftype \\*"   "void \\(\\*\\)\\(void\\)"}
+    {"func_ftype2 *"      "func_ftype2 \\*"  "void \\(\\*\\)\\(void\\)"}
+    {"v_func_ftype"       "func_ftype \\*"   "void \\(\\*\\)\\(void\\)"}
+    {"v_func_ftype2"      "func_ftype2 \\*"  "void \\(\\*\\)\\(void\\)"}
+
+    {"v_t_struct_typedef"                "t_struct_typedef"                "struct t_struct {.* member;.*}"}
+    {"v_t_struct_typedef2"               "t_struct_typedef2"               "struct t_struct {.* member;.*}"}
+    {"v_t_struct_union_wrapper_typedef"  "t_struct_union_wrapper_typedef"  "union t_struct_union_wrapper {.*base;.*}"}
+    {"v_t_struct_union_wrapper_typedef2" "t_struct_union_wrapper_typedef2" "union t_struct_union_wrapper {.*base;.*}"}
+    {"v_uchar_array_t_struct_typedef"    "uchar_array_t_struct_typedef"    "unsigned char \\[.*\\]"}
+    {"v_uchar_array_t_struct_typedef2"   "uchar_array_t_struct_typedef2"   "unsigned char \\[.*\\]"}
+
+    {"v_ns_Struct_typedef"               "ns_Struct_typedef"                "struct ns::Struct {.* method.*}"   "c++"}
+
+    {"ns_method_ptr_typedef"
+	"void \\(ns::Struct::\\*\\)\\(ns::Struct \\* const\\)"
+	"void \\(ns::Struct::\\*\\)\\(ns::Struct \\* const\\)"
+	"c++"}
+
+    {"ns::method_ptr_typedef"
+	"void \\(ns::Struct::\\*\\)\\(ns::Struct \\* const\\)"
+	"void \\(ns::Struct::\\*\\)\\(ns::Struct \\* const\\)"
+	"c++"}
+
+    {"ns_method_ptr_typedef2"
+	"ns_method_ptr_typedef"
+	"void \\(ns::Struct::\\*\\)\\(ns::Struct \\* const\\)"
+	"c++"}
+
+    {"ns::method_ptr_typedef2"
+	"ns::method_ptr_typedef"
+	"void \\(ns::Struct::\\*\\)\\(ns::Struct \\* const\\)"
+	"c++"}
+
+    {"ns::Struct::method"
+	"void \\(ns::Struct \\* const\\)"
+	"void \\(ns::Struct \\* const\\)"
+	"c++"}
+}
+
+# The 4th column above is optional.  If present, it indicates that the
+# line should only be tested in the specified language.  This is a
+# helper function that checks whether LINE's language matches LANG.
+proc line_lang_match {line lang} {
+    if {[llength $line] <= 3} {
+	return true
+    }
+
+    set line_lang [lindex $line 3]
+    if {$line_lang == "" || $lang == $line_lang} {
+	return true
+    }
+
+    return false
+}
+
+# Run tests in language LANG.
+
+proc run_tests {lang} {
+    global table
+    global gdb_prompt
+
+    # Test passing all EXP in the list/table above to whatis/ptype,
+    # and check what comes out.
+    with_test_prefix "whatis/ptype" {
+	foreach line $table {
+	    set type [lindex $line 0]
+	    set whatis [lindex $line 1]
+	    set ptype [lindex $line 2]
+
+	    if {![line_lang_match $line $lang]} {
+		continue
+	    }
+
+	    # GCC doesn't record the target type of "typedef of
+	    # typedef of void" types in the DWARF.  See
+	    # <https://gcc.gnu.org/bugzilla/show_bug.cgi?id=81267>.
+	    # Handle that case manually in order to be able to xfail
+	    # it.
+	    if {$type == "void_typedef2"} {
+		set test "whatis $type"
+		gdb_test_multiple $test $test {
+		    -re "type = void\r\n$gdb_prompt $" {
+			# gcc/81267.
+			setup_xfail "*-*-*"
+			fail "$test (void)"
+		    }
+		    -re "type = void_typedef\r\n$gdb_prompt $" {
+			pass $test
+		    }
+		}
+	    } else {
+		gdb_test "whatis $type" "type = $whatis"
+	    }
+
+	    gdb_test "ptype $type" "type = $ptype"
+	}
+    }
+
+    # If floats and pointers have the same size on this architecture,
+    # then casting from array/function to float works, because
+    # arrays/functions first decay to pointers, and then GDB's cast is
+    # more general than a C cast and accepts any two types of the same
+    # length.
+    set float_ptr_same_size \
+	[get_integer_valueof "sizeof (float) == sizeof (void *)" -1]
+
+    # Ditto double.
+    set double_ptr_same_size \
+	[get_integer_valueof "sizeof (double) == sizeof (void *)" -1]
+
+    # Ditto long double.
+    set long_double_ptr_same_size \
+	[get_integer_valueof "sizeof (long double) == sizeof (void *)" -1]
+
+    # Test converting/casting all variables in the first column of the
+    # table to all types (found in the first column of the table).
+    # The aggregates are all defined to be the same size so that
+    # casting actually works.  (GDB's casting operator is more general
+    # than a C cast.)
+    #
+    # The main idea here is testing all the different paths in the
+    # value casting code in GDB (value_cast), making sure typedefs are
+    # preserved.
+    with_test_prefix "cast" {
+	foreach line1 $table {
+	    set from [lindex $line1 0]
+
+	    if {![line_lang_match $line1 $lang]} {
+		continue
+	    }
+
+	    foreach line2 $table {
+		set to [lindex $line2 0]
+		set whatis [lindex $line2 1]
+		set ptype [lindex $line2 2]
+
+		if {![line_lang_match $line2 $lang]} {
+		    continue
+		}
+
+		# We try all combinations, even those that don't
+		# parse, or are invalid, to catch the case of a
+		# regression making them inadvertently valid.  For
+		# example, these conversions are invalid:
+		#
+		#  float <-> array   [iff sizeof pointer != sizeof float]
+		#  array -> function (not function pointer)
+		#  array -> member_ptr
+		#
+		# while these are invalid syntax:
+		#
+		#  (anything) type
+		#  (var) anything
+		#  (method) anything   [not method pointer]
+		#  (float) method
+		#
+		if {([string match "v_*" $to]
+		     || (![string match "v_*" $from] && ![string match "*method" $from])
+		     || [string match "*method" $to])} {
+		    gdb_test "whatis ($to) $from" "syntax error.*" "whatis ($to) $from (syntax)"
+		    gdb_test "ptype ($to) $from" "syntax error.*" "ptype ($to) $from (syntax)"
+		} elseif {([string match "*float*" $from] && [string match "*array*" $to])
+			  || (!$float_ptr_same_size
+			      && ([string match "float*" $to] && [string match "*array*" $from]
+				  || [string match "float*" $to] && [string match "*method" $from]))
+			  || (!$double_ptr_same_size
+			      && ([string match "double*" $to] && [string match "*array*" $from]
+				  || [string match "double*" $to] && [string match "*method" $from]))
+			  || (!$long_double_ptr_same_size
+			      && ([string match "long_double*" $to] && [string match "*array*" $from]
+				  || [string match "long_double*" $to] && [string match "*method" $from]))
+			  || ([string match "*ftype" $to] && [string match "*array*" $from])
+			  || ([string match "*ftype2" $to] && [string match "*array*" $from])
+			  || ([string match "*ftype" $to] && [string match "*method" $from])
+			  || ([string match "*ftype2" $to] && [string match "*method" $from])
+			  || ([string match "*method_ptr*" $to] && [string match "*method" $from])
+			  || ([string match "*method_ptr*" $to] && [string match "*array*" $from])} {
+		    gdb_test "whatis ($to) $from" "Invalid cast." "whatis ($to) $from (invalid)"
+		    gdb_test "ptype ($to) $from" "Invalid cast." "ptype ($to) $from (invalid)"
+		} else {
+		    gdb_test "whatis ($to) $from" "type = [string_to_regexp $to]"
+		    gdb_test "ptype ($to) $from" "type = $ptype"
+		}
+	    }
+	}
+    }
+}
+
+foreach_with_prefix lang {"c" "c++"} {
+    if {[prepare $lang]} {
+	run_tests $lang
+    }
+}

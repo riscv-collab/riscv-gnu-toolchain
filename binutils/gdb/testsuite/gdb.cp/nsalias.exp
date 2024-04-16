@@ -1,0 +1,328 @@
+# Copyright 2013-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test namespace aliases.
+# PRs c++/7935, c++/10541
+
+load_lib dwarf.exp
+
+require dwarf2_support allow_cplus_tests
+
+standard_testfile .cc nsalias-dw.S
+
+# Make the DWARF used for the test.  This is necessary to work
+# around compiler issues.  Not all versions of gcc output the
+# correct debuginfo we need.
+#
+# This should create the equivalent DWARF to:
+#
+# namespace outer
+# {
+#   namespace inner
+#   {
+#     namespace innermost
+#     {
+#       const int x = 2;
+#       int foo (void) { return x; }
+#     }
+#
+#     namespace Innermost = innermost;
+#
+#     const int x = 1;
+#     int foo (void) { return x + Innermost::foo (); }
+#   }
+#
+#   namespace Inner = inner;
+#
+#   const int x = 0;
+#   int foo (void) { return x + Inner::foo (); }
+# }
+#
+# namespace Outer = outer;
+# namespace oi = Outer::Inner;
+
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    cu {} {
+	compile_unit {{language @DW_LANG_C_plus_plus}} {
+	    declare_labels int_label outer_label inner_label innermost_label
+	    declare_labels im_foo_label i_foo_label o_foo_label
+	    declare_labels OuterInner_label oi1_label oi2_label
+
+	    int_label: base_type {
+		{name int}
+		{encoding @DW_ATE_signed}
+		{byte_size 4 DW_FORM_sdata}
+	    }
+
+	    outer_label: DW_TAG_namespace {
+		{name outer}
+	    } {
+		inner_label: DW_TAG_namespace {
+		    {name inner}
+		} {
+		    innermost_label: DW_TAG_namespace {
+			{name innermost}
+		    } {
+			DW_TAG_variable {
+			    {name x}
+			    {type :$int_label}
+			    {const_value 2 DW_FORM_data1}
+			}
+
+			im_foo_label: DW_TAG_subprogram {
+			    {name foo}
+			    {external 1 flag_present}
+			    {declaration 1 flag_present}
+			}
+		    }
+
+		    imported_declaration {
+			{name Innermost}
+			{import :$innermost_label}
+		    }
+
+		    DW_TAG_variable {
+			{name x}
+			{type :$int_label}
+			{const_value 1 DW_FORM_data1}
+		    }
+
+		    i_foo_label: subprogram {
+			{name foo}
+			{external 1 flag_present}
+			{declaration 1 flag_present}
+		    }
+		}
+
+		OuterInner_label: imported_declaration {
+		    {name Inner}
+		    {import :$inner_label}
+		}
+
+		DW_TAG_variable {
+		    {name x}
+		    {type :$int_label}
+		    {const_value 0 DW_FORM_data1}
+		}
+
+		o_foo_label: subprogram {
+		    {name foo}
+		    {external 1 flag_present}
+		    {declaration 1 flag_present}
+		}
+	    }
+
+	    imported_declaration {
+		{name Outer}
+		{import :$outer_label}
+	    }
+
+	    oi1_label: imported_declaration {
+		{name oi1}
+		{import :$OuterInner_label}
+	    }
+
+	    oi2_label: imported_declaration {
+		{name oi2}
+		{import :$oi1_label}
+	    }
+
+	    imported_declaration {
+		{name oi3}
+		{import :$oi2_label}
+	    }
+
+	    subprogram {
+		{specification :$im_foo_label}
+		{low_pc 0x4 DW_FORM_addr}
+		{high_pc 0x7 DW_FORM_addr}
+	    }
+
+	    subprogram {
+		{specification :$i_foo_label}
+		{low_pc 0x8 DW_FORM_addr}
+		{high_pc 0xb DW_FORM_addr}
+	    }
+
+	    subprogram {
+		{specification :$o_foo_label}
+		{low_pc 0xc DW_FORM_addr}
+		{high_pc 0xf DW_FORM_addr}
+	    }
+	}
+    }
+}
+
+if {[gdb_compile $srcdir/$subdir/$srcfile ${binfile}1.o \
+	 object {c++ debug}] != ""} {
+    return -1
+}
+
+if {[gdb_compile $asm_file ${binfile}2.o object {nodebug}] != ""} {
+    return -1
+}
+
+if {[gdb_compile [list ${binfile}1.o ${binfile}2.o] \
+	 $binfile executable {c++}] != ""} {
+    return -1
+}
+
+clean_restart $testfile
+
+# A procedure to run various tests on aliased namespaces.
+proc do_alias_tests {ns {real ""} {x ""}} {
+
+    # The "real" namespace is simply NS in all lowercase.
+    if {$real == ""} {
+	set real [string tolower $ns]
+    }
+
+    # The value of `x' is the number of '::' in NS.
+    if {$x == ""} {
+	set x [expr {[llength [split $ns ":"]] / 2}]
+    }
+
+    # Test "whatis"
+    gdb_test "whatis $ns" "type = $real"
+
+    # Test "ptype"
+    gdb_test "ptype $ns" "type = namespace $real"
+
+    # Print 'x'
+    send_log "expecting x = $x\n"
+    gdb_test "print ${ns}::x" " = $x"
+
+    # Attempt to list the function.
+    gdb_test_no_output "list ${ns}::foo"
+
+    # Attempt to break on the start of the function.
+    gdb_breakpoint "*${ns}::foo"
+
+    # And then erase it
+    with_test_prefix "($ns)" {
+	gdb_test_no_output "delete \$bpnum"
+    }
+}
+
+# This is a list of all the permutations to be tested.  For troubleshooting
+# purposes, this list is explicitly enumerated.
+
+set permutations {}
+lappend permutations "outer"
+lappend permutations "Outer"
+lappend permutations "outer::inner"
+lappend permutations "Outer::inner"
+lappend permutations "outer::Inner"
+lappend permutations "Outer::Inner"
+lappend permutations "outer::inner::innermost"
+lappend permutations "outer::inner::Innermost"
+lappend permutations "outer::Inner::innermost"
+lappend permutations "outer::Inner::Innermost"
+lappend permutations "Outer::inner::innermost"
+lappend permutations "Outer::inner::Innermost"
+lappend permutations "Outer::Inner::innermost"
+lappend permutations "Outer::Inner::Innermost"
+
+foreach p $permutations {
+    do_alias_tests $p
+}
+
+# Test recursively imported aliases.
+foreach ns {"oi1" "oi2" "oi3"} {
+    do_alias_tests $ns "outer::inner" 1
+    do_alias_tests "${ns}::innermost" "outer::inner::innermost" 2
+    do_alias_tests "${ns}::Innermost" "outer::inner::innermost" 2
+}
+
+# Generate another objfile with nested imported declarations.
+
+set imports {
+    declare_labels n0_label
+
+    n0_label: DW_TAG_namespace {
+	{name n0}
+    } {
+	DW_TAG_variable {
+	    {name x}
+	    {type :$int_label}
+	    {const_value 3 DW_FORM_data1}
+	}
+    }
+
+    declare_labels n0_import
+    n0_import: imported_declaration {
+	{name N0}
+	{import :$n0_label}
+    }
+}
+
+for {set i 1} {$i <= 100} {incr i} {
+    append imports [format "
+	declare_labels n%d_import
+	n%d_import: imported_declaration {
+	    {name N%d}
+	    {import :\$n%d_import}
+	}" $i $i $i [expr {$i - 1}]]
+}
+
+standard_testfile .cc nsalias-r-dw.S
+
+set asm_file [standard_output_file $srcfile2]
+set the_dwarf [format {
+    cu {} {
+	compile_unit {{language @DW_LANG_C_plus_plus}} {
+	    declare_labels int_label n0_label
+
+	    int_label: base_type {
+		{name int}
+		{encoding @DW_ATE_signed}
+		{byte_size 4 DW_FORM_sdata}
+	    }
+
+%s
+	}
+    }
+} $imports]
+
+Dwarf::assemble $asm_file $the_dwarf
+
+if {[gdb_compile $asm_file ${binfile}3.o object {nodebug}] != ""} {
+    return -1
+}
+
+if {[gdb_compile [list ${binfile}1.o ${binfile}3.o] \
+	 ${binfile}-r executable {c++}] != ""} {
+    return -1
+}
+
+clean_restart
+
+# Set complaints before loading the file.  Otherwise the complaint won't
+# trigger for -readnow.
+gdb_test_no_output "set complaints 1"
+
+gdb_load [standard_output_file ${testfile}-r]
+
+set readnow_p [readnow]
+
+set test "complaint for too many recursively imported declarations"
+set re ".* has too many recursively imported declarations.*"
+if { $readnow_p } {
+    global gdb_file_cmd_msg
+    gdb_assert {[regexp $re $gdb_file_cmd_msg]} $test
+} else {
+    gdb_test "print N100::x" $re $test
+}

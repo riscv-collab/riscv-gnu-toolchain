@@ -1,0 +1,57 @@
+# Copyright 2014-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile
+set corefile [standard_output_file ${testfile}.core]
+
+if {[gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable debug] != ""} {
+    return -1
+}
+
+clean_restart ${testfile}
+
+gdb_test_no_output "set non-stop on"
+
+if {![runto_main]} {
+    return -1
+}
+
+gdb_test_multiple "info threads" "threads are supported" {
+    -re ".* main .*\r\n$gdb_prompt $" {
+	# OK, threads are supported.
+    }
+    -re "\r\n$gdb_prompt $" {
+	unsupported "gdb does not support threads on this target"
+	return -1
+    }
+}
+
+gdb_breakpoint ${srcfile}:[gdb_get_line_number "break-here"]
+# gdb_continue_to_breakpoint does not work as it uses "$gdb_prompt $" regex
+# which does not work due to the output: (gdb) [Thread ... exited]
+set name "continue to breakpoint: break-here"
+gdb_test_multiple "continue" $name {
+    -re "Breakpoint .* (at|in) .* break-here .*\r\n$gdb_prompt " {
+	pass $name
+    }
+}
+
+gdb_gcore_cmd "$corefile" "save a corefile"
+
+# Do not run "info threads" before "gcore" as it could workaround the bug
+# by discarding non-current exited threads.
+gdb_test "info threads" \
+         {The current thread <Thread ID 1> has terminated\.  See `help thread'\.} \
+	 "exited thread is current due to non-stop"

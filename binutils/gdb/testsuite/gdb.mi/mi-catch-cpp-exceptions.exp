@@ -1,0 +1,194 @@
+# Copyright 2019-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test the -catch-throw, -catch-rethrow, and -catch-catch MI commands.
+
+require allow_cplus_tests
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+standard_testfile .cc
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug c++}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+mi_clean_restart $binfile
+if {[mi_runto_main] < 0} {
+    return -1
+}
+set libstdcxx_probe_tests_supported [expr ![mi_skip_libstdcxx_probe_tests]]
+
+# Grab some line numbers we'll need.
+set catch_1_lineno [gdb_get_line_number "Catch 1"]
+set catch_2_lineno [gdb_get_line_number "Catch 2"]
+set throw_1_lineno [gdb_get_line_number "Throw 1"]
+set throw_2_lineno [gdb_get_line_number "Throw 2"]
+set main_lineno [gdb_get_line_number "Stop here"]
+
+# Restart this test, load the test binary and set a breakpoint in
+# main.
+proc restart_for_test {} {
+    global srcdir subdir binfile srcfile
+    global main_lineno
+
+    if {[mi_clean_restart $binfile]} {
+	return
+    }
+
+    mi_runto_main
+
+    mi_create_breakpoint \
+	"$srcfile:${main_lineno}" "break before exiting program" \
+	-disp keep -func "main.*" \
+	-file ".*mi-catch-cpp-exceptions.cc" -line ${main_lineno}
+}
+
+# Issue an -exec-continue then wait for GDB to catch a C++ exception
+# event in FUNC on LINE.  Use TESTNAME to make tests unique.
+proc continue_to_next_exception { func line testname } {
+    global hex
+
+    mi_send_resuming_command "exec-continue" \
+	"exec-continue"
+    mi_expect_stop "exception-caught" ".*" ".*" ".*" ".*" \
+	{} "run until an exception is caught: $testname"
+    mi_gdb_test "-stack-list-frames 1 1" \
+	"\\^done,stack=\\\[frame=\{level=\"1\",addr=\"$hex\",(addr_flags=\"PAC\",)?func=\"${func}\",.*,line=\"${line}\".*\}\\\]" \
+	"check previous frame: $testname"
+}
+
+# Issue an -exec-continue and stop at the breakpoint in main.
+proc continue_to_breakpoint_in_main {} {
+    global main_lineno
+
+    mi_send_resuming_command "exec-continue" "exec-continue to main"
+    mi_expect_stop "breakpoint-hit" "main" ".*" ".*" "${main_lineno}" \
+	{.* disp="keep"} "run until breakpoint in main"
+}
+
+# TYPE is one of throw, rethrow, or catch.  This proc creates a catch
+# point using -catch-TYPE.  The optional string EXTRA is any extra
+# arguments to pass when setting up the catchpoint.
+proc setup_catchpoint {type {extra ""}} {
+    global decimal
+    mi_gdb_test "-catch-${type} ${extra}" \
+	"\\^done,bkpt=\{number=\"$decimal\",type=\"catchpoint\".*what=\"exception ${type}\",catch-type=\"${type}\".*\}" \
+	"Setup -catch-${type}"
+}
+
+# Ensure that -catch-throw will catch only throws and nothing else.
+with_test_prefix "-catch-throw" {
+    restart_for_test
+    setup_catchpoint "throw"
+    continue_to_next_exception "bar" "${throw_1_lineno}" "throw 1"
+    continue_to_next_exception "bar" "${throw_1_lineno}" "throw 2"
+    continue_to_next_exception "bar" "${throw_1_lineno}" "throw 3"
+    continue_to_next_exception "bar" "${throw_1_lineno}" "throw 4"
+    continue_to_breakpoint_in_main
+}
+
+# Ensure that -catch-rethrow catches only rethrows and nothing else.
+with_test_prefix "-catch-rethrow" {
+    restart_for_test
+    setup_catchpoint "rethrow"
+    continue_to_next_exception "foo" "${throw_2_lineno}" "rethrow 1"
+    continue_to_next_exception "foo" "${throw_2_lineno}" "rethrow 2"
+    continue_to_breakpoint_in_main
+}
+
+# Ensure that -catch-catch catches only catch points, and nothing
+# else.
+with_test_prefix "-catch-catch" {
+    restart_for_test
+    setup_catchpoint "catch"
+    continue_to_next_exception "foo" "${catch_1_lineno}" "catch 1"
+    continue_to_next_exception "foo" "${catch_1_lineno}" "catch 2"
+    continue_to_next_exception "main" "${catch_2_lineno}" "catch 3"
+    continue_to_next_exception "foo" "${catch_1_lineno}" "catch 4"
+    continue_to_next_exception "foo" "${catch_1_lineno}" "catch 5"
+    continue_to_next_exception "main" "${catch_2_lineno}" "catch 6"
+    continue_to_breakpoint_in_main
+}
+
+if { $libstdcxx_probe_tests_supported  == 1 } {
+    # Now check that all of the command with a regexp that doesn't match,
+    # don't trigger.
+    with_test_prefix "all with invalid regexp" {
+	restart_for_test
+	setup_catchpoint "throw" "-r blahblah"
+	setup_catchpoint "rethrow" "-r woofwoof"
+	setup_catchpoint "catch" "-r miowmiow"
+	continue_to_breakpoint_in_main
+    }
+} else {
+    unsupported "all with invalid regexp"
+}
+
+if { $libstdcxx_probe_tests_supported  == 1 } {
+    # Now check that all of the commands with a regexp that does match,
+    # still trigger.
+    with_test_prefix "all with valid regexp" {
+	restart_for_test
+	setup_catchpoint "throw" "-r my_ex"
+	setup_catchpoint "rethrow" "-r _except"
+	setup_catchpoint "catch" "-r my_exception"
+	continue_to_next_exception "bar" "${throw_1_lineno}" "throw 1"
+	continue_to_next_exception "foo" "${catch_1_lineno}" "catch 1"
+	continue_to_next_exception "bar" "${throw_1_lineno}" "throw 2"
+	continue_to_next_exception "foo" "${catch_1_lineno}" "catch 2"
+	continue_to_next_exception "foo" "${throw_2_lineno}" "rethrow 1"
+	continue_to_next_exception "main" "${catch_2_lineno}" "catch 3"
+	continue_to_next_exception "bar" "${throw_1_lineno}" "throw 3"
+	continue_to_next_exception "foo" "${catch_1_lineno}" "catch 4"
+	continue_to_next_exception "bar" "${throw_1_lineno}" "throw 4"
+	continue_to_next_exception "foo" "${catch_1_lineno}" "catch 5"
+	continue_to_next_exception "foo" "${throw_2_lineno}" "rethrow 2"
+	continue_to_next_exception "main" "${catch_2_lineno}" "catch 6"
+	continue_to_breakpoint_in_main
+    }
+} else {
+    unsupported "all with valid regexp"
+}
+
+# Check that the temporary switch works on its own.
+with_test_prefix "all with -t" {
+    restart_for_test
+    setup_catchpoint "throw" "-t"
+    setup_catchpoint "rethrow" "-t"
+    setup_catchpoint "catch" "-t"
+    continue_to_next_exception "bar" "${throw_1_lineno}" "throw 1"
+    continue_to_next_exception "foo" "${catch_1_lineno}" "catch 1"
+    continue_to_next_exception "foo" "${throw_2_lineno}" "rethrow 1"
+    continue_to_breakpoint_in_main
+}
+
+if { $libstdcxx_probe_tests_supported  == 1 } {
+    # Check that the temporary switch works when used with a regexp.
+    with_test_prefix "all with -t and regexp" {
+	restart_for_test
+	setup_catchpoint "throw" "-t -r my_ex"
+	setup_catchpoint "rethrow" "-t -r _except"
+	setup_catchpoint "catch" "-t -r my_exception"
+	continue_to_next_exception "bar" "${throw_1_lineno}" "throw 1"
+	continue_to_next_exception "foo" "${catch_1_lineno}" "catch 1"
+	continue_to_next_exception "foo" "${throw_2_lineno}" "rethrow 1"
+	continue_to_breakpoint_in_main
+    }
+} else {
+    unsupported "all with -t and regexp"
+}

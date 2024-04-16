@@ -1,0 +1,260 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test exercises the gdb-gdb.py helper script that is generated
+# into the GDB build directory.  This script is intended for use by
+# developers to make debugging GDB easier.
+
+load_lib selftest-support.exp
+
+require {!target_info exists gdb,noinferiorio}
+
+require allow_python_tests
+
+standard_testfile .cc
+
+if { [build_executable "failed to build" $testfile $srcfile {debug c++}] } {
+    return -1
+}
+
+# Find the helper script in the GDB build directory.
+set py_helper_script [file dirname $GDB]/gdb-gdb.py
+if { ![file readable $py_helper_script] \
+	 || [file type $py_helper_script] != "file" } {
+    untested "failed to find gdb-gdb.py helper script"
+    return
+}
+
+# The main test.  This is called by the self-test framework once GDB
+# has been started on a copy of itself.
+proc test_python_helper {} {
+    global py_helper_script decimal hex gdb_prompt bkptno_numopt_re
+    global inferior_spawn_id
+
+    # Source the python helper script.  This script registers the
+    # pretty printer for the object file called 'gdb', however, in our
+    # selftests we rename 'gdb' to 'xgdb', so the pretty printer
+    # doesn't get registered by default.
+    #
+    # So, after sourcing the script we do our own objfile scan and
+    # register the pretty printer for the objfile called 'xgdb'.
+    gdb_test_no_output "source $py_helper_script" \
+	"source gdb-gdb.py helper script"
+    gdb_test [multi_line_input \
+		  "python" \
+		  "for objfile in gdb.objfiles():" \
+		  "  if os.path.basename(objfile.filename) == \"xgdb\":" \
+		  "    objfile.pretty_printers.append(type_lookup_function)" \
+		  "end"] ".*" \
+	"register the type pretty printer"
+
+    # Now place breakpoints somewhere useful.  These locations can be
+    # any function that:
+    #
+    # (a) is easy to reach by issuing a simple gdb command, and
+    # (b) is unlikely to be modified very often within gdb, and
+    # (c) has a parameter that is either a 'struct type *' or a 'struct value *'.
+    gdb_breakpoint value_print qualified
+    gdb_breakpoint c_print_type qualified
+
+    # With gdb build with -O2 -flto=auto and gcc 7.5.0, we can get the mangled
+    # names due to a problem in the debug info, so we work around this by less
+    # strict matching.
+    set fn_name_value_print "\[^\r\n\]*value_print\[^\r\n\]*"
+    set fn_name_c_print_type "\[^\r\n\]*c_print_type\[^\r\n\]*"
+
+    # Disable all breakpoints until after we have loaded the test
+    # binary into the inner GDB.
+    gdb_test_no_output "disable breakpoints"
+
+    set outer_prompt_re "\\(outer-gdb\\) $"
+
+    # Adjust the prompt on the outer gdb, this just makes things a
+    # little clearer when trying to unpick which GDB is active.
+    gdb_test_no_output -prompt $outer_prompt_re  "set prompt (outer-gdb) " "set outer gdb prompt"
+
+    # Send a command to the outer GDB to continue the inner GDB.  The
+    # stop is being detected from the inner GDB, hence the use of -i
+    # here.
+    gdb_test_multiple "continue" "start inner gdb" {
+	-re "received signal SIGSEGV.* in GC_.*$outer_prompt_re" {
+	    # Some versions of the GC used by Guile cause a SEGV
+	    # during stack probing.  Ignore this and carry on.
+	    send_gdb "continue\n"
+	    exp_continue
+	}
+	-i "$inferior_spawn_id"
+	-re "\r\n$gdb_prompt $" {
+	    pass $gdb_test_name
+	}
+    }
+
+    # Load the test executable into the inner GDB.  The output here is
+    # being read from the inner GDB, hence the use of -i here.
+    send_inferior "file -readnow $::binfile\n"
+    gdb_test_multiple "" "loading test binary into inner GDB" {
+	-i "$inferior_spawn_id"
+	-re "Reading symbols from.*\r\n$gdb_prompt $" {
+	    pass $gdb_test_name
+	}
+    }
+
+    # Send Ctrl-C to the inner GDB, this should kick us back to the
+    # prompt of the outer GDB.
+    send_inferior "\003"
+    gdb_test -prompt $outer_prompt_re "" "" "interrupted the inner"
+
+    # Now enable all breakpoints within the outer GDB.
+    gdb_test_no_output -prompt $outer_prompt_re "enable breakpoints"
+
+    # We need to resume the inner GDB after interrupting it, this is
+    # done by sending 'continue'.  However, GDB will not redisplay the
+    # prompt in this case, so we have nothing that we can detect in
+    # order to know this continue was successful.  Still, if this
+    # didn't work, then later tests should fail.
+    send_gdb "continue\n"
+
+    # Control is back with the inner GDB.  Send a command to the inner
+    # GDB, this should result in the outer GDB stopping at one of the
+    # breakpoints we created..
+    send_inferior "print 1\n"
+    gdb_test -prompt $outer_prompt_re "" \
+	"Breakpoint $bkptno_numopt_re, $fn_name_value_print.*" \
+	"hit breakpoint in outer gdb"
+
+    # Now inspect the type of parameter VAL, this should trigger the
+    # pretty printers.
+    set answer [multi_line \
+		    "${decimal} = " \
+		    "\{pointer_type = 0x0," \
+		    " reference_type = 0x0," \
+		    " chain = 0x0," \
+		    " instance_flags = 0," \
+		    " length = $decimal," \
+		    " main_type = $hex\}"]
+    gdb_test -prompt $outer_prompt_re "print *val->m_type" $answer "pretty print type"
+
+    set answer [multi_line \
+		    "$decimal = " \
+		    "\{name = $hex \"int\"," \
+		    " code = TYPE_CODE_INT," \
+		    " flags = \[^\r\n\]+," \
+		    " owner = $hex \\(gdbarch\\)," \
+		    " target_type = 0x0," \
+		    " int_stuff = \{ bit_size = $decimal, bit_offset = $decimal \}\}"]
+    gdb_test -prompt $outer_prompt_re "print *val->m_type->main_type" $answer "pretty print type->main_type"
+
+    # Send the continue to the outer GDB, which resumes the inner GDB,
+    # we then detect the prompt from the inner GDB, hence the use of
+    # -i here.
+    gdb_test_multiple "continue" "resume inner gdb" {
+	-i $inferior_spawn_id
+	-re "\r\n$gdb_prompt $" {
+	    pass $gdb_test_name
+	}
+    }
+
+    # Now print an integer that was created from the DWARF
+    # information, this will include the TYPE_SPECIFIC_INT
+    # information.
+    send_inferior "print global_c.m_val\n"
+    gdb_test -prompt $outer_prompt_re "" \
+	"Breakpoint $bkptno_numopt_re, $fn_name_value_print.*" \
+	"print integer from DWARF info"
+
+    set answer [multi_line \
+		    "$decimal = " \
+		    "\{name = $hex \"int\"," \
+		    " code = TYPE_CODE_INT," \
+		    " flags = \[^\r\n\]+," \
+		    " owner = $hex \\(objfile\\)," \
+		    " target_type = 0x0," \
+		    " int_stuff = \{ bit_size = $decimal, bit_offset = $decimal \}\}"]
+    gdb_test -prompt $outer_prompt_re "print *val->m_type->main_type" $answer "pretty print type->main_type for DWARF type"
+
+    # Send the continue to the outer GDB, which resumes the inner GDB,
+    # we then detect the prompt from the inner GDB, hence the use of
+    # -i here.
+    gdb_test_multiple "continue" "resume inner gdb again" {
+	-i $inferior_spawn_id
+	-re "\r\n$gdb_prompt $" {
+	    pass $gdb_test_name
+	}
+    }
+
+    # Send a command to the inner GDB, this should result in the outer
+    # GDB stopping at the value_print breakpoint again.
+    send_inferior "ptype global_c\n"
+    set test "hit breakpoint in outer gdb again"
+    set in_outer_gdb 0
+    gdb_test_multiple "" $test  -prompt $outer_prompt_re {
+	-re -wrap "Breakpoint $bkptno_numopt_re, $fn_name_c_print_type.*" {
+	    pass $gdb_test_name
+	    set in_outer_gdb 1
+	}
+	-re "\r\n$gdb_prompt $" {
+	    unsupported $gdb_test_name
+	}
+    }
+
+    if { ! $in_outer_gdb } {
+	return 0
+    }
+
+    set cmd "print *type->main_type"
+    set cmd_supported 1
+    foreach sub_expr { type type->main_type } {
+	set ok 0
+	gdb_test_multiple "print $sub_expr" "" -prompt $outer_prompt_re {
+	    -re -wrap " = \\(\[^\r\n\]+ \\*\\) $hex" {
+		set ok 1
+	    }
+	    -re -wrap "" {
+	    }
+	}
+	if { ! $ok } {
+	    set cmd_supported 0
+	    break
+	}
+    }
+
+    if { $cmd_supported } {
+	set answer [multi_line \
+			"$decimal = " \
+			"\{name = $hex \"CC\"," \
+			" code = TYPE_CODE_STRUCT," \
+			" flags = \[^\r\n\]+," \
+			" owner = $hex \\(objfile\\)," \
+			" target_type = 0x0," \
+			" flds_bnds\\.fields\\\[0\\\]:" \
+			"  \{m_name = $hex \"m_val\"," \
+			"   m_type = $hex," \
+			"   m_loc_kind = FIELD_LOC_KIND_BITPOS," \
+			"   bitsize = 0," \
+			"   bitpos = 0\}," \
+			" cplus_stuff = $hex\}"]
+	gdb_test -prompt $outer_prompt_re $cmd $answer
+    } else {
+	unsupported $cmd
+    }
+
+    # Test the htab_t pretty-printer.
+    gdb_test -prompt $outer_prompt_re "print all_bfds" "htab_t with ${::decimal} elements = \\{${::hex}.*\\}"
+
+    return 0
+}
+
+# Use the self-test framework to run the test.
+do_self_tests captured_main test_python_helper

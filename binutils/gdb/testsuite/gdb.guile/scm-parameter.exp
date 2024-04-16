@@ -1,0 +1,391 @@
+# Copyright (C) 2010-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the GDB testsuite.
+# It tests GDB parameter support in Guile.
+
+load_lib gdb-guile.exp
+
+require allow_guile_tests
+
+clean_restart
+
+gdb_install_guile_utils
+gdb_install_guile_module
+
+proc scm_param_test_maybe_no_output { command pattern args } {
+    if [string length $pattern] {
+	gdb_test $command $pattern $args
+    } else {
+	gdb_test_no_output $command $args
+    }
+}
+
+# We use "." here instead of ":" so that this works on win32 too.
+if { [is_remote host] } {
+    # Proc gdb_reinitialize_dir has no effect for remote host.
+    gdb_test "guile (print (parameter-value \"directories\"))" \
+	"\\\$cdir.\\\$cwd"
+} else {
+    set escaped_directory [string_to_regexp "$srcdir/$subdir"]
+    gdb_test "guile (print (parameter-value \"directories\"))" \
+	"$escaped_directory.\\\$cdir.\\\$cwd"
+}
+
+# Test a simple boolean parameter, and parameter? while we're at it.
+
+gdb_test_multiline "Simple gdb boolean parameter" \
+    "guile" "" \
+    "(define test-param" "" \
+    "  (make-parameter \"print test-param\"" "" \
+    "   #:command-class COMMAND_DATA" "" \
+    "   #:parameter-type PARAM_BOOLEAN" "" \
+    "   #:doc \"When enabled, test param does something useful. When disabled, does nothing.\"" "" \
+    "   #:set-doc \"Set the state of the boolean test-param.\"" "" \
+    "   #:show-doc \"Show the state of the boolean test-param.\"" "" \
+    "   #:show-func (lambda (self value)" ""\
+    "      (format #f \"The state of the Test Parameter is ~a.\" value))" "" \
+    "   #:initial-value #t))" "" \
+    "(register-parameter! test-param)" "" \
+    "end"
+
+with_test_prefix "test-param" {
+    gdb_test "guile (print (parameter-value test-param))" "= #t" "parameter value (true)"
+    gdb_test "show print test-param" "The state of the Test Parameter is on." "show parameter on"
+    gdb_test_no_output "set print test-param off"
+    gdb_test "show print test-param" "The state of the Test Parameter is off." "show parameter off"
+    gdb_test "guile (print (parameter-value test-param))" "= #f" "parameter value (false)"
+    gdb_test "help show print test-param" "Show the state of the boolean test-param.*" "show help"
+    gdb_test "help set print test-param" "Set the state of the boolean test-param.*" "set help"
+    gdb_test "help set print" "set print test-param -- Set the state of the boolean test-param.*" "general help"
+
+    gdb_test "guile (print (parameter? test-param))" "= #t"
+    gdb_test "guile (print (parameter? 42))" "= #f"
+}
+
+# Test an enum parameter.
+
+gdb_test_multiline "enum gdb parameter" \
+    "guile" "" \
+    "(define test-enum-param" "" \
+    "  (make-parameter \"print test-enum-param\"" "" \
+    "   #:command-class COMMAND_DATA" "" \
+    "   #:parameter-type PARAM_ENUM" "" \
+    "   #:enum-list '(\"one\" \"two\")" "" \
+    "   #:doc \"When set, test param does something useful. When disabled, does nothing.\"" "" \
+    "   #:show-doc \"Show the state of the enum.\"" "" \
+    "   #:set-doc \"Set the state of the enum.\"" "" \
+    "   #:show-func (lambda (self value)" "" \
+    "      (format #f \"The state of the enum is ~a.\" value))" "" \
+    "   #:initial-value \"one\"))" "" \
+    "(register-parameter! test-enum-param)" "" \
+    "end"
+
+with_test_prefix "test-enum-param" {
+    gdb_test "guile (print (parameter-value test-enum-param))" "one" "enum parameter value (one)"
+    gdb_test "show print test-enum-param" "The state of the enum is one." "show initial value"
+    gdb_test_no_output "set print test-enum-param two"
+    gdb_test "show print test-enum-param" "The state of the enum is two." "show new value"
+    gdb_test "guile (print (parameter-value test-enum-param))" "two" "enum parameter value (two)"
+    gdb_test "set print test-enum-param three" "Undefined item: \"three\".*" "set invalid enum parameter" 
+}
+
+# Test integer parameters.
+
+foreach_with_prefix param {
+    "listsize"
+    "print elements"
+    "max-completions"
+    "print characters"
+} {
+    set param_range_error "integer -1 out of range"
+    set param_type_error \
+	"#<gdb:exception out-of-range\
+	 \\(\"gdbscm_parameter_value\"\
+	    \"Out of range: program error: unhandled type in position 1: ~S\"\
+	    \\(3\\) \\(3\\)\\)>"
+    switch -- $param {
+	"listsize" {
+	    set param_get_zero "#:unlimited"
+	    set param_get_minus_one -1
+	    set param_set_minus_one ""
+	}
+	"print elements" -
+	"print characters" {
+	    set param_get_zero "#:unlimited"
+	    set param_get_minus_one "#:unlimited"
+	    set param_set_minus_one $param_range_error
+	}
+	"max-completions" {
+	    set param_get_zero 0
+	    set param_get_minus_one "#:unlimited"
+	    set param_set_minus_one ""
+	}
+	default {
+	    error "invalid param: $param"
+	}
+    }
+
+    gdb_test_no_output "set $param 1" "test set to 1"
+
+    gdb_test "guile (print (parameter-value \"$param\"))" \
+	1 "test value of 1"
+
+    gdb_test_no_output "set $param 0" "test set to 0"
+
+    gdb_test "guile (print (parameter-value \"$param\"))" \
+	$param_get_zero "test value of 0"
+
+    scm_param_test_maybe_no_output "set $param -1" \
+	$param_set_minus_one "test set to -1"
+
+    gdb_test "guile (print (parameter-value \"$param\"))" \
+	$param_get_minus_one "test value of -1"
+
+    gdb_test_no_output "set $param unlimited" "test set to 'unlimited'"
+
+    gdb_test "guile (print (parameter-value \"$param\"))" \
+	"#:unlimited" "test value of 'unlimited'"
+
+    if {$param == "print characters"} {
+	gdb_test_no_output "set $param elements" "test set to 'elements'"
+
+	gdb_test "guile (print (parameter-value \"$param\"))" \
+	    "#:elements" "test value of 'elements'"
+    }
+}
+
+foreach_with_prefix kind {
+    PARAM_UINTEGER
+    PARAM_ZINTEGER
+    PARAM_ZUINTEGER
+    PARAM_ZUINTEGER_UNLIMITED
+} {
+    gdb_test_multiline "create gdb parameter" \
+	"guile" "" \
+	"(define test-$kind-param" "" \
+	"  (make-parameter \"print test-$kind-param\"" "" \
+	"   #:command-class COMMAND_DATA" "" \
+	"   #:parameter-type $kind" "" \
+	"   #:doc \"Set to a number or 'unlimited' to yield an effect.\"" "" \
+	"   #:show-doc \"Show the state of $kind.\"" "" \
+	"   #:set-doc \"Set the state of $kind.\"" "" \
+	"   #:show-func (lambda (self value)" "" \
+	"      (format #f \"The state of $kind is ~a.\" value))" "" \
+	"   #:initial-value 3))" "" \
+	"(register-parameter! test-$kind-param)" "" \
+	"end"
+
+    set param_integer_error \
+	[multi_line \
+	    "ERROR: In procedure set-parameter-value!:" \
+	    "(ERROR: )?In procedure gdbscm_set_parameter_value_x:\
+	     Wrong type argument in position 2 \\(expecting integer\\):\
+	     #:unlimited" \
+	    "Error while executing Scheme code\\."]
+    set param_minus_one_error "integer -1 out of range"
+    set param_minus_two_error "integer -2 out of range"
+    switch -- $kind {
+	PARAM_UINTEGER {
+	    set param_get_zero "#:unlimited"
+	    set param_get_minus_one "#:unlimited"
+	    set param_get_minus_two "#:unlimited"
+	    set param_str_unlimited unlimited
+	    set param_set_unlimited ""
+	    set param_set_minus_one $param_minus_one_error
+	    set param_set_minus_two $param_minus_two_error
+	}
+	PARAM_ZINTEGER {
+	    set param_get_zero 0
+	    set param_get_minus_one -1
+	    set param_get_minus_two -2
+	    set param_str_unlimited 2
+	    set param_set_unlimited $param_integer_error
+	    set param_set_minus_one ""
+	    set param_set_minus_two ""
+	}
+	PARAM_ZUINTEGER {
+	    set param_get_zero 0
+	    set param_get_minus_one 0
+	    set param_get_minus_two 0
+	    set param_str_unlimited 2
+	    set param_set_unlimited $param_integer_error
+	    set param_set_minus_one $param_minus_one_error
+	    set param_set_minus_two $param_minus_two_error
+	}
+	PARAM_ZUINTEGER_UNLIMITED {
+	    set param_get_zero 0
+	    set param_get_minus_one "#:unlimited"
+	    set param_get_minus_two "#:unlimited"
+	    set param_str_unlimited unlimited
+	    set param_set_unlimited ""
+	    set param_set_minus_one ""
+	    set param_set_minus_two $param_minus_two_error
+	}
+	default {
+	    error "invalid kind: $kind"
+	}
+    }
+
+    with_test_prefix "test-$kind-param" {
+	gdb_test "guile (print (parameter-value test-$kind-param))" \
+	    3 "$kind parameter value (3)"
+	gdb_test "show print test-$kind-param" \
+	    "The state of $kind is 3." "show initial value"
+	gdb_test_no_output "set print test-$kind-param 2"
+	gdb_test "show print test-$kind-param" \
+	    "The state of $kind is 2." "show new value"
+	gdb_test "guile (print (parameter-value test-$kind-param))" \
+	    2 "$kind parameter value (2)"
+	scm_param_test_maybe_no_output \
+	    "guile (set-parameter-value! test-$kind-param #:unlimited)" \
+	    $param_set_unlimited
+	gdb_test "show print test-$kind-param" \
+	    "The state of $kind is $param_str_unlimited." \
+	    "show unlimited value"
+	gdb_test_no_output "guile (set-parameter-value! test-$kind-param 1)"
+	gdb_test "guile (print (parameter-value test-$kind-param))" \
+	    1 "$kind parameter value (1)"
+	gdb_test_no_output "guile (set-parameter-value! test-$kind-param 0)"
+	gdb_test "guile (print (parameter-value test-$kind-param))" \
+	    $param_get_zero "$kind parameter value (0)"
+	scm_param_test_maybe_no_output "set print test-$kind-param -1" \
+	    $param_set_minus_one
+	gdb_test "guile (print (parameter-value test-$kind-param))" \
+	    $param_get_minus_one "$kind parameter value (-1)"
+	scm_param_test_maybe_no_output "set print test-$kind-param -2" \
+	    $param_set_minus_two
+	gdb_test "guile (print (parameter-value test-$kind-param))" \
+	    $param_get_minus_two "$kind parameter value (-2)"
+    }
+}
+
+# Test a file parameter.
+
+gdb_test_multiline "file gdb parameter" \
+    "guile" "" \
+    "(define test-file-param" "" \
+    "  (make-parameter \"test-file-param\"" "" \
+    "   #:command-class COMMAND_FILES" "" \
+    "   #:parameter-type PARAM_FILENAME" "" \
+    "   #:doc \"When set, test param does something useful. When disabled, does nothing.\"" "" \
+    "   #:show-doc \"Show the name of the file.\"" "" \
+    "   #:set-doc \"Set the name of the file.\"" "" \
+    "   #:show-func (lambda (self value)" "" \
+    "      (format #f \"The name of the file is ~a.\" value))" "" \
+    "   #:initial-value \"foo.txt\"))" "" \
+    "(register-parameter! test-file-param)" "" \
+    "end"
+
+with_test_prefix "test-file-param" {
+    gdb_test "guile (print (parameter-value test-file-param))" "foo.txt" "initial parameter value"
+    gdb_test "show test-file-param" "The name of the file is foo.txt." "show initial value"
+    gdb_test_no_output "set test-file-param bar.txt"
+    gdb_test "show test-file-param" "The name of the file is bar.txt." "show new value"
+    gdb_test "guile (print (parameter-value test-file-param))" "bar.txt" " new parameter value"
+    gdb_test "set test-file-param" "Argument required.*" 
+}
+
+# Test a parameter that is not documented.
+
+gdb_test_multiline "undocumented gdb parameter" \
+    "guile" "" \
+    "(register-parameter! (make-parameter \"print test-undoc-param\"" "" \
+    "   #:command-class COMMAND_DATA" "" \
+    "   #:parameter-type PARAM_BOOLEAN" "" \
+    "   #:show-func (lambda (self value)" "" \
+    "      (format #f \"The state of the Test Parameter is ~a.\" value))" "" \
+    "   #:initial-value #t))" "" \
+    "end"
+
+with_test_prefix "test-undocumented-param" {
+    gdb_test "show print test-undoc-param" "The state of the Test Parameter is on." "show parameter on"
+    gdb_test_no_output "set print test-undoc-param off"
+    gdb_test "show print test-undoc-param" "The state of the Test Parameter is off." "show parameter off"
+    gdb_test "help show print test-undoc-param" "This command is not documented." "show help"
+    gdb_test "help set print test-undoc-param" "This command is not documented." "set help"
+    gdb_test "help set print" "set print test-undoc-param -- This command is not documented.*" "general help"
+}
+
+# Test a parameter with a restricted range, where we need to notify the user
+# and restore the previous value.
+
+gdb_test_multiline "restricted gdb parameter" \
+    "guile" "" \
+    "(register-parameter! (make-parameter \"test-restricted-param\"" "" \
+    "   #:command-class COMMAND_DATA" "" \
+    "   #:parameter-type PARAM_ZINTEGER" "" \
+    "   #:set-func (lambda (self)" "" \
+    "      (let ((value (parameter-value self)))" "" \
+    "        (if (and (>= value 0) (<= value 10))" "" \
+    "            \"\"" "" \
+    "            (begin" "" \
+    "              (set-parameter-value! self (object-property self 'value))" "" \
+    "              \"Error: Range of parameter is 0-10.\"))))" "" \
+    "   #:show-func (lambda (self value)" "" \
+    "      (format #f \"The value of the restricted parameter is ~a.\" value))" "" \
+    "   #:initial-value (lambda (self)" "" \
+    "      (set-object-property! self 'value 2)" "" \
+    "      2)))" "" \
+    "end"
+
+with_test_prefix "test-restricted-param" {
+    gdb_test "show test-restricted-param" "The value of the restricted parameter is 2." \
+	"test-restricted-param is initially 2"
+    gdb_test_no_output "set test-restricted-param 10"
+    gdb_test "show test-restricted-param" "The value of the restricted parameter is 10." \
+	"test-restricted-param is now 10"
+    gdb_test "set test-restricted-param 42" "Error: Range of parameter is 0-10."
+    gdb_test "show test-restricted-param" "The value of the restricted parameter is 2." \
+	"test-restricted-param is back to 2 again"
+}
+
+# Test registering a parameter that already exists.
+
+gdb_test "guile (register-parameter! (make-parameter \"height\"))" \
+    "ERROR.*is already defined.*" "error registering existing parameter"
+
+# Test printing and setting the value of an unregistered parameter.
+gdb_test "guile (print (parameter-value (make-parameter \"foo\")))" \
+    "= #f"
+gdb_test "guile (define myparam (make-parameter \"foo\"))"
+gdb_test_no_output "guile (set-parameter-value! myparam #t)"
+gdb_test "guile (print (parameter-value myparam))" \
+    "= #t"
+
+# Test registering a parameter named with what was an ambiguous spelling
+# of existing parameters.
+
+gdb_test_multiline "previously ambiguously named boolean parameter" \
+    "guile" "" \
+    "(define prev-ambig" "" \
+    "  (make-parameter \"print s\"" "" \
+    "   #:parameter-type PARAM_BOOLEAN))" "" \
+    "end"
+
+gdb_test_no_output "guile (register-parameter! prev-ambig)"
+
+with_test_prefix "previously-ambiguous" {
+    gdb_test "guile (print (parameter-value prev-ambig))" "= #f" "parameter value (false)"
+    gdb_test "show print s" "Command is not documented is off." "show parameter off"
+    gdb_test_no_output "set print s on"
+    gdb_test "show print s" "Command is not documented is on." "show parameter on"
+    gdb_test "guile (print (parameter-value prev-ambig))" "= #t" "parameter value (true)"
+    gdb_test "help show print s" "This command is not documented." "show help"
+    gdb_test "help set print s" "This command is not documented." "set help"
+    gdb_test "help set print" "set print s -- This command is not documented.*" "general help"
+}
+
+rename scm_param_test_maybe_no_output ""

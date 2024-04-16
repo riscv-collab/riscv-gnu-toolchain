@@ -1,0 +1,167 @@
+# Copyright 2011-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "trace-support.exp"
+
+require allow_shlib_tests
+
+# Do not run if gdbsever debug is enabled - the output file is many Gb.
+if [gdbserver_debug_enabled] {
+    return 0
+}
+
+standard_testfile
+set executable $testfile
+
+# Check that the target supports trace.
+if { [gdb_compile "$srcdir/$subdir/$srcfile" $binfile executable $options] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+clean_restart ${testfile}
+
+if ![runto_main] {
+    return -1
+}
+
+if ![gdb_target_supports_trace] {
+    unsupported "target does not support trace"
+    return -1
+}
+
+# Compile the test case with the in-process agent library.
+set ipalib [get_in_proc_agent]
+
+if { [gdb_compile "$srcdir/$subdir/$srcfile" $binfile \
+	  executable [concat {debug c} shlib=$ipalib]] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+# Typically we need a little extra time for this test.
+set timeout 180
+
+set ws "\[\r\n\t \]+"
+set cr "\[\r\n\]+"
+
+#
+# Utility procs
+#
+
+proc prepare_for_trace_test {} {
+    global executable
+    global ipalib
+
+    clean_restart $executable
+    gdb_load_shlib $ipalib
+
+    runto_main
+
+    set testline [gdb_get_line_number "set pre-run breakpoint here"]
+
+    gdb_test "break $testline" ".*" \
+	"break at pre-run"
+
+    set testline [gdb_get_line_number "set post-run breakpoint here"]
+
+    gdb_test "break $testline" ".*" \
+	"break at post-run"
+}
+
+proc run_trace_experiment {} {
+
+    gdb_test "continue" \
+	".*Breakpoint \[0-9\]+, main .*" \
+	"advance to trace begin"
+
+    gdb_test_no_output "tstart" "start trace experiment"
+
+    gdb_test "continue" \
+	".*Breakpoint \[0-9\]+, main .*" \
+	"advance through tracing"
+
+    gdb_test "tstatus" ".*Trace .*" "check on trace status"
+
+    gdb_test "tstop" "" ""
+}
+
+proc_with_prefix gdb_slow_trace_speed_test { } {
+
+    gdb_delete_tracepoints
+
+    gdb_test "print iters = init_iters" ".* = .*"
+
+    set testline [gdb_get_line_number "set tracepoint here"]
+
+    gdb_test "trace $testline if (globfoo != 12 && globfoo2 == 45)" \
+	"Tracepoint \[0-9\]+ at .*" \
+	"set slow tracepoint"
+
+    # Begin the test.
+    run_trace_experiment
+}
+
+proc_with_prefix gdb_fast_trace_speed_test { } {
+    global gdb_prompt
+
+    gdb_delete_tracepoints
+
+    gdb_test "print iters = init_iters" ".* = .*"
+
+    set run_ftrace 0
+
+    set testline [gdb_get_line_number "set tracepoint here"]
+
+    gdb_test_multiple "ftrace $testline if (globfoo != 12 && globfoo2 == 45)" \
+	"set conditional fast tracepoint" {
+	    -re "Fast tracepoint \[0-9\]+ at .*\r\n$gdb_prompt $" {
+		pass "set conditional fast tracepoint, done"
+		set run_ftrace 1
+	    }
+	    -re "May not have a fast tracepoint at .*\r\n$gdb_prompt $" {
+		pass "set conditional fast tracepoint, not allowed at line"
+	    }
+	}
+
+    # If the fast tracepoint couldn't be set, don't bother with the run.
+    if {$run_ftrace == 1} {
+
+	# Begin the test.
+	run_trace_experiment
+    }
+}
+
+proc gdb_trace_collection_test {} {
+
+    prepare_for_trace_test
+
+    gdb_slow_trace_speed_test
+
+    gdb_fast_trace_speed_test
+}
+
+clean_restart $executable
+gdb_load_shlib $ipalib
+
+runto_main
+
+if {![gdb_target_supports_trace]} {
+    unsupported "current target does not support trace"
+    return 1
+}
+
+# Body of test encased in a proc so we can return prematurely.
+gdb_trace_collection_test

@@ -1,0 +1,89 @@
+#   Copyright 1998-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file was written by Michael Snyder (msnyder@cygnus.com)
+
+load_lib "trace-support.exp"
+
+standard_testfile actions.c
+set executable $testfile
+require gdb_trace_common_supports_arch
+if { [gdb_compile "$srcdir/$subdir/$srcfile" $binfile \
+	  executable {debug nowarnings}] != "" } {
+    untested "failed to compile"
+    return -1
+}
+
+clean_restart $binfile
+runto_main
+
+if {![gdb_target_supports_trace]} {
+    unsupported "current target does not support trace"
+    return 1
+}
+
+#
+# test while-stepping dynamically (live target)
+#
+
+proc test_while_stepping { while_stepping } {
+    global fpreg
+    global decimal
+    global gdb_prompt
+    global executable
+
+    with_test_prefix "$while_stepping" {
+	clean_restart $executable
+
+	runto_main
+
+	## verify number of trace frames collected matches stepcount
+
+	gdb_delete_tracepoints
+	gdb_test "trace gdb_c_test" \
+	    "Tracepoint $decimal at .*" \
+	    "Set tracepoint at gdb_c_test"
+
+	gdb_trace_setactions "define $while_stepping <stepcount>" \
+	    "" \
+	    "collect \$$fpreg" "^$" \
+	    "$while_stepping 5" "^$" \
+	    "collect p" "^$" \
+	    "end" "^$" \
+	    "end" ""
+
+	gdb_test "tstart" ".*"
+
+	gdb_breakpoint "end" qualified
+	gdb_test "continue" \
+	    "Continuing.*Breakpoint $decimal, end.*" \
+	    "run trace experiment"
+
+	gdb_test "tstop" ".*"
+
+	gdb_tfind_test "frame 5 should be the last one collected" "5" "5"
+
+	gdb_test "tfind 6" "failed to find.*" \
+	    "trace stopped after 5 stepping frames"
+
+	gdb_test "tfind none" ".*"
+    }
+}
+
+# Test all while-stepping aliases.
+
+test_while_stepping "while-stepping"
+test_while_stepping "stepping"
+test_while_stepping "ws"

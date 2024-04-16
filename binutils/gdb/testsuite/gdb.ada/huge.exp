@@ -1,0 +1,94 @@
+# Copyright 2001-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Copied from gdb.base/huge.exp, written by Michael Snyder
+# (msnyder@redhat.com).
+
+# Define if you want to skip this test
+# (could be very time-consuming on remote targets with slow connection).
+#
+require {!target_info exists gdb,skip_huge_test}
+
+load_lib "ada.exp"
+
+require allow_ada_tests
+
+standard_ada_testfile foo
+
+set max [expr 2 * 1024 * 1024]
+set min 16
+
+set opts {}
+lappend opts debug
+
+set compilation_succeeded 0
+for { set size $max } { $size >= $min } { set size [expr $size / 2] } {
+    set try_opts [concat $opts [list additional_flags=-gnateDCRASHGDB=$size]]
+    # Use gdb_compile_ada_1 to prevent failed compilations from producing a
+    # FAIL.
+    if {[gdb_compile_ada_1 "${srcfile}" "${binfile}" executable \
+	     $try_opts] != "" } {
+	continue
+    }
+
+    set compilation_succeeded 1
+    break
+}
+require {expr $compilation_succeeded}
+
+foreach_with_prefix varname {Arr Packed_Arr} {
+    clean_restart ${testfile}
+
+    save_vars { timeout } {
+	set timeout 30
+
+	if {![runto "foo"]} {
+	    return
+	}
+
+	gdb_test_no_output "set max-value-size unlimited"
+	gdb_test_no_output "maint set per-command space on"
+	set re1 \
+	    [list \
+		 [string_to_regexp $] \
+		 $decimal \
+		 " = " \
+		 [string_to_regexp "(0 <repeats "] \
+		 $decimal \
+		 [string_to_regexp " times>)"]]
+	set re2 \
+	    [list \
+		 "Space used: $decimal" \
+		 [string_to_regexp " (+"] \
+		 "($decimal) for this command" \
+		 [string_to_regexp ")"]]
+	set re [multi_line [join $re1 ""]  [join $re2 ""]]
+	set space_used -1
+	gdb_test_multiple "print $varname" "print a very large data object" {
+	    -re -wrap $re {
+		set space_used $expect_out(1,string)
+		pass $gdb_test_name
+	    }
+	}
+
+	set test "not too much space used"
+	if { $space_used == -1 } {
+	    unsupported $test
+	} else {
+	    # At 56 passes with and without the fix, so use 55.
+	    gdb_assert {$space_used < [expr 55 * 4 * $size] } $test
+	}
+    }
+}

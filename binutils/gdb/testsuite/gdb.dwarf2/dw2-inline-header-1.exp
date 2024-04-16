@@ -1,0 +1,179 @@
+# Copyright 2020-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Setup a line table where:
+#
+# |      |      |      |      | Inline | Inline |
+# | Addr | File | Line | Stmt | Rng A  | Rng B  |
+# |------|------|------|------|--------|--------|
+# | 1    | 1    | 16   | Y    |        |        |
+# | 2    | 1    | 17   | Y    |        |        |
+# | 3    | 2    | 21   | Y    | X      |        |
+# | 4    | 2    | 22   | Y    | X      |        |
+# | 4    | 1    | 18   | N    | X      |        |
+# | 5    | 2    | 23   | N    | X      | X      |
+# | 6    | 1    | 24   | Y    |        |        |
+# | 7    | 1    | END  | Y    |        |        |
+# |------|------|------|------|--------|--------|
+#
+# Places a brekpoint at file 2, line 22.  Previously GDB would discard
+# the line table entry for this line due to switching files for the
+# file 1, line 18 non-statement line.  After patching however, GDB now
+# discards the file 1, line 18 entry instead, and the breakpoint at
+# line 22 should succeed.
+#
+# The two inlined subroutine ranges 'A' and 'B' represent two possible
+# ways that a compiler might represent this siuatio in the DWARF.
+#
+# Range 'B' is something that has been seen in the wild using GCC 8.2.
+# In this case the compilers range information is clearly wrong, but
+# this shouldn't impact the main point of the test.
+#
+# Range 'A' is a hypothetical case of how the compiler might choose to
+# represent this range, this has never been seen in the wild, but is
+# an improved debug experiece over range 'B'.  However, if we ever run
+# in to the situation where GDB can support the range 'A' test, or
+# support some real DWARF seen in the wild, then the range 'A' case
+# should be dropped in favour of supporting real world cases.  This is
+# included here as it "just worked" once the range 'B' case was
+# working.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+# The .c files use __attribute__.
+require is_c_compiler_gcc
+
+# Prepare and run the test.
+proc do_test { start_label func_name tag } {
+    global srcfile srcfile2 srcfile3 srcfile4 testfile
+
+    standard_testfile dw2-inline-header-lbls.c dw2-inline-header-${tag}.S \
+	dw2-inline-header.c dw2-inline-header.h
+
+    set build_options {nodebug optimize=-O1}
+
+    set asm_file [standard_output_file $srcfile2]
+    Dwarf::assemble $asm_file {
+	global srcdir subdir srcfile srcfile3 srcfile4 testfile
+	upvar build_options build_options
+	upvar start_label start_label
+	declare_labels lines_label callee_subprog_label
+
+	get_func_info main $build_options
+
+	cu {} {
+	    compile_unit {
+		{producer "gcc" }
+		{language @DW_LANG_C}
+		{name ${srcfile3}}
+		{low_pc 0 addr}
+		{stmt_list ${lines_label} DW_FORM_sec_offset}
+	    } {
+		callee_subprog_label: subprogram {
+		    {external 1 flag}
+		    {name callee}
+		    {inline 3 data1}
+		}
+		subprogram {
+		    {external 1 flag}
+		    {name main}
+		    {low_pc $main_start addr}
+		    {high_pc "$main_start + $main_len" addr}
+		} {
+		    inlined_subroutine {
+			{abstract_origin %$callee_subprog_label}
+			{low_pc $start_label addr}
+			{high_pc line_label_6 addr}
+			{call_file 1 data1}
+			{call_line 18 data1}
+		    }
+		}
+	    }
+	}
+
+	lines {version 2 default_is_stmt 1} lines_label {
+	    include_dir "${srcdir}/${subdir}"
+	    file_name "$srcfile3" 1
+	    file_name "$srcfile4" 1
+
+	    program {
+		DW_LNE_set_address line_label_1
+		DW_LNS_advance_line 15
+		DW_LNS_copy
+
+		DW_LNE_set_address line_label_2
+		DW_LNS_advance_line 1
+		DW_LNS_copy
+
+		DW_LNS_set_file 2
+		DW_LNE_set_address line_label_3
+		DW_LNS_advance_line 4
+		DW_LNS_copy
+
+		DW_LNE_set_address line_label_4
+		DW_LNS_advance_line 1
+		DW_LNS_copy
+
+		DW_LNS_advance_line -4
+		DW_LNS_set_file 1
+		DW_LNS_negate_stmt
+		DW_LNS_copy
+
+		DW_LNS_set_file 2
+		DW_LNE_set_address line_label_5
+		DW_LNS_advance_line 5
+		DW_LNS_copy
+
+		DW_LNS_negate_stmt
+		DW_LNS_set_file 1
+		DW_LNE_set_address line_label_6
+		DW_LNS_advance_line 1
+		DW_LNS_copy
+
+		DW_LNE_set_address line_label_7
+		DW_LNE_end_sequence
+	    }
+	}
+    }
+
+    if { [prepare_for_testing "failed to prepare" ${testfile}-${tag} \
+	      [list $srcfile $asm_file] $build_options] } {
+	return -1
+    }
+
+    if ![runto_main] {
+	return -1
+    }
+
+    # Delete all breakpoints so that the output of "info breakpoints"
+    # below will only contain a single breakpoint.
+    delete_breakpoints
+
+    # Place a breakpoint within the function in the header file.
+    gdb_breakpoint "${srcfile4}:22"
+
+    # Check that the breakpoint was placed where we expected.  It should
+    # appear at the requested line.  When the bug in GDB was present the
+    # breakpoint would be placed on one of the following lines instead.
+    gdb_test "info breakpoints" \
+	".* in $func_name at \[^\r\n\]+${srcfile4}:22\\y.*" \
+	"info breakpoints, $tag"
+}
+
+do_test line_label_3 "callee" "range-a"
+do_test line_label_5 "main" "range-b"

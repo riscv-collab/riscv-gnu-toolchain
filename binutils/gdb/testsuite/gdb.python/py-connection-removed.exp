@@ -1,0 +1,91 @@
+# Copyright (C) 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check that the gdb.connect_removed event triggers when we expect it
+# too.
+#
+# Checking this event has wider implications that simply some corner
+# of the Python API working or not.  The connection_removed event
+# triggers when the reference count of a process_stratum_target
+# reaches zero.  If these events stop triggering when expected then
+# GDB might be getting the reference counting on target_ops objects
+# wrong.
+
+load_lib gdb-python.exp
+
+require allow_python_tests
+
+standard_testfile py-connection.c
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+    return -1
+}
+
+if ![runto_main] then {
+    return 0
+}
+
+# Register a callback that will trigger when a connection is removed
+# (deleted) within GDB.
+gdb_test_multiline "Add connection_removed event" \
+    "python" "" \
+    "def connection_removed_handler(event):" "" \
+    "   num = event.connection.num" "" \
+    "   type = event.connection.type" "" \
+    "   print('Connection %d (%s) removed' % (num, type))" "" \
+    "gdb.events.connection_removed.connect (connection_removed_handler)" "" \
+    "end" ""
+
+if { [target_info exists gdb_protocol] } {
+    if { [target_info gdb_protocol] == "extended-remote" } {
+	set connection_type "extended-remote"
+    } else {
+	set connection_type "remote"
+    }
+} else {
+    set connection_type "native"
+}
+
+# Add an inferior that shares a connection with inferior 1.
+gdb_test "add-inferior" "Added inferior 2 on connection 1 \[^\r\n\]+"
+
+# Add an inferior with no connection.
+gdb_test "add-inferior -no-connection" "Added inferior 3"
+
+# Kill the first inferior.  If we are using the plain 'remote' protocol then
+# it as this point that the remote target connection is removed.  For the
+# 'extended-remote' and 'native' targets the connection is removed later.
+if { $connection_type == "remote" } {
+    gdb_test "with confirm off -- kill" \
+	"Connection 1 \\(remote\\) removed\r\n.*" "kill inferior"
+} else {
+    gdb_test "with confirm off -- kill" "" "kill inferior"
+}
+
+# Switch to inferior 3 (the one with no connection).
+gdb_test "inferior 3"
+
+# Remove inferior 1, not expecting anything interesting at this point.
+gdb_test_no_output "remove-inferiors 1"
+
+# Now removed inferior 2.  For the 'remote' target the connection has
+# already been removed (see above), but for 'extended-remote' and 'native'
+# targets, it is at this point that the connection is removed.
+if { $connection_type == "remote" } {
+    gdb_test_no_output "remove-inferiors 2"
+} else {
+    gdb_test "remove-inferiors 2" \
+	"Connection 1 \\(${connection_type}\\) removed"
+}

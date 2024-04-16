@@ -1,0 +1,97 @@
+# Copyright (C) 2019-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+standard_testfile
+
+if {[build_executable "failed to prepare" $testfile $srcfile {debug pthreads}] == -1} {
+    return -1
+}
+
+# At this point GDB will be busy handling the breakpoint hits and
+# re-resuming the program.  Even if GDB internally switches thread
+# context, the user should not notice it.  The following part of the
+# testcase ensures that.
+
+# Switch to thread EXPECTED_THR, and then confirm that the thread
+# stays selected.
+
+proc test_current_thread {expected_thr} {
+    global decimal
+    global gdb_prompt
+    global binfile
+
+    clean_restart $binfile
+
+    if {![runto "all_started"]} {
+	return
+    }
+
+    # Set a breakpoint that continuously fires but doeesn't cause a stop.
+    gdb_breakpoint [concat [gdb_get_line_number "set breakpoint here"] " if 0"]
+
+    gdb_test "thread $expected_thr" "Switching to thread $expected_thr .*" \
+	"switch to thread $expected_thr"
+
+    # Continue the program in the background.
+    set test "continue&"
+    gdb_test_multiple "continue&" $test {
+	-re "Continuing\\.\r\n$gdb_prompt " {
+	    pass $test
+	}
+    }
+
+    set test "current thread is $expected_thr"
+    set fails 0
+    for {set i 0} {$i < 10} {incr i} {
+	after 200
+
+	set cur_thread 0
+	gdb_test_multiple "thread" $test {
+	    -re "Current thread is ($decimal) .*$gdb_prompt " {
+		set cur_thread $expect_out(1,string)
+	    }
+	}
+
+	if {$cur_thread != $expected_thr} {
+	    incr fails
+	}
+    }
+
+    gdb_assert {$fails == 0} $test
+
+    # Explicitly interrupt the target, because in all-stop/remote,
+    # that's all we can do when the target is running.  If we don't do
+    # this, we'd time out trying to kill the target, while bringing
+    # down gdb & gdbserver.
+    set test "interrupt"
+    gdb_test_multiple $test $test {
+	-re "^interrupt\r\n$gdb_prompt " {
+	    gdb_test_multiple "" $test {
+		-re "Thread .* received signal SIGINT, Interrupt\\." {
+		    pass $test
+		}
+	    }
+	}
+    }
+}
+
+# Try once with each thread as current, to avoid missing a bug just
+# because some part of GDB manages to switch to the right thread by
+# chance.
+for {set thr 1} {$thr <= 3} {incr thr} {
+    with_test_prefix "thread $thr" {
+	test_current_thread $thr
+    }
+}

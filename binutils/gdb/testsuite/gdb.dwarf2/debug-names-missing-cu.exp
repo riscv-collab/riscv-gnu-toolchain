@@ -1,0 +1,78 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+standard_testfile _start.c debug-names.S
+
+set func_info_vars \
+    [get_func_info _start [list debug additional_flags=-nostartfiles]]
+
+# Create the DWARF.
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble {
+    filename $asm_file
+    add_dummy_cus 0
+} {
+    global func_info_vars
+    foreach var $func_info_vars {
+	global $var
+    }
+
+    cu { label cu_label } {
+	compile_unit {{language @DW_LANG_C}} {
+	    subprogram {
+		{DW_AT_name _start}
+		{DW_AT_low_pc $_start_start DW_FORM_addr}
+		{DW_AT_high_pc $_start_end DW_FORM_addr}
+	    }
+	    base_type {
+		{name int}
+		{byte_size 4 sdata}
+		{encoding @DW_ATE_signed}
+	    }
+	}
+    }
+
+    # This CU is missing from the cu list in .debug_names.
+    cu {} {
+    }
+
+    debug_names {} {
+	cu cu_label
+	name _start subprogram cu_label 0xEDDB6232
+	name int base_type cu_label 0xB888030
+    }
+}
+
+if [prepare_for_testing "failed to prepare" $testfile "${asm_file} ${srcfile}" \
+	[list additional_flags=-nostartfiles]] {
+    return -1
+}
+
+# Verify that .debug_names section is not ignored.
+set index [have_index $binfile]
+gdb_assert { [string equal $index ""] } ".debug_names not used"
+
+# Verify that initially no symtab is expanded.
+gdb_test_no_output "maint info symtabs"
+
+# Verify that _start is found in the debuginfo, rather than in the minimal
+# symbols, which would result instead in:
+#   $1 = {<text variable, no debug info>} $hex <_start>
+gdb_test "print _start" " = {void \\(\\)} $hex <_start>"

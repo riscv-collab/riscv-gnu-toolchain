@@ -1,0 +1,401 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test detaching from a process that is running and has threads
+# constantly hitting a breakpoint and stepping over it, in all
+# combinations of:
+#
+#  - maint target non-stop off/on
+#  - set non-stop on/off
+#  - displaced stepping on/off
+#
+# This stresses the edge cases of detaching while a displaced step or
+# an in-line step over are in progress.
+#
+# A fail mode is that the inferior process dies after being detached.
+# This can happen because e.g.:
+#
+# - GDB leaves a breakpoint installed behind, or
+#
+# - GDB leaves a thread running in the displaced step scratch buffer.
+#   With no debugger around to run the finish step, the thread runs
+#   off of the scratch buffer, with undefined results.
+#
+# To exercise this, the testcase reattaches to the process shortly
+# after detaching, ensuring the process is still alive and well.
+#
+# In addition, since GDB may pause threads of all processes for
+# stepping over a breakpoint, it needs to re-resume all threads if it
+# detaches from the process that was just stepping over the
+# breakpoint.  To ensure that, the testcase actually runs a second
+# process at the same time as the one that is used to test detaching.
+# After the first process is detached, the testcase sends a SIGUSR1 to
+# the second process.  If threads failed to be resumed, then the
+# SIGUSR1 is never reported to the user, resulting in timeout.  The
+# threads of this second process will also be constantly stepping over
+# a breakpoint, which has helped with exposing further corner case
+# bugs.
+
+require can_spawn_for_attach
+
+standard_testfile
+
+set bp_lineno [gdb_get_line_number "Set breakpoint here"]
+
+# Number of threads started by the program.
+set n_threads 10
+
+# Start GDB, configuring various settings according to the arguments.
+proc start_gdb_for_test {condition_eval target_non_stop non_stop displaced} {
+    save_vars { ::GDBFLAGS } {
+	append ::GDBFLAGS " -ex \"maint set target-non-stop $target_non_stop\""
+	append ::GDBFLAGS " -ex \"set non-stop $non_stop\""
+	append ::GDBFLAGS " -ex \"set displaced $displaced\""
+	append ::GDBFLAGS " -ex \"set schedule-multiple on\""
+	clean_restart $::binfile
+    }
+
+    gdb_test_no_output "set breakpoint condition-evaluation $condition_eval"
+}
+
+# Use the 'attach' command to attach to process with pid TESTPID.  Return true
+# if we believe GDB has attached and we are back at the GDB prompt, otherwise,
+# return false.
+proc attach_to {testpid} {
+    with_timeout_factor 2 {
+	set attached 0
+	set saw_attaching 0
+	gdb_test_multiple "attach $testpid" "attach" {
+	    -re "Attaching to program.*process $testpid\r\n" {
+		set saw_attaching 1
+		exp_continue
+	    }
+	    -re "new threads in iteration" {
+		# Seen when "set debug libthread_db" is on.
+		exp_continue
+	    }
+	    -re "Reading symbols from|Expanding full symbols from" {
+		# Prevent -readnow timeout.
+		exp_continue
+	    }
+	    -re "is a zombie - the process has already terminated.*$::gdb_prompt " {
+		fail $gdb_test_name
+	    }
+	    -re "Unable to attach: .*$::gdb_prompt " {
+		fail $gdb_test_name
+	    }
+	    -re "\r\n$::gdb_prompt " {
+		if { $saw_attaching } {
+		    set attached 1
+		    pass $gdb_test_name
+		} else {
+		    fail $gdb_test_name
+		}
+	    }
+	}
+    }
+
+    return $attached
+}
+
+# After attaching to a multi-threaded inferior in non-stop mode, we expect to
+# see a stop message from each thread.  This proc waits for all of these stop
+# messages.  TID_RE is a regexp used to match the thread-id of the stopped
+# thread.
+#
+# Return true if we saw a stop from each of the expected threads (based on the
+# global N_THREADS value), otherwise, return false.
+proc check_stops_after_non_stop_attach {tid_re} {
+    set any "\[^\r\n\]*"
+
+    # In non-stop, we will see one stop per thread after the prompt.
+    set stops 0
+    set test "seen all stops"
+    for {set thread 1} { $thread <= $::n_threads } { incr thread } {
+	if {[gdb_test_multiple "" $test {
+	    -re "Thread ${tid_re} ${any} stopped" {
+		incr stops
+	    }
+	}] != 0} {
+	    break
+	}
+    }
+
+    # If we haven't seen all stops, then the
+    # gdb_test_multiple in the loop above will have
+    # already issued a FAIL.
+    if {$stops != $::n_threads} {
+	return false
+    }
+    pass $test
+    return true
+}
+
+# Prepare for a single test iteration.  TESTPID is the pid of the process GDB
+# will be attached too.  NON_STOP indicates if GDB is configured in non-stop
+# mode or not.  ATTEMPT is the current attempt number, and ATTEMPTS is the
+# maximum number of attempts we plan to run.  TID_RE is a string used to match
+# against a thread-id in GDB's stop messages.
+#
+# Return true if everything is prepared correctly, otherwise return false.
+proc prepare_test_iter {testpid non_stop attempt attempts tid_re} {
+    if {![attach_to $testpid]} {
+	return false
+    }
+
+    if {$non_stop} {
+	if {![check_stops_after_non_stop_attach $tid_re]} {
+	    return false
+	}
+    }
+
+    gdb_test "break ${::srcfile}:${::bp_lineno} if 0" "Breakpoint.*" \
+	"break LOC if 0"
+
+    if {$attempt < $attempts} {
+	# Kick the time out timer for another round.
+	gdb_test "print again = 1" " = 1" "reset timer in the inferior"
+	# Show the time we had left in the logs, in case
+	# something goes wrong.
+	gdb_test "print seconds_left" " = .*"
+    }
+
+    if {$non_stop} {
+	set cont_cmd "continue -a &"
+    } else {
+	set cont_cmd "continue &"
+    }
+
+    set cont_cmd_re [string_to_regexp $cont_cmd]
+    gdb_test_multiple $cont_cmd "" {
+	-re "^$cont_cmd_re\r\nContinuing\.\r\n$::gdb_prompt " {
+	    pass $gdb_test_name
+	}
+    }
+
+    return true
+}
+
+# The test proper.  See the description at the top of the file.
+proc_with_prefix test_detach_command {condition_eval target_non_stop non_stop displaced} {
+    set test_spawn_id [spawn_wait_for_attach $::binfile]
+    set testpid [spawn_id_get_pid $test_spawn_id]
+
+    start_gdb_for_test $condition_eval $target_non_stop $non_stop $displaced
+
+    gdb_test "add-inferior" "Added inferior 2.*"
+    gdb_test "inferior 2" "Switching to .*"
+
+    gdb_load $::binfile
+    if {![runto setup_done]} {
+	fail "can't run to setup_done"
+	kill_wait_spawned_process $test_spawn_id
+	return
+    }
+
+    # Get the PID of the test process.
+    set pid_inf2 ""
+    gdb_test_multiple "p mypid" "get pid of inferior 2" {
+	-re " = ($::decimal)\r\n$::gdb_prompt $" {
+	    set pid_inf2 $expect_out(1,string)
+	    pass $gdb_test_name
+	}
+    }
+
+    set attempts 3
+    for {set attempt 1} { $attempt <= $attempts } { incr attempt } {
+	with_test_prefix "iter $attempt" {
+	    gdb_test "inferior 1" "Switching to .*"
+
+	    if {![prepare_test_iter $testpid $non_stop \
+		      $attempt $attempts "$::decimal\.$::decimal"]} {
+		kill_wait_spawned_process $test_spawn_id
+		return
+	    }
+
+	    set running_count 0
+	    set interrupted 0
+	    set running_expected [expr ($::n_threads + 1) * 2]
+	    gdb_test_multiple "info threads" "threads running" {
+		-re "\\(running\\)" {
+		    incr running_count
+		    exp_continue
+		}
+		-re "Cannot execute this command while the target is running.*$::gdb_prompt $" {
+		    # Testing against a remote server that doesn't do
+		    # non-stop mode.  Explicitly interrupt.  This
+		    # doesn't test the same code paths in GDB, but
+		    # it's still something.
+		    set interrupted 1
+		    gdb_test_multiple "interrupt" "" {
+			-re "$::gdb_prompt " {
+			    gdb_test_multiple "" $gdb_test_name {
+				-re "received signal SIGINT, Interrupt" {
+				    pass $gdb_test_name
+				}
+			    }
+			}
+		    }
+		}
+		-re "$::gdb_prompt " {
+		}
+	    }
+
+	    if { !$interrupted } {
+		set iterations 0
+		set max_iterations 10
+		while { $running_count < $running_expected } {
+		    sleep 1
+		    set running_count 0
+		    gdb_test_multiple "info threads" "threads running" {
+			-re "\\(running\\)" {
+			    incr running_count
+			    exp_continue
+			}
+			-re "$::gdb_prompt " {
+			}
+		    }
+		    incr iterations
+		    if { $iterations == $max_iterations } {
+			break
+		    }
+		}
+		gdb_assert {$running_count == $running_expected} \
+		    "all threads running"
+	    }
+
+	    gdb_test "detach" "Detaching from.*"
+
+	    if {!$interrupted} {
+		# Now test whether inferior 2's thread were really left
+		# running.  Currently an inline step-over stops all
+		# threads of all processes.  If detach aborts such a step
+		# over, then threads of other inferiors should be
+		# re-resumed.  Test for that by sending a signal to
+		# inferior 2.
+		remote_exec target "kill -USR1 ${pid_inf2}"
+
+		gdb_test_multiple "" "stop with SIGUSR1" {
+		    -re "received signal SIGUSR1" {
+			pass $gdb_test_name
+		    }
+		}
+	    }
+
+	    delete_breakpoints
+	}
+    }
+    kill_wait_spawned_process $test_spawn_id
+}
+
+# Similar to the proc above, but this time, instead of detaching using
+# the 'detach' command, we quit GDB, this will also trigger a detach, but
+# through a slightly different path, which can expose different bugs.
+proc_with_prefix test_detach_quit {condition_eval target_non_stop \
+	non_stop displaced} {
+    # If debugging with target remote, check whether the all-stop variant
+    # of the RSP is being used.  If so, we can't run the background tests.
+    if {!$non_stop
+	&& [target_info exists gdb_protocol]
+	&& ([target_info gdb_protocol] == "remote"
+	    || [target_info gdb_protocol] == "extended-remote")} {
+	start_gdb_for_test $condition_eval $target_non_stop \
+	    $non_stop $displaced
+
+	if {![is_target_non_stop]} {
+	    return
+	}
+    }
+
+    set test_spawn_id [spawn_wait_for_attach $::binfile]
+    set testpid [spawn_id_get_pid $test_spawn_id]
+
+    set attempts 3
+    for {set attempt 1} { $attempt <= $attempts } { incr attempt } {
+	with_test_prefix "iter $attempt" {
+
+	    start_gdb_for_test $condition_eval $target_non_stop \
+		$non_stop $displaced
+
+	    if {![prepare_test_iter $testpid $non_stop \
+		      $attempt $attempts "$::decimal"]} {
+		kill_wait_spawned_process $test_spawn_id
+		return
+	    }
+
+	    gdb_test_multiple "with confirm off -- quit" "" {
+		eof {
+		    pass $gdb_test_name
+		}
+	    }
+	}
+    }
+
+    kill_wait_spawned_process $test_spawn_id
+}
+
+# The test program exits after a while, in case GDB crashes.  Make it
+# wait at least as long as we may wait before declaring a time out
+# failure.
+set options { "additional_flags=-DTIMEOUT=$timeout" debug pthreads }
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile $options] == -1} {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+# Probe support for "set breakpoint condition-evaluation target".
+# This setting influences who steps over the breakpoint, the (remote)
+# target (e.g. gdbserver) or gdb, thus exposing issues on either the
+# target or gdb.
+set supports_condition_eval_target 1
+set cmd "set breakpoint condition-evaluation target"
+gdb_test_multiple $cmd "probe condition-evaluation target support" {
+    -re "warning: Target does not support breakpoint condition evaluation.\r\nUsing host evaluation mode instead.\r\n$gdb_prompt $" {
+	# Target doesn't support breakpoint condition evaluation on
+	# its side.
+	set supports_condition_eval_target 0
+	pass $gdb_test_name
+    }
+    -re "^$cmd\r\n$gdb_prompt $" {
+	pass $gdb_test_name
+    }
+}
+
+foreach_with_prefix breakpoint-condition-evaluation {"host" "target"} {
+    if {!$supports_condition_eval_target && ${breakpoint-condition-evaluation} == "target"} {
+	continue
+    }
+
+    foreach_with_prefix target-non-stop {"off" "on"} {
+	foreach_with_prefix non-stop {"off" "on"} {
+	    if {${non-stop} && !${target-non-stop}} {
+		# "set non-stop" overrides "maint set
+		# target-non-stop", no use testing this combination.
+		continue
+	    }
+
+	    foreach_with_prefix displaced {"off" "auto"} {
+		test_detach_command ${breakpoint-condition-evaluation} \
+		    ${target-non-stop} ${non-stop} ${displaced}
+		test_detach_quit ${breakpoint-condition-evaluation} \
+		    ${target-non-stop} ${non-stop} ${displaced}
+	    }
+	}
+    }
+}

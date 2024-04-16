@@ -1,0 +1,257 @@
+# Copyright 2002-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file tests that GDB's console can be accessed via the MI.
+# Specifically, we are testing the "interpreter-exec" command and that
+# the commands that are executed via this command are properly executed.
+# Console commands executed via MI should use MI output wrappers, MI event
+# handlers, etc.
+
+load_lib mi-support.exp
+set MIFLAGS "-i=mi"
+
+standard_testfile basics.c
+
+if  { [gdb_compile "${srcdir}/${subdir}/${srcfile}" "${binfile}" executable {debug}] != "" } {
+     untested "failed to compile"
+     return -1
+}
+
+mi_clean_restart $binfile
+
+mi_gdb_test "-interpreter-exec" \
+  {\^error,msg="-interpreter-exec: Usage: -interpreter-exec interp command"} \
+  "-interpreter-exec with no arguments"
+
+mi_gdb_test "-interpreter-exec console" \
+  {\^error,msg="-interpreter-exec: Usage: -interpreter-exec interp command"} \
+  "-interpreter-exec with one argument"
+
+mi_gdb_test "-interpreter-exec bogus command" \
+  {\^error,msg="-interpreter-exec: could not find interpreter \\\"bogus\\\""} \
+  "-interpreter-exec with bogus interpreter"
+
+set msg {Undefined command: \\\"bogus\\\"\.  Try \\\"help\\\"\.}
+mi_gdb_test "-interpreter-exec console bogus" \
+    "&\\\"$msg\\\\n\\\".*\\^error,msg=\\\"$msg\\\".*" \
+  "-interpreter-exec console bogus"
+
+# NOTE: cagney/2003-02-03: Not yet.
+# mi_gdb_test "-interpreter-exec console \"file $binfile\"" \
+#   {(=.*)+\^done} \
+#   "-interpreter-exec console \"file \$binfile\""
+mi_gdb_test "-interpreter-exec console \"file $binfile\"" \
+  {~"Reading symbols from .*mi-cli...\\n".*} \
+  "-interpreter-exec console \"file \$binfile\""
+
+mi_runto_main
+
+set line_main_head    [gdb_get_line_number "main ("]
+set line_main_body    [expr $line_main_head + 2]
+set line_main_hello   [gdb_get_line_number "Hello, World!"]
+set line_main_return  [expr $line_main_hello + 2]
+set line_main_callme_2 [expr $line_main_return + 1]
+set line_callee4_head [gdb_get_line_number "callee4 ("]
+set line_callee4_body [expr $line_callee4_head + 2]
+set line_callee4_next [expr $line_callee4_body + 1]
+set line_callee4_next_step [expr $line_callee4_next + 3]
+
+mi_gdb_test "-interpreter-exec console \"set args foobar\"" \
+  ".*=cmd-param-changed,param=\"args\",value=\"foobar\".*\\^done" \
+  "-interpreter-exec console \"set args foobar\""
+
+mi_gdb_test "-interpreter-exec console \"show args\"" \
+  {\~"Argument list to give program being debugged when it is started is \\\"foobar\\\"\.\\n".*\^done} \
+  "-interpreter-exec console \"show args\""
+
+mi_gdb_test "-interpreter-exec console \"break callee4\"" \
+    {(&.*)*.*~"Breakpoint 2 at.*\\n".*=breakpoint-created,bkpt=\{number="2",type="breakpoint".*\}.*\n\^done} \
+    "-interpreter-exec console \"break callee4\""
+
+mi_gdb_test "-interpreter-exec console \"info break\"" \
+  {\~"Num[ \t]*Type[ \t]*Disp[ \t]*Enb[ \t]*Address[ \t]*What\\n".*~"2[ \t]*breakpoint[ \t]*keep[ \t]*y[ \t]*0x[0-9A-Fa-f]+[ \t]*in callee4 at .*basics.c:[0-9]+\\n".*\^done} \
+  "-interpreter-exec console \"info break\""
+
+mi_gdb_test "-interpreter-exec console \"set listsize 1\"" \
+  ".*=cmd-param-changed,param=\"listsize\",value=\"1\".*\\^done" \
+  "-interpreter-exec console \"set listsize 1\""
+
+# {.*\~"32[ \t(\\t)]*callee1.*\\n".*\^done }
+mi_gdb_test "-interpreter-exec console \"list\"" \
+  ".*\~\"$line_main_body\[\\\\t \]*callee1.*;\\\\n\".*\\^done" \
+  "-interpreter-exec console \"list\""
+
+mi_execute_to "exec-continue" "breakpoint-hit" "callee4" "" ".*basics.c" $line_callee4_body \
+    { "" "disp=\"keep\"" } \
+    "continue to callee4"
+
+mi_gdb_test "100-interpreter-exec console \"delete 2\"" \
+    {.*=breakpoint-deleted,id=\"2\".*\^done} \
+    "-interpreter-exec console \"delete 2\""
+
+# NOTE: cagney/2003-02-03: Not yet.
+# mi_gdb_test "200-interpreter-exec console \"up\"" \
+#   {.*=selected-frame-level-changed,level="1".*\^done} \
+#   "-interpreter-exec console \"up\""
+mi_gdb_test "200-interpreter-exec console \"up\"" \
+  {~"#.*".*200\^done} \
+  "-interpreter-exec console \"up\""
+
+# NOTE: cagney/2003-02-03: Not yet.
+# mi_gdb_test "300-interpreter-exec console \"down\"" \
+#   {.*=selected-frame-level-changed,level="0".*\^done} \
+#   "-interpreter-exec console \"down\""
+mi_gdb_test "300-interpreter-exec console \"down\"" \
+  {~"#.*".*300\^done} \
+  "-interpreter-exec console \"down\""
+
+# NOTE: cagney/2003-02-03: Not yet.
+# mi_gdb_test "-interpreter-exec console \"frame 2\"" \
+#   {.*=selected-frame-level-changed,level="2".*\^done} \
+#   "-interpreter-exec console \"frame 2\""
+mi_gdb_test "400-interpreter-exec console \"frame 2\"" \
+  {~"#.*".*400\^done} \
+  "-interpreter-exec console \"frame 2\""
+
+# NOTE: cagney/2003-02-03: Not yet.
+# mi_gdb_test "-stack-select-frame 0" \
+#   {.*=selected-frame-level-changed,level="0".*\^done} \
+#   "-stack-select-frame 0"
+mi_gdb_test "500-stack-select-frame 0" \
+  {500\^done} \
+  "-stack-select-frame 0"
+
+mi_execute_to "interpreter-exec console step" "end-stepping-range" "callee4" "" ".*basics.c" $line_callee4_next \
+    "" "check *stopped from CLI command"
+
+mi_send_resuming_command "exec-step" "-exec-step to line \$line_callee4_next_step"
+
+# Test that the new current source line is _not_ output, given we
+# executed MI's -exec-next, not CLI's 'next' command.
+
+set output [mi_gdb_expect_cli_output "\\*stopped" "collect CLI output for -exec-step"]
+
+set test "-exec-step does not produce CLI step output"
+if {[regexp "A + B" "$output"]} {
+    fail $test
+} else {
+    pass $test
+}
+
+mi_expect_stop "end-stepping-range" "callee4" "" ".*basics.c" $line_callee4_next_step \
+    "" "check *stopped from CLI command 2"
+
+# Test that CLI's "finish" command prints the function's return value
+# to both the CLI and MI streams, and that the same result variable is
+# printed to both streams.
+with_test_prefix "CLI finish" {
+    mi_send_resuming_command "interpreter-exec console finish" "send CLI command"
+
+    set output [mi_gdb_expect_cli_output "\\*stopped" "collect CLI output"]
+    gdb_assert {[regexp \
+		     "callee3 .* at .*basics.c:.*.*Value returned is .1 = 0\\\\n" \
+		     $output]} \
+	"check CLI output"
+
+    mi_expect_stop "function-finished" "callee3" ".*" \
+	".*basics.c" ".*" \
+	",gdb-result-var=\".1\",return-value=\"0\"" \
+	"check MI output"
+}
+
+mi_gdb_test "600-break-insert -t basics.c:$line_main_hello" \
+	{600\^done,bkpt=.number="3",type="breakpoint".*\}} \
+	"-break-insert -t basics.c:\$line_main_hello"
+
+# Test that breakpoint events are always mirrored to the CLI output
+# stream (both sync and async modes).
+mi_send_resuming_command "exec-continue" "-exec-continue to line \$line_main_hello"
+
+set output [mi_gdb_expect_cli_output "\\*stopped" "collect CLI output for breakpoint hit"]
+set test "breakpoint hit produces CLI output"
+set pattern "\\\\nTemporary breakpoint 3, main \\(\\) at \[^\n\]*basics.c:$line_main_hello\\\\n\[^\n\]+Hello"
+
+if {[regexp $pattern $output]} {
+    pass $test
+} else {
+    fail $test
+}
+
+# Test the MI output.
+mi_expect_stop "breakpoint-hit" "main" "" ".*basics.c" \
+    $line_main_hello { "" "disp=\"del\"" } "temporary breakpoint output hit in MI"
+
+# Test that the token is output even for CLI commands
+# Also test that *stopped includes frame information.
+mi_gdb_test "34 next" \
+    ".*34\\\^running.*\\*running,thread-id=\"all\"" \
+    "34 next: run"
+
+# Test that the new current source line is output to the console
+# stream, given we executed the console 'next' command, not
+# -exec-next.
+set test "34 next: CLI output"
+gdb_expect {
+    -re "~\"$line_main_return\[^\r\n\]+\r\n" {
+	pass $test
+    }
+    timeout {
+	fail "$test (timeout)"
+    }
+}
+
+mi_expect_stop "end-stepping-range" "main" "" ".*basics.c" $line_main_return "" \
+    "34 next: stop"
+
+mi_gdb_test "-interpreter-exec console \"list\"" \
+  "\~\"$line_main_return\[\\\\t ]*callme \\(1\\);\\\\n\".*\\^done" \
+  "-interpreter-exec console \"list\" at basics.c:\$line_main_return"
+
+mi_gdb_test "600-break-insert -t basics.c:$line_main_callme_2" \
+	{600\^done,bkpt=.number="4",type="breakpoint".*\}} \
+	"-break-insert -t basics.c:\$line_main_callme_2"
+
+mi_execute_to "exec-continue" "breakpoint-hit" "main" "" ".*basics.c" \
+    $line_main_callme_2 { "" "disp=\"del\"" } \
+    "-exec-continue to line \$line_main_callme_2"
+
+# Restore the listsize back to the default.
+mi_gdb_test "-interpreter-exec console \"set listsize 10\"" \
+  ".*=cmd-param-changed,param=\"listsize\",value=\"10\".*\\^done" \
+  "-interpreter-exec console \"set listsize 10\""
+
+# "list" should show 10 lines centered on where the program stopped.
+set first_list_line [expr $line_main_callme_2 - 5]
+mi_gdb_test "-interpreter-exec console \"list\"" \
+    ".*\~\"$first_list_line.*\\^done" \
+    "-interpreter-exec console \"list\" at basics.c:\$line_main_callme_2"
+
+mi_gdb_test "-interpreter-exec console \"help set args\"" \
+  {\~"Set argument list to give program being debugged when it is started\.\\nFollow this command with any number of args, to be passed to the program\.".*\^done} \
+  "-interpreter-exec console \"help set args\""
+
+# NOTE: cagney/2003-02-03: Not yet.
+# mi_gdb_test "-interpreter-exec console \"set \$pc=0x0\"" \
+#   {.*=target-changed.*\^done} \
+#   "-interpreter-exec console \"set \$pc=0x0\""
+mi_gdb_test "888-interpreter-exec console \"set \$pc=0x0\"" \
+  {888\^done} \
+  "-interpreter-exec console \"set \$pc=0x0\""
+
+#mi_gdb_test "-interpreter-exec console \"\"" \
+  {} \
+  "-interpreter-exec console \"\""
+
+mi_gdb_exit

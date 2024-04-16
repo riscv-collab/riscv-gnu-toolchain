@@ -1,0 +1,115 @@
+# Copyright 2019-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check how GDB handles printing pointers, both when associated, and
+# when not associated.
+
+standard_testfile "pointers.f90"
+load_lib fortran.exp
+
+require allow_fortran_tests
+
+if { [prepare_for_testing ${testfile}.exp ${testfile} ${srcfile} \
+    {debug f90 quiet}] } {
+    return -1
+}
+
+if ![fortran_runto_main] {
+    return -1
+}
+
+# Depending on the compiler being used, the type names can be printed
+# differently.
+set logical [fortran_logical4]
+set real [fortran_real4]
+set int [fortran_int4]
+set complex [fortran_complex4]
+
+# Print the inferior variable VAR_NAME, and check that the result
+# matches the string TYPE.
+proc check_pointer_type { var_name type } {
+    gdb_test "ptype ${var_name}" \
+	"type = PTR TO -> \\( ${type} \\)"
+}
+
+gdb_breakpoint [gdb_get_line_number "Before pointer assignment"]
+gdb_continue_to_breakpoint "Before pointer assignment"
+
+with_test_prefix "pointers not associated" {
+    check_pointer_type "logp" "$logical"
+    check_pointer_type "comp" "$complex"
+    check_pointer_type "charp" "character\\*1"
+    check_pointer_type "charap" "character\\*3"
+    check_pointer_type "intp" "$int"
+
+    # Current gfortran seems to not mark 'intap' as a pointer.  Intels
+    # Fortran compiler does though.
+    set test "ptype intap"
+    gdb_test_multiple "ptype intap" $test {
+	-re "type = PTR TO -> \\( $int \\(:,:\\) \\)\r\n$gdb_prompt $" {
+	    pass $test
+	}
+	-re "type = $int \\(:,:\\)\r\n$gdb_prompt $" {
+	    pass $test
+	}
+    }
+
+    check_pointer_type "realp" "$real"
+    check_pointer_type "twop" \
+	[multi_line "Type two" \
+	     "    $int, allocatable :: ivla1\\(:\\)" \
+	     "    $int, allocatable :: ivla2\\(:,:\\)" \
+	     "End Type two"]
+}
+
+gdb_test "ptype two" \
+    [multi_line "type = Type two" \
+	 "    $int, allocatable :: ivla1\\(:\\)" \
+	 "    $int, allocatable :: ivla2\\(:,:\\)" \
+	 "End Type two"]
+
+gdb_breakpoint [gdb_get_line_number "Before value assignment"]
+gdb_continue_to_breakpoint "Before value assignment"
+gdb_test "ptype twop" \
+    [multi_line "type = PTR TO -> \\( Type two" \
+                "    $int, allocatable :: ivla1\\(:\\)" \
+                "    $int, allocatable :: ivla2\\(:,:\\)" \
+                "End Type two \\)"]
+
+gdb_breakpoint [gdb_get_line_number "After value assignment"]
+gdb_continue_to_breakpoint "After value assignment"
+gdb_test "ptype logv" "type = $logical"
+gdb_test "ptype comv" "type = $complex"
+gdb_test "ptype charv" "type = character\\*1"
+gdb_test "ptype chara" "type = character\\*3"
+gdb_test "ptype intv" "type = $int"
+gdb_test "ptype inta" "type = $int \\(10,2\\)"
+gdb_test "ptype realv" "type = $real"
+
+gdb_test "ptype logp" "type = PTR TO -> \\( $logical \\)"
+gdb_test "ptype comp" "type = PTR TO -> \\( $complex \\)"
+gdb_test "ptype charp" "type = PTR TO -> \\( character\\*1 \\)"
+gdb_test "ptype charap" "type = PTR TO -> \\( character\\*3 \\)"
+gdb_test "ptype intp" "type = PTR TO -> \\( $int \\)"
+set test "ptype intap"
+gdb_test_multiple $test $test {
+    -re "type = $int \\(10,2\\)\r\n$gdb_prompt $" {
+        pass $test
+    }
+    -re "type = PTR TO -> \\( $int \\(10,2\\)\\)\r\n$gdb_prompt $" {
+        pass $test
+    }
+}
+gdb_test "ptype realp" "type = PTR TO -> \\( $real \\)"

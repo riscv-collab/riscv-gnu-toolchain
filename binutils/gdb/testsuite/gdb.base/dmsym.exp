@@ -1,0 +1,78 @@
+# Copyright (C) 2011-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+set testfile dmsym_main
+
+# Build dmsym_main using two C files:
+#   - dmsym.c, which needs to be built without debug info;
+#   - dmsym_main.c, which needs to be build with debug info.
+# This is why we use gdb_compile instead of relying on the usual
+# call to prepare_for_testing.
+
+set dmsym_o [standard_output_file dmsym.o]
+
+if {[gdb_compile "${srcdir}/${subdir}/dmsym.c" \
+                 $dmsym_o \
+                 object {}] != ""} {
+  untested "failed to compile object file"
+  return -1
+}
+
+if {[gdb_compile \
+      [list ${srcdir}/${subdir}/dmsym_main.c $dmsym_o] \
+      [standard_output_file ${testfile}] \
+      executable {debug}] != ""} {
+    untested "failed to compile"
+    return -1
+}
+
+clean_restart ${testfile}
+
+# Some convenient regular expressions...
+set num "\[0-9\]+"
+set addr "0x\[0-9a-zA-Z\]+"
+
+# Verify that setting a breakpoint on `test_minsym' only results in
+# one location found.  A mistake would be to also insert a breakpoint
+# in the test_minsym data symbol in dmsym.c.  Despite the fact that
+# there is no debugging info available, this is a data symbol and thus
+# should not be used for breakpoint purposes.
+
+gdb_test "break test_minsym" \
+         "Breakpoint $num at $addr.: file .*dmsym_main\\.c, line $num\\."
+
+# However, verify that the `info line' command, on the other hand,
+# finds both locations.
+
+gdb_test "info line test_minsym" \
+         "Line $num of \".*dmsym_main\\.c\" .*\r\nNo line number information available for address $addr <test_minsym>"
+
+# Now, run the program until we get past the call to test_minsym.
+# Except when using hardware breakpoints, inferior behavior is going
+# to be affected if a breakpoint was incorrectly inserted at
+# test_minsym.
+
+gdb_breakpoint dmsym_main.c:[gdb_get_line_number "BREAK" dmsym_main.c]
+
+gdb_run_cmd
+gdb_test "" \
+         "Breakpoint $num, test_minsym \\(\\) at.*" \
+         "run until breakpoint at BREAK"
+
+gdb_test "continue" \
+         "Breakpoint $num, main \\(\\) at.*"
+
+gdb_test "print val" \
+         " = 124"

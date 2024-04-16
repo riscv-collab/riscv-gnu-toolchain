@@ -1,0 +1,170 @@
+# Copyright 2012-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test case for forgotten hw-watchpoints after fork()-off of a process.
+
+# The allow_hw_watchpoint_tests checks if watchpoints are supported by the
+# processor.  On PowerPC, the check runs a small test program under gdb
+# to determine if the Power processor supports HW watchpoints.  The check
+# must be done before starting the test so as to not disrupt the execution
+# of the actual test.
+
+set allow_hw_watchpoint_tests_p [allow_hw_watchpoint_tests]
+
+set testfile watchpoint-fork
+
+# Set DEBUG to 0 or 1 in sources
+set debug 0
+
+proc test {type symbol} {
+    global allow_hw_watchpoint_tests_p
+    global debug
+    with_test_prefix "$type" {
+	global testfile subdir srcdir gdb_prompt
+
+	set srcfile_type ${srcdir}/${subdir}/${testfile}-${type}.c
+
+	# no threads
+
+	with_test_prefix "singlethreaded" {
+	    set executable ${testfile}-${type}-st
+	    set srcfile_main ${testfile}-st.c
+	    if {[build_executable $testfile.exp $executable \
+		     [list $srcfile_main ${testfile}-${type}.c] \
+		     [list debug additional_flags=-D$symbol \
+			  additional_flags=-DDEBUG=$debug]] == -1} {
+		return -1
+	    }
+
+	    clean_restart $executable
+
+	    if {!$allow_hw_watchpoint_tests_p} {
+		# The software watchpoint functionality is in GDB an unrelated test.
+		gdb_test_no_output "set can-use-hw-watchpoints 0"
+		# Software watchpoints can be quite slow on remote targets
+		# on this test because it ends up single-stepping through
+		# code to initialize dynamic libraries, etc.
+		set factor 20
+	    } else {
+		set factor 1
+	    }
+
+	    gdb_test "show detach-on-fork" "Whether gdb will detach the child of a fork is on\\."
+	    gdb_test_no_output "set follow-fork-mode $type"
+	    gdb_test "show follow-fork-mode" "Debugger response to a program call of fork or vfork is \"$type\"\\."
+	    # Testcase uses it for the `follow-fork-mode child' type.
+	    gdb_test "handle SIGUSR1 nostop noprint pass" "No\[ \t\]+No\[ \t\]+Yes.*"
+
+	    if ![runto_main] {
+		return
+	    }
+
+	    gdb_test "watch var" "atchpoint \[0-9\]+: var" "set the watchpoint"
+
+	    # It is never hit but it should not be left over in the fork()ed-off child.
+	    if {![allow_hw_breakpoint_tests]} {
+		set hbreak "break"
+	    } else {
+		set hbreak "hbreak"
+	    }
+	    gdb_test "$hbreak marker"
+
+	    gdb_breakpoint "mark_exit"
+
+	    with_timeout_factor $factor {
+		gdb_test "continue" \
+		    "reakpoint \[0-9\]+, marker.*" "hardware breakpoints work"
+		gdb_test "continue" \
+		    "atchpoint \[0-9\]+: var.*Old value = 0.*New value = 1.*forkoff *\\(1\\).*" "watchpoints work"
+		gdb_test "continue" \
+		    "reakpoint \[0-9\]+, marker.*" "breakpoint after the first fork"
+		gdb_test "continue" \
+		    "atchpoint \[0-9\]+: var.*Old value = 1.*New value = 2.*forkoff *\\(2\\).*" "watchpoint after the first fork"
+		gdb_test "continue" \
+		    "reakpoint \[0-9\]+, marker.*" "breakpoint after the second fork"
+		gdb_test "continue" \
+		    "atchpoint \[0-9\]+: var.*Old value = 2.*New value = 3.*mark_exit \\(\\);" "watchpoint after the second fork"
+		gdb_test "continue" "Continuing\\..*\r\n(Thread .* hit )?Breakpoint \[0-9\]+, mark_exit .*" "finish"
+	    }
+	}
+
+	# threads
+
+	if {!$allow_hw_watchpoint_tests_p} {
+	    # Watchpoint hits would get detected in unexpected threads.
+	    return
+	}
+
+	with_test_prefix "multithreaded" {
+	    set executable ${testfile}-${type}-mt
+	    set srcfile_main ${srcdir}/${subdir}/${testfile}-mt.c
+	    if { [gdb_compile_pthreads "${srcfile_main} ${srcfile_type}" \
+		      [standard_output_file ${executable}] executable \
+		      [list debug "additional_flags=-D$symbol" \
+			   "additional_flags=-DDEBUG=$debug" \
+			   "-DTHREAD"]] != "" } {
+		untested "failed to compile"
+		return
+	    }
+	    clean_restart $executable
+
+	    gdb_test_no_output "set follow-fork-mode $type"
+	    # Testcase uses it for the `follow-fork-mode child' type.
+	    gdb_test "handle SIGUSR1 nostop noprint pass" "No\[ \t\]+No\[ \t\]+Yes.*"
+
+	    if ![runto_main] {
+		return
+	    }
+
+	    gdb_test "watch var" "atchpoint \[0-9\]+: var" "set the watchpoint"
+
+	    # It should not be left over in the fork()ed-off child.
+	    gdb_test "$hbreak marker" {reakpoint [0-9]+.*}
+
+	    gdb_breakpoint "mark_exit"
+
+	    gdb_test "continue" \
+		"reakpoint \[0-9\]+, marker.*" "hardware breakpoints work"
+	    gdb_test "continue" \
+		"atchpoint \[0-9\]+: var.*Old value = 0.*New value = 1.*validity-first.*" "singlethread watchpoints work"
+	    gdb_test "continue" \
+		"atchpoint \[0-9\]+: var.*Old value = 1.*New value = 2.*validity-thread-A.*" "multithreaded watchpoints work at A"
+	    gdb_test "continue" \
+		"atchpoint \[0-9\]+: var.*Old value = 2.*New value = 3.*validity-thread-B.*" "multithreaded watchpoints work at B"
+	    gdb_test "continue" \
+		"reakpoint \[0-9\]+, marker.*" "breakpoint (A) after the first fork"
+	    gdb_test "continue" \
+		"atchpoint \[0-9\]+: var.*Old value = 3.*New value = 4.*after-fork1-A.*" "watchpoint A after the first fork"
+	    gdb_test "continue" \
+		"atchpoint \[0-9\]+: var.*Old value = 4.*New value = 5.*after-fork1-B.*" "watchpoint B after the first fork"
+	    gdb_test "continue" \
+		"reakpoint \[0-9\]+, marker.*" "breakpoint (A) after the second fork"
+	    gdb_test "continue" \
+		"atchpoint \[0-9\]+: var.*Old value = 5.*New value = 6.*after-fork2-A.*" "watchpoint A after the second fork"
+	    gdb_test "continue" \
+		"atchpoint \[0-9\]+: var.*Old value = 6.*New value = 7.*after-fork2-B.*" "watchpoint B after the second fork"
+	    gdb_test "continue" "Continuing\\..*\r\nThread .* hit Breakpoint \[0-9\]+, mark_exit .*" "finish"
+	}
+    }
+}
+
+test parent FOLLOW_PARENT
+
+# Only GNU/Linux is known to support `set follow-fork-mode child'.
+if [istarget "*-*-linux*"] {
+    test child FOLLOW_CHILD
+} else {
+    untested "${testfile}: child"
+}

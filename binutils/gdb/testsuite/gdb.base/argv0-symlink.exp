@@ -1,0 +1,111 @@
+# Copyright 2013-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This testcase was originally for PR gdb/15415, a problem with the "run"
+# command expanding symlinks in the name of the program being run.
+# This test uses pathnames on build to create symbolic links on host and
+# expects the test program running on target to see those symbolic links.
+# Therefore, it can't work reliably on anything other than configurations 
+# where build/host/target are all the same.
+
+require isnative
+
+require {!is_remote host}
+
+standard_testfile
+
+set has_argv0 [gdb_has_argv0]
+
+if { [build_executable ${testfile}.exp ${testfile} ${srcfile}] == -1 } {
+    return -1
+}
+
+with_test_prefix "file symlink" {
+
+    set test "kept name"
+    set filelink "${testfile}-filelink"
+
+    remote_file host delete [standard_output_file $filelink]
+    set status [remote_exec host \
+		    "ln -sf ${testfile} [standard_output_file $filelink]"]
+    if {[lindex $status 0] != 0} {
+	unsupported "$test (host does not support symbolic links)"
+	return 0
+    }
+
+    clean_restart "$filelink"
+
+    if ![runto_main] {
+	return -1
+    }
+
+    gdb_test_no_output "set print repeats 10000"
+    gdb_test_no_output "set print elements 10000"
+
+    if { $has_argv0 } {
+	gdb_test {print argv[0]} "/$filelink\"" $test
+    } else {
+	unsupported $test
+    }
+
+    # For a link named /PATH/TO/DIR/LINK, we want to check the output
+    # against "/DIR/LINK", but computed in a way that doesn't make
+    # assumptions about the test directory layout.
+    set full_filelink [standard_output_file $filelink]
+    set lastdir [file tail [file dirname $full_filelink]]
+
+    gdb_test "info inferiors" "/$lastdir/$filelink *" \
+	"$test for info inferiors"
+}
+
+with_test_prefix "dir symlink" {
+
+    set test "kept name"
+    set dirlink "${testfile}-dirlink"
+
+    # 'ln -sf' does not overwrite symbol link to a directory.
+    # 'remote_file host delete' uses stat (not lstat), therefore it refuses to
+    # delete a directory.
+    remote_exec host "rm -f [standard_output_file $dirlink]"
+    set status [remote_exec host "ln -sf . [standard_output_file $dirlink]"]
+    if {[lindex $status 0] != 0} {
+	unsupported "$test (host does not support symbolic links)"
+	return 0
+    }
+
+    clean_restart "$dirlink/$filelink"
+
+    if ![runto_main] {
+	return -1
+    }
+
+    gdb_test_no_output "set print repeats 10000"
+    gdb_test_no_output "set print elements 10000"
+
+    if { $has_argv0 } {
+	# gdbserver in extended-remote mode does not have this issue.
+	# Plain remote does, however.
+	if { [target_info gdb_protocol] != "extended-remote"
+	     || ![target_is_gdbserver] } {
+	    setup_kfail "*-*-*" gdb/15934
+	}
+	gdb_test {print argv[0]} "/$dirlink/$filelink\"" $test
+    } else {
+	unsupported $test
+    }
+
+    gdb_test "info inferiors" "/$lastdir/$filelink *" \
+	"$test for info inferiors"
+}

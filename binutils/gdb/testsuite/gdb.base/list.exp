@@ -1,0 +1,563 @@
+# Copyright 1992-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file was written by Fred Fish. (fnf@cygnus.com)
+
+
+standard_testfile list0.c list1.c
+
+# Need to download the header to the host.
+gdb_remote_download host ${srcdir}/${subdir}/list0.h
+
+if {[build_executable "failed to prepare" $testfile [list $srcfile $srcfile2] \
+	 {debug}]} {
+    return -1
+}
+
+# The last line in the file.
+set last_line [gdb_get_line_number "last line" "list0.c"]
+
+# Regex matching the last line in the file.
+set last_line_re "${last_line}\[ \t\]+} /\\* last line \\*/"
+
+#
+# Local utility proc just to set and verify listsize
+# Return 1 if success, 0 if fail.
+#
+
+set set_listsize_count 0
+
+proc set_listsize { arg } {
+    global gdb_prompt
+    global set_listsize_count
+
+    incr set_listsize_count
+    if [gdb_test_no_output "set listsize $arg" "setting listsize to $arg #$set_listsize_count"] {
+	return 0
+    }
+    if { $arg == 0 } {
+	set arg "unlimited"
+    }
+
+    if [gdb_test "show listsize" "Number of source lines.* is ${arg}.*" "show listsize $arg #$set_listsize_count"] {
+	return 0
+    }
+    return 1
+}
+
+#
+# Test display of listsize lines around a given line number.
+#
+
+proc test_listsize {} {
+    global gdb_prompt
+    global last_line_re
+
+    # Show default size
+
+    gdb_test "show listsize" "Number of source lines gdb will list by default is 10.*" "show default list size"
+    
+    # Show the default lines
+
+    gdb_test "list" "(1\[ \t\]+#include \"list0.h\".*7\[ \t\]+x = 0;\r\n.*10\[ \t\]+foo .x\[+)\]+;)" "list default lines around main"
+
+    # Ensure we can limit printouts to one line
+
+    if [set_listsize 1] {
+	gdb_test "list 1" "1\[ \t\]+#include \"list0.h\"" "list line 1 with listsize 1"
+	gdb_test "list 2" "2\[ \t\]+" "list line 2 with listsize 1"
+    }    
+
+    # Try just two lines
+    
+    if [ set_listsize 2 ] {
+	gdb_test "list 1" "1\[ \t\]+#include \"list0.h\"\r\n2\[ \t\]+" "list line 1 with listsize 2"
+	gdb_test "list 2" "1\[ \t\]+#include \"list0.h\"\r\n2\[ \t\]+" "list line 2 with listsize 2"
+	gdb_test "list 3" "2\[ \t\]+\r\n3\[ \t\]+int main \[)(\]+" "list line 3 with listsize 2"
+    }
+
+    # Try small listsize > 1 that is an odd number
+
+    if [ set_listsize 3 ] {
+	gdb_test "list 1" "1\[ \t\]+#include \"list0.h\".*3\[ \t\]+int main \[)(\]+" "list line 1 with listsize 3"
+	gdb_test "list 2" "1\[ \t\]+#include \"list0.h\".*3\[ \t\]+int main \[)(\]+" "list line 2 with listsize 3"
+	gdb_test "list 3" "2\[ \t\]+\r\n3\[ \t\]+int main \[(\]+\[)\]+\r\n4\[ \t\]+\{" "list line 3 with listsize 3"
+    }
+
+    # Try small listsize > 2 that is an even number.
+
+    if {[set_listsize 4]} {
+	gdb_test "list 1" "1\[ \t\]+#include \"list0.h\".*4\[ \t\]+\{" "list line 1 with listsize 4"
+	gdb_test "list 2" "1\[ \t\]+#include \"list0.h\".*4\[ \t\]+\{" "list line 2 with listsize 4"
+	
+	gdb_test "list 3" "1\[ \t\]+#include \"list0.h\".*4\[ \t\]+\{" "list line 3 with listsize 4"
+	gdb_test "list 4" "2\[ \t\]+\r\n.*5\[ \t\]+int x;.*" "list line 4 with listsize 4"
+    }
+
+    # Try a size larger than the entire file.
+
+    if {[set_listsize 100]} {
+	gdb_test "list 1" "1\[ \t\]+#include \"list0.h\".*\r\n${last_line_re}" "list line 1 with listsize 100"
+	
+	gdb_test "list 10" "1\[ \t\]+#include \"list0.h\".*\r\n${last_line_re}" "list line 10 with listsize 100"
+    }
+
+    # Try listsize of 0 which is special, and means unlimited.
+
+    set_listsize 0
+    gdb_test "list 1" "1\[ \t\]+#include .*\r\n${last_line_re}" "list line 1 with unlimited listsize"
+}
+
+#
+# Test "list filename:number" for C include file
+#
+
+proc test_list_include_file {} {
+    global gdb_prompt
+
+    setup_xfail_format "COFF"
+    gdb_test "list list0.h:1" "1\[ \t\]+/\[*\]+ An include file .*10\[ \t\]+bar \\(x\\+\\+\\);" "list line 1 in include file"
+
+    setup_xfail_format "COFF"
+    gdb_test "list list0.h:100" "Line number 95 out of range; .*list0.h has 3\[67\] lines." "list message for lines past EOF"
+}
+
+#
+# Test "list filename:number" for C source file
+#
+
+proc_with_prefix test_list_filename_and_number {} {
+    gdb_test "list list0.c:1" "1\[ \t\]+#include \"list0.h\".*10\[ \t\]+foo .x\[+)\]+;"
+    gdb_test "list list0.c:10" "5\[ \t\]+int x;.*14\[ \t\]+foo .x\[+)\]+;"
+    gdb_test "list list1.c:1" "1\[ \t\]+\#include.*4\[ \t\]+.*int oof\[ \t\]*\(.*\);\r\n.*"
+    gdb_test "list list1.c:12" "12\[ \t\]+long_line \[(\]+.*\[)\]+;.*13\[ \t\]+\}\r\n.*"
+}
+
+#
+# Test "list function" for C source file
+#
+
+proc_with_prefix test_list_function {} {
+    # gcc appears to generate incorrect debugging information for code
+    # in include files, which breaks this test.
+    # SunPRO cc is the second case below, it's also correct.
+    gdb_test "list -q main" "(5\[ \t\]+int x;.*8\[ \t\]+foo \[(\]+.*\[)\]+;|1\[ \t\]+#include .*7\[ \t\]+x = 0;)" "list function in source file 1"
+
+    # Ultrix gdb takes the second case below; it's also correct.
+    # SunPRO cc is the third case.
+    gdb_test "list -q bar" "(4\[ \t\]+void.*\[ \t\]*long_line.*;.*bar.*9\[ \t\]*.*|1\[ \t\]+void.*8\[ \t\]+\}|1\[ \t\]+void.*7\[ \t\]*long_line ..;|7\[ \t\]+void.*14\[ \t\]+\})" "list function in source file 2"
+
+    # Test "list function" for C include file
+    # Ultrix gdb is the second case, still correct.
+    # SunPRO cc is the third case.
+    gdb_test "list -q foo" "(3\[ \t\]+.*12\[ \t\]+bar \[(\]+.*\[)\]+;|2\[ \t\]+including file.*11\[ \t\]+bar \[(\]+.*\[)\]+;|1\[ \t\]+/. An include file.*10\[ \t\]+bar \[(\]+.*\[)\]+;)" "list function in include file"
+}
+
+proc_with_prefix test_list_forward {} {
+    global last_line_re
+
+    gdb_test "list list0.c:10" "5\[ \t\]+int x;.*14\[ \t\]+foo \[(\]+.*\[)\]+;"
+    gdb_test "list" "15\[ \t\]+foo \[(\]+.*\[)\]+;.*24\[ \t\]+foo \[(\]+.*\[)\]+;" \
+	"list 15-24"
+    gdb_test "list" "25\[ \t\]+foo \[(\]+.*\[)\]+;.*34\[ \t\]+foo \[(\]+.*\[)\]+;" \
+	"list 25-34"
+    gdb_test "list" "35\[ \t\]+foo \\(.*\\);.*${last_line_re}" \
+	"list 35-42"
+    gdb_test "list" "End of the file was already reached, use \"list .\" to list the current location again" \
+	"list past end of file"
+}
+
+# Test that repeating the list linenum command doesn't print the same
+# lines over again.  Note that this test makes sure that the argument
+# linenum is dropped, when we repeat the previous command. 'x/5i $pc'
+# works the same way.  
+
+proc_with_prefix test_repeat_list_command {} {
+    global last_line_re
+
+    gdb_test "list list0.c:10" "5\[ \t\]+int x;.*14\[ \t\]+foo \[(\]+.*\[)\]+;"
+    gdb_test " " "15\[ \t\]+foo \[(\]+.*\[)\]+;.*24\[ \t\]+foo \[(\]+.*\[)\]+;" \
+	"list 15-24"
+    gdb_test " " "25\[ \t\]+foo \[(\]+.*\[)\]+;.*34\[ \t\]+foo \[(\]+.*\[)\]+;" \
+	"list 25-34"
+    gdb_test " " "35\[ \t\]+foo \\(.*\\);.*${last_line_re}" \
+	"list 35-42"
+    gdb_test "list" "End of the file was already reached, use \"list .\" to list the current location again" \
+	"list past end of file"
+}
+
+proc_with_prefix test_list_backwards {} {
+    gdb_test "list list0.c:33" "28\[ \t\]+foo \\(.*\\);.*37\[ \t\]+\}"
+    gdb_test "list -" "18\[ \t\]+foo \[(\]+.*\[)\]+;.*27\[ \t\]+foo \[(\]+.*\[)\]+;" \
+	"list 18-27"
+    gdb_test "list -" "8\[ \t\]+foo \[(\]+.*\[)\]+;.*17\[ \t\]+foo \[(\]+.*\[)\]+;" \
+	"list 8-17"
+    gdb_test "list -" "1\[ \t\]+#include .*7\[ \t\]+x = 0;" \
+	"list 1-7"
+    gdb_test "list -" "Already at the start of .*\." \
+	"beginning of file error after \"list -\" command"
+}
+
+#
+# Test "list first,last"
+#
+
+proc test_list_range {} {
+    global gdb_prompt
+    global last_line_re
+    global last_line
+
+    gdb_test "list list0.c:2,list0.c:5" "2\[ \t\]+\r\n3\[ \t\]+int main \[)(\]+.*5\[ \t\]+int x;" "list range; filename:line1,filename:line2"
+
+    gdb_test "list 2,5" "2\[ \t\]+\r\n3\[ \t\]+int main \[)(\]+.*5\[ \t\]+int x;" "list range; line1,line2"
+
+#    gdb_test     "list -1,6" 	"Line number 0 out of range; .*list0.c has 39 lines." "list range; lower bound negative"
+
+#    gdb_test     "list -100,-40" 	"Line number -60 out of range; .*list0.c has 39 lines." "list range; both bounds negative"
+
+    set past_end [expr ${last_line} + 10]
+    set much_past_end [expr ${past_end} + 10]
+
+    gdb_test "list 30,${past_end}" "30\[ \t\]+foo \(.*\);.*${last_line_re}" "list range; upper bound past EOF"
+
+    gdb_test "list ${past_end},${much_past_end}" "Line number ${past_end} out of range; .*list0.c has ${last_line} lines." "list range; both bounds past EOF"
+
+    gdb_test "list list0.c:2,list1.c:17" "Specified first and last lines are in different files." "list range, must be same files"
+}
+
+#
+# Test "list filename:function"
+#
+
+proc test_list_filename_and_function {} {
+    global gdb_prompt
+    global last_line_re
+
+    # gcc appears to generate incorrect debugging information for code
+    # in include files, which breaks this test.
+    # SunPRO cc is the second case below, it's also correct.
+    gdb_test_multiple "list list0.c:main" "" {
+	-re -wrap "1\[ \t\]+#include .*10\[ \t\]+foo \[(\]+.*\[)\]+;" {
+	    pass $gdb_test_name
+	}
+	-re -wrap "5\[ \t\]+int x;.*14\[ \t\]+foo \[(\]+.*\[)\]+;" {
+	    pass $gdb_test_name
+	}
+    }
+
+    # Not sure what the point of having this function be unused is.
+    # AIX is legitimately removing it.
+    setup_xfail "rs6000-*-aix*"
+    gdb_test_multiple "list list0.c:unused" "" {
+	-re -wrap "40\[ \t\]+unused.*${last_line_re}" {
+	    pass $gdb_test_name
+	}
+	-re -wrap "37.*42\[ \t\]+\}" {
+	    pass $gdb_test_name
+	}
+    }
+    clear_xfail "rs6000-*-aix*"
+
+    # gcc appears to generate incorrect debugging information for code
+    # in include files, which breaks this test.
+    # Ultrix gdb is the second case, one line different but still correct.
+    # SunPRO cc is the third case.
+    setup_xfail "rs6000-*-*" 1804
+    setup_xfail_format "COFF"
+    gdb_test_multiple "list list0.h:foo" "" {
+	-re -wrap "2\[ \t\]+including file.  This.*11\[ \t\]+bar \[(\]+.*\[)\]+;" {
+	    pass $gdb_test_name
+	}
+	-re -wrap "1\[ \t\]+/. An include file.*10\[ \t\]+bar \[(\]+.*\[)\]+;" {
+	    pass $gdb_test_name
+	}
+	-re -wrap "3\[ \t\]+.*12\[ \t\]+bar \[(\]+.*\[)\]+;" {
+	    pass $gdb_test_name
+	}
+	-re -wrap "No source file named list0.h." {
+	    fail $gdb_test_name
+	}
+    }
+
+    # Ultrix gdb is the second case.
+    gdb_test_multiple "list list1.c:bar" "" {
+	-re -wrap "4\[ \t\]+void.*13\[ \t\]+\}" {
+	    pass $gdb_test_name
+	}
+	-re -wrap "4\[ \t\]+void.*12\[ \t\]*long_line ..;" {
+	    pass $gdb_test_name
+	}
+	-re -wrap "4\[ \t\]+void.*11\[ \t\]*" {
+	    pass $gdb_test_name
+	}
+    }
+
+    # Not sure what the point of having this function be unused is.
+    # AIX is legitimately removing it.
+    setup_xfail "rs6000-*-aix*"
+    gdb_test_multiple "list list1.c:unused" "" {
+	-re -wrap "12\[ \t\]+long_line \[(\]\[)\];.*13\[ \t\]+\}.*" {
+	    pass $gdb_test_name
+	}
+	-re -wrap "14.*19\[ \t\]+\}.*" {
+	    pass $gdb_test_name
+	}
+    }
+    clear_xfail "rs6000-*-aix*"
+
+    # Test with quoting.
+    gdb_test "list 'list0.c:main'" "int main.*"
+
+    # Test some invalid specs
+    # The following test takes the FIXME result on most systems using
+    # DWARF.  It fails to notice that main() is not in the file requested.
+   
+    setup_xfail "*-*-*"
+
+# Does this actually work ANYWHERE?  I believe not, as this is an `aspect' of
+# lookup_symbol(), where, when it is given a specific symtab which does not
+# contain the requested symbol, it will subsequently search all of the symtabs
+# for the requested symbol.
+
+    gdb_test "list list0.c:foo" "Function \"foo\" not defined in .*list0.c" "list filename:function; wrong filename rejected"
+
+    gdb_test "list foobar.c:main" "No source file named foobar.c.|Location not found" "list filename:function; nonexistant file"
+
+    gdb_test "list list0.h:foobar" "Function \"foobar\" not defined in \"list0.h\"." "list filename:function; nonexistant function"
+
+}
+
+# Test the forward-search (aka search) and the reverse-search commands.
+
+proc test_forward_reverse_search {} {
+	global timeout
+
+	gdb_test_no_output "set listsize 4"
+	# On SunOS4, this gives us lines 19-22.  On AIX, it gives us
+	# lines 20-23.  This depends on whether the line number of a function
+	# is considered to be the openbrace or the first statement--either one
+	# is acceptable.
+	gdb_test "list long_line" "24\[ \t\]+long_line .*"
+
+	gdb_test "search 4321" " not found"
+
+	gdb_test "search 6789" "28\[ \t\]+oof .6789.;"
+
+	# Try again, we shouldn't re-find the same source line.  Also,
+	# while at it, test using the "forward-search" alias.
+	gdb_test "forward-search 6789" " not found"
+
+	# Now test backwards.  First make sure we start searching from
+	# the previous line, not the current line.
+	gdb_test "reverse-search 6789" " not found"
+
+	# Now find something in a previous line.
+	gdb_test "reverse-search 67" "26\[ \t\]+oof .67.;"
+
+	# Test that GDB won't crash if the line being searched is extremely long.
+
+	set oldtimeout $timeout
+	set timeout [expr "$timeout + 300"]
+	verbose "Timeout is now $timeout seconds" 2
+	gdb_test "search 1234" ".*1234.*" "search extremely long line (> 5000 chars)"
+	set timeout $oldtimeout
+	verbose "Timeout is now $timeout seconds" 2
+}
+
+proc test_only_end {} {
+    gdb_test_no_output "set listsize 2"
+    gdb_test "list 1" "list 1\r\n1\[ \t\]\[^\r\n\]*\r\n2\[ \t\]\[^\r\n\]*"
+    gdb_test "list ,5" "list ,5\r\n4\[ \t\]\[^\r\n\]*\r\n5\[ \t\]\[^\r\n\]*"
+}
+
+proc test_list_invalid_args {} {
+    global binfile
+
+    clean_restart ${binfile}
+    gdb_test "list -INVALID" \
+	"invalid explicit location argument, \"-INVALID\"" \
+	"first use of \"list -INVALID\""
+    gdb_test "list -INVALID" \
+	"invalid explicit location argument, \"-INVALID\"" \
+	"second use of \"list -INVALID\""
+
+    clean_restart ${binfile}
+    gdb_test "list +INVALID" "Function \"\\+INVALID\" not defined." \
+	"first use of \"list +INVALID\""
+    gdb_test "list +INVALID" "Function \"\\+INVALID\" not defined." \
+	"second use of \"list +INVALID\""
+}
+
+proc test_list_current_location {} {
+    global binfile
+    # Reload the inferior to test "list ." before the inferior is started.
+    gdb_file_cmd ${binfile}
+
+    # Ensure that we are printing 10 lines.
+    if {![set_listsize 10]} {
+	return
+    }
+
+    # First guarantee that GDB prints around the main function correctly.
+    gdb_test "list ." \
+	"1.*\r\n2\[ \t\]+\r\n3\[ \t\]+int main \[)(\]+.*5\[ \t\]+int x;.*" \
+	"list . with inferior not running"
+
+    if {![runto_main]} {
+	warning "couldn't start inferior"
+	return
+    }
+
+    # Walk forward some lines.
+    gdb_test "until 15" ".*15.*foo.*"
+
+    # Test that the correct location is printed and that
+    # using just "list" will print the following lines.
+    gdb_test "list ." "10\[ \t\]+foo \(.*\);.*19\[ \t\]+foo \(.*\);" \
+	"list current line after starting"
+    gdb_test "list" "20\[ \t\]+foo \(.*\);.*29\[ \t\]+foo \(.*\);" \
+	"confirm we are printing the following lines"
+
+    # Test that list . will reset to current location
+    # and that an empty line lists the following lines.
+    gdb_test "list ." "10\[ \t\]+foo \(.*\);.*19\[ \t\]+foo \(.*\);" \
+	"list around current line again"
+    gdb_test " " "20\[ \t\]+foo \(.*\);.*29\[ \t\]+foo \(.*\);" \
+	"testing repeated invocations with GDB's auto-repeat"
+}
+
+clean_restart
+gdb_file_cmd ${binfile}
+
+gdb_test_no_output "set width 0"
+
+test_listsize
+get_debug_format
+if {[set_listsize 10]} {
+    test_list_include_file
+    test_list_filename_and_number
+    test_list_function
+    test_list_forward
+    test_list_backwards
+    test_repeat_list_command
+    test_list_range
+    test_list_filename_and_function
+    test_forward_reverse_search
+    test_only_end
+    test_list_invalid_args
+}
+
+# Follows tests that require execution.
+
+# Build source listing pattern based on a line range spec string.  The
+# range can be specificed as "START-END" indicating all lines in range
+# (inclusive); or just "LINE", indicating just that line.
+
+proc build_pattern { range_spec } {
+    global line_re
+
+    set range_list [split $range_spec -]
+    set range_list_len [llength $range_list]
+
+    set range_start [lindex $range_list 0]
+    if { $range_list_len > 2 || $range_list_len < 1} {
+	error "invalid range spec string: $range_spec"
+    } elseif { $range_list_len == 2 } {
+	set range_end [lindex $range_list 1]
+    } else {
+	set range_end $range_start
+    }
+
+    for {set i $range_start} {$i <= $range_end} {incr i} {
+	append pattern "\r\n$i\[ \t\]\[^\r\n\]*"
+    }
+
+    verbose -log "pattern $pattern"
+    return $pattern
+}
+
+# Test "list" command invocations right after stopping for an event.
+# COMMAND is the actual list command, including arguments.  LISTSIZE1
+# and LISTSIZE2 are the listsizes set just before and after running
+# the program to the stop point.  COMMAND is issued twice.  The first
+# time, the lines specificed by LINERANGE1 are expected; the second
+# time, the lines specified by LINERANGE2 are expected.
+
+proc test_list {command listsize1 listsize2 linerange1 linerange2} {
+    with_test_prefix "$command after stop: $listsize1, $listsize2" {
+	global binfile
+
+	clean_restart $binfile
+	if {![runto_main]} {
+	    return
+	}
+
+	# Test changing the listsize both before nexting, and after
+	# stopping, but before listing.  Only the second listsize
+	# change should affect which lines are listed.
+	with_test_prefix "before next" {
+	    gdb_test_no_output "set listsize $listsize1"
+	}
+	gdb_test "next" "foo \\(.*"
+	with_test_prefix "after next" {
+	    gdb_test_no_output "set listsize $listsize2"
+	}
+
+	set pattern1 [build_pattern $linerange1]
+	set pattern2 [build_pattern $linerange2]
+	gdb_test "$command" "${pattern1}" "$command #1"
+	gdb_test "$command" "${pattern2}" "$command #2"
+    }
+}
+
+
+# The first "list" should center the listing around line 8, the stop
+# line.
+test_list "list" 1 10 "3-12" "13-22"
+
+# Likewise.
+test_list "list" 10 10 "3-12" "13-22"
+
+# Likewise, but show only one line.  IOW, the first list should show
+# line 8.  Note how the listsize is 10 at the time of the stop, but
+# before any listing had been requested.  That should not affect the
+# line range that is first listed.
+test_list "list" 10 1 "8" "9"
+
+# Likewise, but show two lines.
+test_list "list" 10 2 "7-8" "9-10"
+
+# Three lines.
+test_list "list" 10 3 "7-9" "10-12"
+
+# Now test backwards.  Just like "list", the first "list -" should
+# center the listing around the stop line.
+test_list "list -" 10 10 "3-12" "2"
+
+# Likewise, but test showing 3 lines at a time.
+test_list "list -" 10 3 "7-9" "4-6"
+
+# 2 lines at a time.
+test_list "list -" 10 2 "7-8" "5-6"
+
+# Test listing one line only.  This case is a little special and
+# starts showing the previous line immediately instead of repeating
+# the current line.
+test_list "list -" 10 1 "7" "6"
+
+# Test printing the location where the inferior is stopped.
+test_list_current_location
+
+remote_exec build "rm -f list0.h"

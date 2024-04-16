@@ -1,0 +1,146 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test attaching to a multi-threaded process, in all combinations of:
+#
+#  - set non-stop on/off
+#  - maint target non-stop off/on
+#  - "attach" vs "attach &"
+
+require can_spawn_for_attach
+
+standard_testfile
+
+# The test proper.  See description above.
+
+proc test {target_non_stop non_stop cmd} {
+    global binfile srcfile
+    global gdb_prompt
+    global decimal
+    global GDBFLAGS
+
+    # Number of threads started by the program.
+    set n_threads 10
+
+    save_vars { GDBFLAGS } {
+	append GDBFLAGS " -ex \"maint set target-non-stop $target_non_stop\""
+	append GDBFLAGS " -ex \"set non-stop $non_stop\""
+	clean_restart $binfile
+    }
+
+    set test_spawn_id [spawn_wait_for_attach $binfile]
+    set testpid [spawn_id_get_pid $test_spawn_id]
+
+    set attached 0
+    set test "attach"
+    set any "\[^\r\n\]*"
+
+    if {$cmd == "attach"} {
+	gdb_test_multiple "attach $testpid" $test {
+	    -re "Attaching to program:${any}process $testpid\r\n.*$gdb_prompt " {
+		pass $test
+		set attached 1
+	    }
+	}
+
+	if {!$attached} {
+	    kill_wait_spawned_process $test_spawn_id
+	    return
+	}
+
+	if {$non_stop} {
+	    # In non-stop, we will see one stop per thread after
+	    # the prompt.
+	    set stops 0
+	    set test "seen all stops"
+	    for {set thread 1} { $thread <= $n_threads } { incr thread } {
+		gdb_test_multiple "" $test {
+		    -re "Thread $::decimal ${any} stopped" {
+			incr stops
+		    }
+		}
+	    }
+
+	    # If we haven't seen all stops, then the gdb_test_multiple
+	    # in the loop above will have already issued a FAIL.
+	    if {$stops == $n_threads} {
+		pass $test
+	    }
+	}
+
+	gdb_test_multiple "info threads" "" {
+	    -re "\\(running\\).*$gdb_prompt $" {
+		fail $gdb_test_name
+	    }
+	    -re "$gdb_prompt $" {
+		pass $gdb_test_name
+	    }
+	}
+    } else {
+	gdb_test_multiple "attach $testpid &" $test {
+	    -re "Attaching to program:${any}process $testpid\r\n.*$gdb_prompt " {
+		pass $test
+		set attached 1
+	    }
+	}
+
+	if {!$attached} {
+	    kill_wait_spawned_process $test_spawn_id
+	    return
+	}
+
+	set running_count 0
+	gdb_test_multiple "info threads" "all threads running" {
+	    -re "\\(running\\)" {
+		incr running_count
+		exp_continue
+	    }
+	    -re "Cannot execute this command while the target is running.*$gdb_prompt $" {
+		# Testing against a remote server that doesn't do
+		# non-stop mode.  Explicitly interrupt.  This doesn't
+		# test the same code paths in GDB, but it's still
+		# something.
+		gdb_test_multiple "interrupt" "" {
+		    -re "$gdb_prompt " {
+			gdb_test_multiple "" $gdb_test_name {
+			    -re "received signal SIGINT, Interrupt" {
+				pass $gdb_test_name
+			    }
+			}
+		    }
+		}
+	    }
+	    -re "$gdb_prompt $" {
+		gdb_assert {$running_count == ($n_threads + 1)} $gdb_test_name
+	    }
+	}
+    }
+
+    gdb_test "detach" "Detaching from.*"
+
+    kill_wait_spawned_process $test_spawn_id
+}
+
+if {[build_executable "failed to prepare" $testfile $srcfile {debug pthreads}] == -1} {
+    return -1
+}
+
+foreach_with_prefix target-non-stop {"off" "on"} {
+    foreach_with_prefix non-stop {"off" "on"} {
+	foreach_with_prefix cmd {"attach" "attach&"} {
+	    test ${target-non-stop} ${non-stop} ${cmd}
+	}
+    }
+}

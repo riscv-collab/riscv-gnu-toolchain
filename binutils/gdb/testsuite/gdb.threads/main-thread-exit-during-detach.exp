@@ -1,0 +1,140 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check for a race condition where in non-stop mode, the user might
+# have a thread other than the main (original) thread selected and use
+# the 'detach' command.
+#
+# As GDB tries to detach it is possible that the main thread might
+# exit, the main thread is still running due to non-stop mode.
+#
+# GDB used to assume that the main thread would always exist when
+# processing the detach, clearly this isn't the case, and this
+# assumption would lead to assertion failures and segfaults.
+#
+# Triggering the precise timing is pretty hard, we need the main
+# thread to exit after the user has entered the 'detach' command, but
+# before GDB enters the detach implementation and stops all threads,
+# the window of opportunity for this bug is actually tiny.
+#
+# However, we can trigger this bug 100% from Python, as GDB's
+# event-loop only kicks in once we return from a Python function.
+# Thus, if we have a single Python function that causes the main
+# thread to exit, and then calls detach GDB will not have a chance to
+# handle the main thread exiting before entering the detach code.
+
+standard_testfile
+
+require allow_python_tests
+
+if {[build_executable "failed to prepare" $testfile $srcfile \
+	 {debug pthreads}] == -1} {
+    return -1
+}
+
+# Run the test.  When SPAWN_INFERIOR is true the inferior is started
+# as a separate process which GDB then attaches too.  When
+# SPAWN_INFERIOR is false the inferior is started directly within GDB.
+
+proc run_test { spawn_inferior } {
+    save_vars { ::GDBFLAGS } {
+	append ::GDBFLAGS " -ex \"set non-stop on\""
+	clean_restart $::binfile
+    }
+
+    # Setup the inferior.  When complete the main thread (#1) will
+    # still be running (due to non-stop mode), while the worker thread
+    # (#2) will be stopped.
+    #
+    # There are two setup modes, when SPAWN_INFERIOR is true we span a
+    # separate process and attach to it, after the attach both threads
+    # are stopped, so it is necessary to resume thread #1.
+    #
+    # When SPAWN_INFERIOR is false we just start the inferior within
+    # GDB, in this case we place a breakpoint that will be hit by
+    # thread #2.  When the breakpoint is hit thread #1 will remain
+    # running.
+    if {$spawn_inferior} {
+	set test_spawn_id [spawn_wait_for_attach $::binfile]
+	set testpid [spawn_id_get_pid $test_spawn_id]
+
+	set escapedbinfile  [string_to_regexp $::binfile]
+	gdb_test -no-prompt-anchor "attach $testpid" \
+	    "Attaching to program.*`?$escapedbinfile'?, process $testpid.*" \
+	    "attach to the inferior"
+
+	# Attaching to a multi-threaded application in non-stop mode
+	# can result in thread stops being reported after the prompt
+	# is displayed.
+	#
+	# Send a simple command now just to resync the command prompt.
+	gdb_test "p 1 + 2" " = 3"
+
+	# Set thread 1 (the current thread) running again.
+	gdb_test "continue&"
+    } else {
+	if {![runto_main]} {
+	    return -1
+	}
+
+	gdb_breakpoint "breakpt"
+	gdb_continue_to_breakpoint "run to breakpoint"
+    }
+
+    # Switch to thread 2.
+    gdb_test "thread 2" \
+	[multi_line \
+	     "Switching to thread 2\[^\r\n\]*" \
+	     "#0\\s+.*"]
+
+    # Create a Python function that sets a variable in the inferior and
+    # then detaches.  Setting the variable in the inferior will allow the
+    # main thread to exit, we even sleep for a short while in order to
+    # give the inferior a chance to exit.
+    #
+    # However, we don't want GDB to notice the exit before we call detach,
+    # which is why we perform both these actions from a Python function.
+    gdb_test_multiline "Create worker function" \
+	"python" "" \
+	"import time" "" \
+	"def set_and_detach():" "" \
+	"   gdb.execute(\"set variable dont_exit_just_yet=0\")" "" \
+	"   time.sleep(1)" "" \
+	"   gdb.execute(\"detach\")" "" \
+	"end" ""
+
+    # The Python function performs two actions, the first causes the
+    # main thread to exit, while the second detaches from the inferior.
+    #
+    # In both cases the stop arrives while GDB is processing the
+    # detach, however, for remote targets GDB doesn't report the stop,
+    # while for local targets GDB does report the stop.
+    if {![gdb_is_target_remote]} {
+	set stop_re "\\\[Thread.*exited\\\]\r\n"
+    } else {
+	set stop_re ""
+    }
+    gdb_test "python set_and_detach()" \
+	"${stop_re}\\\[Inferior.*detached\\\]"
+}
+
+foreach_with_prefix spawn_inferior { true false } {
+    if {$spawn_inferior && ![can_spawn_for_attach]} {
+	# If spawning (and attaching too) a separate inferior is not
+	# supported for the current board, then skip this test.
+	continue
+    }
+
+    run_test $spawn_inferior
+}

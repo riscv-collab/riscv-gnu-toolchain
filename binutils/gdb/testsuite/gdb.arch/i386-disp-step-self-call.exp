@@ -1,0 +1,82 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test i386 displaced stepping over a call instruction that calls to
+# itself.  This is pretty unlikely to be seen in the wild, but does
+# test a corner case of our displaced step handling.
+
+require is_x86_like_target
+
+set newline "\[\r\n\]*"
+
+set opts {debug nopie}
+standard_testfile .S -alarm.c
+
+if { [prepare_for_testing "failed to prepare" $testfile "$srcfile $srcfile2" $opts] } {
+    return -1
+}
+
+gdb_test "set displaced-stepping on" ""
+gdb_test "show displaced-stepping" ".* displaced stepping .* is on.*"
+
+if {![runto_main]} {
+    return 0
+}
+
+# Proceed to the test function.
+gdb_breakpoint "test_call"
+gdb_continue_to_breakpoint "test_call"
+
+# Get the current stack pointer value.
+set sp [get_hexadecimal_valueof "\$sp" "*UNKNOWN*"]
+
+# Get the address of the next instruction.
+set next_insn_addr ""
+gdb_test_multiple "x/2i \$pc" "get address of next insn" {
+    -re "\r\n=> $hex \[^\r\n\]+\r\n" {
+	exp_continue
+    }
+    -re "^   ($hex) \[^\r\n\]+\r\n" {
+	set next_insn_addr $expect_out(1,string)
+	exp_continue
+    }
+    -re "^$::gdb_prompt $" {
+	gdb_assert {![string equal $next_insn_addr ""]} \
+	    $gdb_test_name
+    }
+}
+
+# Clear the slot on the stack and confirm it was set to zero.
+set sp [expr $sp - 0x4]
+gdb_test_no_output "set {unsigned int} $sp = 0" \
+    "clear stack slot"
+set zero_val 0x[format %08x 0]
+gdb_test "x/1wx 0x[format %x $sp]" "$hex:\\s+${zero_val}" \
+    "check return address slot was set to zero"
+
+# Single step.
+gdb_test "stepi" \
+    "Breakpoint $decimal, test_call \\(\\) at .*"
+
+# Check stack pointer was updated to the expected value.
+set new_sp [get_hexadecimal_valueof "\$sp" "*UNKNOWN*" \
+	       "get stack pointer after step"]
+gdb_assert {[expr $sp == $new_sp]} \
+    "check stack pointer was updated as expected"
+
+# Check the contents of the stack were updated to the expected value.
+set next_insn_addr 0x[format %08X $next_insn_addr]
+gdb_test "x/1wx 0x[format %x $sp]" "$hex:\\s+$next_insn_addr" \
+    "check return address was updated correctly"

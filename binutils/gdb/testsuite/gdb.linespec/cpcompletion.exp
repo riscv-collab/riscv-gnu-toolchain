@@ -1,0 +1,1400 @@
+# Copyright 2017-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This file is part of the gdb testsuite.
+
+load_lib completion-support.exp
+load_lib data-structures.exp
+
+standard_testfile cpls.cc cpls2.cc cpls-hyphen.cc
+
+set opts {}
+lappend opts debug
+lappend opts additional_flags=-std=c++11
+
+if {[prepare_for_testing "failed to prepare" $testfile \
+	 [list $srcfile $srcfile2 $srcfile3] $opts]} {
+    return -1
+}
+
+# Tests below are about tab-completion, which doesn't work if readline
+# library isn't used.  Check it first.
+
+if { ![readline_is_used] } {
+    untested "no tab completion support without readline"
+    return -1
+}
+
+#
+# Some convenience procedures for testing template parameter list
+# completion.
+#
+
+# For the variable named ARGLISTVAR, which should be the name of an
+# argument list in the calling frame, "consume" the top-most token.
+# [See comments for makefoo for description of arglist format.]
+
+proc consume {arglistvar} {
+  upvar $arglistvar arglist
+
+  # ARGLIST is a string -- simply strip off the first character.
+  set arglist [string range $arglist 1 end]
+}
+
+# Create a function template named NAME, using the given stack ID to grab
+# NUM template parameters.  The result is pushed back onto the
+# stack.  NUM may be "all," in which case we use the entire stack
+# to create the function template, including function arguments.
+# The resulting template function's arguments are taken from the test
+# source code for the function "foo" and is not generalized.
+
+proc maket {sid name {num 1}} {
+
+  # Set up a temporary stack of parameters.  This will reverse
+  # the order in SID so that when they are popped again below,
+  # we get them in the correct order.  This also takes into account
+  # how many levels of the result stack we want to consider.
+
+  set paramstack [::Stack::new]
+  if {[string equal $num "all"]} {
+    while {![stack empty $sid]} {
+      stack push $paramstack [stack pop $sid]
+    }
+  } else {
+    for {set i 0} {$i < $num} {incr i} {
+      stack push $paramstack [stack pop $sid]
+    }
+  }
+
+  # Construct the function template and push it back to the
+  # top of the stack given by SID.
+  set result ""
+  set first true
+  while {![stack empty $paramstack]} {
+    set top [stack pop $paramstack]
+    if {$first} {
+      set first false
+    } else {
+      append result ", "
+    }
+    append result $top
+  }
+
+  # Save argument list.
+  set args $result
+
+  # GDB outputs "> >" instead of ">>".
+  if {[string index $top end] == ">"} {
+      append result " "
+  }
+  set result "$name<$result>"
+  if {[string equal $num "all"]} {
+    append result "($args)"
+  }
+  stack push $sid $result
+  stack delete $paramstack
+}
+
+# Given the stack SID and the name of a variable of the desired template
+# parameters, construct the actual template parameter and push it to the
+# top of the stack.
+
+proc makearg {sid arglistvar} {
+    upvar $arglistvar arglist
+
+  set c [string index $arglist 0]
+  consume arglist
+  switch $c {
+    A -
+    B {
+      makearg $sid arglist
+      makearg $sid arglist
+      maket $sid $c 2
+    }
+
+    a -
+    b -
+    c -
+    d {
+      makearg $sid arglist
+      maket $sid $c
+    }
+
+    i {
+      stack push $sid "int"
+    }
+
+    n {
+      # These are not templates.
+      set c [string index $arglist 0]
+      stack push $sid "n::n$c"
+      consume arglist
+    }
+
+    N {
+      set c [string index $arglist 0]
+      makearg $sid arglist
+      set top [stack pop $sid]
+      stack push $sid "n::N$top"
+    }
+
+    default { error "unhandled arglist identifier: '$c'" }
+  }
+}
+
+# Given ARGLIST, construct a class template for the type and return
+# it as a string.
+
+proc maketype {arglist} {
+    set s [Stack::new]
+    makearg $s arglist
+    set result [stack pop $s]
+    stack delete $s
+    return $result
+}
+
+# Returns a function template declaration for the function "foo" in the
+# corresponding test source code.  ARGLIST specifies the exact instantiation
+# that is desired.
+#
+# Generically, this procedure returns a string of the form,
+# "foo<parameter-list> (arg-list)", where ARGLIST describes the parameter(s).
+#
+# Valid specifiers for ARGLIST (must be kept in sync with source code):
+#
+# i: Creates an "int" type.
+# a, b, c, d: Creates the struct template of the same name, taking a single
+#    template parameter.
+# A, B: Creates the struct template of the same name, taking two template
+#    parameters.
+# na, nb: Creates the non-template structs n::na and n::nb, respectively.
+# NA, NB: Creates the struct templates n::NA and n::NB, respectively, which
+#    take two template parameters.
+#
+# Examples:
+# makefoo i
+# --> foo<int> (int)
+# makefoo ii
+# --> foo<int, int> (int, int)
+# makefoo Aiabi
+# --> foo<A<int, a<b<int> > > > (A<int, a<b<int> > >)
+# makefoo NANAiaiNBbiabi
+# --> foo<n::NA<n::NA<int, a<int> >, n::NB<b<int>, a<b<int> > > > >
+#          (n::NA<n::NA<int, a<int> >, n::NB<b<int>, a<b<int> > > >)
+
+proc makefoo {arglist} {
+    set s [::Stack::new]
+    while {[string length $arglist] > 0} {
+	makearg $s arglist
+    }
+
+  maket $s "foo" all
+  set result [stack pop $s]
+  stack delete $s
+  return $result
+}
+
+# Test wrapper for a single "makefoo" unit test.
+
+proc test_makefoo_1 {arglist expected} {
+  set exp "foo<$expected"
+  if {[string index $exp end] == ">"} {
+    append exp " "
+  }
+  append exp ">"
+  append exp "($expected)"
+
+  set calc [makefoo $arglist]
+  send_log "makefoo $arglist = $calc\n"
+  send_log "expecting: $exp\n"
+  if {[string equal $exp $calc]} {
+    pass "makefoo unit test: $arglist"
+  } else {
+      fail "makefoo unit test: $arglist"
+  }
+}
+
+# Test whether the procedure "makefoo" is functioning as expected.
+
+proc test_makefoo {} {
+  test_makefoo_1 "i" "int"
+  test_makefoo_1 "ai" "a<int>"
+  test_makefoo_1 "aai" "a<a<int> >"
+  test_makefoo_1 "ii" "int, int"
+  test_makefoo_1 "aaibi" "a<a<int> >, b<int>"
+    test_makefoo_1 \
+      "ababiibababai" "a<b<a<b<int> > > >, int, b<a<b<a<b<a<int> > > > > >"
+  test_makefoo_1 "Aii" "A<int, int>"
+  test_makefoo_1 "ABaibibi" "A<B<a<int>, b<int> >, b<int> >"
+  test_makefoo_1 "na" "n::na"
+  test_makefoo_1 "nana" "n::na, n::na"
+  test_makefoo_1 "NAii" "n::NA<int, int>"
+  test_makefoo_1 "NANAiiNAii" "n::NA<n::NA<int, int>, n::NA<int, int> >"
+}
+
+#
+# Tests start here.
+#
+
+# Disable the completion limit for the whole testcase.
+gdb_test_no_output "set max-completions unlimited"
+
+# Start of tests.
+
+# Test completion of all parameter prefixes, crossing "(" and ")",
+# with and without whitespace.
+
+proc_with_prefix all-param-prefixes {} {
+
+    # Test both linespecs and explicit locations.
+    foreach cmd_prefix {"b" "b -function"} {
+	set line "$cmd_prefix param_prefixes_test_long(long)"
+	set start [index_after "test_long" $line]
+	test_complete_prefix_range $line $start
+
+	# Same, but with extra spaces.  Note that the original spaces in
+	# the input line are preserved after completion.
+	test_gdb_complete_unique \
+	    "$cmd_prefix param_prefixes_test_long(long "   \
+	    "$cmd_prefix param_prefixes_test_long(long )"
+	test_gdb_complete_unique \
+	    "$cmd_prefix param_prefixes_test_long( long "  \
+	    "$cmd_prefix param_prefixes_test_long( long )"
+	test_gdb_complete_unique \
+	    "$cmd_prefix param_prefixes_test_long ( long " \
+	    "$cmd_prefix param_prefixes_test_long ( long )"
+
+	# Complete all parameter prefixes between "(i" and "(int*, int&)".
+	# Note that this exercises completing when the point is at the
+	# space in "param_prefixes_test_intp_intr(int*, ".
+	set line "$cmd_prefix param_prefixes_test_intp_intr(int*, int&)"
+	set start [index_after "intp_intr" $line]
+	test_complete_prefix_range $line $start
+
+	# Similar, but with extra spaces.
+	test_gdb_complete_unique \
+	    "$cmd_prefix param_prefixes_test_intp_intr (  int* " \
+	    "$cmd_prefix param_prefixes_test_intp_intr (  int* , int&)"
+
+	test_gdb_complete_unique \
+	    "$cmd_prefix param_prefixes_test_intp_intr (  int *" \
+	    "$cmd_prefix param_prefixes_test_intp_intr (  int *, int&)"
+
+	test_gdb_complete_unique \
+	    "$cmd_prefix param_prefixes_test_intp_intr (  int *, int " \
+	    "$cmd_prefix param_prefixes_test_intp_intr (  int *, int &)"
+
+	test_gdb_complete_unique \
+	    "$cmd_prefix param_prefixes_test_intp_intr (  int *,  int & " \
+	    "$cmd_prefix param_prefixes_test_intp_intr (  int *,  int & )"
+    }
+}
+
+# Test completion of an overloaded function.
+
+proc_with_prefix overload {} {
+    set completion_list {
+	"overload_ambiguous_test(int, int)"
+	"overload_ambiguous_test(int, long)"
+	"overload_ambiguous_test(long)"
+    }
+
+    foreach cmd_prefix {"b" "b -function"} {
+	test_gdb_complete_multiple \
+	    "$cmd_prefix " "overload_ambiguous_" "test(" \
+	    $completion_list
+	check_bp_locations_match_list \
+	    "$cmd_prefix overload_ambiguous_test" \
+	    $completion_list
+
+	# Test disambiguating by typing enough to pick the "int" as
+	# first parameter type.  This then tests handling ambiguity in
+	# the second parameter, which checks that tab completion when
+	# the point is at the whitespace behaves naturally, by showing
+	# the remaining matching overloads to the user.
+	test_gdb_complete_multiple \
+	    "$cmd_prefix " "overload_ambiguous_test(i" "nt, " {
+	    "overload_ambiguous_test(int, int)"
+	    "overload_ambiguous_test(int, long)"
+	}
+
+	# Add a few more characters to make the completion
+	# unambiguous.
+	test_gdb_complete_unique \
+	    "$cmd_prefix overload_ambiguous_test(int, i" \
+	    "$cmd_prefix overload_ambiguous_test(int, int)"
+	check_bp_locations_match_list \
+	    "$cmd_prefix overload_ambiguous_test(int, int)" {
+		"overload_ambiguous_test(int, int)"
+	    }
+    }
+}
+
+# Test completion of a function that is defined in different scopes
+# with different parameters.
+
+proc_with_prefix overload-2 {} {
+    with_test_prefix "all" {
+	set completion_list {
+	    "(anonymous namespace)::overload2_function(overload2_arg3)"
+	    "(anonymous namespace)::struct_overload2_test::overload2_function(overload2_arg4)"
+	    "ns_overload2_test::(anonymous namespace)::ns_overload2_test::overload2_function(overload2_arg9)"
+	    "ns_overload2_test::(anonymous namespace)::ns_overload2_test::struct_overload2_test::overload2_function(overload2_arga)"
+	    "ns_overload2_test::(anonymous namespace)::overload2_function(overload2_arg7)"
+	    "ns_overload2_test::(anonymous namespace)::struct_overload2_test::overload2_function(overload2_arg8)"
+	    "ns_overload2_test::overload2_function(overload2_arg5)"
+	    "ns_overload2_test::struct_overload2_test::overload2_function(overload2_arg6)"
+	    "overload2_function(overload2_arg1)"
+	    "struct_overload2_test::overload2_function(overload2_arg2)"
+	}
+	foreach cmd_prefix {"b" "b -function"} {
+	    test_gdb_complete_multiple \
+		"$cmd_prefix " "overload2_func" "tion(overload2_arg" $completion_list
+	    check_bp_locations_match_list \
+		"$cmd_prefix overload2_function" $completion_list
+	}
+    }
+
+    # Same, but restrict to functions/methods in some scope.
+    with_test_prefix "restrict scope" {
+	set completion_list {
+	    "ns_overload2_test::(anonymous namespace)::ns_overload2_test::overload2_function(overload2_arg9)"
+	    "ns_overload2_test::overload2_function(overload2_arg5)"
+	}
+	foreach cmd_prefix {"b" "b -function"} {
+	    test_gdb_complete_multiple \
+		"$cmd_prefix " "ns_overload2_test::overload2_func" "tion(overload2_arg" $completion_list
+	    check_bp_locations_match_list \
+		"$cmd_prefix ns_overload2_test::overload2_function" $completion_list
+	}
+    }
+
+    # Restrict to anonymous namespace scopes.
+    with_test_prefix "restrict scope 2" {
+	set completion_list {
+	    "(anonymous namespace)::overload2_function(overload2_arg3)"
+	    "ns_overload2_test::(anonymous namespace)::overload2_function(overload2_arg7)"
+	}
+	foreach cmd_prefix {"b" "b -function"} {
+	    test_gdb_complete_multiple \
+		"$cmd_prefix " "(anonymous namespace)::overload2_func" "tion(overload2_arg" $completion_list
+	    check_bp_locations_match_list \
+		"$cmd_prefix (anonymous namespace)::overload2_function" $completion_list
+	}
+    }
+
+    # Add enough scopes, and we get a unique completion.
+    with_test_prefix "unique completion" {
+	foreach cmd_prefix {"b" "b -function"} {
+	    test_gdb_complete_unique \
+		"$cmd_prefix ns_overload2_test::(anonymous namespace)::overload2_func" \
+		"$cmd_prefix ns_overload2_test::(anonymous namespace)::overload2_function(overload2_arg7)"
+	    check_setting_bp_fails "$cmd_prefix ns_overload2_test::(anonymous namespace)::overload2_func"
+	    check_bp_locations_match_list \
+		"$cmd_prefix ns_overload2_test::(anonymous namespace)::overload2_function" \
+		{"ns_overload2_test::(anonymous namespace)::overload2_function(overload2_arg7)"}
+	}
+    }
+}
+
+# Test linespecs / locations using fully-qualified names.
+
+proc_with_prefix fqn {} {
+
+    # "-qualified" works with both explicit locations and linespecs.
+    # Also test that combining a source file with a function name
+    # still results in a full match, with both linespecs and explicit
+    # locations.
+    foreach cmd_prefix {
+	"b -qualified "
+	"b -qualified -function "
+	"b -qualified cpls.cc:"
+	"b -qualified -source cpls.cc -function "
+	"b -source cpls.cc -qualified -function "
+    } {
+	test_gdb_complete_unique \
+	    "${cmd_prefix}overload2_func" \
+	    "${cmd_prefix}overload2_function(overload2_arg1)"
+
+	# Drill down until we find a unique completion.
+	test_gdb_complete_multiple "${cmd_prefix}" "ns_overload2_test::" "" {
+	    "ns_overload2_test::(anonymous namespace)::ns_overload2_test::overload2_function(overload2_arg9)"
+	    "ns_overload2_test::(anonymous namespace)::ns_overload2_test::struct_overload2_test::overload2_function(overload2_arga)"
+	    "ns_overload2_test::(anonymous namespace)::overload2_function(overload2_arg7)"
+	    "ns_overload2_test::(anonymous namespace)::struct_overload2_test::overload2_function(overload2_arg8)"
+	    "ns_overload2_test::overload2_function(overload2_arg5)"
+	    "ns_overload2_test::struct_overload2_test::overload2_function(overload2_arg6)"
+	}
+
+	test_gdb_complete_multiple "${cmd_prefix}" "ns_overload2_test::(anonymous namespace)::" "" {
+	    "ns_overload2_test::(anonymous namespace)::ns_overload2_test::overload2_function(overload2_arg9)"
+	    "ns_overload2_test::(anonymous namespace)::ns_overload2_test::struct_overload2_test::overload2_function(overload2_arga)"
+	    "ns_overload2_test::(anonymous namespace)::overload2_function(overload2_arg7)"
+	    "ns_overload2_test::(anonymous namespace)::struct_overload2_test::overload2_function(overload2_arg8)"
+	}
+
+	test_gdb_complete_multiple "${cmd_prefix}" "ns_overload2_test::(anonymous namespace)::ns_overload2_test::" "" {
+	    "ns_overload2_test::(anonymous namespace)::ns_overload2_test::overload2_function(overload2_arg9)"
+	    "ns_overload2_test::(anonymous namespace)::ns_overload2_test::struct_overload2_test::overload2_function(overload2_arga)"
+	}
+
+	test_gdb_complete_unique \
+	    "${cmd_prefix}ns_overload2_test::(anonymous namespace)::ns_overload2_test::overload2_func" \
+	    "${cmd_prefix}ns_overload2_test::(anonymous namespace)::ns_overload2_test::overload2_function(overload2_arg9)"
+
+    }
+}
+
+# Check that a fully-qualified lookup name doesn't match symbols in
+# nested scopes.
+
+proc_with_prefix fqn-2 {} {
+    set linespec "struct_overload2_test::overload2_function(overload2_arg6)"
+    set cmd_prefix "b -qualified"
+    check_setting_bp_fails "$cmd_prefix $linespec"
+    test_gdb_complete_none "$cmd_prefix $linespec"
+
+    # Check that using the same name, but not fully-qualifying it,
+    # would find something, just to make sure the test above is
+    # testing what we intend to test.
+    set cmd_prefix "b -function"
+    test_gdb_complete_unique "$cmd_prefix $linespec" "$cmd_prefix $linespec"
+    check_bp_locations_match_list \
+	"$cmd_prefix $linespec" \
+	{"ns_overload2_test::struct_overload2_test::overload2_function(overload2_arg6)"}
+}
+
+# Test completion of functions in different scopes that have the same
+# name and parameters.  Restricting the scopes should find fewer and
+# fewer matches.
+
+proc_with_prefix overload-3 {} {
+    with_test_prefix "all overloads" {
+	set completion_list {
+	    "(anonymous namespace)::overload3_function(int)"
+	    "(anonymous namespace)::overload3_function(long)"
+	    "(anonymous namespace)::struct_overload3_test::overload3_function(int)"
+	    "(anonymous namespace)::struct_overload3_test::overload3_function(long)"
+	    "ns_overload3_test::(anonymous namespace)::ns_overload3_test::overload3_function(int)"
+	    "ns_overload3_test::(anonymous namespace)::ns_overload3_test::overload3_function(long)"
+	    "ns_overload3_test::(anonymous namespace)::ns_overload3_test::struct_overload3_test::overload3_function(int)"
+	    "ns_overload3_test::(anonymous namespace)::ns_overload3_test::struct_overload3_test::overload3_function(long)"
+	    "ns_overload3_test::(anonymous namespace)::overload3_function(int)"
+	    "ns_overload3_test::(anonymous namespace)::overload3_function(long)"
+	    "ns_overload3_test::(anonymous namespace)::struct_overload3_test::overload3_function(int)"
+	    "ns_overload3_test::(anonymous namespace)::struct_overload3_test::overload3_function(long)"
+	    "ns_overload3_test::overload3_function(int)"
+	    "ns_overload3_test::overload3_function(long)"
+	    "ns_overload3_test::struct_overload3_test::overload3_function(int)"
+	    "ns_overload3_test::struct_overload3_test::overload3_function(long)"
+	    "overload3_function(int)"
+	    "overload3_function(long)"
+	    "struct_overload3_test::overload3_function(int)"
+	    "struct_overload3_test::overload3_function(long)"
+	}
+	foreach cmd_prefix {"b" "b -function"} {
+	    test_gdb_complete_multiple "$cmd_prefix " "overload3_func" "tion(" $completion_list
+	    check_bp_locations_match_list "$cmd_prefix overload3_function" $completion_list
+	}
+    }
+
+    with_test_prefix "restrict overload" {
+	foreach cmd_prefix {"b" "b -function"} {
+	    test_gdb_complete_unique \
+		"$cmd_prefix overload3_function(int)" \
+		"$cmd_prefix overload3_function(int)"
+	    check_bp_locations_match_list "$cmd_prefix overload3_function(int)" {
+		"(anonymous namespace)::overload3_function(int)"
+		"(anonymous namespace)::struct_overload3_test::overload3_function(int)"
+		"ns_overload3_test::(anonymous namespace)::ns_overload3_test::overload3_function(int)"
+		"ns_overload3_test::(anonymous namespace)::ns_overload3_test::struct_overload3_test::overload3_function(int)"
+		"ns_overload3_test::(anonymous namespace)::overload3_function(int)"
+		"ns_overload3_test::(anonymous namespace)::struct_overload3_test::overload3_function(int)"
+		"ns_overload3_test::overload3_function(int)"
+		"ns_overload3_test::struct_overload3_test::overload3_function(int)"
+		"overload3_function(int)"
+		"struct_overload3_test::overload3_function(int)"
+	    }
+	}
+    }
+
+    with_test_prefix "restrict scope" {
+	set completion_list {
+	    "(anonymous namespace)::struct_overload3_test::overload3_function(int)"
+	    "(anonymous namespace)::struct_overload3_test::overload3_function(long)"
+	    "ns_overload3_test::(anonymous namespace)::ns_overload3_test::struct_overload3_test::overload3_function(int)"
+	    "ns_overload3_test::(anonymous namespace)::ns_overload3_test::struct_overload3_test::overload3_function(long)"
+	    "ns_overload3_test::(anonymous namespace)::struct_overload3_test::overload3_function(int)"
+	    "ns_overload3_test::(anonymous namespace)::struct_overload3_test::overload3_function(long)"
+	    "ns_overload3_test::struct_overload3_test::overload3_function(int)"
+	    "ns_overload3_test::struct_overload3_test::overload3_function(long)"
+	    "struct_overload3_test::overload3_function(int)"
+	    "struct_overload3_test::overload3_function(long)"
+	}
+	foreach cmd_prefix {"b" "b -function"} {
+	    test_gdb_complete_multiple \
+		"$cmd_prefix " "struct_overload3_test::overload3_func" "tion(" \
+		$completion_list
+	    check_bp_locations_match_list \
+		"$cmd_prefix struct_overload3_test::overload3_function" \
+		$completion_list
+	}
+    }
+}
+
+# Test completing an overloaded template method.
+
+proc_with_prefix template-overload {} {
+    set completion_list {
+	"template_struct<int>::template_overload_fn(int)"
+	"template_struct<long>::template_overload_fn(long)"
+    }
+    foreach cmd_prefix {"b" "b -function"} {
+	test_gdb_complete_multiple "$cmd_prefix " "template_overload_fn" "(" $completion_list
+	check_bp_locations_match_list "$cmd_prefix template_overload_fn" $completion_list
+	check_bp_locations_match_list \
+	    "$cmd_prefix template_struct<int>::template_overload_fn" \
+	    "template_struct<int>::template_overload_fn(int)"
+    }
+}
+
+# Test completing template methods with non-void return type.
+
+proc_with_prefix template-ret-type {} {
+    set method_name "template2_fn<int, int>"
+    set param_list "(template2_ret_type<int>, int, int)"
+    set struct_type "template2_struct<template2_ret_type<int> >"
+    set ret_type "template2_ret_type<int>"
+
+    # Templates are listed both with and without return type, making
+    # "template2_<tab>" ambiguous.
+    foreach cmd_prefix {"b" "b -function"} {
+	set completion_list \
+	    [list \
+		 "${ret_type} ${struct_type}::${method_name}${param_list}" \
+		 "${struct_type}::${method_name}${param_list}"]
+	test_gdb_complete_multiple "$cmd_prefix " "template2_" "" $completion_list
+
+	# Add one character more after "2_", and the linespec becomes
+	# unambiguous.  Test completing the whole prefix range after that,
+	# thus testing completing either with or without return type.
+	foreach {s t} [list \
+			   "template2_r" \
+			   "${ret_type} ${struct_type}::${method_name}${param_list}" \
+			   "template2_s" \
+			   "${struct_type}::${method_name}${param_list}"] {
+	    set linespec $t
+	    set complete_line "$cmd_prefix $linespec"
+	    set start [index_after $s $complete_line]
+	    test_complete_prefix_range $complete_line $start
+	}
+
+	# Setting a breakpoint with or without template params and without
+	# the method params works, just like with non-template functions.
+	#  It also works with or without return type.
+	foreach linespec [list \
+			      "template2_fn" \
+			      "${method_name}" \
+			      "${method_name}${param_list}" \
+			      "${struct_type}::${method_name}" \
+			      "${struct_type}::${method_name}${param_list}" \
+			      "${ret_type} ${struct_type}::${method_name}" \
+			      "${ret_type} ${struct_type}::${method_name}${param_list}"] {
+	    check_bp_locations_match_list \
+		"$cmd_prefix $linespec" \
+		[list "${struct_type}::${method_name}${param_list}"]
+	}
+    }
+}
+
+# Test completion of function template foo.
+
+proc_with_prefix template-function-foo {} {
+
+    foreach cmd_prefix {"b" "b -function"} {
+	# "foo" is ambiguous, this will set many different breakpoints.
+	set completion_list \
+	    [list \
+		 [makefoo Aabiaai] \
+		 [makefoo Aabiabi] \
+		 [makefoo Aabicdi] \
+		 [makefoo AabicdiAabiaai] \
+		 [makefoo AabicdiAabiabi] \
+		 [makefoo AabicdiBabicdi] \
+		 [makefoo Babicdi] \
+		 [makefoo aai] \
+		 [makefoo aaiabi] \
+		 [makefoo aaicci] \
+		 [makefoo aaicdi] \
+		 [makefoo abi] \
+		 [makefoo anabnb] \
+		 [makefoo cci] \
+		 [makefoo cdi] \
+		 [makefoo NAnanbNBnanb] \
+		 [makefoo nanb]]
+	test_gdb_complete_multiple "$cmd_prefix " "foo" "<" $completion_list
+	check_bp_locations_match_list "$cmd_prefix foo" $completion_list
+
+	# "foo<" should give the same result, but it should not set any
+	# breakpoints.
+	test_gdb_complete_multiple "$cmd_prefix " "foo<" "" $completion_list
+	check_setting_bp_fails "$cmd_prefix foo<"
+
+	# "foo<A" should only give completions in COMPLETION_LIST that
+	# start with "A" but should set no breakpoints.
+	set completion_list \
+	    [list \
+		 [makefoo Aabiaai] \
+		 [makefoo Aabiabi] \
+		 [makefoo Aabicdi] \
+		 [makefoo AabicdiAabiaai] \
+		 [makefoo AabicdiAabiabi] \
+		 [makefoo AabicdiBabicdi]]
+	test_gdb_complete_multiple "$cmd_prefix " "foo<A" "<a<b<int> >, " \
+	    $completion_list
+	check_setting_bp_fails "$cmd_prefix foo<A"
+
+	# "foo<A>" should give any function with one parameter of any type
+	# of A.  While the parameter list in the template should be ignored,
+	# the function's argument list should not be ignored.
+	set completion_list \
+	    [list \
+		 [makefoo Aabiaai] \
+		 [makefoo Aabiabi] \
+		 [makefoo Aabicdi]]
+	test_gdb_complete_multiple "$cmd_prefix " "foo<A>" \
+	    "(A<a<b<int> >, " $completion_list
+	check_bp_locations_match_list "$cmd_prefix foo<A>" $completion_list
+
+	# "foo<A," should complete to any function with more than one
+	# parameter where the first parameter is any type of A.  Insufficient
+	# location to set breakpoints.
+	set completion_list \
+	    [list \
+		 [makefoo AabicdiAabiaai] \
+		 [makefoo AabicdiAabiabi] \
+		 [makefoo AabicdiBabicdi]]
+	test_gdb_complete_multiple "$cmd_prefix " "foo<A," " " \
+	    $completion_list
+	check_setting_bp_fails "$cmd_prefix foo<A,"
+
+	# "foo<A<a<b<int>, a" should give all completions starting with
+	# "Aabia" but it is insufficient to set breakpoints.
+	set completion_list \
+	    [list \
+		 [makefoo Aabiaai] \
+		 [makefoo Aabiabi]]
+	test_gdb_complete_multiple "$cmd_prefix " "foo<A<a<b<int> >, a" \
+	    "<" $completion_list
+	check_setting_bp_fails "$cmd_prefix foo<A<a<b<int> >, a"
+
+	# "foo<A<a<b<int>, a<" should yield the same results as above.
+	test_gdb_complete_multiple "$cmd_prefix " "foo<A<a<b<int> >, a<" \
+	    "" $completion_list
+	check_setting_bp_fails "$cmd_prefix foo<A<a<b<int> >, a<"
+
+	# "foo<A<a<b<int>, a<a" is unique but insufficient to set a
+	# breakpoint.  This has an ignored template parameter list, so
+	# the completion will contain an ignored list ("a<a>")
+	test_gdb_complete_unique "$cmd_prefix foo<A<a<b<int> >, a<a" \
+	    "$cmd_prefix [makefoo Aabiaai]"
+	check_setting_bp_fails "$cmd_prefix foo<A<b<int> >, a<a"
+
+	# "foo<A<a<b<int>, a<b" is also unique.  Same parameter ignoring
+	# happens here, too (except "a<b>").
+	test_gdb_complete_unique "$cmd_prefix foo<A<a<b<int> >, a<b" \
+	    "$cmd_prefix [makefoo Aabiabi]"
+	check_setting_bp_fails "$cmd_prefix foo<A<a<b<int> >, a<b"
+
+	# "foo<B" is unique but insufficient to set a breakpoint.
+	test_gdb_complete_unique "$cmd_prefix foo<B" \
+	    "$cmd_prefix [makefoo Babicdi]"
+	check_setting_bp_fails "$cmd_prefix foo<B"
+
+	# "foo<B>" yields the same unique result and sets a breakpoint.
+	# Since the input skips the parameter list, so does the completion.
+	test_gdb_complete_unique "$cmd_prefix foo<B>" \
+	    "$cmd_prefix foo<B>(B<a<b<int> >, c<d<int> > >)"
+	check_bp_locations_match_list "$cmd_prefix foo<B>" \
+	    [list [makefoo Babicdi]]
+
+	# "foo<B," should return no completions and no breakpoints.
+	test_gdb_complete_none "$cmd_prefix foo<B,"
+	check_setting_bp_fails "$cmd_prefix foo<B,"
+
+	# "foo<n::" should yield only the functions starting with
+	# "n" and "N" and no breakpoints.
+	set completion_list \
+	    [list \
+		 [makefoo NAnanbNBnanb] \
+		 [makefoo nanb]]
+	test_gdb_complete_multiple "$cmd_prefix " "foo<n::" "" \
+	    $completion_list
+	check_setting_bp_fails "$cmd_prefix foo<n::"
+
+	# "foo<A<a, c> >" is unique and sets a breakpoint.
+	# Multiple template parameter lists are skipped, so GDB will ignore
+	# them in the completion.
+	test_gdb_complete_unique "$cmd_prefix foo<A<a, c> >" \
+	    "$cmd_prefix foo<A<a, c> >(A<a<b<int> >, c<d<int> > >)"
+	check_bp_locations_match_list "$cmd_prefix foo<A<a, c> >" \
+	    [list [makefoo Aabicdi]]
+    }
+}
+
+# Helper for template-class-with-method to build completion lists.
+
+proc makem {arglist_list} {
+    set completion_list {}
+    foreach arglist $arglist_list {
+	lappend completion_list "[maketype $arglist]::method()"
+    }
+    return $completion_list
+}
+
+# Returns a list of elements that look like
+#   void TYPE::method()
+# where TYPE is derived from each arglist in ARGLIST_LIST.
+
+proc test_makem_1 {arglist_list expected_list} {
+    set result [makem $arglist_list]
+    send_log "makem $arglist = $result\n"
+    send_log "expecting $expected_list\n"
+
+    # Do list equality via canonical strings.
+    if {[expr {[list {*}$expected_list] eq [list {*}$result]}]} {
+	pass "makem unit test: $arglist"
+    } else {
+	fail "makem unit test: $arglist"
+    }
+}
+
+# Unit tests for makem.
+
+proc test_makem {} {
+    test_makem_1 ai {"a<int>::method()"}
+    test_makem_1 bi {"b<int>::method()"}
+    test_makem_1 {ai bi} {"a<int>::method()" "b<int>::method()"}
+    test_makem_1 {Aaiaai Bbibbi abi cdi} {
+	"A<a<int>, a<a<int> > >::method()"
+	"B<b<int>, b<b<int> > >::method()"
+	"a<b<int> >::method()"
+	"c<d<int> >::method()"
+    }
+}
+
+# Test class template containing a (non-templated) method called "method."
+
+proc_with_prefix template-class-with-method {} {
+
+    foreach {type type_list} \
+	[list \
+	     "" {aai abi cci cdi Aabicdi Aabiaai Aabiabi Babicdi} \
+	     "a" {aai abi} \
+	     "b" {} \
+	     "c" {cci cdi} \
+	     "A" {Aabicdi Aabiaai Aabiabi} \
+	     "B" {Babicdi} \
+	     "A<a, a>" {Aabiaai Aabiabi} \
+	     "A<a<b>, c>" {Aabicdi}\
+	     "A<a, d>" {} \
+	     "B<a, a>" {} \
+	     "B<a, b>" {} \
+	     "B<a, c>" {Babicdi}] \
+	{
+	    foreach cmd_prefix {"b" "b -function"} {
+		set c "$cmd_prefix "
+		if {$type != ""} {
+		    append c "${type}::"
+		}
+		append c "method"
+
+		if {[llength $type_list] > 0} {
+		    test_gdb_complete_unique $c "${c}()"
+		    check_bp_locations_match_list $c [makem $type_list]
+		} else {
+		    test_gdb_complete_none $c
+		}
+	    }
+	}
+}
+
+# Test completion of a const-overloaded funtion (const-overload).
+# Note that "const" appears after the function/method parameters.
+
+proc_with_prefix const-overload {} {
+    set completion_list {
+	"struct_with_const_overload::const_overload_fn()"
+	"struct_with_const_overload::const_overload_fn() const"
+    }
+    foreach cmd_prefix {"b" "b -function"} {
+	test_gdb_complete_multiple \
+	    "$cmd_prefix " "const_overload_fn" "()" \
+	    $completion_list
+	test_gdb_complete_multiple \
+	    "$cmd_prefix " "const_overload_fn ( " ")" \
+	    $completion_list
+	test_gdb_complete_multiple \
+	    "$cmd_prefix " "const_overload_fn()" "" \
+	    $completion_list
+
+	check_bp_locations_match_list \
+	    "$cmd_prefix const_overload_fn" \
+	    {"struct_with_const_overload::const_overload_fn()"
+		"struct_with_const_overload::const_overload_fn() const"}
+
+	check_setting_bp_fails "$cmd_prefix const_overload_fn("
+	check_bp_locations_match_list \
+	    "$cmd_prefix const_overload_fn()" \
+	    {"struct_with_const_overload::const_overload_fn()"}
+	check_bp_locations_match_list \
+	    "$cmd_prefix const_overload_fn() const" \
+	    {"struct_with_const_overload::const_overload_fn() const"}
+    }
+}
+
+# Same but quote-enclose the function name.  This makes the overload
+# no longer be ambiguous.
+
+proc_with_prefix const-overload-quoted {} {
+    foreach cmd_prefix {"b" "b -function"} {
+	set linespec "'const_overload_fn()'"
+	test_gdb_complete_unique "$cmd_prefix $linespec" "$cmd_prefix $linespec"
+	check_bp_locations_match_list \
+	    "$cmd_prefix $linespec" {
+		"struct_with_const_overload::const_overload_fn()"
+	    }
+
+	set linespec "'const_overload_fn() const'"
+	test_gdb_complete_unique "$cmd_prefix $linespec" "$cmd_prefix $linespec"
+	check_bp_locations_match_list \
+	    "$cmd_prefix $linespec" {
+		"struct_with_const_overload::const_overload_fn() const"
+	    }
+    }
+}
+
+# Test that when the function is unambiguous, linespec completion
+# appends the end quote char automatically, both ' and ".
+
+proc_with_prefix append-end-quote-char-when-unambiguous {} {
+    foreach cmd_prefix {"b" "b -function"} {
+	foreach qc $completion::all_quotes_list {
+	    set linespec "${qc}not_overloaded_fn()${qc}"
+	    foreach cmd [list "$cmd_prefix ${qc}not_overloaded_fn()" \
+			      "$cmd_prefix ${qc}not_overloaded_fn" \
+			      "$cmd_prefix ${qc}not_overloaded_"] {
+		test_gdb_complete_unique $cmd "$cmd_prefix $linespec"
+	    }
+	    check_bp_locations_match_list \
+		"$cmd_prefix $linespec" {"not_overloaded_fn()"}
+	}
+    }
+}
+
+# Test completing symbols of source files.
+
+proc_with_prefix in-source-file-unconstrained {} {
+    # First test that unconstrained matching picks up functions from
+    # multiple files.
+    test_gdb_complete_multiple "b " "file_constrained_test" "_cpls" {
+	"file_constrained_test_cpls2_function(int)"
+	"file_constrained_test_cpls_function(int)"
+    }
+    check_setting_bp_fails "b file_constrained_test_cpls"
+}
+
+# Test an unambiguous completion that would be ambiguous if it weren't
+# for the source file component, due to
+# "file_constrained_test_cpls_function" in cpls.cc.  Test with
+# different components quoted, and with whitespace before the function
+# name.
+
+proc_with_prefix in-source-file-unambiguous {} {
+    foreach sqc $completion::maybe_quoted_list {
+	foreach fqc $completion::maybe_quoted_list {
+	    # Linespec.
+	    foreach sep {":" ": "} {
+		set linespec \
+		    "${sqc}cpls2.cc${sqc}${sep}${fqc}file_constrained_test_cpls2_function(int)${fqc}"
+		set complete_line "b $linespec"
+		set start [index_after "constrained_test" $complete_line]
+		set input_line [string range $complete_line 0 $start]
+		test_gdb_complete_unique $input_line ${complete_line}
+		check_bp_locations_match_list "b $linespec" {
+		    "file_constrained_test_cpls2_function(int)"
+		}
+	    }
+
+	    # Explicit location.
+	    set source_opt "-source ${sqc}cpls2.cc${sqc}"
+	    set function_opt "-function ${fqc}file_constrained_test_cpls2_function(int)${fqc}"
+	    set complete_line "b $source_opt $function_opt"
+	    set start [index_after "cpls2_functio" $complete_line]
+	    set input_line [string range $complete_line 0 $start]
+	    test_gdb_complete_unique $input_line ${complete_line}
+	    check_bp_locations_match_list "$complete_line" {
+		    "file_constrained_test_cpls2_function(int)"
+	    }
+	}
+    }
+}
+
+# Test an ambiguous completion constrained by a source file.  Test
+# with different components quoted, and with whitespace before the
+# function name.
+
+proc_with_prefix in-source-file-ambiguous {} {
+    foreach sqc $completion::maybe_quoted_list {
+	foreach fqc $completion::maybe_quoted_list {
+	    # Linespec.
+	    foreach sep {":" ": "} {
+		set cmd_prefix "b ${sqc}cpls2.cc${sqc}${sep}"
+		test_gdb_complete_multiple "${cmd_prefix}" ${fqc} "" {
+		    "another_file_constrained_test_cpls2_function(int)"
+		    "file_constrained_test_cpls2_function(int)"
+		} ${fqc} ${fqc}
+	    }
+
+	    # Explicit location.
+	    test_gdb_complete_multiple \
+		"b -source ${sqc}cpls2.cc${sqc} -function " ${fqc} "" {
+		"another_file_constrained_test_cpls2_function(int)"
+		"file_constrained_test_cpls2_function(int)"
+	    } ${fqc} ${fqc}
+	}
+    }
+}
+
+# Check that completing a file name in a linespec auto-appends a colon
+# instead of a whitespace character.
+
+proc_with_prefix source-complete-appends-colon {} {
+    # Test with quotes to make sure the end quote char is put at the
+    # right place.
+    foreach qc $completion::maybe_quoted_list {
+	test_gdb_complete_unique \
+	    "b ${qc}cpls2." \
+	    "b ${qc}cpls2.cc${qc}" ":"
+	test_gdb_complete_unique \
+	    "b ${qc}cpls2.c" \
+	    "b ${qc}cpls2.cc${qc}" ":"
+	test_gdb_complete_unique \
+	    "b ${qc}cpls2.cc" \
+	    "b ${qc}cpls2.cc${qc}" ":"
+
+	# Same, but with a filename with an hyphen (which is normally
+	# a language word break char).
+	test_gdb_complete_unique \
+	    "b ${qc}cpls-" \
+	    "b ${qc}cpls-hyphen.cc${qc}" ":"
+	test_gdb_complete_unique \
+	    "b ${qc}cpls-hyphen" \
+	    "b ${qc}cpls-hyphen.cc${qc}" ":"
+    }
+
+    # Test the same, but with the name of a nonexisting file.
+
+    # Cursor at the end of the string.
+    test_gdb_complete_none "b nonexistingfilename.cc"
+    # Cursor past the end of the string.
+    test_gdb_complete_multiple "b nonexistingfilename.cc " "" "" \
+	$completion::keyword_list
+    foreach qc $completion::all_quotes_list {
+	# Unterminated quote.
+	test_gdb_complete_none "b ${qc}nonexistingfilename.cc"
+	test_gdb_complete_none "b ${qc}nonexistingfilename.cc "
+	# Terminated quote, cursor at the quote.
+	test_gdb_complete_unique \
+	    "b ${qc}nonexistingfilename.cc${qc}" \
+	    "b ${qc}nonexistingfilename.cc${qc}"
+	# Terminated quote, cursor past the quote.
+	test_gdb_complete_multiple \
+	    "b ${qc}nonexistingfilename.cc${qc} " "" "" \
+	    $completion::keyword_list
+    }
+}
+
+####################################################################
+
+# Test that a colon at the end of the linespec is understood as an
+# incomplete scope operator (incomplete-scope-colon), instead of a
+# source/function separator.
+
+proc_with_prefix incomplete-scope-colon {} {
+
+    # Helper for the loop below to simplify it.  Tests completion of
+    # the range defined by the RANGE_SS found in the constructed line.
+    #
+    # E.g., with:
+    #
+    #   source="source.cc"
+    #   fqc="'"
+    #   prototype="ns::function()"
+    #   range_ss="s::f"
+    #
+    # we'd try completing with the cursor set in each of the
+    # underlined range's positions of:
+    #
+    #   b source.cc:'ns::function()'"
+    #                 ^^^^
+    #
+    # Also test that setting a breakpoint at the constructed line
+    # finds the same breakpoint location as completion does.
+    #
+    proc incomplete_scope_colon_helper {prototype range_ss {skip_check_bp 0}} {
+	foreach source {"" "cpls.cc"} {
+	    # Test with and without source quoting.
+	    foreach sqc $completion::maybe_quoted_list {
+		if {$source == "" && $sqc != ""} {
+		    # Invalid combination.
+		    continue
+		}
+
+		# Test with and without function quoting.
+		foreach fqc $completion::maybe_quoted_list {
+		    if {$source == ""} {
+			set linespec_source ""
+			set explicit_source ""
+		    } else {
+			set linespec_source "${sqc}${source}${sqc}:"
+			set explicit_source "-source ${sqc}${source}${sqc}"
+		    }
+
+		    # Even though this use case is trickier with
+		    # linespecs due to the ":" as separator, test both
+		    # linespecs and explicit locations for
+		    # completeness.
+		    foreach location [list \
+					  "${linespec_source}${fqc}$prototype${fqc}" \
+					  "${explicit_source} -function ${fqc}$prototype${fqc}"] {
+			set complete_line "b $location"
+			set start [string first $range_ss $complete_line]
+			set end [expr ($start + [string length $range_ss])]
+			test_complete_prefix_range $complete_line $start $end
+			if {!$skip_check_bp} {
+			    check_bp_locations_match_list "b $location" [list "$prototype"]
+			}
+		    }
+		}
+	    }
+	}
+    }
+
+    incomplete_scope_colon_helper \
+	"struct_incomplete_scope_colon_test::incomplete_scope_colon_test()" \
+	"t::i"
+
+    incomplete_scope_colon_helper \
+	"ns_incomplete_scope_colon_test::incomplete_scope_colon_test()" \
+	"t::i"
+
+    # Test completing around both "::"s.
+    foreach range_ss {"t::s" "t::i"} skip_check_bp {0 1} {
+	incomplete_scope_colon_helper \
+	    "ns2_incomplete_scope_colon_test::struct_in_ns2_incomplete_scope_colon_test::incomplete_scope_colon_test()" \
+	    $range_ss $skip_check_bp
+    }
+}
+
+# Test completing functions/methods in anonymous namespaces.
+
+proc_with_prefix anon-ns {} {
+    foreach cmd_prefix {"b" "b -function"} {
+	foreach qc $completion::maybe_quoted_list {
+	    test_gdb_complete_unique \
+		"$cmd_prefix ${qc}anon_ns_function" \
+		"$cmd_prefix ${qc}anon_ns_function()${qc}"
+	    check_bp_locations_match_list "$cmd_prefix ${qc}anon_ns_function()${qc}" {
+		"(anonymous namespace)::anon_ns_function()"
+		"(anonymous namespace)::anon_ns_struct::anon_ns_function()"
+		"the_anon_ns_wrapper_ns::(anonymous namespace)::anon_ns_function()"
+		"the_anon_ns_wrapper_ns::(anonymous namespace)::anon_ns_struct::anon_ns_function()"
+	    }
+	}
+
+	# A "(" finds all anonymous namespace functions/methods in all
+	# scopes.
+	test_gdb_complete_multiple "$cmd_prefix " "(" "anonymous namespace)::" {
+	    "(anonymous namespace)::anon_ns_function()"
+	    "(anonymous namespace)::anon_ns_struct::anon_ns_function()"
+	    "(anonymous namespace)::overload2_function(overload2_arg3)"
+	    "(anonymous namespace)::overload3_function(int)"
+	    "(anonymous namespace)::overload3_function(long)"
+	    "(anonymous namespace)::struct_overload2_test::overload2_function(overload2_arg4)"
+	    "(anonymous namespace)::struct_overload3_test::overload3_function(int)"
+	    "(anonymous namespace)::struct_overload3_test::overload3_function(long)"
+	    "ns_overload2_test::(anonymous namespace)::ns_overload2_test::overload2_function(overload2_arg9)"
+	    "ns_overload2_test::(anonymous namespace)::ns_overload2_test::struct_overload2_test::overload2_function(overload2_arga)"
+	    "ns_overload2_test::(anonymous namespace)::overload2_function(overload2_arg7)"
+	    "ns_overload2_test::(anonymous namespace)::struct_overload2_test::overload2_function(overload2_arg8)"
+	    "ns_overload3_test::(anonymous namespace)::ns_overload3_test::overload3_function(int)"
+	    "ns_overload3_test::(anonymous namespace)::ns_overload3_test::overload3_function(long)"
+	    "ns_overload3_test::(anonymous namespace)::ns_overload3_test::struct_overload3_test::overload3_function(int)"
+	    "ns_overload3_test::(anonymous namespace)::ns_overload3_test::struct_overload3_test::overload3_function(long)"
+	    "ns_overload3_test::(anonymous namespace)::overload3_function(int)"
+	    "ns_overload3_test::(anonymous namespace)::overload3_function(long)"
+	    "ns_overload3_test::(anonymous namespace)::struct_overload3_test::overload3_function(int)"
+	    "ns_overload3_test::(anonymous namespace)::struct_overload3_test::overload3_function(long)"
+	    "the_anon_ns_wrapper_ns::(anonymous namespace)::anon_ns_function()"
+	    "the_anon_ns_wrapper_ns::(anonymous namespace)::anon_ns_struct::anon_ns_function()"
+	}
+
+	set function "the_anon_ns_wrapper_ns::(anonymous namespace)::anon_ns_function()"
+	test_gdb_complete_unique "$cmd_prefix $function" "$cmd_prefix $function"
+	check_bp_locations_match_list "$cmd_prefix $function" [list $function]
+
+	# Test completing after the "(anonymous namespace)" part.
+	test_gdb_complete_unique \
+	    "$cmd_prefix the_anon_ns_wrapper_ns::(anonymous namespace)::anon_ns_fu" \
+	    "$cmd_prefix $function"
+
+	# Test whitespace in the "(anonymous namespace)" component.
+
+	test_gdb_complete_unique \
+	    "$cmd_prefix the_anon_ns_wrapper_ns::( anonymous   namespace )::anon_ns_fu" \
+	    "$cmd_prefix the_anon_ns_wrapper_ns::( anonymous   namespace )::anon_ns_function()"
+	check_setting_bp_fails \
+	    "$cmd_prefix the_anon_ns_wrapper_ns::( anonymous   namespace )::anon_ns_fu"
+
+	set function_ws \
+	    "the_anon_ns_wrapper_ns::( anonymous   namespace )::anon_ns_function ( )"
+	test_gdb_complete_unique "$cmd_prefix $function_ws" "$cmd_prefix $function_ws"
+	check_bp_locations_match_list "$cmd_prefix $function_ws" [list $function]
+    }
+}
+
+# Basic test for completing "operator<".  More extensive C++ operator
+# tests in cpls-op.exp.
+
+proc_with_prefix operator< {} {
+    # Complete all prefixes between "oper" and the whole prototype.
+    set function "operator<(foo_enum, foo_enum)"
+    foreach cmd_prefix {"b" "b -function"} {
+	set line "$cmd_prefix $function"
+	set start [index_after "oper" $line]
+	test_complete_prefix_range $line $start
+    }
+
+    # There's a label in the function; try completing it.  (Exhaustive
+    # label completion tests further below.)
+    foreach location [list \
+		     "$function:label1" \
+		     "-function $function -label label1"] {
+
+	set cmd "b $location"
+	set input_line [string range $cmd 0 [expr [string length $cmd] - 3]]
+
+	test_gdb_complete_unique $input_line $cmd
+	test_gdb_complete_unique $cmd $cmd
+	check_bp_locations_match_list $cmd [list "$location"]
+    }
+}
+
+# Test completion of scopes with an ambiguous prefix.
+
+proc_with_prefix ambiguous-prefix {} {
+    foreach cmd_prefix {"b" "b -function"} {
+	test_gdb_complete_multiple "$cmd_prefix " "ambiguous_pre" "fix_" {
+	    "ambiguous_prefix_global_func()"
+	    "the_ambiguous_prefix_ns::ambiguous_prefix_ns_func()"
+	    "the_ambiguous_prefix_struct::ambiguous_prefix_method()"
+	}
+	check_setting_bp_fails "$cmd_prefix ambiguous_prefix_"
+    }
+}
+
+# Test completion of function labels.
+
+proc_with_prefix function-labels {} {
+    # Test with and without a source file component.
+    foreach_location_functions \
+	{ "" "cpls.cc" } \
+	{ "function_with_labels(int)" } \
+	{
+	    # Linespec version.  Test various spacing around the label
+	    # colon separator.
+	    foreach label_sep {":" " :" ": " " : "} {
+		set linespec "${location}${label_sep}"
+		test_gdb_complete_multiple "b $linespec" "l" "abel" {
+		    "label1"
+		    "label2"
+		}
+		check_setting_bp_fails "b ${linespec}label"
+
+		set tsep [string trim ${source_sep}]
+		check_bp_locations_match_list \
+		    "b ${linespec}label1" [list "${source}${tsep}${function}:label1"]
+		check_bp_locations_match_list \
+		    "b ${linespec}label2" [list "${source}${tsep}${function}:label2"]
+	    }
+	} \
+	{
+	    # Explicit locations version.
+	    append location " -label"
+	    test_gdb_complete_multiple "b $location " "l" "abel" {
+		"label1"
+		"label2"
+	    }
+	    check_setting_bp_fails "b $location label"
+
+	    if {$source != ""} {
+		set bp_loc_src "-source ${source} "
+	    } else {
+		set bp_loc_src ""
+	    }
+	    check_bp_locations_match_list \
+		"b ${location} label1" [list "${bp_loc_src}-function $function -label label1"]
+	    check_bp_locations_match_list \
+		"b ${location} label2" [list "${bp_loc_src}-function $function -label label2"]
+	}
+}
+
+# Test that completion after a function name offers keyword
+# (if/inferior/task/thread/-force-condition) matches in linespec mode,
+# and also the explicit location options in explicit locations mode.
+
+proc_with_prefix keywords-after-function {} {
+    set explicit_list \
+	[lsort [concat \
+		    $completion::explicit_opts_list \
+		    $completion::keyword_list]]
+
+    # Test without a source file, with a known source file, and with
+    # and unknown source file.
+    # Test a known and an unknown function.
+    foreach_location_functions \
+	{ "" "cpls.cc" "unknown_file.cc" } \
+	{ "function_with_labels(int)" "unknown_function(int)" } \
+	{
+	    # Linespec version.
+	    test_gdb_complete_multiple "b ${location} " "" "" \
+		$completion::keyword_list
+	} \
+	{
+	    # Explicit locations version.
+	    test_gdb_complete_multiple "b ${location} " "" "" \
+		$explicit_list
+	}
+}
+
+# Same, but after a label.
+
+proc_with_prefix keywords-after-label {} {
+    set explicit_list \
+	[lsort [concat \
+		    $completion::explicit_opts_list \
+		    $completion::keyword_list]]
+
+    foreach_location_labels \
+	{ "" "cpls.cc" } \
+	{ "function_with_labels(int)" "unknown_function(int)" } \
+	{ "label1" "non_existing_label" } \
+	{
+	    # Linespec version.
+	    test_gdb_complete_multiple "b ${location} " "" "" \
+		$completion::keyword_list
+	} \
+	{
+	    # Explicit locations version.
+	    test_gdb_complete_multiple "b ${location} " "" "" \
+		$explicit_list
+	}
+}
+
+# Similar, but after an unknown file, and in linespec mode only.
+
+proc_with_prefix keywords-after-unknown-file {} {
+    # Test with and without quoting.
+    foreach qc $completion::maybe_quoted_list {
+	set line "b ${qc}unknown_file.cc${qc}: "
+	test_gdb_complete_multiple $line "" "" $completion::keyword_list
+    }
+}
+
+# Test that linespec / function completion does not match data
+# symbols, only functions/methods.
+
+proc_with_prefix no-data-symbols {} {
+    foreach cmd_prefix {"b" "b -function"} {
+	test_gdb_complete_unique "$cmd_prefix code_" "$cmd_prefix code_function()"
+    }
+}
+
+
+# After "if", we expect an expression, which has a different completer
+# that matches data symbols as well.  Check that that works.
+
+proc_with_prefix if-expression {} {
+    foreach cmd_prefix {"b" "b -function"} {
+	test_gdb_complete_multiple "$cmd_prefix function() if " "code_" "" {
+	    "code_data"
+	    "code_function()"
+	}
+
+	test_gdb_complete_unique \
+	    "$cmd_prefix function() if code_data + another_da" \
+	    "$cmd_prefix function() if code_data + another_data"
+
+	test_gdb_complete_unique \
+	    "$cmd_prefix non_existing_function() if code_data + another_da" \
+	    "$cmd_prefix non_existing_function() if code_data + another_data"
+
+	# FIXME: For now, thread and task also use the expression
+	# completer.
+	test_gdb_complete_unique \
+	    "$cmd_prefix function() thread code_data + another_da" \
+	    "$cmd_prefix function() thread code_data + another_data"
+	test_gdb_complete_unique \
+	    "$cmd_prefix function() task code_data + another_da" \
+	    "$cmd_prefix function() task code_data + another_data"
+    }
+}
+
+# The testcase driver.  Calls all test procedures.
+
+proc test_driver {} {
+    all-param-prefixes
+    overload
+    overload-2
+    fqn
+    fqn-2
+    overload-3
+    template-overload
+    template-ret-type
+    #test_makefoo
+    template-function-foo
+    #test_makem
+    template-class-with-method
+    const-overload
+    const-overload-quoted
+    append-end-quote-char-when-unambiguous
+    in-source-file-unconstrained
+    in-source-file-unambiguous
+    in-source-file-ambiguous
+    source-complete-appends-colon
+    incomplete-scope-colon
+    anon-ns
+    operator<
+    ambiguous-prefix
+    function-labels
+    keywords-after-function
+    keywords-after-label
+    keywords-after-unknown-file
+    no-data-symbols
+    if-expression
+}
+
+test_driver

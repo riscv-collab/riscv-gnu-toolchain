@@ -1,0 +1,94 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Check that GDB does not do excess accesses to the inferior memory
+# when fetching elements from an array in the C language.
+
+standard_testfile
+
+if {[prepare_for_testing "failed to prepare" $testfile $srcfile]} {
+    return -1
+}
+
+if {![runto_main]} {
+    return -1
+}
+
+# Load 'global_foo' into a history variable.
+gdb_test "p global_foo" "\\{f = 1, array = \\{1, 2, 3, 4, 5\\}\\}"
+
+gdb_test_no_output "set debug target 1"
+
+# Now print an array element from within 'global_foo', but accessed
+# via the history element.  The history element should be non-lazy,
+# and so there should be no reason for GDB to fetch the array element
+# from the inferior memory, we should be able to grab the contents
+# directory from the history value.
+#
+# To check this we 'set debug target 1' (above), and then look for any
+# xfer_partial calls; there shouldn't be any.
+set saw_memory_access false
+set saw_auxv_parse false
+gdb_test_multiple "p \$.array\[1\]" "" {
+    -re "^p \\\$\\.array\\\[1\\\]\r\n" {
+	exp_continue
+    }
+    -re "^->\[^\r\n\]+xfer_partial\[^\r\n\]+\r\n" {
+	set saw_memory_access true
+	exp_continue
+    }
+    -re "^->\[^\r\n\]+auxv_parse\[^\r\n\]+\r\n" {
+	set saw_auxv_parse true
+	exp_continue
+    }
+    -re "^->\[^\r\n\]+\r\n" {
+	exp_continue
+    }
+    -re "^<-\[^\r\n\]+\r\n" {
+	exp_continue
+    }
+    -re "^\[^\$\]\[^\r\n\]+\r\n" {
+	exp_continue
+    }
+    -re "^\\\$${decimal} = 2\r\n$gdb_prompt " {
+	if { $saw_memory_access } {
+	    if { $saw_auxv_parse } {
+		# The expression parser may look up global symbols, which
+		# may require reading AUXV in order to determine the debug
+		# base for SVR4 linker namespaces.
+		xfail "$gdb_test_name"
+	    } else {
+		fail "$gdb_test_name"
+	    }
+	} else {
+	    pass "$gdb_test_name"
+	}
+    }
+}
+
+gdb_test "set debug target 0" ".*"
+
+if { [allow_python_tests] } {
+    gdb_test_no_output "python val = gdb.parse_and_eval('global_foo')"
+    gdb_test "python print('val = %s' % val)" "val = \\{f = 1, array = \\{1, 2, 3, 4, 5\\}\\}"
+    gdb_test "python print('val.is_lazy = %s' % val.is_lazy)" "val\\.is_lazy = False"
+
+    # Grab an element from the array within VAL.  The element should
+    # immediately be non-lazy as the value contents can be copied
+    # directly from VAL.
+    gdb_test_no_output "python elem = val\['array'\]\[1\]"
+    gdb_test "python print('elem.is_lazy = %s' % elem.is_lazy)" "elem\\.is_lazy = False"
+    gdb_test "python print('elem = %s' % elem)" "elem = 2"
+}

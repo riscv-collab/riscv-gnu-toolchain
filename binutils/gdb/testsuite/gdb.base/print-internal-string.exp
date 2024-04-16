@@ -1,0 +1,64 @@
+# Copyright 2023-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test different ways in which GDB can create a string and then push
+# that string into the inferior before reading it back.  Check that
+# the thing that is read back is correctly interpreted as a string.
+
+standard_testfile
+
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile] } {
+    return -1
+}
+
+if {![runto_main]} {
+    return 0
+}
+
+if [allow_python_tests] {
+    # The $_as_string convenience function is implemented in Python.
+    gdb_test {printf "%s\n", $_as_string("aabbcc")} "\"aabbcc\""
+
+    # Create a gdb.Value object for a string.  Take its address (which
+    # forces it into the inferior), and then print the address as a
+    # string.
+    gdb_test_no_output {python addr = gdb.Value("ccbbaa").address}
+    gdb_test {python gdb.execute("x/1s 0x%x" % addr)} \
+	"$hex <arena>:\\s+\"ccbbaa\""
+
+    # Call an inferior function through a gdb.Value object, pass a
+    # string to the inferior function and ensure it arrives correctly.
+    gdb_test "p/x take_string" " = $hex.*"
+    gdb_test_no_output "python func_ptr = gdb.history (0)" \
+	"place address of take_string into Python variable"
+    gdb_test "python func_value = func_ptr.dereference()" ""
+    gdb_breakpoint "take_string"
+    gdb_test {python result = func_value("qqaazz")} \
+	"Breakpoint $decimal, take_string \\(str=$hex <arena> \"qqaazz\"\\) at .*"
+    gdb_test "continue" "Continuing\\."
+}
+
+# Use printf on a string parsed by the C expression parser.
+gdb_test {printf "%s\n", "ddeeff"} "ddeeff"
+
+# Parse a string in the C expression parser, force it into the
+# inferior by taking its address, then print it as a string.
+gdb_test {x/1s &"gghhii"} "$hex <arena>:\\s+\"gghhii\""
+
+# Use $_gdb_setting_str and $_gdb_maint_setting_str to create a string
+# value, and then print using printf, which forces the string into the
+# inferior.
+gdb_test {printf "%s\n", $_gdb_setting_str("arch")} "auto"
+gdb_test {printf "%s\n", $_gdb_maint_setting_str("bfd-sharing")} "on"

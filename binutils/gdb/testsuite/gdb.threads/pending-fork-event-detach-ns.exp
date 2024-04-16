@@ -1,0 +1,121 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Detach a running program that constantly forks, verify that we correctly
+# detach all fork children, for which events are pending.
+#
+# The strategy is:
+#
+#   - Resume a program in background (continue &) with many threads that
+#     constantly fork and wait for their fork children to exit.
+#   - Detach the program.  If testing against GDBserver, hope that the detach
+#     CLI command is processed while there is a stop reply pending in the
+#     remote target.
+#   - Signal the parent program to exit, by sending it a SIGUSR1 signal.
+#   - Have the parent write a flag file to the filesystem just before exiting.
+#   - If a pending fork child is mistakenly still attached, it will prevent its
+#     parent thread from waitpid'ing it, preventing the main thread from joining
+#     it, prevent it from writing the flag file, failing the test.
+
+standard_testfile
+
+if { [is_remote target] } {
+    # If the target is remote, write the file in whatever the current working
+    # directory is, with a somewhat unique name.
+    set touch_file_path ${testfile}-flag
+} else {
+    set touch_file_path [standard_output_file flag]
+}
+
+if { [gdb_compile_pthreads "${srcdir}/${subdir}/${srcfile}" "${binfile}" \
+	executable [list debug "additional_flags=-DTOUCH_FILE_PATH=\"$touch_file_path\""]] != "" } {
+    return
+}
+
+proc do_test { } {
+    remote_file target delete $::touch_file_path
+    gdb_assert { ![remote_file target exists $::touch_file_path] } "file does not exist before test"
+
+    save_vars { ::GDBFLAGS } {
+	append ::GDBFLAGS " -ex \"set non-stop on\""
+	clean_restart $::binfile
+    }
+
+    if { ![runto break_here_first] } {
+	return
+    }
+
+    set pid [get_integer_valueof "my_pid" -1]
+    if { $pid == -1 } {
+	error "could not get inferior pid"
+    }
+
+    gdb_test_no_output "set print inferior-events off"
+
+    gdb_test_multiple "continue &" "" {
+	-re "Continuing.\r\n$::gdb_prompt " {
+	    pass $gdb_test_name
+	}
+    }
+
+    set wait_time_s 2
+
+    if { [info exists ::server_spawn_id] } {
+	# Let the program run for 2 seconds, during which it will fork many times.
+	# When running against GDBserver, this makes server print a ton of
+	# "Detaching from process X" message, to the point where its output buffer
+	# gets full and it hangs in a write to stdout.  During these 2 seconds,
+	# drain the messages from GDBserver to keep that from happening.
+	gdb_test_multiple "" "flush server output" {
+	    -timeout $wait_time_s
+	    -i $::server_spawn_id
+	    -re ".+" {
+		exp_continue -continue_timer
+	    }
+
+	    timeout {
+		pass $gdb_test_name
+	    }
+	}
+    } else {
+	# Not using GDBserver, just sleep 2 seconds.
+	sleep $wait_time_s
+    }
+
+    gdb_test "detach" "Detaching from program: .*"
+
+    if { [info exists ::server_spawn_id] } {
+	# Drain GDBserver's output buffer, in the (unlikely) event that enough
+	# messages were output to fill the buffer between the moment we stopped
+	# consuming it and the moment GDBserver detached the process.
+	gdb_test_multiple "" "" {
+	    -i $::server_spawn_id
+	    -re ".+" {
+		exp_continue
+	    }
+	    -re "^$" {}
+	}
+    }
+
+    remote_exec target "kill -USR1 ${pid}"
+    gdb_assert { [target_file_exists_with_timeout $::touch_file_path] } "file exists after detach"
+
+    # Don't leave random files on the target system.
+    if { [is_remote target] } {
+	remote_file target delete $::touch_file_path
+    }
+}
+
+do_test

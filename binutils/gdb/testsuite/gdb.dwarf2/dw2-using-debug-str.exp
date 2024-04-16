@@ -1,0 +1,161 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This test is as much about testing the lib/dwarf.exp DWARF generator
+# as it is about testing GDB.  At the time this test was written, this
+# was the only test that generated any DWARF using DW_FORM_strp.
+
+load_lib dwarf.exp
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+standard_testfile .c -dw.S
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile}] } {
+    return -1
+}
+
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    global srcfile
+
+    cu {} {
+	compile_unit {
+            {language @DW_LANG_C}
+            {name ${srcfile}}
+        } {
+	    declare_labels int4_type struct_type
+
+	    int4_type: DW_TAG_base_type {
+		{DW_AT_byte_size 4 DW_FORM_sdata}
+		{DW_AT_encoding  @DW_ATE_signed}
+		{DW_AT_name      integer}
+	    }
+
+	    struct_type: DW_TAG_structure_type {
+		{DW_AT_name "foo_t" DW_FORM_strp}
+		{DW_AT_byte_size 12 DW_FORM_sdata}
+	    } {
+		member {
+		    {name "aa" DW_FORM_strp}
+		    {type :$int4_type}
+		    {data_member_location 0 data1}
+		}
+		member {
+		    {name "bb" DW_FORM_strp}
+		    {type :$int4_type}
+		    {data_member_location 4 data1}
+		}
+		member {
+		    {name "cc" DW_FORM_strp}
+		    {type :$int4_type}
+		    {data_member_location 8 data1}
+		}
+	    }
+
+	    DW_TAG_variable {
+		{DW_AT_name global_var DW_FORM_strp}
+		{DW_AT_type :$struct_type}
+		{DW_AT_location {
+		    DW_OP_addr [gdb_target_symbol global_var]
+		} SPECIAL_expr}
+		{external 1 flag}
+	    }
+
+	    subprogram {
+		{external 1 flag}
+		{name main DW_FORM_strp}
+		{MACRO_AT_range {main}}
+	    }
+	}
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	  [list $srcfile $asm_file] {nodebug}] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+# Print the type of global_var.  This type information is entirely
+# fictional, it only exists in the DWARF, but it contains lots of nice
+# field names, all of which are stored in the .debug_str section.
+gdb_test "p global_var" " = \\{aa = 0, bb = 0, cc = 0\\}"
+
+set host_binfile [gdb_remote_download host $binfile]
+
+# Verify that the executable actually contains a .debug_str section, before
+# trying to remove it.  This can be missing with target boards
+# cc-with-dwz-m.exp and cc-with-gnu-debuglink.exp.  Handle this by
+# skipping the remainder of the test-case.
+set debug_str_section "${host_binfile}-debug-str"
+set args "--dump-section .debug_str=${debug_str_section} $host_binfile"
+set result [remote_exec host "[gdb_find_objcopy] $args"]
+set status [lindex $result 0]
+set output [lindex $result 1]
+if { $status == 0 && ![string equal $output ""] } {
+    return -1
+}
+
+# Now copy the executable, and remove the .debug_str section.  This
+# creates an executable with an invalid DWARF configuration.  GDB
+# should give an error when trying to read the debug information from
+# this executable.
+set binfile_no_debug_str "${host_binfile}-no-debug-str"
+set args "--remove-section .debug_str $host_binfile ${binfile_no_debug_str}"
+if {[run_on_host "objcopy" [gdb_find_objcopy] "$args"]} {
+    perror "failed to run objcopy"
+    return -1
+}
+
+# Restart GDB, but don't load an executable.  When we do load the
+# executable we're going to get an error, which we check for below.
+clean_restart
+
+gdb_test_no_output "maint set dwarf synchronous on"
+
+set line1 "Reading symbols from \[^\r\n\]+"
+set dwarf_error "Dwarf Error: DW_FORM_strp used without required section"
+
+# This pattern is hit when GDB does not use -readnow (i.e. the default
+# behaviour).
+set pattern1 \
+    [multi_line \
+         $line1 \
+         $dwarf_error \
+        "\\(No debugging symbols \[^\r\n\]+\\)"]
+
+# This pattern is hit when GDB does use -readnow (e.g. running with
+# --target_board=readnow).
+set pattern2 \
+    [multi_line \
+        $line1 \
+        "Expanding full symbols from \[^\r\n\]+" \
+        $dwarf_error]
+
+# This pattern is hit when gcc adds an index (e.g. running with
+# --target_board=cc-with-gdb-index).
+set pattern3 \
+    [multi_line \
+        $line1 \
+        $dwarf_error]
+
+# Load the executable, we expect an error from the DWARF parser.
+gdb_test "file $binfile_no_debug_str" "($pattern1|$pattern2|$pattern3)" \
+    "file $testfile"

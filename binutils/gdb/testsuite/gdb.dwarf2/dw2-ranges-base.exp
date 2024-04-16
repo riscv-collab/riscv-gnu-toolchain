@@ -1,0 +1,180 @@
+# Copyright 2015-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+load_lib dwarf.exp
+
+# Test DW_TAG_compile_unit with no children and with neither DW_AT_low_pc nor
+# DW_AT_high_pc but with DW_AT_ranges instead.
+
+# This test can only be run on targets which support DWARF-2 and use gas.
+require dwarf2_support
+
+# The .c files use __attribute__.
+require is_c_compiler_gcc
+
+standard_testfile .c -dw.S
+
+set asm_file [standard_output_file $srcfile2]
+Dwarf::assemble $asm_file {
+    global srcdir subdir srcfile srcfile2
+    declare_labels ranges_label
+    declare_labels L
+
+    # Find start address and length for our functions.
+    set main_func \
+	[function_range main [list ${srcdir}/${subdir}/$srcfile]]
+    set frame2_func \
+	[function_range frame2 [list ${srcdir}/${subdir}/$srcfile]]
+    set frame3_func \
+	[function_range frame3 [list ${srcdir}/${subdir}/$srcfile]]
+
+    # Very simple info for this test program.  We don't care about
+    # this information being correct (w.r.t. funtion / argument types)
+    # just so long as the compilation using makes use of the
+    # .debug_ranges data then the test achieves its objective.
+    cu { label cu_label } {
+	compile_unit {
+	    {language @DW_LANG_C}
+	    {name dw-ranges-base.c}
+	    {stmt_list $L DW_FORM_sec_offset}
+	    {ranges ${ranges_label} DW_FORM_sec_offset}
+	} {
+	    subprogram {
+		{external 1 flag}
+		{name main}
+	    }
+	    subprogram {
+		{external 1 flag}
+		{name frame2}
+	    }
+	    subprogram {
+		{external 1 flag}
+		{name frame3}
+	    }
+	}
+    }
+
+    lines {version 2} L {
+	include_dir "${srcdir}/${subdir}"
+	file_name "$srcfile" 1
+
+	# Generate simple line table program.  The line table
+	# information contained here is not correct, and we really
+	# don't care, just so long as each function has some line
+	# table data associated with it.  We do make use of the fake
+	# line numbers that we pick here in the tests below.
+	program {
+	    DW_LNE_set_address [lindex $main_func 0]
+	    DW_LNS_advance_line 10
+	    DW_LNS_copy
+	    DW_LNS_advance_pc [lindex $main_func 1]
+	    DW_LNS_advance_line 19
+	    DW_LNS_copy
+	    DW_LNE_end_sequence
+
+	    DW_LNE_set_address [lindex $frame2_func 0]
+	    DW_LNS_advance_line 20
+	    DW_LNS_copy
+	    DW_LNS_advance_pc [lindex $frame2_func 1]
+	    DW_LNS_advance_line 29
+	    DW_LNS_copy
+	    DW_LNE_end_sequence
+
+	    DW_LNE_set_address [lindex $frame3_func 0]
+	    DW_LNS_advance_line 30
+	    DW_LNS_copy
+	    DW_LNS_advance_pc [lindex $frame3_func 1]
+	    DW_LNS_advance_line 39
+	    DW_LNS_copy
+	    DW_LNE_end_sequence
+	}
+    }
+
+    # Generate ranges data.  This is the point of this whole test
+    # file, we must have multiple bases specified, so we use a new
+    # base for each function.
+    ranges {is_64 [is_64_target]} {
+	ranges_label: sequence {
+	    base [lindex $main_func 0]
+	    range 0 [lindex $main_func 1]
+	    base [lindex $frame2_func 0]
+	    range 0 [lindex $frame2_func 1]
+	    base [lindex $frame3_func 0]
+	    range 0 [lindex $frame3_func 1]
+	}
+    }
+
+    aranges {} cu_label {
+	arange {} [lindex $main_func 0] [lindex $main_func 1]
+	arange {} [lindex $frame2_func 0] [lindex $frame2_func 1]
+	arange {} [lindex $frame3_func 0] [lindex $frame3_func 1]
+    }
+}
+
+if { [prepare_for_testing "failed to prepare" ${testfile} \
+	  [list $srcfile $asm_file] {nodebug}] } {
+    return -1
+}
+
+if ![runto_main] {
+    return -1
+}
+
+# Make use of the line numbers we faked in the .debug_line table above.
+gdb_test "info line main" \
+    "Line 11 of .* starts at address .* and ends at .*"
+gdb_test "info line frame2" \
+    "Line 21 of .* starts at address .* and ends at .*"
+gdb_test "info line frame3" \
+    "Line 31 of .* starts at address .* and ends at .*"
+
+# Ensure that the line table correctly tracks the end of sequence markers.
+set end_seq_count 0
+set prev -1
+set seq_count 0
+gdb_test_multiple "maint info line-table gdb.dwarf2/dw2-ranges-base.c" \
+    "count END markers in line table" {
+	-re "^$decimal\[ \t\]+$decimal\[ \t\]+$hex\[ \t\]+$hex\(\[ \t\]+Y\)? *\r\n" {
+	    if { $prev != -1 } {
+		gdb_assert "$prev == 1" \
+		    "prev of normal entry at $seq_count is end marker"
+	    }
+	    set prev 0
+	    incr seq_count
+	    exp_continue
+	}
+	-re "^$decimal\[ \t\]+END\[ \t\]+$hex\[ \t\]+$hex\(\[ \t\]+Y\)? *\r\n" {
+	    if { $prev != -1 } {
+		gdb_assert "$prev == 0" \
+		    "prev of end marker at $seq_count is normal entry"
+	    }
+	    set prev 1
+	    incr seq_count
+	    incr end_seq_count
+	    exp_continue
+	}
+	-re "^\r\n" {
+	    # Empty lines between tables.
+	    exp_continue
+	}
+	-re "^$gdb_prompt $" {
+	    gdb_assert [expr $end_seq_count == 3] $gdb_test_name
+	}
+	-re ".*linetable: \\(\\(struct linetable \\*\\) 0x0\\):\r\nNo line table.\r\n" {
+	    exp_continue
+	}
+	-re ".*linetable: \\(\\(struct linetable \\*\\) $hex\\):\r\nINDEX\[ \t\]+LINE\[ \t\]+REL-ADDRESS\[ \t\]+UNREL-ADDRESS\[ \t\]+IS-STMT\[ \t\]PROLOGUE-END\[ \t\]EPILOGUE-BEGIN *\r\n" {
+	    exp_continue
+	}
+    }

@@ -1,0 +1,102 @@
+# This testcase is part of GDB, the GNU debugger.
+
+# Copyright 2012-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test various aspects of methods.
+
+load_lib "go.exp"
+
+require allow_go_tests support_go_compile
+
+standard_testfile .go
+
+if { [prepare_for_testing "failed to prepare" ${testfile} ${srcfile} {debug go}] } {
+    return -1
+}
+
+set bp_location1 {main.T.Foo}
+set bp_location2 {main.T.Bar}
+
+if { [go_runto_main] < 0 } {
+    return -1
+}
+
+set found_wrong_foo 0
+set found_wrong_bar 0
+gdb_test_multiple "maintenance print symbols" "" {
+    -re "^\r\n void main.Foo.N6_main.T\[^\r\n\]*(?=\r\n)" {
+	set found_wrong_foo 1
+	exp_continue
+    }
+    -re "^\r\n void main.Bar.pN6_main.T\[^\r\n\]*(?=\r\n)" {
+	set found_wrong_bar 1
+	exp_continue
+    }
+    -re "^\r\n void main.T.Bar\[^\r\n\]*(?=\r\n)" {
+	exp_continue
+    }
+    -re "^\r\n$gdb_prompt $" {
+	pass $gdb_test_name
+    }
+    -re "\r\n\[^\r\n\]*(?=\r\n)" {
+	exp_continue
+    }
+}
+
+if { $found_wrong_foo } {
+    # We have with gccgo-6/7:
+    # <1><553>: Abbrev Number: 21 (DW_TAG_subprogram)
+    #    <554>   DW_AT_name        : main.Foo.N6_main.T
+    setup_xfail "*-*-*"
+} else {
+    # We have with gccgo-8/9/10:
+    # <1><1e24>: Abbrev Number: 40 (DW_TAG_subprogram)
+    #    <1e25>   DW_AT_name        : main.Foo.main.T
+    #    <1e2c>   DW_AT_linkage_name: main.T.Foo
+
+    # For reference: with go1.11.13:
+    # <1><6c46b>: Abbrev Number: 2 (DW_TAG_subprogram)
+    #    <6c46c>   DW_AT_name        : main.T.Foo
+}
+
+if { [gdb_breakpoint ${bp_location1} message]} {
+    gdb_test "cont" "Breakpoint .*, ${bp_location1}.*" \
+	"going to first breakpoint"
+}
+
+if { $found_wrong_bar == 1 } {
+    # We have with gccgo-6/7:
+    # <1><528>: Abbrev Number: 19 (DW_TAG_subprogram)
+    # <529>   DW_AT_name        : main.Bar.pN6_main.T
+    setup_xfail "*-*-*"
+} else {
+    # We have with gccgo-8/9/10:
+    # <1><6e4>: Abbrev Number: 24 (DW_TAG_subprogram)
+    #    <6e5>   DW_AT_name        : main.Bar..1main.T
+    #    <6ec>   DW_AT_linkage_name: main.T.Bar
+
+    # For reference: with go1.11.13:
+    # <1><6c49a>: Abbrev Number: 2 (DW_TAG_subprogram)
+    #    <6c49b>   DW_AT_name        : main.(*T).Bar
+
+    # It has been clarified in PR gcc/93866 that it's ok that symbols names
+    # diverge between gc and gccgo.  So, we accept the main.T.Bar as valid.
+}
+
+if { [gdb_breakpoint ${bp_location2} message] } {
+    gdb_test "cont" "Breakpoint .*, ${bp_location2}.*" \
+	"going to second breakpoint"
+}

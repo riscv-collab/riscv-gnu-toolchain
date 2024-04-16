@@ -1,0 +1,59 @@
+# Copyright 2022-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Test that "start"ing an inferior does not inadvertently stop in another
+# inferior.
+#
+# To achieve this, we start inferior 1 in background, which sleeps for a bit
+# before reaching its main function.  We then "start" inferior 2, which also
+# sleeps before reaching its main function.  The goal is that inferior 1
+# "crosses" inferior 2's start breakpoint (at the time of writing this test, the
+# breakpoint inserted for start is global and has locations in both inferiors).
+# A buggy GDB would report a breakpoint hit in inferior 1.
+
+standard_testfile .c -other.c
+
+require !use_gdb_stub
+
+set srcfile_other ${srcfile2}
+set binfile_other ${binfile}-other
+
+if { [build_executable ${testfile}.exp ${binfile} "${srcfile}" {debug}] != 0 } {
+    return -1
+}
+
+if { [build_executable ${testfile}.exp ${binfile_other} "${srcfile_other}" {debug}] != 0 } {
+    return -1
+}
+
+proc do_test {} {
+    # With remote, to be able to start an inferior while another one is
+    # running, we need to use the non-stop variant of the protocol.
+    save_vars { ::GDBFLAGS } {
+	if { [target_info gdb_protocol] == "extended-remote"} {
+	    append ::GDBFLAGS " -ex \"maintenance set target-non-stop on\""
+	}
+
+	clean_restart ${::binfile_other}
+    }
+
+    gdb_test -no-prompt-anchor "run&" "Starting program: .*" "start background inferior"
+    gdb_test "add-inferior" "Added inferior 2.*"
+    gdb_test "inferior 2" "Switching to inferior 2.*"
+    gdb_file_cmd ${::binfile}
+    gdb_test "start" "Thread 2.1 .* hit Temporary breakpoint .*"
+}
+
+do_test

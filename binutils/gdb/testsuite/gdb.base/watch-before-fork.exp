@@ -1,0 +1,97 @@
+# Copyright 2021-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Regression test for PR gdb/28621.  Test that GDB does not misreport
+# a watchpoint hit when a previous watchpoint hit is immediately
+# followed by a catchpoint hit.
+
+# This test uses "awatch".
+require allow_hw_watchpoint_access_tests
+
+standard_testfile
+
+if {[build_executable "failed to prepare" $testfile $srcfile debug]} {
+    return
+}
+
+# Check that fork catchpoints are supported.  Returns 1 if they are.
+# Returns 0 and issues unsupported if they are not supported.  If it
+# couldn't be determined, returns 0 (but does not call unsupported).
+
+proc_with_prefix catch_fork_supported {} {
+    clean_restart $::testfile
+
+    if { ![runto_main] } {
+	return 0
+    }
+
+    # Verify that the system supports "catch fork".
+    gdb_test "catch fork" "Catchpoint \[0-9\]* \\(fork\\)" "insert first fork catchpoint"
+    set has_fork_catchpoints -1
+    gdb_test_multiple "continue" "continue to first fork catchpoint" {
+	-re -wrap ".*Your system does not support this type\r\nof catchpoint.*" {
+	    set has_fork_catchpoints 0
+	    pass $gdb_test_name
+	}
+	-re -wrap ".*Catchpoint.*" {
+	    set has_fork_catchpoints 1
+	    pass $gdb_test_name
+	}
+    }
+
+    if {$has_fork_catchpoints == 1} {
+	return 1
+    } elseif {$has_fork_catchpoints == -1} {
+	return 0
+    } else {
+	unsupported "catch fork not supported"
+	return 0
+    }
+}
+
+# The test proper.
+
+proc_with_prefix test {} {
+    clean_restart $::testfile
+
+    if { ![runto_main] } {
+	return 0
+    }
+
+    gdb_test "awatch global_var" \
+	"Hardware access \\(read/write\\) watchpoint .*: global_var.*" \
+	"watchpoint on global variable"
+
+    gdb_test "continue" \
+	"Hardware access \\(read/write\\) watchpoint .*: global_var.*" \
+	"continue to watchpoint"
+
+    set seen_watchpoint 0
+    gdb_test_multiple "continue" "continue to catch fork" {
+	-re "watchpoint" {
+	    set seen_watchpoint 1
+	    exp_continue
+	}
+	-re "$::gdb_prompt " {
+	    gdb_assert { !$seen_watchpoint } $gdb_test_name
+	}
+    }
+}
+
+if {![catch_fork_supported] } {
+    return
+}
+
+test

@@ -1,0 +1,3308 @@
+# Copyright 2010-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Return true if the target supports DWARF-2 and uses gas.
+# For now pick a sampling of likely targets.
+proc dwarf2_support {} {
+    if {[istarget *-*-linux*]
+	|| [istarget *-*-gnu*]
+	|| [istarget *-*-elf*]
+	|| [istarget *-*-openbsd*]
+	|| [istarget arm*-*-eabi*]
+	|| [istarget powerpc-*-eabi*]} {
+	return 1
+    }
+
+    return 0
+}
+
+# Use 'objcopy --extract-dwo to extract DWO information from
+# OBJECT_FILE and place it into DWO_FILE.
+#
+# Return 0 on success, otherwise, return -1.
+proc extract_dwo_information { object_file dwo_file } {
+    set objcopy [gdb_find_objcopy]
+    set command "$objcopy --extract-dwo $object_file $dwo_file"
+    verbose -log "Executing $command"
+    set result [catch "exec $command" output]
+    verbose -log "objcopy --extract-dwo output: $output"
+    if { $result == 1 } {
+	return -1
+    }
+    return 0
+}
+
+# Use 'objcopy --strip-dwo to remove DWO information from
+# FILENAME.
+#
+# Return 0 on success, otherwise, return -1.
+proc strip_dwo_information { filename } {
+    set objcopy [gdb_find_objcopy]
+    set command "$objcopy --strip-dwo $filename"
+    verbose -log "Executing $command"
+    set result [catch "exec $command" output]
+    verbose -log "objcopy --strip-dwo output: $output"
+    if { $result == 1 } {
+	return -1
+    }
+    return 0
+}
+
+# Build an executable, with the debug information split out into a
+# separate .dwo file.
+#
+# This function is based on build_executable_from_specs in
+# lib/gdb.exp, but with threading support, and rust support removed.
+#
+# TESTNAME is the name of the test; this is passed to 'untested' if
+# something fails.
+#
+# EXECUTABLE is the executable to create, this can be an absolute
+# path, or a relative path, in which case the EXECUTABLE will be
+# created in the standard output directory.
+#
+# OPTIONS is passed to the final link, using gdb_compile.  If OPTIONS
+# contains any option that indicates threads is required, of if the
+# option rust is included, then this function will return failure.
+#
+# ARGS is a series of lists.  Each list is a spec for one source file
+# that will be compiled to make EXECUTABLE.  Each spec in ARGS has the
+# form:
+#	[ SOURCE OPTIONS ]
+# or:
+#       [ SOURCE OPTIONS OBJFILE ]
+#
+# Where SOURCE is the path to the source file to compile.  This can be
+# absolute, or relative to the standard global ${subdir}/${srcdir}/
+# path.
+#
+# OPTIONS are the options to use when compiling SOURCE into an object
+# file.
+#
+# OBJFILE is optional, if present this is the name of the object file
+# to create for SOURCE.  If this is not provided then a suitable name
+# will be auto-generated.
+#
+# If OPTIONS contains the option 'split-dwo' then the debug
+# information is extracted from the object file created by compiling
+# SOURCE and placed into a file with a dwo extension.  The name of
+# this file is generated based on the name of the object file that was
+# created (with the .o replaced with .dwo).
+proc build_executable_and_dwo_files { testname executable options args } {
+    global subdir
+    global srcdir
+
+    if {![regexp "^/" "$executable"]} {
+	set binfile [standard_output_file $executable]
+    } else {
+	set binfile $executable
+    }
+
+    set func gdb_compile
+    if {[lsearch -regexp $options \
+	     {^(pthreads|shlib|shlib_pthreads|openmp)$}] != -1} {
+	# Currently don't support compiling thread based tests here.
+	# If this is required then look to build_executable_from_specs
+	# for inspiration.
+	return -1
+    }
+    if {[lsearch -exact $options rust] != -1} {
+	# Currently don't support compiling rust tests here.  If this
+	# is required then look to build_executable_from_specs for
+	# inspiration.
+	return -1
+    }
+
+    # Must be run on local host due to use of objcopy.
+    if [is_remote host] {
+	return -1
+    }
+
+    set objects {}
+    set i 0
+    foreach spec $args {
+	if {[llength $spec] < 2} {
+	    error "invalid spec length"
+	    return -1
+	}
+
+	verbose -log "APB: SPEC: $spec"
+
+	set s [lindex $spec 0]
+	set local_options [lindex $spec 1]
+
+	if {![regexp "^/" "$s"]} {
+	    set s "$srcdir/$subdir/$s"
+	}
+
+	if {[llength $spec] > 2} {
+	    set objfile [lindex $spec 2]
+	} else {
+	    set objfile "${binfile}${i}.o"
+	    incr i
+	}
+
+	if  { [$func "${s}" "${objfile}" object $local_options] != "" } {
+	    untested $testname
+	    return -1
+	}
+
+	lappend objects "$objfile"
+
+	if {[lsearch -exact $local_options "split-dwo"] >= 0} {
+	    # Split out the DWO file.
+	    set dwo_file "[file rootname ${objfile}].dwo"
+
+	    if { [extract_dwo_information $objfile $dwo_file] == -1 } {
+		untested $testname
+		return -1
+	    }
+
+	    if { [strip_dwo_information $objfile] == -1 } {
+		untested $testname
+		return -1
+	    }
+	}
+    }
+
+    verbose -log "APB: OBJECTS = $objects"
+
+    set ret [$func $objects "${binfile}" executable $options]
+    if  { $ret != "" } {
+        untested $testname
+        return -1
+    }
+
+    return 0
+}
+
+# Utility function for procs shared_gdb_*.
+
+proc init_shared_gdb {} {
+    global shared_gdb_enabled
+    global shared_gdb_started
+
+    if { ! [info exists shared_gdb_enabled] } {
+	set shared_gdb_enabled 0
+	set shared_gdb_started 0
+    }
+}
+
+# Cluster of four procs:
+# - shared_gdb_enable
+# - shared_gdb_disable
+# - shared_gdb_start_use SRC OPTIONS
+# - shared_gdb_end_use
+#
+# Can be used like so:
+#
+#   {
+#     if { $share } shared_gdb_enable
+#     ...
+#     shared_gdb_start_use $src $options
+#     ...
+#     shared_gdb_end_use
+#     ...
+#     shared_gdb_start_use $src $options
+#     ...
+#     shared_gdb_end_use
+#     ...
+#     if { $share } shared_gdb_disable
+#   }
+#
+# to write functionalty that could share ($share == 1) or could not
+# share ($share == 0) a gdb session between two uses.
+
+proc shared_gdb_enable {} {
+    set me shared_gdb_enable
+
+    init_shared_gdb
+    global shared_gdb_enabled
+    global shared_gdb_started
+
+    if { $shared_gdb_enabled } {
+	error "$me: gdb sharing already enabled"
+    }
+    set shared_gdb_enabled 1
+
+    if { $shared_gdb_started } {
+	error "$me: gdb sharing not stopped"
+    }
+}
+
+# See above.
+
+proc shared_gdb_disable {} {
+    init_shared_gdb
+    global shared_gdb_enabled
+    global shared_gdb_started
+
+    if { ! $shared_gdb_enabled } {
+	error "$me: gdb sharing not enabled"
+    }
+    set shared_gdb_enabled 0
+
+    if { $shared_gdb_started } {
+	gdb_exit
+	set shared_gdb_started 0
+    }
+}
+
+# Share the current gdb session.
+
+proc share_gdb { src options } {
+    global shared_gdb_started
+    global shared_gdb_src
+    global shared_gdb_options
+
+    set shared_gdb_started 1
+    set shared_gdb_src $src
+    set shared_gdb_options $options
+}
+
+# See above.
+
+proc shared_gdb_start_use { src options } {
+    set me shared_gdb_start_use
+
+    init_shared_gdb
+    global shared_gdb_enabled
+    global shared_gdb_started
+    global shared_gdb_src
+    global shared_gdb_options
+
+    set do_start 1
+    if { $shared_gdb_enabled && $shared_gdb_started } {
+	if { $shared_gdb_src != $src
+	     || $shared_gdb_options != $options } {
+	    error "$me: gdb sharing inconsistent"
+	}
+
+	set do_start 0
+    }
+
+    if { $do_start } {
+	set exe [standard_temp_file func_addr.x]
+
+	gdb_compile $src $exe executable $options
+
+	gdb_exit
+	gdb_start
+	gdb_load "$exe"
+
+	if { $shared_gdb_enabled } {
+	    share_gdb $src $options
+	}
+    }
+}
+
+# See above.
+
+proc shared_gdb_end_use {} {
+    init_shared_gdb
+    global shared_gdb_enabled
+
+    if { ! $shared_gdb_enabled } {
+	gdb_exit
+    }
+}
+
+# Enable gdb session sharing within BODY.
+
+proc with_shared_gdb { body } {
+    shared_gdb_enable
+    set code [catch { uplevel 1 $body } result]
+    shared_gdb_disable
+
+    # Return as appropriate.
+    if { $code == 1 } {
+	global errorInfo errorCode
+	return -code error -errorinfo $errorInfo -errorcode $errorCode $result
+    } elseif { $code > 1 } {
+	return -code $code $result
+    }
+
+    return $result
+}
+
+# Return a list of expressions about function FUNC's address and length.
+# The first expression is the address of function FUNC, and the second
+# one is FUNC's length.  SRC is the source file having function FUNC.
+# An internal label ${func}_label must be defined inside FUNC:
+#
+#  int main (void)
+#  {
+#    asm ("main_label: .globl main_label");
+#    return 0;
+#  }
+#
+# This label is needed to compute the start address of function FUNC.
+# If the compiler is gcc, we can do the following to get function start
+# and end address too:
+#
+# asm ("func_start: .globl func_start");
+# static void func (void) {}
+# asm ("func_end: .globl func_end");
+#
+# however, this isn't portable, because other compilers, such as clang,
+# may not guarantee the order of global asms and function.  The code
+# becomes:
+#
+# asm ("func_start: .globl func_start");
+# asm ("func_end: .globl func_end");
+# static void func (void) {}
+#
+
+proc function_range { func src {options {debug}} } {
+    global decimal gdb_prompt
+
+    shared_gdb_start_use $src $options
+
+    # Compute the label offset, and we can get the function start address
+    # by "${func}_label - $func_label_offset".
+    set func_label_offset ""
+    set test "p ${func}_label - ${func}"
+    gdb_test_multiple $test $test {
+	-re ".* = ($decimal)\r\n$gdb_prompt $" {
+	    set func_label_offset $expect_out(1,string)
+	}
+    }
+
+    # Compute the function length.
+    global hex
+    set func_length ""
+    set test "disassemble $func"
+    gdb_test_multiple $test $test {
+	-re ".*$hex <\\+($decimal)>:\[^\r\n\]+\r\nEnd of assembler dump\.\r\n$gdb_prompt $" {
+	    set func_length $expect_out(1,string)
+	}
+    }
+
+    # Compute the size of the last instruction.
+    # For C++, GDB appends arguments to the names of functions if they don't
+    # have a linkage name.  For example, asking gdb to disassemble a C++ main
+    # will print the function name as main() or main(int argc, char **argv).
+    # Take this into account by optionally allowing an argument list after
+    # the function name.
+    set func_pattern "$func\(\?\:\\(\.\*\\)\)?"
+    if { $func_length != 0 } {
+	set func_pattern "$func_pattern\\+$func_length"
+    }
+    set test "with print asm-demangle on -- x/2i $func+$func_length"
+    gdb_test_multiple $test $test {
+	-re ".*($hex) <$func_pattern>:\[^\r\n\]+\r\n\[ \]+($hex).*\.\r\n$gdb_prompt $" {
+	    set start $expect_out(1,string)
+	    set end $expect_out(2,string)
+
+	    set func_length [expr $func_length + $end - $start]
+	}
+    }
+
+    shared_gdb_end_use
+
+    return [list "${func}_label - $func_label_offset" $func_length]
+}
+
+# Extract the start, length, and end for function called NAME and
+# create suitable variables in the callers scope.
+# Return the list of created variables.
+proc get_func_info { name {options {debug}} } {
+    global srcdir subdir srcfile
+
+    upvar 1 "${name}_start" func_start
+    upvar 1 "${name}_len" func_len
+    upvar 1 "${name}_end" func_end
+
+    lassign [function_range ${name} \
+		 [list ${srcdir}/${subdir}/$srcfile] \
+		 ${options}]  \
+	func_start func_len
+    set func_end "$func_start + $func_len"
+
+    return [list \
+		"${name}_start" \
+		"${name}_len" \
+		"${name}_end"]
+}
+
+# A DWARF assembler.
+#
+# All the variables in this namespace are private to the
+# implementation.  Also, any procedure whose name starts with "_" is
+# private as well.  Do not use these.
+#
+# Exported functions are documented at their definition.
+#
+# In addition to the hand-written functions documented below, this
+# module automatically generates a function for each DWARF tag.  For
+# most tags, two forms are made: a full name, and one with the
+# "DW_TAG_" prefix stripped.  For example, you can use either
+# 'DW_TAG_compile_unit' or 'compile_unit' interchangeably.
+#
+# There are two exceptions to this rule: DW_TAG_variable and
+# DW_TAG_namespace.  For these, the full name must always be used,
+# as the short name conflicts with Tcl builtins.  (Should future
+# versions of Tcl or DWARF add more conflicts, this list will grow.
+# If you want to be safe you should always use the full names.)
+#
+# Each tag procedure is defined like:
+#
+# proc DW_TAG_mumble {{attrs {}} {children {}}} { ... }
+#
+# ATTRS is an optional list of attributes.
+# It is run through 'subst' in the caller's context before processing.
+#
+# Each attribute in the list has one of two forms:
+#   1. { NAME VALUE }
+#   2. { NAME VALUE FORM }
+#
+# In each case, NAME is the attribute's name.
+# This can either be the full name, like 'DW_AT_name', or a shortened
+# name, like 'name'.  These are fully equivalent.
+#
+# Besides DWARF standard attributes, assembler supports 'macro' attribute
+# which will be substituted by one or more standard or macro attributes.
+# supported macro attributes are:
+#
+#  - MACRO_AT_range { FUNC }
+#  It is substituted by DW_AT_low_pc and DW_AT_high_pc with the start and
+#  end address of function FUNC in file $srcdir/$subdir/$srcfile.
+#
+#  - MACRO_AT_func { FUNC }
+#  It is substituted by DW_AT_name with FUNC and MACRO_AT_range.
+#
+# If FORM is given, it should name a DW_FORM_ constant.
+# This can either be the short form, like 'DW_FORM_addr', or a
+# shortened version, like 'addr'.  If the form is given, VALUE
+# is its value; see below.  In some cases, additional processing
+# is done; for example, DW_FORM_strp manages the .debug_str
+# section automatically.
+#
+# If FORM is 'SPECIAL_expr', then VALUE is treated as a location
+# expression.  The effective form is then DW_FORM_block or DW_FORM_exprloc
+# for DWARF version >= 4, and VALUE is passed to the (internal)
+# '_location' proc to be translated.
+# This proc implements a miniature DW_OP_ assembler.
+#
+# If FORM is not given, it is guessed:
+# * If VALUE starts with the "@" character, the rest of VALUE is
+#   looked up as a DWARF constant, and DW_FORM_sdata is used.  For
+#   example, '@DW_LANG_c89' could be used.
+# * If VALUE starts with the ":" character, then it is a label
+#   reference.  The rest of VALUE is taken to be the name of a label,
+#   and DW_FORM_ref4 is used.  See 'new_label' and 'define_label'.
+# * If VALUE starts with the "%" character, then it is a label
+#   reference too, but DW_FORM_ref_addr is used.
+# * Otherwise, if the attribute name has a default form (f.i. DW_FORM_addr for
+#   DW_AT_low_pc), then that one is used.
+# * Otherwise, an error is reported.  Either specify a form explicitly, or
+#   add a default for the the attribute name in _default_form.
+#
+# CHILDREN is just Tcl code that can be used to define child DIEs.  It
+# is evaluated in the caller's context.
+#
+# Currently this code is missing nice support for CFA handling, and
+# probably other things as well.
+
+namespace eval Dwarf {
+    # True if the module has been initialized.
+    variable _initialized 0
+
+    # Constants from dwarf2.h.
+    variable _constants
+    # DW_AT short names.
+    variable _AT
+    # DW_FORM short names.
+    variable _FORM
+    # DW_OP short names.
+    variable _OP
+
+    # The current output file.
+    variable _output_file
+
+    # Note: The _cu_ values here also apply to type units (TUs).
+    # Think of a TU as a special kind of CU.
+
+    # Current CU count.
+    variable _cu_count
+
+    # The current CU's base label.
+    variable _cu_label
+
+    # The current CU's version.
+    variable _cu_version
+
+    # The current CU's address size.
+    variable _cu_addr_size
+    # The current CU's offset size.
+    variable _cu_offset_size
+
+    # Label generation number.
+    variable _label_num
+
+    # The deferred output array.  The index is the section name; the
+    # contents hold the data for that section.
+    variable _deferred_output
+
+    # If empty, we should write directly to the output file.
+    # Otherwise, this is the name of a section to write to.
+    variable _defer
+
+    # The abbrev section.  Typically .debug_abbrev but can be .debug_abbrev.dwo
+    # for Fission.
+    variable _abbrev_section
+
+    # The next available abbrev number in the current CU's abbrev
+    # table.
+    variable _abbrev_num
+
+    # The string table for this assembly.  The key is the string; the
+    # value is the label for that string.
+    variable _strings
+
+    # Current .debug_line unit count.
+    variable _line_count
+
+    # A Label for line table header generation.
+    variable _line_header_end_label
+
+    # The address size for debug ranges section.
+    variable _debug_ranges_64_bit
+
+    # The index into the .debug_addr section (used for fission
+    # generation).
+    variable _debug_addr_index
+
+    # Flag, true if the current CU is contains fission information,
+    # otherwise false.
+    variable _cu_is_fission
+
+    proc _process_one_constant {name value} {
+	variable _constants
+	variable _AT
+	variable _FORM
+	variable _OP
+
+	set _constants($name) $value
+
+	if {![regexp "^DW_(\[A-Z\]+)_(\[A-Za-z0-9_\]+)$" $name \
+		  ignore prefix name2]} {
+	    error "non-matching name: $name"
+	}
+
+	if {$name2 == "lo_user" || $name2 == "hi_user"} {
+	    return
+	}
+
+	# We only try to shorten some very common things.
+	# FIXME: CFA?
+	switch -exact -- $prefix {
+	    TAG {
+		# Create two procedures for the tag.  These call
+		# _handle_DW_TAG with the full tag name baked in; this
+		# does all the actual work.
+		proc $name {{attrs {}} {children {}}} \
+		    "_handle_DW_TAG $name \$attrs \$children"
+
+		# Filter out ones that are known to clash.
+		if {$name2 == "variable" || $name2 == "namespace"} {
+		    set name2 "tag_$name2"
+		}
+
+		if {[info commands $name2] != {}} {
+		    error "duplicate proc name: from $name"
+		}
+
+		proc $name2 {{attrs {}} {children {}}} \
+		    "_handle_DW_TAG $name \$attrs \$children"
+	    }
+
+	    AT {
+		set _AT($name2) $name
+	    }
+
+	    FORM {
+		set _FORM($name2) $name
+	    }
+
+	    OP {
+		set _OP($name2) $name
+	    }
+
+	    default {
+		return
+	    }
+	}
+    }
+
+    proc _read_constants {} {
+	global srcdir hex decimal
+
+	# DWARF name-matching regexp.
+	set dwrx "DW_\[a-zA-Z0-9_\]+"
+	# Whitespace regexp.
+	set ws "\[ \t\]+"
+
+	set fd [open [file join $srcdir .. .. include dwarf2.h]]
+	while {![eof $fd]} {
+	    set line [gets $fd]
+	    if {[regexp -- "^${ws}($dwrx)${ws}=${ws}($hex|$decimal),?$" \
+		     $line ignore name value ignore2]} {
+		_process_one_constant $name $value
+	    }
+	}
+	close $fd
+
+	set fd [open [file join $srcdir .. .. include dwarf2.def]]
+	while {![eof $fd]} {
+	    set line [gets $fd]
+	    if {[regexp -- \
+		     "^DW_\[A-Z_\]+${ws}\\(($dwrx),${ws}($hex|$decimal)\\)$" \
+		     $line ignore name value ignore2]} {
+		_process_one_constant $name $value
+	    }
+	}
+	close $fd
+    }
+
+    proc _quote {string} {
+	# FIXME
+	return "\"${string}\\0\""
+    }
+
+    proc _nz_quote {string} {
+	# For now, no quoting is done.
+	return "\"${string}\""
+    }
+
+    proc _handle_DW_FORM {form value} {
+	switch -exact -- $form {
+	    DW_FORM_string  {
+		_op .ascii [_quote $value]
+	    }
+
+	    DW_FORM_implicit_const -
+	    DW_FORM_flag_present {
+		# We don't need to emit anything.
+	    }
+
+	    DW_FORM_data4 -
+	    DW_FORM_ref4 {
+		_op .4byte $value
+	    }
+
+	    DW_FORM_ref_addr {
+		variable _cu_offset_size
+		variable _cu_version
+		variable _cu_addr_size
+
+		if {$_cu_version == 2} {
+		    set size $_cu_addr_size
+		} else {
+		    set size $_cu_offset_size
+		}
+
+		_op .${size}byte $value
+	    }
+
+	    DW_FORM_GNU_ref_alt -
+	    DW_FORM_GNU_strp_alt -
+	    DW_FORM_sec_offset {
+		variable _cu_offset_size
+		_op_offset $_cu_offset_size $value
+	    }
+
+	    DW_FORM_ref1 -
+	    DW_FORM_flag -
+	    DW_FORM_data1 {
+		_op .byte $value
+	    }
+
+	    DW_FORM_sdata {
+		_op .sleb128 $value
+	    }
+
+	    DW_FORM_ref_udata -
+	    DW_FORM_udata -
+	    DW_FORM_loclistx -
+	    DW_FORM_rnglistx {
+		_op .uleb128 $value
+	    }
+
+	    DW_FORM_addr {
+		variable _cu_addr_size
+
+		_op .${_cu_addr_size}byte $value
+	    }
+
+	    DW_FORM_GNU_addr_index {
+		variable _debug_addr_index
+		variable _cu_addr_size
+
+		_op .uleb128 ${_debug_addr_index}
+		incr _debug_addr_index
+
+		_defer_output .debug_addr {
+		    _op .${_cu_addr_size}byte $value
+		}
+	    }
+
+	    DW_FORM_data2 -
+	    DW_FORM_ref2 {
+		_op .2byte $value
+	    }
+
+	    DW_FORM_data8 -
+	    DW_FORM_ref8 -
+	    DW_FORM_ref_sig8 {
+		_op .8byte $value
+	    }
+
+	    DW_FORM_data16 {
+		_op .8byte $value
+	    }
+
+	    DW_FORM_strp {
+		variable _strings
+		variable _cu_offset_size
+
+		if {![info exists _strings($value)]} {
+		    set _strings($value) [new_label strp]
+		    _defer_output .debug_str {
+			define_label $_strings($value)
+			_op .ascii [_quote $value]
+		    }
+		}
+
+		_op_offset $_cu_offset_size $_strings($value) "strp: $value"
+	    }
+
+	    SPECIAL_expr {
+		variable _cu_version
+		variable _cu_addr_size
+		variable _cu_offset_size
+
+		set l1 [new_label "expr_start"]
+		set l2 [new_label "expr_end"]
+		_op .uleb128 "$l2 - $l1" "expression"
+		define_label $l1
+		_location $value $_cu_version $_cu_addr_size $_cu_offset_size
+		define_label $l2
+	    }
+
+	    DW_FORM_block1 {
+		set len [string length $value]
+		if {$len > 255} {
+		    error "DW_FORM_block1 length too long"
+		}
+		_op .byte $len
+		_op .ascii [_nz_quote $value]
+	    }
+
+	    DW_FORM_block2 -
+	    DW_FORM_block4 -
+
+	    DW_FORM_block -
+
+	    DW_FORM_ref2 -
+	    DW_FORM_indirect -
+	    DW_FORM_exprloc -
+
+	    DW_FORM_strx -
+	    DW_FORM_strx1 -
+	    DW_FORM_strx2 -
+	    DW_FORM_strx3 -
+	    DW_FORM_strx4 -
+
+	    DW_FORM_GNU_str_index -
+
+	    default {
+		error "unhandled form $form"
+	    }
+	}
+    }
+
+    proc _guess_form {value varname} {
+	upvar $varname new_value
+
+	switch -exact -- [string range $value 0 0] {
+	    @ {
+		# Constant reference.
+		variable _constants
+
+		set new_value $_constants([string range $value 1 end])
+		# Just the simplest.
+		return DW_FORM_sdata
+	    }
+
+	    : {
+		# Label reference.
+		variable _cu_label
+
+		set new_value "[string range $value 1 end] - $_cu_label"
+
+		return DW_FORM_ref4
+	    }
+
+	    % {
+		# Label reference, an offset from .debug_info.
+		set new_value "[string range $value 1 end]"
+
+		return DW_FORM_ref_addr
+	    }
+
+	    default {
+		return ""
+	    }
+	}
+    }
+
+    proc _default_form { attr } {
+	switch -exact -- $attr {
+	    DW_AT_low_pc  {
+		return DW_FORM_addr
+	    }
+	    DW_AT_producer -
+	    DW_AT_comp_dir -
+	    DW_AT_linkage_name -
+	    DW_AT_MIPS_linkage_name -
+	    DW_AT_name {
+		return DW_FORM_string
+	    }
+	    DW_AT_GNU_addr_base {
+		return DW_FORM_sec_offset
+	    }
+	}
+	return ""
+    }
+
+    # Map NAME to its canonical form.
+    proc _map_name {name ary} {
+	variable $ary
+
+	if {[info exists ${ary}($name)]} {
+	    set name [set ${ary}($name)]
+	}
+
+	return $name
+    }
+
+    proc _handle_attribute { attr_name attr_value attr_form } {
+	variable _abbrev_section
+	variable _constants
+	variable _cu_version
+
+	_handle_DW_FORM $attr_form $attr_value
+
+	_defer_output $_abbrev_section {
+	    if { $attr_form eq "SPECIAL_expr" } {
+		if { $_cu_version < 4 } {
+		    set attr_form_comment "DW_FORM_block"
+		} else {
+		    set attr_form_comment "DW_FORM_exprloc"
+		}
+	    } else {
+		set attr_form_comment $attr_form
+	    }
+	    _op .uleb128 $_constants($attr_name) $attr_name
+	    _op .uleb128 $_constants($attr_form) $attr_form_comment
+	    if {$attr_form eq "DW_FORM_implicit_const"} {
+		_op .sleb128 $attr_value "the constant"
+	    }
+	}
+    }
+
+    # Handle macro attribute MACRO_AT_range.
+
+    proc _handle_macro_at_range { attr_value } {
+	variable _cu_is_fission
+
+	if {[llength $attr_value] != 1} {
+	    error "usage: MACRO_AT_range { func }"
+	}
+
+	set func [lindex $attr_value 0]
+	global srcdir subdir srcfile
+	set src ${srcdir}/${subdir}/${srcfile}
+	set result [function_range $func $src]
+
+	set form DW_FORM_addr
+	if { $_cu_is_fission } {
+	    set form DW_FORM_GNU_addr_index
+	}
+
+	_handle_attribute DW_AT_low_pc [lindex $result 0] $form
+	_handle_attribute DW_AT_high_pc \
+	    "[lindex $result 0] + [lindex $result 1]" $form
+    }
+
+    # Handle macro attribute MACRO_AT_func.
+
+    proc _handle_macro_at_func { attr_value } {
+	if {[llength $attr_value] != 1} {
+	    error "usage: MACRO_AT_func { func file }"
+	}
+	_handle_attribute DW_AT_name [lindex $attr_value 0] DW_FORM_string
+	_handle_macro_at_range $attr_value
+    }
+
+    # Return the next available abbrev number in the current CU's abbrev
+    # table.
+    proc _get_abbrev_num {} {
+	variable _abbrev_num
+	set res $_abbrev_num
+	incr _abbrev_num
+	return $res
+    }
+
+    proc _handle_DW_TAG {tag_name {attrs {}} {children {}}} {
+	variable _abbrev_section
+	variable _abbrev_num
+	variable _constants
+
+	set has_children [expr {[string length $children] > 0}]
+	set my_abbrev [_get_abbrev_num]
+
+	# We somewhat wastefully emit a new abbrev entry for each tag.
+	# There's no reason for this other than laziness.
+	_defer_output $_abbrev_section {
+	    _op .uleb128 $my_abbrev "Abbrev start"
+	    _op .uleb128 $_constants($tag_name) $tag_name
+	    _op .byte $has_children "has_children"
+	}
+
+	_op .uleb128 $my_abbrev "Abbrev ($tag_name)"
+
+	foreach attr $attrs {
+	    set attr_name [_map_name [lindex $attr 0] _AT]
+
+	    # When the length of ATTR is greater than 2, the last
+	    # element of the list must be a form.  The second through
+	    # the penultimate elements are joined together and
+	    # evaluated using subst.  This allows constructs such as
+	    # [gdb_target_symbol foo] to be used.
+
+	    if {[llength $attr] > 2} {
+	        set attr_value [uplevel 2 [list subst [join [lrange $attr 1 end-1]]]]
+	    } else {
+	        set attr_value [uplevel 2 [list subst [lindex $attr 1]]]
+	    }
+
+	    if { [string equal "MACRO_AT_func" $attr_name] } {
+		_handle_macro_at_func $attr_value
+	    } elseif { [string equal "MACRO_AT_range" $attr_name] } {
+		_handle_macro_at_range $attr_value
+	    } else {
+		if {[llength $attr] > 2} {
+		    set attr_form [uplevel 2 [list subst [lindex $attr end]]]
+
+		    if { [string index $attr_value 0] == ":" } {
+			# It is a label, get its value.
+			_guess_form $attr_value attr_value
+		    }
+		} else {
+		    set attr_form [_guess_form $attr_value attr_value]
+		    if { $attr_form eq "" } {
+			set attr_form [_default_form $attr_name]
+		    }
+		    if { $attr_form eq "" } {
+			error "No form for $attr_name $attr_value"
+		    }
+		}
+		set attr_form [_map_name $attr_form _FORM]
+
+		_handle_attribute $attr_name $attr_value $attr_form
+	    }
+	}
+
+	_defer_output $_abbrev_section {
+	    # Terminator.
+	    _op .byte 0x0 "DW_AT - Terminator"
+	    _op .byte 0x0 "DW_FORM - Terminator"
+	}
+
+	if {$has_children} {
+	    uplevel 2 $children
+
+	    # Terminate children.
+	    _op .byte 0x0 "Terminate children"
+	}
+    }
+
+    proc _emit {string} {
+	variable _output_file
+	variable _defer
+	variable _deferred_output
+
+	if {$_defer == ""} {
+	    puts $_output_file $string
+	} else {
+	    append _deferred_output($_defer) ${string}\n
+	}
+    }
+
+    proc _section {name {flags ""} {type ""}} {
+	if {$flags == "" && $type == ""} {
+	    _emit "        .section $name"
+	} elseif {$type == ""} {
+	    _emit "        .section $name, \"$flags\""
+	} else {
+	    _emit "        .section $name, \"$flags\", %$type"
+	}
+    }
+
+    # SECTION_SPEC is a list of arguments to _section.
+    proc _defer_output {section_spec body} {
+	variable _defer
+	variable _deferred_output
+
+	set old_defer $_defer
+	set _defer [lindex $section_spec 0]
+
+	if {![info exists _deferred_output($_defer)]} {
+	    set _deferred_output($_defer) ""
+	    eval _section $section_spec
+	}
+
+	uplevel $body
+
+	set _defer $old_defer
+    }
+
+    proc _defer_to_string {body} {
+	variable _defer
+	variable _deferred_output
+
+	set old_defer $_defer
+	set _defer temp
+
+	set _deferred_output($_defer) ""
+
+	uplevel $body
+
+	set result $_deferred_output($_defer)
+	unset _deferred_output($_defer)
+
+	set _defer $old_defer
+	return $result
+    }
+
+    proc _write_deferred_output {} {
+	variable _output_file
+	variable _deferred_output
+
+	foreach section [array names _deferred_output] {
+	    # The data already has a newline.
+	    puts -nonewline $_output_file $_deferred_output($section)
+	}
+
+	# Save some memory.
+	unset _deferred_output
+    }
+
+    proc _op {name value {comment ""}} {
+	set text "        ${name}        ${value}"
+	if {$comment != ""} {
+	    # Try to make stuff line up nicely.
+	    while {[string length $text] < 40} {
+		append text " "
+	    }
+	    append text "/* ${comment} */"
+	}
+	_emit $text
+    }
+
+    proc _op_offset { size offset {comment ""} } {
+	if { $size == 4 } {
+	    _op .4byte $offset $comment
+	} elseif { $size == 8 } {
+	    if {[is_64_target]} {
+		_op .8byte $offset $comment
+	    } else {
+		# This allows us to emit 64-bit dwarf for
+		# 32-bit targets.
+		if { [target_endianness] == "little" } {
+		    _op .4byte $offset "$comment (lsw)"
+		    _op .4byte 0 "$comment (msw)"
+		} else {
+		    _op .4byte 0 "$comment (msw)"
+		    _op .4byte $offset "$comment (lsw)"
+		}
+	    }
+	} else {
+	    error "Don't know how to handle offset size $size"
+	}
+    }
+
+    proc _compute_label {name} {
+	return ".L${name}"
+    }
+
+    # Return a name suitable for use as a label.  If BASE_NAME is
+    # specified, it is incorporated into the label name; this is to
+    # make debugging the generated assembler easier.  If BASE_NAME is
+    # not specified a generic default is used.  This proc does not
+    # define the label; see 'define_label'.  'new_label' attempts to
+    # ensure that label names are unique.
+    proc new_label {{base_name label}} {
+	variable _label_num
+
+	return [_compute_label ${base_name}[incr _label_num]]
+    }
+
+    # Define a label named NAME.  Ordinarily, NAME comes from a call
+    # to 'new_label', but this is not required.
+    proc define_label {name} {
+	_emit "${name}:"
+    }
+
+    # A higher-level interface to label handling.
+    #
+    # ARGS is a list of label descriptors.  Each one is either a
+    # single element, or a list of two elements -- a name and some
+    # text.  For each descriptor, 'new_label' is invoked.  If the list
+    # form is used, the second element in the list is passed as an
+    # argument.  The label name is used to define a variable in the
+    # enclosing scope; this can be used to refer to the label later.
+    # The label name is also used to define a new proc whose name is
+    # the label name plus a trailing ":".  This proc takes a body as
+    # an argument and can be used to define the label at that point;
+    # then the body, if any, is evaluated in the caller's context.
+    #
+    # For example:
+    #
+    # declare_labels int_label
+    # something { ... $int_label }   ;# refer to the label
+    # int_label: constant { ... }    ;# define the label
+    proc declare_labels {args} {
+	foreach arg $args {
+	    set name [lindex $arg 0]
+	    set text [lindex $arg 1]
+
+	    if { $text == "" } {
+		set text $name
+	    }
+
+	    upvar $name label_var
+	    set label_var [new_label $text]
+
+	    proc ${name}: {args} [format {
+		define_label %s
+		uplevel $args
+	    } $label_var]
+	}
+    }
+
+    # Assign elements from LINE to the elements of an array named
+    # "argvec" in the caller scope.  The keys used are named in ARGS.
+    # If the wrong number of elements appear in LINE, error.
+    proc _get_args {line op args} {
+	if {[llength $line] != [llength $args] + 1} {
+	    error "usage: $op [string toupper $args]"
+	}
+
+	upvar argvec argvec
+	foreach var $args value [lreplace $line 0 0] {
+	    set argvec($var) $value
+	}
+    }
+
+    # This is a miniature assembler for location expressions.  It is
+    # suitable for use in the attributes to a DIE.  Its output is
+    # prefixed with "=" to make it automatically use DW_FORM_block.
+    #
+    # BODY is split by lines, and each line is taken to be a list.
+    #
+    # DWARF_VERSION is the DWARF version for the section where the location
+    # description is found.
+    #
+    # ADDR_SIZE is the length in bytes (4 or 8) of an address on the target
+    # machine (typically found in the header of the section where the location
+    # description is found).
+    #
+    # OFFSET_SIZE is the length in bytes (4 or 8) of an offset into a DWARF
+    # section.  This typically depends on whether 32-bit or 64-bit DWARF is
+    # used, as indicated in the header of the section where the location
+    # description is found.
+    #
+    # (FIXME should use 'info complete' here.)
+    # Each list's first element is the opcode, either short or long
+    # forms are accepted.
+    # FIXME argument handling
+    # FIXME move docs
+    proc _location { body dwarf_version addr_size offset_size } {
+	variable _constants
+
+	foreach line [split $body \n] {
+	    # Ignore blank lines, and allow embedded comments.
+	    if {[lindex $line 0] == "" || [regexp -- {^[ \t]*#} $line]} {
+		continue
+	    }
+	    set opcode [_map_name [lindex $line 0] _OP]
+	    _op .byte $_constants($opcode) $opcode
+
+	    array unset argvec *
+	    switch -exact -- $opcode {
+		DW_OP_addr {
+		    _get_args $line $opcode size
+		    _op .${addr_size}byte $argvec(size)
+		}
+
+		DW_OP_GNU_addr_index {
+		    variable _debug_addr_index
+		    variable _cu_addr_size
+
+		    _op .uleb128 ${_debug_addr_index}
+		    incr _debug_addr_index
+
+		    _defer_output .debug_addr {
+			_op .${_cu_addr_size}byte [lindex $line 1]
+		    }
+		}
+
+		DW_OP_regx {
+		    _get_args $line $opcode register
+		    _op .uleb128 $argvec(register)
+		}
+
+		DW_OP_pick -
+		DW_OP_const1u -
+		DW_OP_const1s {
+		    _get_args $line $opcode const
+		    _op .byte $argvec(const)
+		}
+
+		DW_OP_const2u -
+		DW_OP_const2s {
+		    _get_args $line $opcode const
+		    _op .2byte $argvec(const)
+		}
+
+		DW_OP_const4u -
+		DW_OP_const4s {
+		    _get_args $line $opcode const
+		    _op .4byte $argvec(const)
+		}
+
+		DW_OP_const8u -
+		DW_OP_const8s {
+		    _get_args $line $opcode const
+		    _op .8byte $argvec(const)
+		}
+
+		DW_OP_constu {
+		    _get_args $line $opcode const
+		    _op .uleb128 $argvec(const)
+		}
+		DW_OP_consts {
+		    _get_args $line $opcode const
+		    _op .sleb128 $argvec(const)
+		}
+
+		DW_OP_plus_uconst {
+		    _get_args $line $opcode const
+		    _op .uleb128 $argvec(const)
+		}
+
+		DW_OP_piece {
+		    _get_args $line $opcode size
+		    _op .uleb128 $argvec(size)
+		}
+
+		DW_OP_bit_piece {
+		    _get_args $line $opcode size offset
+		    _op .uleb128 $argvec(size)
+		    _op .uleb128 $argvec(offset)
+		}
+
+		DW_OP_skip -
+		DW_OP_bra {
+		    _get_args $line $opcode label
+		    _op .2byte $argvec(label)
+		}
+
+		DW_OP_implicit_value {
+		    set l1 [new_label "value_start"]
+		    set l2 [new_label "value_end"]
+		    _op .uleb128 "$l2 - $l1"
+		    define_label $l1
+		    foreach value [lrange $line 1 end] {
+			switch -regexp -- $value {
+			    {^0x[[:xdigit:]]{1,2}$} {_op .byte $value}
+			    {^0x[[:xdigit:]]{4}$} {_op .2byte $value}
+			    {^0x[[:xdigit:]]{8}$} {_op .4byte $value}
+			    {^0x[[:xdigit:]]{16}$} {_op .8byte $value}
+			    default {
+				error "bad value '$value' in DW_OP_implicit_value"
+			    }
+			}
+		    }
+		    define_label $l2
+		}
+
+		DW_OP_implicit_pointer -
+		DW_OP_GNU_implicit_pointer {
+		    _get_args $line $opcode label offset
+
+		    # Here label is a section offset.
+		    if { $dwarf_version == 2 } {
+			_op .${addr_size}byte $argvec(label)
+		    } else {
+			_op_offset $offset_size $argvec(label)
+		    }
+		    _op .sleb128 $argvec(offset)
+		}
+
+		DW_OP_GNU_variable_value {
+		    _get_args $line $opcode label
+
+		    # Here label is a section offset.
+		    if { $dwarf_version == 2 } {
+			_op .${addr_size}byte $argvec(label)
+		    } else {
+			_op_offset $offset_size $argvec(label)
+		    }
+		}
+
+		DW_OP_deref_size {
+		    _get_args $line $opcode size
+		    _op .byte $argvec(size)
+		}
+
+		DW_OP_bregx {
+		    _get_args $line $opcode register offset
+		    _op .uleb128 $argvec(register)
+		    _op .sleb128 $argvec(offset)
+		}
+
+		DW_OP_fbreg {
+		    _get_args $line $opcode offset
+		    _op .sleb128 $argvec(offset)
+		}
+
+		DW_OP_fbreg {
+		    _op .sleb128 [lindex $line 1]
+		}
+
+		default {
+		    if {[llength $line] > 1} {
+			error "Unimplemented: operands in location for $opcode"
+		    }
+		}
+	    }
+	}
+    }
+
+    # Return a label that references the current position in the
+    # .debug_addr table.  When a user is creating split DWARF they
+    # will define two CUs, the first will be the split DWARF content,
+    # and the second will be the non-split stub CU.  The split DWARF
+    # CU fills in the .debug_addr section, but the non-split CU
+    # includes a reference to the start of the section.  The label
+    # returned by this proc provides that reference.
+    proc debug_addr_label {} {
+	variable _debug_addr_index
+
+	set lbl [new_label "debug_addr_idx_${_debug_addr_index}_"]
+	_defer_output .debug_addr {
+	    define_label $lbl
+	}
+	return $lbl
+    }
+
+    # Emit a DWARF CU.
+    # OPTIONS is a list with an even number of elements containing
+    # option-name and option-value pairs.
+    # Current options are:
+    # is_64 0|1    - boolean indicating if you want to emit 64-bit DWARF
+    #                default = 0 (32-bit)
+    # version n    - DWARF version number to emit
+    #                default = 4
+    # addr_size n  - the size of addresses in bytes: 4, 8, or default
+    #                default = default
+    # fission 0|1  - boolean indicating if generating Fission debug info
+    #                default = 0
+    # label <label>
+    #              - string indicating label to be defined at the start
+    #                of the CU header.
+    #                default = ""
+    # BODY is Tcl code that emits the DIEs which make up the body of
+    # the CU.  It is evaluated in the caller's context.
+    proc cu {options body} {
+	variable _constants
+	variable _cu_count
+	variable _abbrev_section
+	variable _abbrev_num
+	variable _cu_label
+	variable _cu_version
+	variable _cu_addr_size
+	variable _cu_offset_size
+	variable _cu_is_fission
+
+	# Establish the defaults.
+	set is_64 0
+	set _cu_version 4
+	set _cu_addr_size default
+	set _cu_is_fission 0
+	set section ".debug_info"
+	set _abbrev_section ".debug_abbrev"
+	set label ""
+
+	foreach { name value } $options {
+	    set value [uplevel 1 "subst \"$value\""]
+	    switch -exact -- $name {
+		is_64 { set is_64 $value }
+		version { set _cu_version $value }
+		addr_size { set _cu_addr_size $value }
+		fission { set _cu_is_fission $value }
+		label { set label $value }
+		default { error "unknown option $name" }
+	    }
+	}
+	if {$_cu_addr_size == "default"} {
+	    if {[is_64_target]} {
+		set _cu_addr_size 8
+	    } else {
+		set _cu_addr_size 4
+	    }
+	}
+	set _cu_offset_size [expr { $is_64 ? 8 : 4 }]
+	if { $_cu_is_fission } {
+	    set section ".debug_info.dwo"
+	    set _abbrev_section ".debug_abbrev.dwo"
+	}
+
+	if {$_cu_version < 4} {
+	    set _constants(SPECIAL_expr) $_constants(DW_FORM_block)
+	} else {
+	    set _constants(SPECIAL_expr) $_constants(DW_FORM_exprloc)
+	}
+
+	_section $section
+
+	set cu_num [incr _cu_count]
+	set my_abbrevs [_compute_label "abbrev${cu_num}_begin"]
+	set _abbrev_num 1
+
+	set _cu_label [_compute_label "cu${cu_num}_begin"]
+	set start_label [_compute_label "cu${cu_num}_start"]
+	set end_label [_compute_label "cu${cu_num}_end"]
+
+	if { $label != "" } {
+	    upvar $label my_label
+	    set my_label $_cu_label
+	}
+
+	define_label $_cu_label
+	if {$is_64} {
+	    _op .4byte 0xffffffff
+	    _op .8byte "$end_label - $start_label"
+	} else {
+	    _op .4byte "$end_label - $start_label"
+	}
+	define_label $start_label
+	_op .2byte $_cu_version Version
+
+	# The CU header for DWARF 4 and 5 are slightly different.
+	if { $_cu_version == 5 } {
+	    _op .byte 0x1 "DW_UT_compile"
+	    _op .byte $_cu_addr_size "Pointer size"
+	    _op_offset $_cu_offset_size $my_abbrevs Abbrevs
+	} else {
+	    _op_offset $_cu_offset_size $my_abbrevs Abbrevs
+	    _op .byte $_cu_addr_size "Pointer size"
+	}
+
+	_defer_output $_abbrev_section {
+	    define_label $my_abbrevs
+	}
+
+	uplevel $body
+
+	_defer_output $_abbrev_section {
+	    # Emit the terminator.
+	    _op .byte 0x0 "Abbrev end - Terminator"
+	}
+
+	define_label $end_label
+    }
+
+    # Emit a DWARF TU.
+    # OPTIONS is a list with an even number of elements containing
+    # option-name and option-value pairs.
+    # Current options are:
+    # is_64 0|1    - boolean indicating if you want to emit 64-bit DWARF
+    #                default = 0 (32-bit)
+    # version n    - DWARF version number to emit
+    #                default = 4
+    # addr_size n  - the size of addresses in bytes: 4, 8, or default
+    #                default = default
+    # fission 0|1  - boolean indicating if generating Fission debug info
+    #                default = 0
+    # SIGNATURE is the 64-bit signature of the type.
+    # TYPE_LABEL is the label of the type defined by this TU,
+    # or "" if there is no type (i.e., type stubs in Fission).
+    # BODY is Tcl code that emits the DIEs which make up the body of
+    # the TU.  It is evaluated in the caller's context.
+    proc tu {options signature type_label body} {
+	variable _cu_count
+	variable _abbrev_section
+	variable _abbrev_num
+	variable _cu_label
+	variable _cu_version
+	variable _cu_addr_size
+	variable _cu_offset_size
+	variable _cu_is_fission
+
+	# Establish the defaults.
+	set is_64 0
+	set _cu_version 4
+	set _cu_addr_size default
+	set _cu_is_fission 0
+	set section ".debug_types"
+	set _abbrev_section ".debug_abbrev"
+	set label ""
+
+	foreach { name value } $options {
+	    set value [uplevel 1 "subst \"$value\""]
+	    switch -exact -- $name {
+		is_64 { set is_64 $value }
+		version { set _cu_version $value }
+		addr_size { set _cu_addr_size $value }
+		fission { set _cu_is_fission $value }
+		label { set label $value }
+		default { error "unknown option $name" }
+	    }
+	}
+	if {$_cu_addr_size == "default"} {
+	    if {[is_64_target]} {
+		set _cu_addr_size 8
+	    } else {
+		set _cu_addr_size 4
+	    }
+	}
+	set _cu_offset_size [expr { $is_64 ? 8 : 4 }]
+	if { $_cu_version == 5 } {
+	    set section ".debug_info"
+	}
+	if { $_cu_is_fission } {
+	    set section "$section.dwo"
+	    set _abbrev_section "$section.dwo"
+	}
+
+	_section $section
+
+	set cu_num [incr _cu_count]
+	set my_abbrevs [_compute_label "abbrev${cu_num}_begin"]
+	set _abbrev_num 1
+
+	set _cu_label [_compute_label "cu${cu_num}_begin"]
+	set start_label [_compute_label "cu${cu_num}_start"]
+	set end_label [_compute_label "cu${cu_num}_end"]
+
+	if { $label != "" } {
+	    upvar $label my_label
+	    set my_label $_cu_label
+	}
+
+	define_label $_cu_label
+	if {$is_64} {
+	    _op .4byte 0xffffffff
+	    _op .8byte "$end_label - $start_label"
+	} else {
+	    _op .4byte "$end_label - $start_label"
+	}
+	define_label $start_label
+	_op .2byte $_cu_version Version
+
+	# The CU header for DWARF 4 and 5 are slightly different.
+	if { $_cu_version == 5 } {
+	    _op .byte 0x2 "DW_UT_type"
+	    _op .byte $_cu_addr_size "Pointer size"
+	    _op_offset $_cu_offset_size $my_abbrevs Abbrevs
+	} else {
+	    _op_offset $_cu_offset_size $my_abbrevs Abbrevs
+	    _op .byte $_cu_addr_size "Pointer size"
+	}
+
+	_op .8byte $signature Signature
+	if { $type_label != "" } {
+	    uplevel declare_labels $type_label
+	    upvar $type_label my_type_label
+	    if {$is_64} {
+		_op .8byte "$my_type_label - $_cu_label"
+	    } else {
+		_op .4byte "$my_type_label - $_cu_label"
+	    }
+	} else {
+	    if {$is_64} {
+		_op .8byte 0
+	    } else {
+		_op .4byte 0
+	    }
+	}
+
+	_defer_output $_abbrev_section {
+	    define_label $my_abbrevs
+	}
+
+	uplevel $body
+
+	_defer_output $_abbrev_section {
+	    # Emit the terminator.
+	    _op .byte 0x0 "Abbrev end - Terminator"
+	}
+
+	define_label $end_label
+    }
+
+    # Emit a DWARF .debug_ranges unit.
+    # OPTIONS is a list with an even number of elements containing
+    # option-name and option-value pairs.
+    # Current options are:
+    # is_64 0|1    - boolean indicating if you want to emit 64-bit DWARF
+    #                default = 0 (32-bit)
+    #
+    # BODY is Tcl code that emits the content of the .debug_ranges
+    # unit, it is evaluated in the caller's context.
+    proc ranges {options body} {
+	variable _debug_ranges_64_bit
+
+	foreach { name value } $options {
+	    switch -exact -- $name {
+		is_64 { set _debug_ranges_64_bit [subst $value] }
+		default { error "unknown option $name" }
+	    }
+	}
+
+	set section ".debug_ranges"
+	_section $section
+
+	proc sequence { body } {
+	    variable _debug_ranges_64_bit
+
+	    # Emit the sequence of addresses.
+
+	    proc base { addr } {
+		variable _debug_ranges_64_bit
+
+		if {$_debug_ranges_64_bit} {
+		    _op .8byte 0xffffffffffffffff "Base Marker"
+		    _op .8byte $addr "Base Address"
+		} else {
+		    _op .4byte 0xffffffff "Base Marker"
+		    _op .4byte $addr "Base Address"
+		}
+	    }
+
+	    proc range { start end } {
+		variable _debug_ranges_64_bit
+
+		if {$_debug_ranges_64_bit} {
+		    _op .8byte $start "Start Address"
+		    _op .8byte $end "End Address"
+		} else {
+		    _op .4byte $start "Start Address"
+		    _op .4byte $end "End Address"
+		}
+	    }
+
+	    uplevel $body
+
+	    # End of the sequence.
+	    if {$_debug_ranges_64_bit} {
+		_op .8byte 0x0 "End of Sequence Marker (Part 1)"
+		_op .8byte 0x0 "End of Sequence Marker (Part 2)"
+	    } else {
+		_op .4byte 0x0 "End of Sequence Marker (Part 1)"
+		_op .4byte 0x0 "End of Sequence Marker (Part 2)"
+	    }
+	}
+
+	uplevel $body
+    }
+
+    # Emit a DWARF .debug_rnglists section.
+    #
+    # The target address size is based on the current target's address size.
+    #
+    # BODY must be Tcl code that emits the content of the section.  It is
+    # evaluated in the caller's context.
+    #
+    # The `is-64 true|false` options tells whether to use 64-bit DWARF instead
+    # of 32-bit DWARF.  The default is 32-bit.
+
+    proc rnglists { options body } {
+	variable _debug_rnglists_addr_size
+	variable _debug_rnglists_offset_size
+	variable _debug_rnglists_is_64_dwarf
+
+	parse_options {{"is-64" "false"}}
+
+	if [is_64_target] {
+	    set _debug_rnglists_addr_size 8
+	} else {
+	    set _debug_rnglists_addr_size 4
+	}
+
+	if { ${is-64} } {
+	    set _debug_rnglists_offset_size 8
+	    set _debug_rnglists_is_64_dwarf true
+	} else {
+	    set _debug_rnglists_offset_size 4
+	    set _debug_rnglists_is_64_dwarf false
+	}
+
+	_section ".debug_rnglists"
+
+	# Count of tables in the section.
+	variable _debug_rnglists_table_count 0
+
+	# Compute the label name for list at index LIST_IDX, for the current
+	# table.
+
+	proc _compute_list_label { list_idx } {
+	    variable _debug_rnglists_table_count
+
+	    return ".Lrnglists_table_${_debug_rnglists_table_count}_list_${list_idx}"
+	}
+
+	with_override Dwarf::table Dwarf::_rnglists_table {
+	    uplevel $body
+	}
+    }
+
+    # Generate one rnglists table (header + offset array + range lists).
+    #
+    # This proc is meant to be used within proc rnglists' body.  It is made
+    # available as `table` while inside proc rnglists' body.
+    #
+    # BODY must be Tcl code that emits the content of the table.  It may call
+    # the LIST_ procedure to generate rnglists.  It is evaluated in the
+    # caller's context.
+    #
+    # The `post-header-label` option can be used to define a label just after
+    # the header of the table.  This is the label that a DW_AT_rnglists_base
+    # attribute will usually refer to.
+    #
+    # The `with-offset-array true|false` option can be used to control whether
+    # the headers of the location list tables have an array of offset.  The
+    # default is true.
+
+    proc _rnglists_table { options body } {
+	variable _debug_rnglists_table_count
+	variable _debug_rnglists_addr_size
+	variable _debug_rnglists_offset_size
+	variable _debug_rnglists_is_64_dwarf
+
+	parse_options {
+	    {post-header-label ""}
+	    {with-offset-array true}
+	}
+
+	# Count of lists in the table.
+	variable _debug_rnglists_list_count 0
+
+	# Generate the lists ops first, because we need to know how many
+	# lists there are to generate the header and offset table.
+	set lists_ops [_defer_to_string {
+	    with_override Dwarf::list_ Dwarf::_rnglists_list {
+		uplevel $body
+	    }
+	}]
+
+	set post_unit_len_label \
+	    [_compute_label "rnglists_table_${_debug_rnglists_table_count}_post_unit_len"]
+	set post_header_label \
+	    [_compute_label "rnglists_table_${_debug_rnglists_table_count}_post_header"]
+	set table_end_label \
+	    [_compute_label "rnglists_table_${_debug_rnglists_table_count}_end"]
+
+	# Emit the table header.
+	if { $_debug_rnglists_is_64_dwarf } {
+	    _op .4byte 0xffffffff "unit length 1/2"
+	    _op .8byte "$table_end_label - $post_unit_len_label" "unit length 2/2"
+	} else {
+	    _op .4byte "$table_end_label - $post_unit_len_label" "unit length"
+	}
+
+	define_label $post_unit_len_label
+
+	_op .2byte 5 "dwarf version"
+	_op .byte $_debug_rnglists_addr_size "address size"
+	_op .byte 0 "segment selector size"
+
+	if { ${with-offset-array} } {
+	  _op .4byte "$_debug_rnglists_list_count" "offset entry count"
+	} else {
+	  _op .4byte 0 "offset entry count"
+	}
+
+	define_label $post_header_label
+
+	# Define the user post-header label, if provided.
+	if { ${post-header-label} != "" } {
+	    define_label ${post-header-label}
+	}
+
+	# Emit the offset array.
+	if { ${with-offset-array} } {
+	    for {set list_idx 0} {$list_idx < $_debug_rnglists_list_count} {incr list_idx} {
+		set list_label [_compute_list_label $list_idx]
+		_op_offset $_debug_rnglists_offset_size \
+		    "$list_label - $post_header_label" \
+		    "offset of list $list_idx"
+	    }
+	}
+
+	# Emit the actual list data.
+	_emit "$lists_ops"
+
+	define_label $table_end_label
+
+	incr _debug_rnglists_table_count
+    }
+
+    # Generate one rnglists range list.
+    #
+    # This proc is meant to be used within proc _rnglists_table's body.  It is
+    # made available as `list_` while inside proc _rnglists_table's body.
+    #
+    # BODY may call the various procs defined below to generate list entries.
+    # They correspond to the range list entry kinds described in section 2.17.3
+    # of the DWARF 5 spec.
+    #
+    # To define a label pointing to the beginning of the list, use the
+    # conventional way of declaring and defining labels:
+    #
+    #   declare_labels the_list
+    #
+    #   the_list: list_ { ...  }
+
+    proc _rnglists_list { body } {
+	variable _debug_rnglists_list_count
+
+	# Define a label for this list.  It is used to build the offset
+	# array later.
+	set list_label [_compute_list_label $_debug_rnglists_list_count]
+	define_label $list_label
+
+	with_override Dwarf::start_end Dwarf::_rnglists_start_end {
+	    uplevel $body
+	}
+
+	# Emit end of list.
+	_op .byte 0x00 "DW_RLE_end_of_list"
+
+	incr _debug_rnglists_list_count
+    }
+
+    # Emit a rnglists DW_RLE_start_end entry.
+    #
+    # This proc is meant to be used within proc _rnglists_list's body.  It is
+    # made available as `start_end` while inside proc _rnglists_list's body.
+
+    proc _rnglists_start_end { start end } {
+	variable _debug_rnglists_addr_size
+
+	_op .byte 0x06 "DW_RLE_start_end"
+	_op .${_debug_rnglists_addr_size}byte $start "start"
+	_op .${_debug_rnglists_addr_size}byte $end "end"
+    }
+
+    # Emit a DWARF .debug_loclists section.
+    #
+    # The target address size is based on the current target's address size.
+    #
+    # BODY must be Tcl code that emits the content of the section.  It is
+    # evaluated in the caller's context.
+    #
+    # The `is-64 true|false` options tells whether to use 64-bit DWARF instead
+    # of 32-bit DWARF.  The default is 32-bit.
+
+    proc loclists { options body } {
+	variable _debug_loclists_addr_size
+	variable _debug_loclists_offset_size
+	variable _debug_loclists_is_64_dwarf
+
+	parse_options {{"is-64" "false"}}
+
+	if [is_64_target] {
+	    set _debug_loclists_addr_size 8
+	} else {
+	    set _debug_loclists_addr_size 4
+	}
+
+	if { ${is-64} } {
+	    set _debug_loclists_offset_size 8
+	    set _debug_loclists_is_64_dwarf true
+	} else {
+	    set _debug_loclists_offset_size 4
+	    set _debug_loclists_is_64_dwarf false
+	}
+
+	_section ".debug_loclists"
+
+	# Count of tables in the section.
+	variable _debug_loclists_table_count 0
+
+	# Compute the label name for list at index LIST_IDX, for the current
+	# table.
+
+	proc _compute_list_label { list_idx } {
+	    variable _debug_loclists_table_count
+
+	    return ".Lloclists_table_${_debug_loclists_table_count}_list_${list_idx}"
+	}
+
+	with_override Dwarf::table Dwarf::_loclists_table {
+	    uplevel $body
+	}
+    }
+
+    # Generate one loclists table (header + offset array + location lists).
+    #
+    # This proc is meant to be used within proc loclists' body.  It is made
+    # available as `table` while inside proc rnglists' body.
+    #
+    # BODY must be Tcl code that emits the content of the table.  It may call
+    # the LIST_ procedure to generate rnglists.  It is evaluated in the
+    # caller's context.
+    #
+    # The `post-header-label` option can be used to define a label just after
+    # the header of the table.  This is the label that a DW_AT_loclists_base
+    # attribute will usually refer to.
+    #
+    # The `with-offset-array true|false` option can be used to control
+    # whether the headers of the location list tables have an array of
+    # offset.  The default is true.
+
+    proc _loclists_table { options body } {
+	variable _debug_loclists_table_count
+	variable _debug_loclists_addr_size
+	variable _debug_loclists_offset_size
+	variable _debug_loclists_is_64_dwarf
+
+	parse_options {
+	    {post-header-label ""}
+	    {with-offset-array true}
+	}
+
+	# Count of lists in the table.
+	variable _debug_loclists_list_count 0
+
+	# Generate the lists ops first, because we need to know how many
+	# lists there are to generate the header and offset table.
+	set lists_ops [_defer_to_string {
+	    with_override Dwarf::list_ Dwarf::_loclists_list {
+		uplevel $body
+	    }
+	}]
+
+	set post_unit_len_label \
+	    [_compute_label "loclists_table_${_debug_loclists_table_count}_post_unit_len"]
+	set post_header_label \
+	    [_compute_label "loclists_table_${_debug_loclists_table_count}_post_header"]
+	set table_end_label \
+	    [_compute_label "loclists_table_${_debug_loclists_table_count}_end"]
+
+	# Emit the table header.
+	if { $_debug_loclists_is_64_dwarf } {
+	    _op .4byte 0xffffffff "unit length 1/2"
+	    _op .8byte "$table_end_label - $post_unit_len_label" "unit length 2/2"
+	} else {
+	    _op .4byte "$table_end_label - $post_unit_len_label" "unit length"
+	}
+
+	define_label $post_unit_len_label
+
+	_op .2byte 5 "DWARF version"
+	_op .byte $_debug_loclists_addr_size "address size"
+	_op .byte 0 "segment selector size"
+
+	if { ${with-offset-array} } {
+	  _op .4byte "$_debug_loclists_list_count" "offset entry count"
+	} else {
+	  _op .4byte 0 "offset entry count"
+	}
+
+	define_label $post_header_label
+
+	# Define the user post-header label, if provided.
+	if { ${post-header-label} != "" } {
+	    define_label ${post-header-label}
+	}
+
+	# Emit the offset array.
+	if { ${with-offset-array} } {
+	    for {set list_idx 0} {$list_idx < $_debug_loclists_list_count} {incr list_idx} {
+		set list_label [_compute_list_label $list_idx]
+		_op_offset $_debug_loclists_offset_size \
+		    "$list_label - $post_header_label" \
+		    "offset of list $list_idx"
+	    }
+	}
+
+	# Emit the actual list data.
+	_emit "$lists_ops"
+
+	define_label $table_end_label
+
+	incr _debug_loclists_table_count
+    }
+
+    # Generate one loclists location list.
+    #
+    # This proc is meant to be used within proc _loclists_table's body.  It is
+    # made available as `list_` while inside proc _loclists_table's body.
+    #
+    # BODY may call the various procs defined below to generate list
+    # entries.  They correspond to the location list entry kinds
+    # described in section 2.6.2 of the DWARF 5 spec.
+    #
+    # To define a label pointing to the beginning of the list, use
+    # the conventional way of declaring and defining labels:
+    #
+    #   declare_labels the_list
+    #
+    #   the_list: list_ {
+    #     ...
+    #   }
+
+    proc _loclists_list { body } {
+	variable _debug_loclists_list_count
+
+	# Count the location descriptions in this list.
+	variable _debug_loclists_locdesc_count 0
+
+	# Define a label for this list.  It is used to build the offset
+	# array later.
+	set list_label [_compute_list_label $_debug_loclists_list_count]
+	define_label $list_label
+
+	with_override Dwarf::start_length Dwarf::_loclists_start_length {
+	with_override Dwarf::base_address Dwarf::_loclists_base_address {
+	with_override Dwarf::start_end Dwarf::_loclists_start_end {
+	    uplevel $body
+	}}}
+
+	# Emit end of list.
+	_op .byte 0x00 "DW_LLE_end_of_list"
+
+	incr _debug_loclists_list_count
+    }
+
+    # Emit a DW_LLE_start_length entry.
+    #
+    # This proc is meant to be used within proc _loclists_list's body.  It is
+    # made available as `start_length` while inside proc _loclists_list's body.
+
+    proc _loclists_start_length { start length locdesc } {
+	variable _debug_loclists_is_64_dwarf
+	variable _debug_loclists_addr_size
+	variable _debug_loclists_offset_size
+	variable _debug_loclists_table_count
+	variable _debug_loclists_list_count
+	variable _debug_loclists_locdesc_count
+
+	set locdesc [uplevel [list subst $locdesc]]
+
+	_op .byte 0x08 "DW_LLE_start_length"
+
+	# Start and end of the address range.
+	_op .${_debug_loclists_addr_size}byte $start "start"
+	_op .uleb128 $length "length"
+
+	# Length of location description.
+	set locdesc_start_label ".Lloclists_table_${_debug_loclists_table_count}_list_${_debug_loclists_list_count}_locdesc_${_debug_loclists_locdesc_count}_start"
+	set locdesc_end_label ".Lloclists_table_${_debug_loclists_table_count}_list_${_debug_loclists_list_count}_locdesc_${_debug_loclists_locdesc_count}_end"
+	_op .uleb128 "$locdesc_end_label - $locdesc_start_label" "locdesc length"
+
+	define_label $locdesc_start_label
+	set dwarf_version 5
+	_location $locdesc $dwarf_version $_debug_loclists_addr_size $_debug_loclists_offset_size
+	define_label $locdesc_end_label
+
+	incr _debug_loclists_locdesc_count
+    }
+
+    # Emit a DW_LLE_start_end entry.
+    #
+    # This proc is meant to be used within proc _loclists_list's body.  It is
+    # made available as `start_end` while inside proc _loclists_list's body.
+
+    proc _loclists_start_end { start end locdesc } {
+	variable _debug_loclists_is_64_dwarf
+	variable _debug_loclists_addr_size
+	variable _debug_loclists_offset_size
+	variable _debug_loclists_table_count
+	variable _debug_loclists_list_count
+	variable _debug_loclists_locdesc_count
+
+	set locdesc [uplevel [list subst $locdesc]]
+
+	_op .byte 0x07 "DW_LLE_start_end"
+
+	# Start and end of the address range.
+	_op .${_debug_loclists_addr_size}byte $start "start"
+	_op .${_debug_loclists_addr_size}byte $end "end"
+
+	# Length of location description.
+	set locdesc_start_label ".Lloclists_table_${_debug_loclists_table_count}_list_${_debug_loclists_list_count}_locdesc_${_debug_loclists_locdesc_count}_start"
+	set locdesc_end_label ".Lloclists_table_${_debug_loclists_table_count}_list_${_debug_loclists_list_count}_locdesc_${_debug_loclists_locdesc_count}_end"
+	_op .uleb128 "$locdesc_end_label - $locdesc_start_label" "locdesc length"
+
+	define_label $locdesc_start_label
+	set dwarf_version 5
+	_location $locdesc $dwarf_version $_debug_loclists_addr_size $_debug_loclists_offset_size
+	define_label $locdesc_end_label
+
+	incr _debug_loclists_locdesc_count
+    }
+
+    # Emit a DW_LLE_base_address entry.
+    proc _loclists_base_address {addr} {
+	variable _debug_loclists_addr_size
+	variable _debug_loclists_locdesc_count
+	_op .byte 0x06 "DW_LLE_base_address"
+	_op .${_debug_loclists_addr_size}byte $addr "base_address"
+	incr _debug_loclists_locdesc_count
+    }
+
+    # Emit a DWARF .debug_macro section.
+    #
+    # BODY must be Tcl code that emits the content of the section.  It is
+    # evaluated in the caller's context.  The body can use the `unit` proc
+    # (see `_macro_unit`) to generate macro units.
+
+    proc macro { body } {
+	_section ".debug_macro"
+
+	with_override Dwarf::unit Dwarf::_macro_unit {
+	    uplevel $body
+	}
+    }
+
+    # Generate one macro unit.
+    #
+    # This proc is meant to be used within proc macro's body.  It is made
+    # available as `unit` while inside proc macro's body.
+    #
+    # BODY must be Tcl code that emits the content of the unit.  It may call
+    # procedures defined below, prefixed with `_macro_unit_`, to generate the
+    # unit's content.  It is evaluated in the caller's context.
+    #
+    # The `is-64 true|false` options tells whether to use 64-bit DWARF instead
+    # of 32-bit DWARF.  The default is 32-bit.
+    #
+    # If specified, the `debug-line-offset-label` option is the name of a label
+    # to use for the unit header's `debug_line_offset` field value.  If
+    # omitted, the unit header will not contain the `debug_line_offset` field.
+
+    proc _macro_unit { options body } {
+	parse_options {
+	    {"is-64" "false"}
+	    {"debug-line-offset-label" ""}
+	}
+
+	_op .2byte 5 "version"
+
+	# Flags:
+	#
+	#   offset_size_flag           = set if is-64 is true
+	#   debug_line_offset_flag     = set if debug-line-offset-label is set
+	#   opcode_operands_table_flag = 0
+	set flags 0
+
+	if { ${is-64} } {
+	    set flags [expr $flags | 0x1]
+	}
+
+	if { ${debug-line-offset-label} != "" } {
+	    set flags [expr $flags | 0x2]
+	}
+
+	_op .byte $flags "flags"
+
+	if { ${debug-line-offset-label} != "" } {
+	    _op_offset [expr ${is-64} ? 8 : 4] ${debug-line-offset-label} \
+		"debug_line offset"
+	}
+
+	with_override Dwarf::define Dwarf::_macro_unit_define {
+	with_override Dwarf::start_file Dwarf::_macro_unit_start_file {
+	with_override Dwarf::end_file Dwarf::_macro_unit_end_file {
+	    uplevel $body
+	}}}
+    }
+
+    # Emit a DW_MACRO_define entry.
+
+    proc _macro_unit_define { lineno text } {
+	_op .byte 0x1 "DW_MACRO_define"
+	_op .uleb128 $lineno "Line number"
+	_op .asciz "\"$text\"" "Macro definition"
+    }
+
+    # Emit a DW_MACRO_start_file entry.
+
+    proc _macro_unit_start_file { lineno file_idx } {
+	_op .byte 0x3 "DW_MACRO_start_file"
+	_op .uleb128 $lineno
+	_op .uleb128 $file_idx
+    }
+
+    # Emit a DW_MACRO_end_file entry.
+
+    proc _macro_unit_end_file {} {
+	_op .byte 0x4 "DW_MACRO_end_file"
+    }
+
+    # Emit a DWARF .debug_line unit.
+    # OPTIONS is a list with an even number of elements containing
+    # option-name and option-value pairs.
+    # Current options are:
+    # is_64 0|1    - boolean indicating if you want to emit 64-bit DWARF
+    #                default = 0 (32-bit)
+    # version n    - DWARF version number to emit
+    #                default = 4
+    # addr_size n  - the size of addresses in bytes: 4, 8, or default
+    #                default = default
+    # seg_sel_size n
+    #              - the size of segment selector_size in bytes:
+    #                default = 0
+    #
+    # LABEL is the label of the current unit (which is probably
+    # referenced by a DW_AT_stmt_list), or "" if there is no such
+    # label.
+    #
+    # BODY is Tcl code that emits the parts which make up the body of
+    # the line unit.  It is evaluated in the caller's context.  The
+    # following commands are available for the BODY section:
+    #
+    #   include_dir "dirname" -- adds a new include directory
+    #
+    #   file_name "file.c" idx -- adds a new file name.  IDX is a
+    #   1-based index referencing an include directory or 0 for
+    #   current directory.
+
+    proc lines {options label body} {
+	variable _line_count
+	variable _line_include_dirs
+	variable _line_file_names
+	variable _line_header_finalized
+	variable _line_header_end_label
+	variable _line_unit_version
+	variable _line_is_64
+	variable _line_string_form
+
+	# Establish the defaults.
+	set _line_is_64 0
+	set _line_unit_version 4
+	set _unit_addr_size default
+	set _line_include_dirs {}
+	set _line_file_names {}
+	set _line_header_finalized 0
+	set _default_is_stmt 1
+	set _seg_sel_size 0
+	#set _line_string_form string
+	set _line_string_form line_strp
+
+	foreach { name value } $options {
+	    switch -exact -- $name {
+		is_64 { set _line_is_64 $value }
+		version { set _line_unit_version $value }
+		addr_size { set _unit_addr_size $value }
+		seg_sel_size { set _seg_sel_size $value }
+		default_is_stmt { set _default_is_stmt $value }
+		string_form { set _line_string_form $value }
+		default { error "unknown option $name" }
+	    }
+	}
+	if {$_unit_addr_size == "default"} {
+	    if {[is_64_target]} {
+		set _unit_addr_size 8
+	    } else {
+		set _unit_addr_size 4
+	    }
+	}
+
+	set unit_num [incr _line_count]
+
+	set section ".debug_line"
+	_section $section
+
+	if { "$label" != "" } {
+	    # Define the user-provided label at this point.
+	    $label:
+	}
+
+	set unit_len_label [_compute_label "line${_line_count}_start"]
+	set unit_end_label [_compute_label "line${_line_count}_end"]
+	set header_len_label [_compute_label "line${_line_count}_header_start"]
+	set _line_header_end_label [_compute_label "line${_line_count}_header_end"]
+
+	if {$_line_is_64} {
+	    _op .4byte 0xffffffff
+	    _op .8byte "$unit_end_label - $unit_len_label" "unit_length"
+	} else {
+	    _op .4byte "$unit_end_label - $unit_len_label" "unit_length"
+	}
+
+	define_label $unit_len_label
+
+	_op .2byte $_line_unit_version version
+
+	if { $_line_unit_version >= 5 } {
+	    _op .byte $_unit_addr_size "address_size"
+	    # Hardcode to 0 for now.
+	    _op .byte $_seg_sel_size "seg_sel_size"
+	}
+
+	if {$_line_is_64} {
+	    _op .8byte "$_line_header_end_label - $header_len_label" "header_length"
+	} else {
+	    _op .4byte "$_line_header_end_label - $header_len_label" "header_length"
+	}
+
+	define_label $header_len_label
+
+	_op .byte 1 "minimum_instruction_length"
+	if { $_line_unit_version >= 4 } {
+	    # Assume non-VLIW for now.
+	    _op .byte 1 "maximum_operations_per_instruction"
+	}
+	_op .byte $_default_is_stmt "default_is_stmt"
+	_op .byte 1 "line_base"
+	_op .byte 1 "line_range"
+	_op .byte 12 "opcode_base"
+
+	# The standard_opcode_lengths table.  The number of arguments
+	# for each of the standard opcodes.  Generating 11 entries here
+	# matches the use of 12 in the opcode_base above.  These 10
+	# entries match the 9 standard opcodes for DWARF2 plus
+	# DW_LNS_prologue_end and DW_LNS_epilogue_begin from DWARF3.
+	_op .byte 0 "standard opcode 1"
+	_op .byte 1 "standard opcode 2"
+	_op .byte 1 "standard opcode 3"
+	_op .byte 1 "standard opcode 4"
+	_op .byte 1 "standard opcode 5"
+	_op .byte 0 "standard opcode 6"
+	_op .byte 0 "standard opcode 7"
+	_op .byte 0 "standard opcode 8"
+	_op .byte 1 "standard opcode 9"
+	_op .byte 0 "standard opcode 10"
+	_op .byte 0 "standard opcode 11"
+
+	# Add a directory entry to the line table header's directory table.
+	#
+	# Return the index by which this entry can be referred to.
+	proc include_dir {dirname} {
+	    variable _line_include_dirs
+	    lappend _line_include_dirs $dirname
+
+	    if { $Dwarf::_line_unit_version >= 5 } {
+		return [expr [llength $_line_include_dirs] - 1]
+	    } else {
+		return [llength $_line_include_dirs]
+	    }
+	}
+
+	# Add a file name entry to the line table header's file names table.
+	#
+	# Return the index by which this entry can be referred to.
+	proc file_name {filename diridx} {
+	    variable _line_file_names
+	    lappend _line_file_names $filename $diridx
+
+	    if { $Dwarf::_line_unit_version >= 5 } {
+		return [expr [llength $_line_file_names] - 1]
+	    } else {
+		return [llength $_line_file_names]
+	    }
+	}
+
+	proc _line_finalize_header {} {
+	    variable _line_header_finalized
+	    if { $_line_header_finalized } {
+		return
+	    }
+	    set _line_header_finalized 1
+
+	    variable _line_include_dirs
+	    variable _line_file_names
+
+	    variable _line_unit_version
+	    variable _line_is_64
+	    variable _line_string_form
+	    if { $_line_unit_version >= 5 } {
+		_op .byte 1 "directory_entry_format_count"
+		_op .uleb128 1 \
+		    "directory_entry_format (content type code: DW_LNCT_path)"
+		switch $_line_string_form {
+		    string {
+			_op .uleb128 0x08 \
+			    "directory_entry_format (form: DW_FORM_string)"
+		    }
+		    line_strp {
+			_op .uleb128 0x1f \
+			    "directory_entry_format (form: DW_FORM_line_strp)"
+		    }
+		}
+
+		set nr_dirs [llength $_line_include_dirs]
+		_op .byte $nr_dirs "directory_count"
+
+		foreach dirname $_line_include_dirs {
+		    switch $_line_string_form {
+			string {
+			    _op .ascii [_quote $dirname]
+			}
+			line_strp {
+			    declare_labels string_ptr
+			    _defer_output .debug_line_str {
+				string_ptr:
+				_op .ascii [_quote $dirname]
+			    }
+			    _op_offset [expr $_line_is_64 ? 8 : 4] $string_ptr
+			}
+		    }
+		}
+
+		_op .byte 2 "file_name_entry_format_count"
+		_op .uleb128 1 \
+		    "file_name_entry_format (content type code: DW_LNCT_path)"
+		switch $_line_string_form {
+		    string {
+			_op .uleb128 0x08 \
+			    "directory_entry_format (form: DW_FORM_string)"
+		    }
+		    line_strp {
+			_op .uleb128 0x1f \
+			    "directory_entry_format (form: DW_FORM_line_strp)"
+		    }
+		}
+		_op .uleb128 2 \
+		    "file_name_entry_format (content type code: DW_LNCT_directory_index)"
+		_op .uleb128 0x0f \
+		    "file_name_entry_format (form: DW_FORM_udata)"
+
+		set nr_files [expr [llength $_line_file_names] / 2]
+		_op .byte $nr_files "file_names_count"
+
+		foreach { filename diridx } $_line_file_names {
+		    switch $_line_string_form {
+			string {
+			    _op .ascii [_quote $filename]
+			}
+			line_strp {
+			    declare_labels string_ptr
+			    _defer_output .debug_line_str {
+				string_ptr:
+				_op .ascii [_quote $filename]
+			    }
+			    _op_offset [expr $_line_is_64 ? 8 : 4] $string_ptr
+			}
+		    }
+		    _op .uleb128 $diridx
+		}
+	    } else {
+		foreach dirname $_line_include_dirs {
+		    _op .ascii [_quote $dirname]
+		}
+
+		_op .byte 0 "Terminator (include_directories)"
+
+		foreach { filename diridx } $_line_file_names {
+		    _op .ascii [_quote $filename]
+		    _op .sleb128 $diridx
+		    _op .sleb128 0 "mtime"
+		    _op .sleb128 0 "length"
+		}
+
+		_op .byte 0 "Terminator (file_names)"
+	    }
+
+	    set _line_include_dirs {}
+	    set _line_file_names {}
+
+	    variable _line_header_end_label
+	    define_label $_line_header_end_label
+	}
+
+	proc program { body } {
+	    variable _line_header_end_label
+	    variable _line
+
+
+	    set _line 1
+
+	    _line_finalize_header
+
+	    proc DW_LNE_set_address {addr} {
+		_op .byte 0
+		set start [new_label "set_address_start"]
+		set end [new_label "set_address_end"]
+		_op .uleb128 "${end} - ${start}"
+		define_label ${start}
+		_op .byte 2
+		if {[is_64_target]} {
+		    _op .8byte ${addr}
+		} else {
+		    _op .4byte ${addr}
+		}
+		define_label ${end}
+	    }
+
+	    proc DW_LNE_end_sequence {} {
+		variable _line
+		_op .byte 0
+		_op .uleb128 1
+		_op .byte 1
+		set _line 1
+	    }
+
+	    proc DW_LNE_user { len opcode } {
+		set DW_LNE_lo_usr 0x80
+		set DW_LNE_hi_usr 0xff
+		if { $DW_LNE_lo_usr <= $opcode
+		     && $opcode <= $DW_LNE_hi_usr } {
+		    _op .byte 0
+		    _op .uleb128 $len
+		    _op .byte $opcode
+		    for {set i 1} {$i < $len} {incr i} {
+			_op .byte 0
+		    }
+		} else {
+		    error "unknown vendor specific extended opcode: $opcode"
+		}
+	    }
+
+	    proc DW_LNS_copy {} {
+		_op .byte 1
+	    }
+
+	    proc DW_LNS_negate_stmt {} {
+		_op .byte 6
+	    }
+
+	    proc DW_LNS_set_prologue_end {} {
+		_op .byte 0x0a
+	    }
+
+	    proc DW_LNS_set_epilogue_begin {} {
+		_op .byte 0x0b
+	    }
+
+	    proc DW_LNS_advance_pc {offset} {
+		_op .byte 2
+		_op .uleb128 ${offset}
+	    }
+
+	    proc DW_LNS_advance_line {offset} {
+		variable _line
+		_op .byte 3
+		_op .sleb128 ${offset}
+		set _line [expr $_line + $offset]
+	    }
+
+	    # A pseudo line number program instruction, that can be used instead
+	    # of DW_LNS_advance_line.  Rather than writing:
+	    #   {DW_LNS_advance_line [expr $line1 - 1]}
+	    #   {DW_LNS_advance_line [expr $line2 - $line1]}
+	    #   {DW_LNS_advance_line [expr $line3 - $line2]}
+	    # we can just write:
+	    #   {line $line1}
+	    #   {line $line2}
+	    #   {line $line3}
+	    proc line {line} {
+		variable _line
+		set offset [expr $line - $_line]
+		DW_LNS_advance_line $offset
+	    }
+
+	    proc DW_LNS_set_file {num} {
+		_op .byte 4
+		_op .sleb128 ${num}
+	    }
+
+	    uplevel $body
+	}
+
+	uplevel $body
+
+	rename include_dir ""
+	rename file_name ""
+
+	_line_finalize_header
+
+	define_label $unit_end_label
+    }
+
+    # Emit a DWARF .debug_aranges entry.
+
+    proc arange { options arange_start arange_length } {
+	parse_options {
+	    { comment "" }
+	    { seg_sel "" }
+	}
+
+	if { $comment != "" } {
+	    # Wrap
+	    set comment " ($comment)"
+	}
+
+	if { $seg_sel != "" } {
+	    variable _seg_size
+	    if { $_seg_size == 8 } {
+		set seg_op .8byte
+	    } elseif { $_seg_size == 4 } {
+		set seg_op .4byte
+	    } else {
+		error \
+		    "Don't know how to handle segment selector size $_seg_size"
+	    }
+	    _op $seg_op $seg_sel "Address range segment selector$comment"
+	}
+
+	variable _addr_size
+	if { $_addr_size == 8 } {
+	    set addr_op .8byte
+	} elseif { $_addr_size == 4 } {
+	    set addr_op .4byte
+	}
+
+	_op $addr_op $arange_start "Address range start$comment"
+	_op $addr_op $arange_length "Address range length$comment"
+    }
+
+    # Emit a DWARF .debug_aranges unit.
+    #
+    # OPTIONS is a list with an even number of elements containing
+    # option-name and option-value pairs.
+    # Current options are:
+    # is_64 0|1    - boolean indicating if you want to emit 64-bit DWARF
+    #                default = 0 (32-bit)
+    # cu_is_64 0|1 - boolean indicating if LABEL refers to a 64-bit DWARF CU
+    #                default = 0 (32-bit)
+    # section_version n
+    #                - section version number to emit
+    #                default = 2
+    # seg_size n   - the size of the adress selector in bytes: 0, 4, or 8
+    #                default = 0
+    #
+    # LABEL is the label of the corresponding CU.
+    #
+    # BODY is Tcl code that emits the parts which make up the body of
+    # the aranges unit.  It is evaluated in the caller's context.  The
+    # following commands are available for the BODY section:
+    #
+    #   arange [-c <comment>] [<segment selector>] <start> <length>
+    #     -- adds an address range.
+
+    proc aranges { options label body } {
+	variable _addr_size
+	variable _seg_size
+
+	# Handle options.
+	parse_options {
+	    { is_64 0 }
+	    { cu_is_64 0 }
+	    { section_version 2 }
+	    { seg_size 0 }
+	}
+	set _seg_size $seg_size
+
+	if { [is_64_target] } {
+	    set _addr_size 8
+	} else {
+	    set _addr_size 4
+	}
+
+	# Switch to .debug_aranges section.
+	_section .debug_aranges
+
+	# Keep track of offset from start of section entry to determine
+	# padding amount.
+	set offset 0
+
+	# Initial length.
+	declare_labels aranges_start aranges_end
+	set length "$aranges_end - $aranges_start"
+	set comment "Length"
+	if { $is_64 } {
+	    _op .4byte 0xffffffff
+	    _op .8byte $length $comment
+	    incr offset 12
+	} else {
+	    _op .4byte $length $comment
+	    incr offset 4
+	}
+
+	# Start label.
+	aranges_start:
+
+	# Section version.
+	_op .2byte $section_version "Section version"
+	incr offset 2
+
+	# Offset into .debug_info.
+	upvar $label my_label
+	if { $cu_is_64 } {
+	    _op .8byte $my_label "Offset into .debug_info"
+	    incr offset 8
+	} else {
+	    _op .4byte $my_label "Offset into .debug_info"
+	    incr offset 4
+	}
+
+	# Address size.
+	_op .byte $_addr_size "Address size"
+	incr offset
+
+	# Segment selector size.
+	_op .byte $_seg_size "Segment selector size"
+	incr offset
+
+	# Padding.
+	set tuple_size [expr 2 * $_addr_size + $_seg_size]
+	while { 1 } {
+	    if { [expr $offset % $tuple_size] == 0 } {
+		break
+	    }
+	    _op .byte 0 "Pad to $tuple_size byte boundary"
+	    incr offset
+	}
+
+	# Range tuples.
+	uplevel $body
+
+	# Terminator tuple.
+	set comment "Terminator"
+	if { $_seg_size == 0 } {
+	    arange {comment $comment} 0 0
+	} else {
+	    arange {comment $comment seg_sel 0} 0 0
+	}
+
+	# End label.
+	aranges_end:
+    }
+
+    # Emit a .debug_loc entry.
+
+    proc _loc_entry { start end location_description } {
+	# Determine how to emit addresses.
+	variable _addr_size
+	if { $_addr_size == 8 } {
+	    set addr_op .8byte
+	} elseif { $_addr_size == 4 } {
+	    set addr_op .4byte
+	}
+
+	# Emit start and end address.
+	_op $addr_op $start "Start address"
+	_op $addr_op $end "End address"
+
+	declare_labels location_description_start
+	declare_labels location_description_end
+
+	# Emit length of location description.
+	set len "$location_description_end - $location_description_start"
+	_op .2byte $len "Location description length"
+
+	# Tag start of location description.
+	define_label $location_description_start
+
+	# Emit location description.
+	variable _cu_version
+	variable _cu_offset_size
+	_location $location_description $_cu_version $_addr_size \
+	    $_cu_offset_size
+
+	# Tag end of location description.
+	define_label $location_description_end
+    }
+
+    # Emit a DWARF .debug_loc contribution.
+    #
+    # OPTIONS is a list with an even number of elements containing
+    # option-name and option-value pairs.
+    # Current options are:
+    # cu_is_64 0|1 - boolean indicating if references from location
+    #                descriptions refer to a 64-bit DWARF CU.
+    #                default = 0 (32-bit)
+    # cu_version n - section version of DWARF CU referenced from location
+    #                descriptions.
+    #                default = 4
+    #
+    # BODY is Tcl code that emits the parts which make up the body of
+    # the debug_loc contribution.  It is evaluated in the caller's context.
+    # The following command is available for the BODY section:
+    #
+    #   entry <start> <end> <location description>
+    #     -- emit a .debug_loc entry
+
+    proc loc { options body } {
+	# Handle options.
+	parse_options {
+	    { cu_version 4 }
+	    { cu_is_64 0 }
+	}
+
+	# Export for use in BODY.
+	variable _addr_size
+	if { [is_64_target] } {
+	    set _addr_size 8
+	} else {
+	    set _addr_size 4
+	}
+	variable _cu_version
+	set _cu_version $cu_version
+	variable _cu_offset_size
+	if { $cu_is_64 == 1 } {
+	    set _cu_offset_size 8
+	} else {
+	    set _cu_offset_size 4
+	}
+
+	# Switch to .debug_loc section.
+	_section .debug_loc
+
+	# Introduce command 'entry'.
+	with_override Dwarf::entry Dwarf::_loc_entry {
+	    # Emit entries.
+	    uplevel $body
+	}
+
+	# Determine how to emit addresses.
+	if { $_addr_size == 8 } {
+	    set addr_op .8byte
+	} elseif { $_addr_size == 4 } {
+	    set addr_op .4byte
+	}
+
+	# Emit <End of list>.
+	set comment "<End of list>"
+	_op $addr_op 0 "$comment (Part 1/2)"
+	_op $addr_op 0 "$comment (Part 2/2)"
+    }
+
+    proc _empty_array {name} {
+	upvar $name the_array
+
+	catch {unset the_array}
+	set the_array(_) {}
+	unset the_array(_)
+    }
+
+    # Emit a .gnu_debugaltlink section with the given file name and
+    # build-id.  The buildid should be represented as a hexadecimal
+    # string, like "ffeeddcc".
+    proc gnu_debugaltlink {filename buildid} {
+	_defer_output .gnu_debugaltlink {
+	    _op .ascii [_quote $filename]
+	    foreach {a b} [split $buildid {}] {
+		_op .byte 0x$a$b
+	    }
+	}
+    }
+
+    proc _note {type name hexdata} {
+	set namelen [expr [string length $name] + 1]
+
+	# Name size.
+	_op .4byte $namelen
+	# Data size.
+	_op .4byte [expr [string length $hexdata] / 2]
+	# Type.
+	_op .4byte $type
+	# The name.
+	_op .ascii [_quote $name]
+	# Alignment.
+	set align 2
+	set total [expr {($namelen + (1 << $align) - 1) & -(1 << $align)}]
+	for {set i $namelen} {$i < $total} {incr i} {
+	    _op .byte 0
+	}
+	# The data.
+	foreach {a b} [split $hexdata {}] {
+	    _op .byte 0x$a$b
+	}
+    }
+
+    # Emit a note section holding the given build-id.
+    proc build_id {buildid} {
+	_defer_output {.note.gnu.build-id a note} {
+	    # From elf/common.h.
+	    set NT_GNU_BUILD_ID 3
+
+	    _note $NT_GNU_BUILD_ID GNU $buildid
+	}
+    }
+
+    # Emit a dummy CU.
+    proc dummy_cu {} {
+	# Generate a CU with default options and empty body.
+	cu {label dummy_cu} {
+	}
+
+	# Generate an .debug_aranges entry for the dummy CU.
+	aranges {} dummy_cu {
+	}
+    }
+
+    # Emit a DWARF .debug_names section.
+    #
+    # OPTIONS is a list with an even number of elements containing
+    # option-name and option-value pairs.
+    # Current options are:
+    # is_64 0|1 - boolean indicating if the section contains 64-bit DWARF.
+    #             default = 0 (32-bit)
+    # version n - section version.
+    #             default = 5.
+    #
+    # BODY is Tcl code that emits the parts which make up the body of
+    # the .debug_names section.  It is evaluated in the caller's context.
+    # The following commands are available for the BODY section:
+    #
+    #   cu <cu-label>
+    #     -- add a CU.
+    #
+    #   name <name> <tag> <cu> <hash>
+    #     -- add a name.
+
+    proc debug_names { options body } {
+	global decimal
+
+	parse_options {
+	    { is_64 0 }
+	    { version 5 }
+	}
+
+	variable _debug_names_offset_size
+	if { $is_64 == 1 } {
+	    set _debug_names_offset_size 8
+	} else {
+	    set _debug_names_offset_size 4
+	}
+
+	# Section start.
+	set section ".debug_names"
+	_section $section
+
+	# Header - initial length.
+	declare_labels debug_names_start debug_names_end
+	set length "$debug_names_end - $debug_names_start"
+	set comment "Initial_length"
+	if { $is_64 } {
+	    _op .4byte 0xffffffff
+	    _op .8byte $length $comment
+	} else {
+	    _op .4byte $length $comment
+	}
+
+	# Header - start label.
+	debug_names_start:
+
+	# Header - version + padding.
+	_op .2byte $version "Version"
+	_op .2byte 0 "Padding"
+
+	# Parse the body.
+	variable _debug_names_cus
+	set _debug_names_cus []
+	proc _debug_names_cu { cu } {
+	    variable _debug_names_cus
+	    lappend _debug_names_cus $cu
+	}
+       variable _debug_names_tus
+       set _debug_names_tus []
+       proc _debug_names_tu { tu } {
+	   variable _debug_names_tus
+	   lappend _debug_names_tus $tu
+       }
+	variable _debug_names
+	set _debug_names []
+	proc _debug_names_name { name tag cu hash } {
+	    variable _debug_names
+	    declare_labels entry_pool_offset
+	    lappend _debug_names [list $name $tag $cu $hash $entry_pool_offset]
+	}
+	with_override Dwarf::cu Dwarf::_debug_names_cu {
+	with_override Dwarf::tu Dwarf::_debug_names_tu {
+	with_override Dwarf::name Dwarf::_debug_names_name {
+	    uplevel $body
+	}}}
+
+	# Header - CU / TU / foreign TU count.
+	_op .4byte [llength $_debug_names_cus] "Comp_unit_count"
+	_op .4byte [llength $_debug_names_tus] "Local_type_unit_count"
+	_op .4byte 0 "Foreign_type_unit_count"
+
+	# Header - bucket count.
+	_op .4byte 1 "Bucket_count"
+
+	# Header - name count.
+	_op .4byte [llength $_debug_names] "Name_count"
+
+	# Header - abbreviation table size.
+	declare_labels debug_names_abbrev_table_start \
+	    debug_names_abbrev_table_end
+	set abbrev_table_size \
+	    "$debug_names_abbrev_table_end - $debug_names_abbrev_table_start"
+	_op .4byte $abbrev_table_size "Abbrev_table_size"
+
+	# Header - augmentation string.
+	_op .4byte 4 "Augmentation_string_size"
+	_op .ascii [_quote GDB] "Augmentation_string"
+
+	# List of CUs.
+	set comment "CU offset"
+	foreach cu $_debug_names_cus {
+	    upvar $cu tmp
+	    if { $is_64 } {
+		_op .8byte $tmp $comment
+	    } else {
+		_op .4byte $tmp $comment
+	    }
+	}
+
+	# List of Local TUs.
+	set comment "TU offset"
+	foreach tu $_debug_names_tus {
+	    upvar $tu tmp
+	    if { $is_64 } {
+		_op .8byte $tmp $comment
+	    } else {
+		_op .4byte $tmp $comment
+	    }
+	}
+
+	# List of Foreign TUs.
+	#
+
+	# Hash Lookup Table - array of buckets.
+	_op .4byte 1 "bucket: hash array index 1"
+
+	# Hash Lookup Table - array of hashes.
+	foreach idx $_debug_names {
+	    set name [lindex $idx 0]
+	    set hash [lindex $idx 3]
+	    _op .4byte $hash "hash: $name"
+	}
+
+	# Name Table - array of string offsets.
+	foreach idx $_debug_names {
+	    set name [lindex $idx 0]
+
+	    variable _strings
+	    if {![info exists _strings($name)]} {
+		set _strings($name) [new_label strp]
+		_defer_output .debug_str {
+		    define_label $_strings($name)
+		    _op .ascii [_quote $name]
+		}
+	    }
+
+	    _op_offset $_debug_names_offset_size $_strings($name) "name: $name"
+	}
+
+	# Name Table - array of entry offsets.
+	set base_label ""
+	foreach idx $_debug_names {
+	    set name [lindex $idx 0]
+	    set label [lindex $idx 4]
+	    if { [string equal $base_label ""]} {
+		set base_label $label
+	    }
+	    _op_offset $_debug_names_offset_size "$label - $base_label" \
+		"entry pool offset: $name"
+	}
+
+	# Abbreviations Table.
+	debug_names_abbrev_table_start:
+	set abbrev 1
+	variable _constants
+	foreach idx $_debug_names {
+	    set name [lindex $idx 0]
+	    set tag [lindex $idx 1]
+	    set cu [lindex $idx 2]
+
+	    if { [regexp "^CU-($decimal)$" $cu dummy cu_index] } {
+		set attr_name compile_unit
+		set attr_val 1
+	    } elseif { [regexp "^TU-($decimal)$" $cu dummy cu_index] } {
+		set attr_name type_unit
+		set attr_val 2
+	    } else {
+		set cu_index [lsearch -exact $_debug_names_cus $cu]
+		if { $cu_index == -1 } {
+		    set attr_name type_unit
+		    set attr_val 2
+		} else {
+		    set attr_name compile_unit
+		    set attr_val 1
+		}
+	    }
+
+	    _op .byte $abbrev "abbrev $abbrev"
+	    _op .uleb128 $_constants(DW_TAG_$tag) "DW_TAG_$tag"
+	    _op .byte $attr_val  "DW_IDX_$attr_name (attribute)"
+	    _op .byte 0x0f "DW_FORM_udata (form)"
+	    _op .byte 0  "abbrev terminator (attribute)"
+	    _op .byte 0  "abbrev terminator (form)"
+	    incr abbrev
+	}
+	_op .byte 0 "Abbreviations Table terminator"
+	debug_names_abbrev_table_end:
+
+	# Entry Pool
+	set abbrev 1
+	foreach idx $_debug_names {
+	    set name [lindex $idx 0]
+	    set cu [lindex $idx 2]
+	    set label [lindex $idx 4]
+
+	    if { [regexp "^CU-($decimal)$" $cu dummy cu_index] } {
+		set comment "$name: CU index"
+	    } elseif { [regexp "^TU-($decimal)$" $cu dummy cu_index] } {
+		set comment "$name: TU index"
+	    } else {
+		set cu_index [lsearch -exact $_debug_names_cus $cu]
+		if { $cu_index == -1 } {
+		    set cu_index [lsearch -exact $_debug_names_tus $cu]
+		    set comment "$name: TU index"
+		} else {
+		    set comment "$name: CU index"
+		}
+	    }
+	    define_label $label
+	    _op .byte $abbrev "$name: abbrev"
+	    _op .uleb128 $cu_index $comment
+	    _op .byte 0 "$name: terminator"
+	    incr abbrev
+	}
+
+	# Section end.
+	debug_names_end:
+    }
+
+    # The top-level interface to the DWARF assembler.
+    # OPTIONS is a list with an even number of elements containing
+    # option-name and option-value pairs.
+    # Current options are:
+    # filename <string>
+    #           - the name of the file where the generated assembly
+    #             code is written.
+    #             default = "".
+    # file_id <tcl channel identifier>
+    #           - open file where the generated assemble core is written.
+    #             default = "".
+    #  add_dummy_cus <0|1>
+    #           - Whether to add dummy CUs before and after the CUs
+    #             added in the BODY.
+    #             default = 1.
+    # As a special case, if OPTIONS is a list of length 1, it's
+    # interpreted as specifing the filename.
+    # BODY is Tcl code to emit the assembly.  It is evaluated via
+    # "eval" -- not uplevel as you might expect, because it is
+    # important to run the body in the Dwarf namespace.
+    #
+    # A typical invocation is something like:
+    #    Dwarf::assemble $file {
+    #        cu 0 2 8 {
+    #            compile_unit {
+    #            ...
+    #            }
+    #        }
+    #        cu 0 2 8 {
+    #        ...
+    #        }
+    #    }
+    proc assemble {options body} {
+	variable _initialized
+	variable _output_file
+	variable _deferred_output
+	variable _defer
+	variable _label_num
+	variable _strings
+	variable _cu_count
+	variable _line_count
+	variable _line_header_end_label
+	variable _debug_ranges_64_bit
+	variable _debug_addr_index
+
+	if { [llength $options] == 1 } {
+	    set options [list filename [lindex $options 0]]
+	}
+
+	parse_options {
+	    { filename "" }
+	    { file_id "" }
+	    { add_dummy_cus 1 }
+	}
+
+	if {!$_initialized} {
+	    _read_constants
+	    set _initialized 1
+	}
+
+	if { $file_id != "" } {
+	    set _output_file $file_id
+	} else {
+	    set _output_file [open $filename w]
+	}
+
+	set _cu_count -1
+	_empty_array _deferred_output
+	set _defer ""
+	set _label_num 0
+	_empty_array _strings
+
+	set _line_count 0
+	set _debug_ranges_64_bit [is_64_target]
+
+	set _debug_addr_index 0
+
+	# Dummy CU at the start to ensure that the first CU in $body is not
+	# the first in .debug_info.
+	if { $add_dummy_cus } {
+	    dummy_cu
+	}
+
+	with_shared_gdb {
+	    # Not "uplevel" here, because we want to evaluate in this
+	    # namespace.  This is somewhat bad because it means we can't
+	    # readily refer to outer variables.
+	    eval $body
+	}
+
+	# Dummy CU at the end to ensure that the last CU in $body is not
+	# the last in .debug_info.
+	if { $add_dummy_cus } {
+	    dummy_cu
+	}
+
+	_write_deferred_output
+
+	_section .note.GNU-stack "" progbits
+
+	if { $file_id == "" } {
+	    catch {close $_output_file}
+	}
+	set _output_file {}
+    }
+}

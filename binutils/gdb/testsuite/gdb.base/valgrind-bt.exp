@@ -1,0 +1,67 @@
+# Copyright 2009-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Valgrind gdbserver requires gdb with xml support.
+require allow_xml_test
+
+load_lib valgrind.exp
+
+require {!is_remote target}
+
+standard_testfile .c
+if {[build_executable $testfile.exp $testfile $srcfile {debug}] == -1} {
+    return -1
+}
+
+if { [vgdb_start] == -1 } {
+    return -1
+}
+
+set double_free [gdb_get_line_number "double-free"]
+
+gdb_breakpoint "main"
+
+set test "continue"
+gdb_test_multiple "continue" $test {
+    -re "Invalid free\\(\\).*: main \\(${srcfile}:$double_free\\)\r\n.*$gdb_prompt $" {
+	pass $test
+    }
+    -re "Remote connection closed.*\r\n$gdb_prompt $" {
+	fail "$test (remote connection closed)"
+	# Only if valgrind got stuck.
+	kill_wait_spawned_process $valgrind_spawn_id
+	return -1
+    }
+    -re "The program is not being run\\.\r\n$gdb_prompt $" {
+	fail "$test (valgrind vgdb has terminated)"
+	# Only if valgrind got stuck.
+	kill_wait_spawned_process $valgrind_spawn_id
+	return -1
+    }
+    -re "\r\n$gdb_prompt $" {
+	pass "$test (false warning)"
+    }
+}
+
+# Initialization from default_gdb_start.
+gdb_test_no_output "set height 0"
+gdb_test_no_output "set width 0"
+
+gdb_test "bt" "#\[0-9 ]+main \\(.*\\) at .*${srcfile}.*"
+
+# Explicitly kill the program so it doesn't dump core when we quit->detach.
+gdb_test "kill" "" "kill program" "Kill the program being debugged.*y or n. $" "y"
+
+vgdb_stop

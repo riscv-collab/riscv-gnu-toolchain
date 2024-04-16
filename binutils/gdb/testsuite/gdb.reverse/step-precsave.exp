@@ -1,0 +1,312 @@
+# Copyright 2008-2024 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
+
+# This file is part of the GDB testsuite.  It tests reverse stepping.
+# Lots of code borrowed from "step-test.exp".
+
+#
+# Test step and next with a reloaded process record file.
+#
+
+# This test suitable only for process record-replay
+require supports_process_record
+
+standard_testfile step-reverse.c
+set precsave [standard_output_file step.precsave]
+
+if { [prepare_for_testing "failed to prepare" $testfile $srcfile] } {
+    return -1
+}
+
+runto_main
+
+# Activate process record/replay
+gdb_test_no_output "record" "turn on process record"
+
+set end_of_main [gdb_get_line_number "end of main" ]
+gdb_test "break $end_of_main" \
+    "Breakpoint $decimal at .*$srcfile, line $end_of_main\." \
+    "breakpoint at end of main"
+
+# This can take awhile.
+with_timeout_factor 20 {
+    gdb_test_multiple "continue" "run to end of main" {
+	-re -wrap "Breakpoint .* end of main .*" {
+	    pass $gdb_test_name
+	}
+	-re -wrap "Process record does not support instruction 0xc5 at.*" {
+	    kfail "record/23188" $gdb_test_name
+	}
+	-re -wrap "Process record does not support instruction 0xfae64 at.*" {
+	    kfail "record/25038" $gdb_test_name
+	}
+	-re -wrap "Process record does not support instruction 0x62 at.*" {
+	    kfail "record/30807" $gdb_test_name
+	}
+    }
+}
+
+# So can this, against gdbserver, for example.
+
+with_timeout_factor 10 {
+    gdb_test "record save $precsave" \
+	"Saved core file $precsave with execution log\."  \
+	"save process recfile"
+}
+
+gdb_test "kill" "" "kill process, prepare to debug log file" \
+    "Kill the program being debugged\\? \\(y or n\\) " "y"
+
+gdb_test "record restore $precsave" \
+    "Restored records from core file .*" \
+    "reload core file"
+
+# plain vanilla step/next (no count)
+
+gdb_test "next" ".*NEXT TEST 1.*" "next test 1"
+gdb_test "step" ".*STEP TEST 1.*" "step test 1"
+
+# step/next with count
+
+gdb_test "next 2" ".*NEXT TEST 2.*" "next test 2"
+gdb_test "step 3" ".*STEP TEST 2.*" "step test 2"
+
+# step over call
+
+gdb_test "step" ".*NEXT OVER THIS RECURSION.*" "step up to call"
+gdb_test "next" ".*NEXT OVER THIS CALL.*" "skip recursive call"
+gdb_test "next" ".*STEP INTO THIS CALL.*" "next over call"
+
+# step into call
+
+gdb_test "step" ".*ARRIVED IN CALLEE.*" "step into call"
+
+# finish out of call
+
+set test_message "finish out of fn call"
+gdb_test_multiple "finish" "$test_message" {
+    -re "FINISH TEST.*$gdb_prompt $" {
+	pass "$test_message"
+    }
+    -re "STEP INTO THIS CALL.*$gdb_prompt $" {
+	send_gdb "step\n"
+	exp_continue
+    }
+}
+
+# stepi over flat code (no calls)
+
+set test_message "simple stepi"
+gdb_test_multiple "stepi" "$test_message" {
+    -re "STEPI TEST.*$gdb_prompt $" {
+	pass "$test_message"
+    }
+    -re "FINISH TEST.*$gdb_prompt $" {
+	send_gdb "stepi\n"
+	exp_continue
+    }
+    -re "NEXTI TEST.*$gdb_prompt $" {
+	fail "$test_message (too far)"
+    }
+}
+
+# stepi into a function call
+
+set alphanum_re "\[a-zA-Z0-9\]"
+set pic_thunk_re  "__$alphanum_re*\\.get_pc_thunk\\.$alphanum_re* \\(\\)"
+set test_message "stepi into function call"
+gdb_test_multiple "stepi" "$test_message" {
+    -re "ARRIVED IN CALLEE.*$gdb_prompt $" {
+	pass "$test_message"
+    }
+    -re "NEXTI TEST.*$gdb_prompt $" {
+	fail "$test_message (too far)"
+    }
+    -re "RETURN FROM CALLEE.*$gdb_prompt $" {
+	fail "$test_message (too far)"
+    }
+    -re "ENTER CALLEE.*$gdb_prompt $" {
+	send_gdb "stepi\n"
+	exp_continue
+    }
+    -re "STEPI TEST.*$gdb_prompt $" {
+	send_gdb "stepi\n"
+	exp_continue
+    }
+    -re "$pic_thunk_re.*$gdb_prompt $" {
+	send_gdb "stepi\n"
+	exp_continue
+    }
+}
+
+# stepi thru return of a function call
+
+set test_message "stepi back from function call"
+gdb_test_multiple "stepi" "$test_message" {
+    -re "NEXTI TEST.*$gdb_prompt $" {
+	pass "$test_message"
+    }
+    -re "ARRIVED IN CALLEE.*$gdb_prompt $" {
+	send_gdb "stepi\n"
+	exp_continue
+    }
+    -re "RETURN FROM CALLEE.*$gdb_prompt $" {
+	send_gdb "stepi\n"
+	exp_continue
+    }
+    -re "STEPI TEST.*$gdb_prompt $" {
+	send_gdb "stepi\n"
+	exp_continue
+    }
+    -re "ENTER CALLEE.*$gdb_prompt $" {
+	fail "$test_message (too far)"
+    }
+}
+
+###
+###
+###
+
+# Set reverse execution direction
+
+gdb_test_no_output "set exec-dir reverse" "set reverse execution"
+
+# stepi backward thru return and into a function
+
+set stepi_location  [gdb_get_line_number "ARRIVED IN CALLEE" "$srcfile"]
+set test_message "reverse stepi thru function return"
+gdb_test_multiple "stepi" "$test_message" {
+    -re "NEXTI TEST.*$gdb_prompt $" {
+	fail "$test_message (start statement)"
+    }
+    -re "RETURN FROM CALLEE.*$gdb_prompt $" {
+	send_gdb "stepi\n"
+	exp_continue
+    }
+    -re "$hex\[ \t\]*$stepi_location.*ARRIVED IN CALLEE.*$gdb_prompt $" {
+	send_gdb "stepi\n"
+	exp_continue
+    }
+    -re "ARRIVED IN CALLEE.*$gdb_prompt $" {
+	pass "$test_message"
+    }
+    -re "ENTER CALLEE.*$gdb_prompt $" {
+	fail "$test_message (too far)"
+    }
+    -re "STEPI TEST.*$gdb_prompt $" {
+	fail "$test_message (too far)"
+    }
+}
+
+# stepi backward out of a function call
+
+set start_pc [get_hexadecimal_valueof "\$pc" 0 "getting PC at start of stepi backwards"]
+set step_count 0
+set stepi_location  [gdb_get_line_number "STEPI TEST" "$srcfile"]
+set test_message "reverse stepi from a function call"
+gdb_test_multiple "stepi" "$test_message" {
+    -re "ARRIVED IN CALLEE.*$gdb_prompt $" {
+	incr step_count
+	if { [get_hexadecimal_valueof "\$pc" 0 "getting PC after $step_count steps"] == $start_pc } {
+	    fail "$test_message (start statement)"
+	} else {
+	    send_gdb "stepi\n"
+	    exp_continue
+	}
+    }
+    -re "ENTER CALLEE.*$gdb_prompt $" {
+	send_gdb "stepi\n" 
+	exp_continue
+    }
+    -re "$pic_thunk_re.*$gdb_prompt $" {
+	send_gdb "stepi\n"
+	exp_continue
+    }
+    -re "${hex} in main .*:$stepi_location.*STEPI TEST.*$gdb_prompt $" {
+	send_gdb "stepi\n"
+	exp_continue
+    }
+    -re "STEPI TEST.*$gdb_prompt $" {
+	pass "$test_message"
+    }
+    -re "STEP INTO THIS CALL.*$gdb_prompt $" {
+	fail "$test_message (too far)"
+    }
+}
+
+# stepi backward over flat code (no calls)
+
+set stepi_location  [gdb_get_line_number "FINISH TEST" "$srcfile"]
+set test_message "simple reverse stepi"
+gdb_test_multiple "stepi" "$test_message" {
+    -re "STEPI TEST.*$gdb_prompt $" {
+	fail "$test_message (start statement)"
+    }
+    -re "$hex\[ \t\]*$stepi_location.* FINISH TEST.*$gdb_prompt $" {
+	send_gdb "stepi\n"
+	exp_continue
+    }
+    -re "$stepi_location.* FINISH TEST.*$gdb_prompt $" {
+	pass "$test_message"
+    }
+    -re "STEP INTO THIS CALL.*$gdb_prompt $" {
+	fail "$test_message (too far)"
+    }
+}
+
+# step backward into function (thru return)
+
+gdb_test "step" "(RETURN FROM CALLEE|ARRIVED IN CALLEE).*" \
+    "reverse step into fn call"
+
+# step backward out of called function (thru call)
+
+set test_message "reverse step out of called fn"
+gdb_test_multiple "step" "$test_message" {
+    -re "STEP INTO THIS CALL.*.*$gdb_prompt $" {
+	pass "$test_message"
+    }
+    -re "ARRIVED IN CALLEE.*$gdb_prompt $" {
+	send_gdb "step\n"
+	exp_continue
+    }
+    -re "ENTER CALLEE.*$gdb_prompt $" {
+	send_gdb "step\n"
+	exp_continue
+    }
+}
+
+# Next backward over calls.
+
+gdb_test "next" ".*NEXT OVER THIS CALL.*" "reverse next over call"
+gdb_test "next" ".*NEXT OVER THIS RECURSION.*" "reverse next over recursive call"
+
+# step/next backward with count
+
+gdb_test "step 3" ".*REVERSE STEP TEST 1.*" "reverse step test 1"
+gdb_test "next 2" ".*REVERSE NEXT TEST 1.*" "reverse next test 1"
+
+# step/next backward without count
+
+gdb_test "step" ".*STEP TEST 1.*" "reverse step test 2"
+gdb_test "next" ".*NEXT TEST 1.*" "reverse next test 2"
+
+
+
+# Finish test by running forward to the end.
+# FIXME return to this later...
+# gdb_test_no_output "set exec-dir forward" "set forward execution"
+# gdb_continue_to_end "step-reverse.exp"
+

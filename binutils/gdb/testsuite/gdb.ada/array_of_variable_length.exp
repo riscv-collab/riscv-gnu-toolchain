@@ -1,0 +1,50 @@
+# Copyright 2015-2024 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib "ada.exp"
+
+require allow_ada_tests
+
+standard_ada_testfile foo
+
+foreach_with_prefix scenario {all minimal} {
+    set flags [list debug additional_flags=-fgnat-encodings=$scenario]
+
+    if {[gdb_compile_ada "${srcfile}" "${binfile}-${scenario}" executable $flags] != ""} {
+	return -1
+    }
+
+    clean_restart ${testfile}-${scenario}
+
+    set bp_location [gdb_get_line_number "BREAK" ${testdir}/foo.adb]
+    runto "foo.adb:$bp_location"
+
+    # Pck.A is an array that embeds elements with variable size so compilers will
+    # emit DWARF attributes such as DW_AT_byte_stride to tell GDB how to fetch
+    # individual elements.  Array stride is also a way to describe packed arrays:
+    # make sure we do not consider Pck.A as a packed array.
+    gdb_test "ptype pck.a" "array \\(1 \\.\\. 2\\) of pck\\.r_type"
+
+    # Make sure this also works with a type from a fully evaluated value.  During
+    # evaluation, dynamic types can be "resolved" so GDB internals could "forget"
+    # that elements have variable size.  Fortunately, type resolution of array
+    # elements happens only when processing individual elements (i.e. the resolved
+    # array type is still associated to the dynamic element type), so the following
+    # is supposed to work.
+    gdb_test "print pck.a" \
+	"= \\(\\(l => 0, s => \"\"\\), \\(l => 2, s => \"ab\"\\)\\)"
+    gdb_test "ptype $"\
+	"array \\(1 \\.\\. 2\\) of pck\\.r_type"
+}
