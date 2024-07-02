@@ -105,6 +105,10 @@ The musl compiler (riscv64-unknown-linux-musl-) will only be able to target
 The `--enable-multilib` flag therefore does not actually enable multilib support
 for musl libc.
 
+Linux toolchain has an additional option `--enable-default-pie` to control the
+default PIE enablement for GCC, which is enabled by default, similar to most
+Linux distributions.
+
 ### Troubleshooting Build Problems
 
 Builds work best if installing into an empty directory.  If you build a
