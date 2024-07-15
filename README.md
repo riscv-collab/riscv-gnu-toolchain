@@ -20,21 +20,21 @@ Several standard packages are needed to build the toolchain.
 
 On Ubuntu, executing the following command should suffice:
 
-    $ sudo apt-get install autoconf automake autotools-dev curl python3 python3-pip libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo gperf libtool patchutils bc zlib1g-dev libexpat-dev ninja-build git cmake libglib2.0-dev libslirp-dev
+    $ sudo apt-get install autoconf automake autotools-dev curl python3 python3-pip libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo gperf libtool patchutils bc zlib1g-dev libexpat-dev ninja-build git cmake libglib2.0-dev
 
 On Fedora/CentOS/RHEL OS, executing the following command should suffice:
 
-    $ sudo yum install autoconf automake python3 libmpc-devel mpfr-devel gmp-devel gawk  bison flex texinfo patchutils gcc gcc-c++ zlib-devel expat-devel libslirp-devel
+    $ sudo yum install autoconf automake python3 libmpc-devel mpfr-devel gmp-devel gawk  bison flex texinfo patchutils gcc gcc-c++ zlib-devel expat-devel
     
 On Arch Linux, executing the following command should suffice:
 
-    $ sudo pacman -Syyu autoconf automake curl python3 libmpc mpfr gmp gawk base-devel bison flex texinfo gperf libtool patchutils bc zlib expat libslirp
+    $ sudo pacman -Syyu autoconf automake curl python3 libmpc mpfr gmp gawk base-devel bison flex texinfo gperf libtool patchutils bc zlib expat
 
 Also available for Arch users on the AUR: [https://aur.archlinux.org/packages/riscv-gnu-toolchain-bin](https://aur.archlinux.org/packages/riscv-gnu-toolchain-bin)
 
 On OS X, you can use [Homebrew](http://brew.sh) to install the dependencies:
 
-    $ brew install python3 gawk gnu-sed gmp mpfr libmpc isl zlib expat texinfo flock libslirp
+    $ brew install python3 gawk gnu-sed gmp mpfr libmpc isl zlib expat texinfo flock
 
 To build the glibc (Linux) on OS X, you will need to build within a case-sensitive file
 system.  The simplest approach is to create and mount a new disk image with
@@ -56,8 +56,6 @@ Then, simply run the following command:
     make
 
 You should now be able to use riscv64-unknown-elf-gcc and its cousins.
-
-Note: If you're planning to use an external library that replaces part of newlib (for example `libgloss-htif`), [read the FAQ](#ensuring-code-model-consistency).
 
 ### Installation (Linux)
 
@@ -137,7 +135,7 @@ devtoolset-7 works.
 There are a number of additional options that may be passed to
 configure.  See './configure --help' for more details.
 
-Also you can define extra flags to pass to specific projects: ```BINUTILS_NATIVE_FLAGS_EXTRA, BINUTILS_TARGET_FLAGS_EXTRA, GCC_EXTRA_CONFIGURE_FLAGS, GDB_NATIVE_FLAGS_EXTRA, GDB_TARGET_FLAGS_EXTRA, GLIBC_TARGET_FLAGS_EXTRA, NEWLIB_TARGET_FLAGS_EXTRA```.
+Also you can define extra flags to pass to specific projects: ```BINUTILS_NATIVE_FLAGS_EXTRA, BINUTILS_TARGET_FLAGS_EXTRA, GCC_EXTRA_CONFIGURE_FLAGS, GDB_NATIVE_FLAGS_EXTRA, GDB_TARGET_FLAGS_EXTRA, GLIBC_NATIVE_FLAGS_EXTRA, GLIBC_TARGET_FLAGS_EXTRA```.
 Example: ```GCC_EXTRA_CONFIGURE_FLAGS=--with-gmp=/opt/gmp make linux```
 
 #### Set default ISA spec version
@@ -459,13 +457,3 @@ sources is among them.  The flag `--enable-host-gcc` does exaclty that:
 * Initially a host GCC will be built
 * This host GCC is then used to build the cross compiler
 * The cross compiler will be built with `-Werror` to identify code issues
-
-### FAQ
-#### Ensuring Code Model Consistency
-If parts of newlib are going to be replaced with an external library (such as with [libgloss-htif](https://github.com/ucb-bar/libgloss-htif) for Berkeley Host-Target Interface), 
-you should take care to ensure that both newlib and the external library are built using the same code model. For more information about RISC-V code models, 
-[read this SiFive blog article](https://www.sifive.com/blog/all-aboard-part-4-risc-v-code-models).
-
-Errors that indicate a code model mismatch include "relocation overflow" or "relocation truncated" errors from the linker being unable to successfully relocate symbols in the executable.
-
-By default, `riscv-gnu-toolchain` builds newlib with `-mcmodel=medlow`. You can use the alternative `medany` code model (as used in libgloss-htif) by passing `--with-cmodel=medany` to the configure script.
