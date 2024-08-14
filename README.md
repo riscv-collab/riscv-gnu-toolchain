@@ -130,6 +130,15 @@ If `make check-binutils` errors, check the [following documentation](./macos-bui
 
 When `make check-binutils` finishes successfully, you run the build normally with `make` or `make linux`.
 
+### Big Endian configuration
+
+To build either cross-compiler with support for big endian targets, run the following command:
+
+```
+./configure --prefix=/opt/riscv --with-endian=big
+make (target)
+```
+
 ### Troubleshooting Build Problems
 
 Builds work best if installing into an empty directory.  If you build a
