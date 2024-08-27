@@ -7,6 +7,7 @@ BINUTILS_SRCDIR := @with_binutils_src@
 NEWLIB_SRCDIR := @with_newlib_src@
 GLIBC_SRCDIR := @with_glibc_src@
 MUSL_SRCDIR := @with_musl_src@
+UCLIBC_SRCDIR := @with_uclibc_src@
 LINUX_HEADERS_SRCDIR := @with_linux_headers_src@
 GDB_SRCDIR := @with_gdb_src@
 QEMU_SRCDIR := @with_qemu_src@
@@ -53,10 +54,10 @@ PATH := $(INSTALL_DIR)/bin:$(PATH)
 # Check to see if we need wrapper scripts for awk/sed (which point to
 # gawk/gsed on platforms where these aren't the default), otherwise
 # don't override these as the wrappers don't always work.
-ifneq (@GSED@,/bin/sed)
+ifneq (@GSED@, $(shell realpath $(shell which sed)))
 	PATH := $(builddir)/scripts/wrapper/sed:$(PATH)
 endif
-ifneq (@GAWK@,/usr/bin/gawk)
+ifneq (@GAWK@, $(shell realpath $(shell which awk)))
 	PATH := $(builddir)/scripts/wrapper/awk:$(PATH)
 endif
 
@@ -85,6 +86,7 @@ make_tuple = riscv$(1)-unknown-$(2)
 LINUX_TUPLE  ?= $(call make_tuple,$(XLEN),linux-gnu)
 NEWLIB_TUPLE ?= $(call make_tuple,$(XLEN),elf)
 MUSL_TUPLE ?= $(call make_tuple,$(XLEN),linux-musl)
+UCLIBC_TUPLE ?= $(call make_tuple,$(XLEN),linux-uclibc)
 
 CFLAGS_FOR_TARGET := $(CFLAGS_FOR_TARGET_EXTRA) $(DEBUG_INFO) @target_cflags@ @cmodel@
 CXXFLAGS_FOR_TARGET := $(CXXFLAGS_FOR_TARGET_EXTRA) $(DEBUG_INFO) @target_cxxflags@ @cmodel@
@@ -124,6 +126,10 @@ MUSL_TARGET_FLAGS := $(MUSL_TARGET_FLAGS_EXTRA)
 MUSL_CC_FOR_TARGET ?= $(MUSL_TUPLE)-gcc
 MUSL_CXX_FOR_TARGET ?= $(MUSL_TUPLE)-g++
 
+UCLIBC_TARGET_FLAGS := $(UCLIBC_TARGET_FLAGS_EXTRA)
+UCLIBC_CC_FOR_TARGET ?= $(UCLIBC_TUPLE)-gcc
+UCLIBC_CXX_FOR_TARGET ?= $(UCLIBC_TUPLE)-g++
+
 CONFIGURE_HOST   = @configure_host@
 PREPARATION_STAMP:=stamps/check-write-permission
 
@@ -142,6 +148,7 @@ musl:
 else
 musl: stamps/build-gcc-musl-stage2
 endif
+uclibc: stamps/build-gcc-uclibc-stage2
 ifeq (@enable_gdb@,--enable-gdb)
 newlib: stamps/build-gdb-newlib
 linux: stamps/build-gdb-linux
@@ -299,6 +306,12 @@ ifeq ($(findstring $(srcdir),$(MUSL_SRCDIR)),$(srcdir))
 MUSL_SRC_GIT := $(MUSL_SRCDIR)/.git
 else
 MUSL_SRC_GIT :=
+endif
+
+ifeq ($(findstring $(srcdir),$(UCLIBC_SRCDIR)),$(srcdir))
+UCLIBC_SRC_GIT := $(UCLIBC_SRCDIR)/.git
+else
+UCLIBC_SRC_GIT :=
 endif
 
 ifeq ($(findstring $(srcdir),$(QEMU_SRCDIR)),$(srcdir))
@@ -930,6 +943,139 @@ stamps/build-gcc-musl-stage2: $(GCC_SRCDIR) $(GCC_SRC_GIT) stamps/build-musl-lin
 	$(MAKE) -C $(notdir $@) install
 	cp -a $(INSTALL_DIR)/$(MUSL_TUPLE)/lib* $(SYSROOT)
 	mkdir -p $(dir $@) && touch $@
+
+#
+# UCLIBC
+#
+
+stamps/build-binutils-uclibc: $(BINUTILS_SRCDIR) $(BINUTILS_SRC_GIT) $(PREPARATION_STAMP)
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+# CC_FOR_TARGET is required for the ld testsuite.
+	cd $(notdir $@) && CC_FOR_TARGET=$(UCLIBC_CC_FOR_TARGET) $</configure \
+		--target=$(UCLIBC_TUPLE) \
+		$(CONFIGURE_HOST) \
+		--prefix=$(INSTALL_DIR) \
+		--with-sysroot=$(SYSROOT) \
+		--enable-plugins \
+		$(MULTILIB_FLAGS) \
+		@with_guile@ \
+		--disable-werror \
+		--disable-nls \
+		$(BINUTILS_TARGET_FLAGS) \
+		--disable-gdb \
+		--disable-sim \
+		--disable-libdecnumber \
+		--disable-readline \
+		$(WITH_ISA_SPEC)
+	$(MAKE) -C $(notdir $@)
+	$(MAKE) -C $(notdir $@) install
+	mkdir -p $(dir $@) && touch $@
+
+stamps/build-gcc-uclibc-stage1: $(GCC_SRCDIR) $(GCC_SRC_GIT) stamps/build-binutils-uclibc \
+                               stamps/build-linux-headers
+	if test -f $</contrib/download_prerequisites && test "@NEED_GCC_EXTERNAL_LIBRARIES@" = "true"; then cd $< && ./contrib/download_prerequisites; fi
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	cd $(notdir $@) && $</configure \
+		--target=$(UCLIBC_TUPLE) \
+		$(CONFIGURE_HOST) \
+		--prefix=$(INSTALL_DIR) \
+		--without-headers \
+		--disable-shared \
+		--disable-threads \
+		@with_system_zlib@ \
+		--enable-tls \
+		--enable-languages=c \
+		--disable-libatomic \
+		--disable-libmudflap \
+		--disable-libssp \
+		--disable-libquadmath \
+		--disable-libgomp \
+		--disable-nls \
+		--disable-bootstrap \
+		--src=$(gccsrcdir) \
+		$(GCC_CHECKING_FLAGS) \
+		--disable-multilib \
+		$(WITH_ABI) \
+		$(WITH_ARCH) \
+		$(WITH_TUNE) \
+		$(WITH_ISA_SPEC) \
+		$(GCC_EXTRA_CONFIGURE_FLAGS) \
+		CFLAGS_FOR_TARGET="-O2 $(CFLAGS_FOR_TARGET)" \
+		CXXFLAGS_FOR_TARGET="-O2 $(CXXFLAGS_FOR_TARGET)"
+	$(MAKE) -C $(notdir $@) inhibit-libc=true all-gcc
+	$(MAKE) -C $(notdir $@) inhibit-libc=true install-gcc
+	$(MAKE) -C $(notdir $@) inhibit-libc=true all-target-libgcc
+	$(MAKE) -C $(notdir $@) inhibit-libc=true install-target-libgcc
+	mkdir -p $(dir $@) && touch $@
+
+stamps/build-uclibc-linux: $(UCLIBC_SRCDIR) $(UCLIBC_SRC_GIT) stamps/build-gcc-uclibc-stage1
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+
+	echo "# ARCH_USE_MMU is not set" > $(notdir $@)/.config && \
+	echo "UCLIBC_HAS_LINUXTHREADS=y" >> $(notdir $@)/.config && \
+	echo "DO_C99_MATH=y" >> $(notdir $@)/.config && \
+	echo "UCLIBC_HAS_UTMPX=y" >> $(notdir $@)/.config && \
+	echo "UCLIBC_SUSV3_LEGACY=y" >> $(notdir $@)/.config && \
+	echo "UCLIBC_SUSV3_LEGACY_MACROS=y" >> $(notdir $@)/.config && \
+	echo "UCLIBC_SUSV4_LEGACY=y" >> $(notdir $@)/.config && \
+	echo "UCLIBC_HAS_RESOLVER_SUPPORT=y" >> $(notdir $@)/.config && \
+	echo "KERNEL_HEADERS=\"$(LINUX_HEADERS_SRCDIR)\"" >> $(notdir $@)/.config && \
+	echo "RUNTIME_PREFIX=\"/\"" >> $(notdir $@)/.config && \
+	echo "DEVEL_PREFIX=\"/usr\"" >> $(notdir $@)/.config && \
+	O="$$(realpath $(notdir $@))" \
+	ARCH=riscv$(XLEN) \
+	CROSS_COMPILE=$(UCLIBC_TUPLE)- \
+	$(MAKE) -C $< olddefconfig
+
+	O="$$(realpath $(notdir $@))" \
+	ARCH=riscv$(XLEN) \
+	PREFIX=$(SYSROOT) \
+	CROSS_COMPILE=$(UCLIBC_TUPLE)- \
+	UCLIBC_EXTRA_CFLAGS="$(CFLAGS_FOR_TARGET)" \
+	UCLIBC_EXTRA_CPPFLAGS="$(CXXFLAGS_FOR_TARGET)" \
+	$(MAKE) -C $< install
+	cp -a $(notdir $@)/lib/*\.so $(SYSROOT)/usr/lib/
+	cp -a $(notdir $@)/lib/*\.so.* $(SYSROOT)/usr/lib/
+	ln -f $(SYSROOT)/usr/lib/crt1.o $(SYSROOT)/usr/lib/Scrt1.o
+
+	mkdir -p $(dir $@) && touch $@
+
+stamps/build-gcc-uclibc-stage2: $(GCC_SRCDIR) $(GCC_SRC_GIT) stamps/build-uclibc-linux
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	cd $(notdir $@) && $</configure \
+		--target=$(UCLIBC_TUPLE) \
+		$(CONFIGURE_HOST) \
+		--prefix=$(INSTALL_DIR) \
+		--with-sysroot=$(SYSROOT) \
+		@with_system_zlib@ \
+		--enable-tls \
+		--enable-languages=c,c++ \
+		--disable-shared \
+		--disable-libmudflap \
+		--disable-libssp \
+		--disable-libquadmath \
+		--disable-libsanitizer \
+		--disable-nls \
+		--disable-bootstrap \
+		--src=$(gccsrcdir) \
+		$(GCC_CHECKING_FLAGS) \
+		--disable-multilib \
+		$(WITH_ABI) \
+		$(WITH_ARCH) \
+		$(WITH_TUNE) \
+		$(WITH_ISA_SPEC) \
+		$(GCC_EXTRA_CONFIGURE_FLAGS) \
+		CFLAGS_FOR_TARGET="-O2 $(CFLAGS_FOR_TARGET)" \
+		CXXFLAGS_FOR_TARGET="-O2 $(CXXFLAGS_FOR_TARGET)"
+	$(MAKE) -C $(notdir $@)
+	$(MAKE) -C $(notdir $@) install
+	cp -a $(INSTALL_DIR)/$(UCLIBC_TUPLE)/lib* $(SYSROOT)
+	mkdir -p $(dir $@) && touch $@
+
 
 stamps/build-spike: $(SPIKE_SRCDIR) $(SPIKE_SRC_GIT) $(PREPARATION_STAMP)
 	rm -rf $@ $(notdir $@)
