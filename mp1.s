@@ -411,7 +411,9 @@ skip_row:
 
 
 
-.end
+
+
+
 
 
 
@@ -422,5 +424,79 @@ skip_row:
 
 draw_beacon:
 
+        mv t0, ra                    # Save the current return address in t0
+        jal ra, link                 # Jump to `link` and save the return address in `ra`
+        mv ra, t0                    # Restore the original return address from t0
+
+        lh t2, 14(a2)                # t2 = bcn->period (load the period)
+
+        # Calculate t % period
+        rem t2, a1, t2               # t6 = t % bcn->period
+
+        # Compare t % period with ontime
+        lh t3, 16(a2)                # t3 = bcn->ontime (load the ontime)
+        bge t2, t3, draw_beacon_end  # If t % period >= ontime, do not draw and exit
+
+        # Calculate the radius of the beacon (dia / 2)
+        lbu t3, 12(a2)               # t3 = bcn->dia (load the diameter)
+        srl t2, t3, 1                # t2 = bcn->dia / 2 (right shift by 1)
+
+        # Start drawing the beacon
+        li t0, 0                     # i = 0 (row index)
+
+draw_beacon_row:
+        # Check if we've processed all rows
+        lbu t3, 12(a2)               # t3 = bcn->dia (load the diameter)
+        bge t0, t3, draw_beacon_end  # if i >= dia, end drawing
+
+        # Inner loop for columns
+        li t1, 0                     # j = 0 (column index)
+
+draw_beacon_column:
+        # Check if we've processed all columns
+        lbu t3, 12(a2)               # t3 = bcn->dia (load the diameter)
+        bge t1, t3, next_row         # if j >= dia, move to next row
+
+        # Calculate screen coordinates x and y
+        lh t3, 8(a2)                 # t3 = bcn->x (load the x coordinate)
+        add t3, t3, t1               # t3 = bcn->x + j (x coordinate)
+        sub t3, t3, t2               # t3 = x - (dia / 2)
+        lh t4, 10(a2)                # t4 = bcn->y (load the y coordinate)
+        add t4, t4, t0               # t4 = bcn->y + i (y coordinate)
+        sub t4, t4, t2               # t4 = y - (dia / 2)
+
+        # Check if coordinates are within screen boundaries
+        blt t3, zero, skip_pixel     # if x < 0, skip this pixel
+        bge t3, s1, skip_pixel       # if x >= SKYLINE_WIDTH, skip this pixel
+        blt t4, zero, skip_pixel     # if y < 0, skip this pixel
+        bge t4, s2, skip_pixel       # if y >= SKYLINE_HEIGHT, skip this pixel
+
+        # Calculate the framebuffer offset and draw the pixel
+        mul t4, t4, s1               # t4 = y * SKYLINE_WIDTH
+        add t4, t4, t3               # t4 = (y * SKYLINE_WIDTH) + x
+        slli t4, t4, 1               # t4 = ((y * SKYLINE_WIDTH) + x) * 2 (byte offset)
+        add t4, a0, t4               # t4 = fbuf + offset (address in framebuffer)
+
+        # Calculate the beacon image offset
+        lbu t3, 12(a2)               # t3 = bcn->dia (load the diameter)
+        mul t3, t0, t3               # t3 = i * dia
+        add t3, t3, t1               # t3 = (i * dia) + j (offset in beacon image)
+        slli t3, t3, 1               # t3 = ((i * dia) + j) * 2 (byte offset)
+        ld t5, 0(a2)                 # t5 = bcn->img (load the address of the image)
+        lhu t6, 0(t5)                # Load color data from bcn->img at t13 offset
+        sh t6, 0(t4)                 # Store color data into framebuffer at t12 offset
 
 
+skip_pixel:
+        addi t1, t1, 1               # j++
+        j draw_beacon_column         # Repeat column loop
+
+next_row:
+        addi t0, t0, 1               # i++
+        j draw_beacon_row            # Repeat row loop
+
+draw_beacon_end:
+        ret                          # Return from function
+
+
+.end

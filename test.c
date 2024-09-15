@@ -14,36 +14,65 @@ uint16_t framebuffer[FRAMEBUFFER_WIDTH * FRAMEBUFFER_HEIGHT];
 
 struct skyline_window *skyline_win_list = NULL; // Initialize window list
 
+
+
+
+void print_framebuffer_region(int x_start, int y_start, int width, int height) {
+    for (int y = y_start; y < y_start + height; y++) {
+        for (int x = x_start; x < x_start + width; x++) {
+            uint16_t pixel = framebuffer[y * FRAMEBUFFER_WIDTH + x];
+            console_printf("Pixel at (%d, %d): 0x%04x\n", x, y, pixel);
+        }
+    }
+}
+
+
+
 void main(void){
     // Initialize the framebuffer to a known value (e.g., 0x0000)
     memset(framebuffer, 0x00, sizeof(framebuffer));
 
-    // Define a window with specific properties
-    struct skyline_window win;
-    win.x = 100;             // X coordinate of upper-left corner
-    win.y = 150;             // Y coordinate of upper-left corner
-    win.w = 20;              // Width of the window
-    win.h = 10;              // Height of the window
-    win.color = 0x07E0;      // Green color in RGB565 format
+    // Define beacon image data (e.g., 3x3 green square)
+    uint16_t beacon_img[9] = {
+        0x07E0, 0x07E0, 0x07E0, // Row 1
+        0x07E0, 0x07E0, 0x07E0, // Row 2
+        0x07E0, 0x07E0, 0x07E0  // Row 3
+    };
 
-    // Call the draw_window function to draw the window in the framebuffer
-    draw_window(framebuffer, &win);
+    // Define a beacon with specific properties
+    struct skyline_beacon beacon;
+    beacon.img = beacon_img;  // Image data (3x3)
+    beacon.x = 100;           // X coordinate of the center
+    beacon.y = 150;           // Y coordinate of the center
+    beacon.dia = 3;           // Diameter (3x3 square)
+    beacon.period = 10;       // Beacon period (10 ticks)
+    beacon.ontime = 5;        // Beacon on-time (5 ticks)
 
-    // Verify if the window was drawn correctly in the framebuffer
-    for (int y = win.y; y < win.y + win.h; y++) {
-        for (int x = win.x; x < win.x + win.w; x++) {
-            uint16_t pixel = framebuffer[y * FRAMEBUFFER_WIDTH + x];
-            if (pixel != win.color) {
-                console_printf("Error: Unexpected pixel color at (%d, %d): 0x%04x\n", x, y, pixel);
-            } else {
-                console_printf("Correct pixel color at (%d, %d): 0x%04x\n", x, y, pixel);
-            }
-        }
-    }
+    // Test case 1: Beacon should be drawn (t = 3, within on-time)
+    uint64_t t = 3; // Elapsed time
+    draw_beacon(framebuffer, t, &beacon);
+    
+    console_printf("Test Case 1: Beacon should be drawn (t = 3)\n");
+    print_framebuffer_region(99, 149, 5, 5); // Print a region around the beacon
 
-    // Print a few pixels outside the window to verify they are unchanged
-    console_printf("Pixel at (99, 150): 0x%04x (should be 0x0000)\n", framebuffer[150 * FRAMEBUFFER_WIDTH + 99]);
-    console_printf("Pixel at (121, 150): 0x%04x (should be 0x0000)\n", framebuffer[150 * FRAMEBUFFER_WIDTH + 121]);
-    console_printf("Pixel at (100, 149): 0x%04x (should be 0x0000)\n", framebuffer[149 * FRAMEBUFFER_WIDTH + 100]);
-    console_printf("Pixel at (100, 161): 0x%04x (should be 0x0000)\n", framebuffer[161 * FRAMEBUFFER_WIDTH + 100]);
+    // Reset the framebuffer for the next test
+    memset(framebuffer, 0x00, sizeof(framebuffer));
+
+    // Test case 2: Beacon should not be drawn (t = 7, outside on-time)
+    t = 7; // Elapsed time
+    draw_beacon(framebuffer, t, &beacon);
+
+    console_printf("Test Case 2: Beacon should not be drawn (t = 7)\n");
+    print_framebuffer_region(99, 149, 5, 5); // Print a region around the beacon
+
+    // Test case 3: Edge case (partially outside screen bounds)
+    memset(framebuffer, 0x00, sizeof(framebuffer)); // Reset framebuffer
+    beacon.x = 638; // Close to the right edge
+    beacon.y = 478; // Close to the bottom edge
+
+    t = 3; // Within on-time again
+    draw_beacon(framebuffer, t, &beacon);
+
+    console_printf("Test Case 3: Beacon partially outside screen bounds\n");
+    print_framebuffer_region(637, 477, 5, 5); // Print a region near the bottom-right corner
 }
