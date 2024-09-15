@@ -32,6 +32,28 @@
         .type   draw_beacon, @function
 
 
+
+        .global link
+        .type link, @function
+
+
+        .equ SKYLINE_WIDTH, 640
+        .equ SKYLINE_HEIGHT, 480
+        .equ SKYLINE_STARS_MAX, 1000
+
+
+# load boundries into temp regs
+link:
+        li s1, SKYLINE_WIDTH
+        li s2, SKYLINE_HEIGHT
+        li s3, SKYLINE_STARS_MAX
+
+        ret
+
+        .end
+
+
+
 start_beacon:
 
         la t0, skyline_beacon             # Load address of skyline_beacon into t0 (t0 is 64-bit)
@@ -340,7 +362,82 @@ next_window:
 
 
 
+
+
+
+
+
+
+
 draw_window:
+
+        mv t0, ra                # Save the current return address in t0
+
+        # Call `link` to load constants into s1, s2, s3
+        jal ra, link             # Jump to `link` and save the return address in `ra`
+
+        # Restore `ra` from `t0`
+        mv ra, t0                # Restore the original return address from t0
+
+        # Continue with the draw_window logic...
+
+        # Function arguments:
+        # a0 = fbuf (framebuffer pointer)
+        # a1 = win (pointer to the window structure)
+
+        # Step 1: Load window properties
+        lh t0, 8(a1)              # t0 = x (Load x from window structure)
+        lh t1, 10(a1)             # t1 = y (Load y from window structure)
+        lbu t2, 12(a1)            # t2 = w (Load width from window structure)
+        lbu t3, 13(a1)            # t3 = h (Load height from window structure)
+        lh t4, 14(a1)             # t4 = color (Load color from window structure)
+
+        # Step 2: Use preloaded screen boundaries from `link`
+        # s1 = SKYLINE_WIDTH (640 pixels), s2 = SKYLINE_HEIGHT (480 pixels)
+
+        # Initialize row counter i (t5)
+        li t5, 0
+
+draw_window_row:
+        # Calculate the current y position and check if it is within bounds
+        add t6, t1, t5            # t6 = y + i
+        bge t6, s2, skip_row      # If y + i >= SKYLINE_HEIGHT, skip drawing
+        
+        # Calculate the base offset for the start of the row in the framebuffer
+        mul t6, t6, s1            # t6 = (y + i) * SKYLINE_WIDTH
+        add t6, t6, t0            # t6 = (y + i) * SKYLINE_WIDTH + x
+        slli t6, t6, 1            # t6 = ((y + i) * SKYLINE_WIDTH + x) * 2 (byte offset)
+
+        # Set the starting address of this row in the framebuffer
+        add t6, a0, t6            # t6 = framebuffer + offset (start of the row in framebuffer)
+
+        # Draw the row of pixels for the width (w)
+        li t5, 0                  # Reuse t5 for column counter j (initialize j = 0)
+
+draw_window_column:
+        add t3, t0, t5            # t3 = x + j
+        bge t3, s1, skip_column   # If x + j >= SKYLINE_WIDTH, skip the pixel
+        
+        # Draw the pixel
+        sh t4, 0(t6)              # Store color at the current framebuffer position
+        addi t6, t6, 2            # Move to the next pixel (2 bytes per pixel)
+        addi t5, t5, 1            # Increment column counter j
+        blt t5, t2, draw_window_column # Repeat until j < width (w)
+
+skip_column:
+        # Move to the next row
+        addi t5, t5, 1            # Increment row counter i
+        blt t5, t3, draw_window_row  # Repeat until i < height (h)
+
+skip_row:
+        ret                       # Return from function
+
+        .end
+
+
+
+
+
 
 
 
@@ -353,3 +450,5 @@ draw_window:
 
 
 draw_beacon:
+
+        
