@@ -1,16 +1,3 @@
-<<<<<<< HEAD
-        .section .text.start
-
-        la      sp, stack0
-        call    main
-loop:
-        j       main
-
-        .section .data.stack
-        .align 16
-        .fill 4096, 1, 0xA5
-stack0:
-=======
         .section	.text.start
         
         # Set stack pointer. The main thread uses a statically-allocated stack
@@ -51,4 +38,3 @@ _main_guard:
         .fill	MAIN_GUARD_SIZE, 1, 0x5A
         .end
 
->>>>>>> release/mp1
