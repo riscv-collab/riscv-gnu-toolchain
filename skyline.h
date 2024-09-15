@@ -1,5 +1,4 @@
 // skyline.h
-//
 
 #ifndef _SKYLINE_H_
 #define _SKYLINE_H_
