@@ -6,6 +6,11 @@
         .global skyline_star_cnd
         .type   skyline_star_cnd, @object
 
+        .extern skyline_win_list
+
+        .extern skyline_stars
+        
+        
         .text
         .global start_beacon
         .type   start_beacon, @function
@@ -50,7 +55,6 @@ link:
 
         ret
 
-        .end
 
 
 
@@ -73,7 +77,6 @@ start_beacon:
 
         ret                               # Return to caller
 
-        .end
 
 
 
@@ -111,7 +114,6 @@ add_star:
 end_function:
         ret                        # Return from the function
 
-        .end
 
 
 
@@ -134,7 +136,7 @@ remove_star:
 
 loop_start:
         # Check if index is less than star count
-        bge t3, t2, end_function  # If index >= star count, exit loop
+        bge t3, t2, E  # If index >= star count, exit loop
 
         # Calculate address of current star in array
         slli t4, t3, 3             # t3 * 8 (assuming each star takes 8 bytes, adjust as needed)
@@ -173,12 +175,11 @@ continue_loop:
         addi t3, t3, 1             # Increment index
         j loop_start               # Jump back to start of loop
 
-end_function:
+E:
         ret
 
-        .end
 
-
+.end
 
 
 
@@ -204,11 +205,8 @@ draw_star:
         add t6, t6, t1             # t6 = y * SKYLINE_WIDTH + x
 
 
-
-
-
         # Calculate the memory offset within the framebuffer
-        li t4, 640                 # t4 = SKYLINE_WIDTH
+        li t4, SKYLINE_WIDTH       # t4 = SKYLINE_WIDTH
         mul t5, t2, t4             # t5 = y * SKYLINE_WIDTH
         add t5, t5, t1             # t5 = y * SKYLINE_WIDTH + x
         slli t5, t5, 1             # t5 = (y * SKYLINE_WIDTH + x) * 2
@@ -217,9 +215,8 @@ draw_star:
         add t6, t0, t5             # t6 = framebuffer address + offset
         sh t3, 0(t6)               # Store the star's color at the calculated framebuffer address
 
-        ret                         # Return from the function
+        ret                        # Return from the function
 
-        .end
 
 
 
@@ -290,8 +287,6 @@ alloc_fail:
         li a0, -1                 # Return -1 to indicate failure
         ret
 
-        .end
-
 
 
 
@@ -351,13 +346,6 @@ next_window:
         # End of function
         ret                        # Return if window is not found
 
-        .end
-
-
-
-
-
-
 
 
 
@@ -372,70 +360,53 @@ next_window:
 draw_window:
 
         mv t0, ra                # Save the current return address in t0
-
-        # Call `link` to load constants into s1, s2, s3
         jal ra, link             # Jump to `link` and save the return address in `ra`
-
-        # Restore `ra` from `t0`
         mv ra, t0                # Restore the original return address from t0
 
-        # Continue with the draw_window logic...
-
-        # Function arguments:
-        # a0 = fbuf (framebuffer pointer)
-        # a1 = win (pointer to the window structure)
-
-        # Step 1: Load window properties
-        lh t0, 8(a1)              # t0 = x (Load x from window structure)
-        lh t1, 10(a1)             # t1 = y (Load y from window structure)
-        lbu t2, 12(a1)            # t2 = w (Load width from window structure)
-        lbu t3, 13(a1)            # t3 = h (Load height from window structure)
-        lh t4, 14(a1)             # t4 = color (Load color from window structure)
-
-        # Step 2: Use preloaded screen boundaries from `link`
-        # s1 = SKYLINE_WIDTH (640 pixels), s2 = SKYLINE_HEIGHT (480 pixels)
-
-        # Initialize row counter i (t5)
-        li t5, 0
+        # initilize row counter
+        li t0, 0
 
 draw_window_row:
-        # Calculate the current y position and check if it is within bounds
-        add t6, t1, t5            # t6 = y + i
-        bge t6, s2, skip_row      # If y + i >= SKYLINE_HEIGHT, skip drawing
-        
-        # Calculate the base offset for the start of the row in the framebuffer
-        mul t6, t6, s1            # t6 = (y + i) * SKYLINE_WIDTH
-        add t6, t6, t0            # t6 = (y + i) * SKYLINE_WIDTH + x
-        slli t6, t6, 1            # t6 = ((y + i) * SKYLINE_WIDTH + x) * 2 (byte offset)
 
-        # Set the starting address of this row in the framebuffer
-        add t6, a0, t6            # t6 = framebuffer + offset (start of the row in framebuffer)
+        lh t2, 10(a1)             # t2 = y (Load y from window structure)
+        add t2, t2, t0            # t2 = y + i
+        bge t2, s2, skip_row      # If y + i >= SKYLINE_HEIGHT, skip drawing
+
+        # Calculate the base offset for the start of the row in the framebuffer
+        mul t2, t2, s1            # t2 = (y + i) * SKYLINE_WIDTH
+        lh t3, 8(a1)              # t3 = x (Load x from window structure)
+        add t2, t2, t3            # t2 = (y + i) * SKYLINE_WIDTH + x
+        slli t2, t2, 1            # t2 = ((y + i) * SKYLINE_WIDTH + x) * 2 (byte offset)
+        
+        add t2, a0, t2            # t2 = framebuffer + offset (start of the row in framebuffer)
 
         # Draw the row of pixels for the width (w)
-        li t5, 0                  # Reuse t5 for column counter j (initialize j = 0)
+        li t1, 0                  # t1 for column counter j (initialize j = 0)
 
 draw_window_column:
-        add t3, t0, t5            # t3 = x + j
+
+        lh t3, 8(a1)              # t3 = x (Load x from window structure)
+        add t3, t3, t1            # t3 = x + j
         bge t3, s1, skip_column   # If x + j >= SKYLINE_WIDTH, skip the pixel
-        
+
         # Draw the pixel
-        sh t4, 0(t6)              # Store color at the current framebuffer position
-        addi t6, t6, 2            # Move to the next pixel (2 bytes per pixel)
-        addi t5, t5, 1            # Increment column counter j
-        blt t5, t2, draw_window_column # Repeat until j < width (w)
+        lh t4, 14(a1)             # t4 = color (Load color from window structure)
+        sh t4, 0(t2)              # Store color at the current framebuffer position
+        addi t2, t2, 2            # Move to the next pixel (2 bytes per pixel)
+        addi t1, t1, 1            # Increment column counter j
+        lbu t4, 12(a1)            # t4 = w (Load width from window structure)
+        blt t1, t4, draw_window_column # Repeat until j < width (w)
+
 
 skip_column:
         # Move to the next row
-        addi t5, t5, 1            # Increment row counter i
-        blt t5, t3, draw_window_row  # Repeat until i < height (h)
+        addi t0, t0, 1            # Increment row counter i
+        lbu t3, 13(a1)            # t3 = h (Load height from window structure)
+        blt t0, t3, draw_window_row  # Repeat until i < height (h)
+
 
 skip_row:
         ret                       # Return from function
-
-        .end
-
-
-
 
 
 
@@ -451,4 +422,5 @@ skip_row:
 
 draw_beacon:
 
-        
+
+

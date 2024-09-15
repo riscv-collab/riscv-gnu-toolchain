@@ -31,8 +31,14 @@ all: demo.elf
 demo.elf: $(CORE_OBJS)
 	$(LD) $(LDFLAGS) -T kernel.ld -o $@ $^ demo.o gold.o memory.o
 
+test.elf: $(CORE_OBJS) test.o
+	$(LD) $(LDFLAGS) -T kernel.ld -o $@ $^ memory.o
+
 clean:
 	rm -rf console.o halt.o intr.o serial.o start.o string.o trap.o vga.o mp1.o *.elf
 
 run-demo:
 	$(QEMU) -machine virt -bios none -kernel demo.elf -m 128M -serial mon:stdio -device bochs-display
+
+run-test:
+	$(QEMU) -machine virt -bios none -kernel test.elf -m 128M -serial mon:stdio -nographic
