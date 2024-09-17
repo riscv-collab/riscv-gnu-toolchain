@@ -3,6 +3,10 @@
         .section .data                    # Data section (optional for global data)
         .extern skyline_beacon             # Declare the external global variable
 
+
+        .extern skyline_star_cnt
+
+
         .global skyline_star_cnd
         .type   skyline_star_cnd, @object
 
@@ -188,7 +192,14 @@ E:
 
 
 
+
+
 draw_star:
+
+
+        mv t0, ra                # Save the current return address in t0
+        jal ra, link             # Jump to `link` and save the return address in `ra`
+        mv ra, t0                # Restore the original return address from t0
 
         # Load the base address of the framebuffer
         mv t0, a0                  # t0 = framebuffer pointer (fbuf)
@@ -200,20 +211,13 @@ draw_star:
         lh t4, 6(a1)               # t4 = color
 
         # Calculate the memory offset within the framebuffer
-        li t5, SKYLINE_WIDTH       # t5 = SKYLINE_WIDTH
-        mul t6, t2, t5             # t6 = y * SKYLINE_WIDTH
+        mul t6, t2, s1             # t6 = y * SKYLINE_WIDTH
         add t6, t6, t1             # t6 = y * SKYLINE_WIDTH + x
-
-
-        # Calculate the memory offset within the framebuffer
-        li t4, SKYLINE_WIDTH       # t4 = SKYLINE_WIDTH
-        mul t5, t2, t4             # t5 = y * SKYLINE_WIDTH
-        add t5, t5, t1             # t5 = y * SKYLINE_WIDTH + x
-        slli t5, t5, 1             # t5 = (y * SKYLINE_WIDTH + x) * 2
+        slli t6, t6, 1             # t6 = (y * SKYLINE_WIDTH + x) * 2
 
         # Draw the star at the calculated position in the framebuffer
-        add t6, t0, t5             # t6 = framebuffer address + offset
-        sh t3, 0(t6)               # Store the star's color at the calculated framebuffer address
+        add t6, t0, t6             # t6 = framebuffer address + offset
+        sh t4, 0(t6)               # Store the star's color at the calculated framebuffer address
 
         ret                        # Return from the function
 
@@ -227,65 +231,90 @@ draw_star:
 
 
 
+
+
+
+
+
 add_window:
+        # Prologue: Adjust the stack and save registers
+        addi sp, sp, -48            # Allocate 48 bytes on the stack (multiple of 16 for alignment)
+        sd ra, 40(sp)               # Save return address (ra is 64 bits)
+        sd s0, 32(sp)               # Save s0 (used for x)
+        sd a1, 24(sp)               # Save a1 (y)
+        sd a2, 16(sp)               # Save a2 (w)
+        sd a3, 8(sp)                # Save a3 (h)
+        sd a4, 0(sp)                # Save a4 (color)
 
-        # Step 1: Allocate memory for the new window node using `brk`
-        li a7, 214                # Syscall number for brk in RISC-V 64
-        mv a0, zero               # Set a0 to 0 to get the current end of the data segment
-        ecall                     # System call to get current program break
-        
-        # After ecall, a0 has the current break address; store it in t0
-        mv t0, a0                 # Store the current end of the data segment in t0
-        
-        # Increase the break by 16 bytes for new window structure allocation
-        addi a0, t0, 16           # Increment by 16 bytes for new window structure
-        li a7, 214                # Syscall number for brk again
-        ecall                     # Adjust program break to allocate new memory
-        
-        # Check for allocation failure (if a0 returns -1, allocation failed)
-        bgez a0, alloc_success    # If a0 >= 0, continue
-        j alloc_fail              # If a0 < 0, jump to allocation failure handling
+        # Save a0 (x coordinate) in s0
+        mv s0, a0                   # s0 = a0 (x)
 
-alloc_success:
-        # Now, t0 contains the starting address of the newly allocated window structure
-        # Step 2: Populate the new window structure
-        sw zero, 0(t0)            # Set next pointer to NULL (0)
-        sh a0, 8(t0)              # Store x-coordinate at offset 8
-        sh a1, 10(t0)             # Store y-coordinate at offset 10
-        sb a2, 12(t0)             # Store width at offset 12
-        sb a3, 13(t0)             # Store height at offset 13
-        sh a4, 14(t0)             # Store color at offset 14
-        
-        # Step 3: Add to the window list
-        la t1, skyline_win_list   # Load the address of skyline_win_list
-        lw t2, 0(t1)              # Load the current head of the window list into t2
-        
-        # Check if the list is empty
-        beqz t2, insert_new_head  # If t2 (skyline_win_list) is NULL, insert as new head
+        # Allocate memory for a new node
+        li a0, 16                   # a0 = size of skyline_window (16 bytes)
+        call malloc                 # Allocate memory
+        beqz a0, end_add_window     # If malloc failed, exit function
 
-        # Traverse the list to find the last node
-traverse_list:
-        lw t3, 0(t2)              # Load the next pointer of the current node
-        beqz t3, end_of_list      # If the next pointer is NULL, we found the end
-        mv t2, t3                 # Move to the next node
-        j traverse_list           # Continue traversing
+        mv t0, a0                   # t0 = pointer to new node
 
-end_of_list:
-        # Link the new window to the end of the list
-        sw t0, 0(t2)              # Set the next pointer of the last node to the new node
-        j add_window_end          # Jump to end of function
+        # Restore arguments from the stack
+        ld a1, 24(sp)               # Restore a1 (y)
+        ld a2, 16(sp)               # Restore a2 (w)
+        ld a3, 8(sp)                # Restore a3 (h)
+        ld a4, 0(sp)                # Restore a4 (color)
 
-insert_new_head:
-        # Insert the new window as the head of the list
-        sw t0, 0(t1)              # Set skyline_win_list to the new window node
+        # Initialize next pointer to NULL
+        sd zero, 0(t0)              # *(t0 + 0) = NULL
 
-add_window_end:
-        ret                       # Return from function
+        # Store the window data into the new node
+        sh s0, 8(t0)                # x coordinate at offset 8
+        sh a1, 10(t0)               # y coordinate at offset 10
+        sb a2, 12(t0)               # width (w) at offset 12
+        sb a3, 13(t0)               # height (h) at offset 13
+        sh a4, 14(t0)               # color at offset 14
 
-alloc_fail:
-        # Allocation failed handling
-        li a0, -1                 # Return -1 to indicate failure
-        ret
+        # Load the head of the window list
+        la t1, skyline_win_list     # t1 = address of skyline_win_list
+        ld t2, 0(t1)                # t2 = *skyline_win_list
+        beqz t2, insert_first_node  # If list is empty, insert at head
+
+find_last_node:
+        ld t3, 0(t2)                # t3 = t2->next
+        beqz t3, insert_after_last_node
+        mv t2, t3                   # Move to next node
+        j find_last_node            # Repeat loop
+
+insert_after_last_node:
+        sd t0, 0(t2)                # t2->next = t0 (new node)
+        j end_add_window            # Jump to function epilogue
+
+insert_first_node:
+        sd t0, 0(t1)                # *skyline_win_list = t0 (new node)
+
+end_add_window:
+        # Epilogue: Restore registers and stack pointer
+        ld a4, 0(sp)                # Restore a4 (color)
+        ld a3, 8(sp)                # Restore a3 (h)
+        ld a2, 16(sp)               # Restore a2 (w)
+        ld a1, 24(sp)               # Restore a1 (y)
+        ld s0, 32(sp)               # Restore s0
+        ld ra, 40(sp)               # Restore return address
+        addi sp, sp, 48             # Deallocate stack space
+        ret                         # Return from function
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -299,9 +328,13 @@ alloc_fail:
 
 remove_window:
 
+        addi sp, sp, -16            # Allocate 16 bytes on the stack
+        sd ra, 8(sp)                # Save return address
+        sd s0, 0(sp)                # Save s0 if you use it (not used in this code)
+
         # Step 1: Load the window list head pointer
         la t0, skyline_win_list    # Load the address of skyline_win_list
-        lw t1, 0(t0)               # Load the current head of the window list into t1
+        ld t1, 0(t0)               # Load the current head of the window list into t1
         
         # Check if the list is empty
         beqz t1, remove_window_end # If t1 is NULL (skyline_win_list), list is empty, return
@@ -312,6 +345,9 @@ remove_window:
 
 # Traverse the linked list to find the matching window
 find_window:
+
+        beqz t3, remove_window_end
+
         # Load the x and y coordinates of the current window
         lh t4, 8(t3)               # Load x of the current window
         lh t5, 10(t3)              # Load y of the current window
@@ -325,26 +361,47 @@ find_window:
         beqz t2, remove_head       # If t2 is NULL, we are removing the head
 
         # Remove the window from the middle or end
-        lw t6, 0(t3)               # Load the next pointer of the current window
-        sw t6, 0(t2)               # Set the next pointer of the previous window to t6 (skip the current window)
+        ld t6, 0(t3)               # Load the next pointer of the current window
+        sd t6, 0(t2)               # Set the next pointer of the previous window to t6 (skip the current window)
+
+        mv a0, t3
+        call free
+
         j remove_window_end        # Jump to end
 
 remove_head:
         # Removing the head of the list
-        lw t6, 0(t3)               # Load the next pointer of the current window
-        sw t6, 0(t0)               # Update skyline_win_list to point to the new head (next window)
+        ld t6, 0(t3)               # Load the next pointer of the current window
+        sd t6, 0(t0)               # Update skyline_win_list to point to the new head (next window)
+
+        mv a0, t3
+        call free
+
 
 remove_window_end:
+
+        ld s0, 0(sp)                # Restore s0
+        ld ra, 8(sp)                # Restore return address
+        addi sp, sp, 16             # Deallocate stack space
+
         ret                        # Return from function
 
 next_window:
         # Move to the next window in the list
         mv t2, t3                  # Update the previous window pointer to current
-        lw t3, 0(t3)               # Move to the next window
-        bnez t3, find_window       # If t3 is not NULL, continue searching
+        ld t3, 0(t3)               # Move to the next window
+        j find_window              # If t3 is not NULL, continue searching
+
+        ld s0, 0(sp)                # Restore s0
+        ld ra, 8(sp)                # Restore return address
+        addi sp, sp, 16             # Deallocate stack space
 
         # End of function
         ret                        # Return if window is not found
+
+
+
+
 
 
 
@@ -419,84 +476,14 @@ skip_row:
 
 
 
-
-
-
 draw_beacon:
 
-        mv t0, ra                    # Save the current return address in t0
-        jal ra, link                 # Jump to `link` and save the return address in `ra`
-        mv ra, t0                    # Restore the original return address from t0
-
-        lh t2, 14(a2)                # t2 = bcn->period (load the period)
-
-        # Calculate t % period
-        rem t2, a1, t2               # t6 = t % bcn->period
-
-        # Compare t % period with ontime
-        lh t3, 16(a2)                # t3 = bcn->ontime (load the ontime)
-        bge t2, t3, draw_beacon_end  # If t % period >= ontime, do not draw and exit
-
-        # Calculate the radius of the beacon (dia / 2)
-        lbu t3, 12(a2)               # t3 = bcn->dia (load the diameter)
-        srl t2, t3, 1                # t2 = bcn->dia / 2 (right shift by 1)
-
-        # Start drawing the beacon
-        li t0, 0                     # i = 0 (row index)
-
-draw_beacon_row:
-        # Check if we've processed all rows
-        lbu t3, 12(a2)               # t3 = bcn->dia (load the diameter)
-        bge t0, t3, draw_beacon_end  # if i >= dia, end drawing
-
-        # Inner loop for columns
-        li t1, 0                     # j = 0 (column index)
-
-draw_beacon_column:
-        # Check if we've processed all columns
-        lbu t3, 12(a2)               # t3 = bcn->dia (load the diameter)
-        bge t1, t3, next_row         # if j >= dia, move to next row
-
-        # Calculate screen coordinates x and y
-        lh t3, 8(a2)                 # t3 = bcn->x (load the x coordinate)
-        add t3, t3, t1               # t3 = bcn->x + j (x coordinate)
-        sub t3, t3, t2               # t3 = x - (dia / 2)
-        lh t4, 10(a2)                # t4 = bcn->y (load the y coordinate)
-        add t4, t4, t0               # t4 = bcn->y + i (y coordinate)
-        sub t4, t4, t2               # t4 = y - (dia / 2)
-
-        # Check if coordinates are within screen boundaries
-        blt t3, zero, skip_pixel     # if x < 0, skip this pixel
-        bge t3, s1, skip_pixel       # if x >= SKYLINE_WIDTH, skip this pixel
-        blt t4, zero, skip_pixel     # if y < 0, skip this pixel
-        bge t4, s2, skip_pixel       # if y >= SKYLINE_HEIGHT, skip this pixel
-
-        # Calculate the framebuffer offset and draw the pixel
-        mul t4, t4, s1               # t4 = y * SKYLINE_WIDTH
-        add t4, t4, t3               # t4 = (y * SKYLINE_WIDTH) + x
-        slli t4, t4, 1               # t4 = ((y * SKYLINE_WIDTH) + x) * 2 (byte offset)
-        add t4, a0, t4               # t4 = fbuf + offset (address in framebuffer)
-
-        # Calculate the beacon image offset
-        lbu t3, 12(a2)               # t3 = bcn->dia (load the diameter)
-        mul t3, t0, t3               # t3 = i * dia
-        add t3, t3, t1               # t3 = (i * dia) + j (offset in beacon image)
-        slli t3, t3, 1               # t3 = ((i * dia) + j) * 2 (byte offset)
-        ld t5, 0(a2)                 # t5 = bcn->img (load the address of the image)
-        lhu t6, 0(t5)                # Load color data from bcn->img at t13 offset
-        sh t6, 0(t4)                 # Store color data into framebuffer at t12 offset
 
 
-skip_pixel:
-        addi t1, t1, 1               # j++
-        j draw_beacon_column         # Repeat column loop
 
-next_row:
-        addi t0, t0, 1               # i++
-        j draw_beacon_row            # Repeat row loop
 
-draw_beacon_end:
-        ret                          # Return from function
+
+
 
 
 .end

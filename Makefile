@@ -40,5 +40,30 @@ clean:
 run-demo:
 	$(QEMU) -machine virt -bios none -kernel demo.elf -m 128M -serial mon:stdio -device bochs-display
 
+run-debug:
+	$(QEMU) -machine virt -bios none -kernel demo.elf -m 128M -serial mon:stdio -device bochs-display -s -S
+
 run-test:
 	$(QEMU) -machine virt -bios none -kernel test.elf -m 128M -serial mon:stdio -nographic
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
