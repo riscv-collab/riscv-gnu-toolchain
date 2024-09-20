@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 RISC-V GNU Compiler Toolchain
 =============================
 
@@ -470,9 +469,9 @@ you should take care to ensure that both newlib and the external library are bui
 Errors that indicate a code model mismatch include "relocation overflow" or "relocation truncated" errors from the linker being unable to successfully relocate symbols in the executable.
 
 By default, `riscv-gnu-toolchain` builds newlib with `-mcmodel=medlow`. You can use the alternative `medany` code model (as used in libgloss-htif) by passing `--with-cmodel=medany` to the configure script.
+
 # ECE 391 (fa24) repo for NetID: hw46
 
 GitHub username at initialization time: hw46
 
 For next steps, please refer to the instructions provided by your course.
->>>>>>> 6084b3a78d486f91366e78f90992e63467ef1bd6
