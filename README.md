@@ -100,11 +100,6 @@ systems.
 It will support the most common `-march`/`-mabi` options, which can be seen by
 using the `--print-multi-lib` flag on either cross-compiler.
 
-The musl compiler (riscv64-unknown-linux-musl-) will only be able to target
-64-bit systems due to limitations in the upstream musl architecture support.
-The `--enable-multilib` flag therefore does not actually enable multilib support
-for musl libc.
-
 Linux toolchain has an additional option `--enable-default-pie` to control the
 default PIE enablement for GCC, which is disable by default.
 
