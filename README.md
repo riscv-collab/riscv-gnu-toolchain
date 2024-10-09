@@ -435,8 +435,6 @@ it will has a section named `gcc` and has a field `branch` is
 There are several configure options for specifying the source tree of each
 submodule/component.
 
-* https://github.com/riscv-collab/riscv-gnu-toolchain/blob/795267df36fcf1269f2bd596ac42e0e91ad9cfd3/configure#L1426-L1444 
-
 For example, if you have GCC sources in `$HOME/gcc`, use `--with-gcc-src` to build the toolchain using those sources:
 
     ./configure ... --with-gcc-src=$HOME/gcc
