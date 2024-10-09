@@ -426,17 +426,18 @@ it will has a section named `gcc` and has a field `branch` is
 
 #### Use Source Tree Other Than `riscv-gnu-toolchain`
 
-`riscv-gnu-toolchain` also support using out-of-tree source to build toolchain,
-there is couple configure option to specify the source tree of each
+`riscv-gnu-toolchain` also supports using out-of-tree source to build the toolchain.
+There are several configure options for specifying the source tree of each
 submodule/component.
 
-For example you have a gcc in `$HOME/gcc`, use `--with-gcc-src` can specify that:
+For example, if you have GCC sources in `$HOME/gcc`, use `--with-gcc-src` to build the toolchain using those sources:
 
-    ./configure --with-gcc-src=$HOME/gcc
+    ./configure ... --with-gcc-src=$HOME/gcc
 
-Here is the list of configure option for specify source tree:
+Here is the list of configure options for specifying alternative sources for the various submodules/components:
 
     --with-binutils-src
+    --with-dejagnu-src
     --with-gcc-src
     --with-gdb-src
     --with-glibc-src
@@ -447,6 +448,7 @@ Here is the list of configure option for specify source tree:
     --with-pk-src
     --with-qemu-src
     --with-spike-src
+    --with-uclibc-src
 
 #### Build host GCC to check for compiler warnings
 
