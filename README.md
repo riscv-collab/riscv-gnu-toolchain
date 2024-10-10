@@ -103,6 +103,10 @@ using the `--print-multi-lib` flag on either cross-compiler.
 Linux toolchain has an additional option `--enable-default-pie` to control the
 default PIE enablement for GCC, which is disable by default.
 
+To customize the enabled languages, use option `--with-languages=`. For example, 
+if you want to enable `c,c++,fortran`, use `./configure --with-languages=c,c++,fortran`.
+This option only takes effect for the GNU toolchain.
+
 ### Troubleshooting Build Problems
 
 Builds work best if installing into an empty directory.  If you build a
