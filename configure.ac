@@ -1,5 +1,5 @@
 ## Process this file with autoconf 2.69. Other versions may not work.
-AC_INIT(riscv-toolchain, 1.0)
+AC_INIT([riscv-toolchain],[1.0])
 
 AC_PROG_CC
 AC_PROG_FGREP
@@ -246,8 +246,7 @@ AS_IF([test "x$with_system_zlib" != xno],
 	[AC_SUBST(with_system_zlib,--without-system-zlib)])
 
 AC_ARG_WITH(guile,
-	[AC_HELP_STRING([--with-guile],
-			[Set which guile to use, if any])],
+	[AS_HELP_STRING([--with-guile],[Set which guile to use, if any])],
 	[],
 	[with_guile=default]
 	)
@@ -291,8 +290,7 @@ AS_IF([test "x$enable_host_gcc" != xyes],
 AC_DEFUN([AX_ARG_WITH_SRC],
 	[{m4_pushdef([opt_name], with_$1_src)
 	  AC_ARG_WITH($1-src,
-		[AC_HELP_STRING([--with-$1-src],
-				[Set $1 source path, use builtin source by default])],
+		[AS_HELP_STRING([--with-$1-src],[Set $1 source path, use builtin source by default])],
 		[],
 		[opt_name=default]
 		)
@@ -316,8 +314,7 @@ AX_ARG_WITH_SRC(llvm, llvm)
 AX_ARG_WITH_SRC(dejagnu, dejagnu)
 
 AC_ARG_WITH(linux-headers-src,
-	[AC_HELP_STRING([--with-linux-headers-src],
-			[Set linux-headers source path, use builtin source by default])],
+	[AS_HELP_STRING([--with-linux-headers-src],[Set linux-headers source path, use builtin source by default])],
 	[],
 	[with_linux_headers_src=default]
 	)
