@@ -80,10 +80,10 @@ AS_IF([test "x$enable_default_pie" != xyes],
 
 
 AC_ARG_WITH(arch,
-	[AS_HELP_STRING([--with-arch=rv64imafdc],
-		[Sets the base RISC-V ISA, defaults to rv64imafdc])],
+	[AS_HELP_STRING([--with-arch=rv64gc],
+		[Sets the base RISC-V ISA, defaults to rv64gc])],
 	[],
-	[with_arch=rv64imafdc]
+	[with_arch=rv64gc]
 	)
 
 AC_ARG_WITH(abi,
