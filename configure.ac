@@ -141,7 +141,7 @@ AC_SUBST(WITH_LANGUAGES, $with_languages)
 
 AC_ARG_ENABLE(multilib,
 	[AS_HELP_STRING([--enable-multilib],
-		[build both RV32 and RV64 runtime libraries (only RV64 for musl libc) @<:@--disable-multilib@:>@])],
+		[build both RV32 and RV64 runtime libraries @<:@--disable-multilib@:>@])],
 	[],
 	[enable_multilib=no]
 	)
