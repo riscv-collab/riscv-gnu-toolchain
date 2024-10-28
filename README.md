@@ -32,13 +32,14 @@ On Arch Linux, executing the following command should suffice:
 
 Also available for Arch users on the AUR: [https://aur.archlinux.org/packages/riscv-gnu-toolchain-bin](https://aur.archlinux.org/packages/riscv-gnu-toolchain-bin)
 
-On OS X, you can use [Homebrew](http://brew.sh) to install the dependencies:
+On macOS, you can use [Homebrew](http://brew.sh) to install the dependencies:
 
-    $ brew install python3 gawk gnu-sed gmp mpfr libmpc isl zlib expat texinfo flock libslirp
+    $ brew install python3 gawk gnu-sed make gmp mpfr libmpc isl zlib expat texinfo flock libslirp
 
-To build the glibc (Linux) on OS X, you will need to build within a case-sensitive file
+When executing the instructions in this README, please use `gmake` instead of `make` to use the newly installed version of make.
+To build the glibc (Linux) on macOS, you will need to build within a case-sensitive file
 system.  The simplest approach is to create and mount a new disk image with
-a case sensitive format.  Make sure that the mount point does not contain spaces. This is not necessary to build newlib or gcc itself on OS X.
+a case sensitive format.  Make sure that the mount point does not contain spaces. This is not necessary to build newlib or gcc itself on macOS.
 
 This process will start by downloading about 200 MiB of upstream sources, then
 will patch, build, and install the toolchain.  If a local cache of the
