@@ -9,8 +9,81 @@ on:
       - master
 
 jobs:
+  cache:
+    name: Update Submodule Cache
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache GCC
+        uses: actions/cache@v4
+        with:
+          path: |
+            .git/modules/gcc
+            gcc
+          key: compiler-gcc
+
+      - name: Cache LLVM
+        uses: actions/cache@v4
+        with:
+          path: |
+            .git/modules/llvm
+            llvm
+          key: compiler-llvm
+      
+      - name: Cache Newlib
+        uses: actions/cache@v4
+        with:
+          path: |
+            .git/modules/newlib
+            newlib
+          key: mode-newlib
+
+      - name: Cache Linux
+        uses: actions/cache@v4
+        with:
+          path: |
+            .git/modules/glibc
+            glibc
+          key: mode-linux
+
+      - name: Cache musl
+        uses: actions/cache@v4
+        with:
+          path: |
+            .git/modules/musl
+            musl
+          key: mode-musl
+
+      - name: Cache uClibc
+        uses: actions/cache@v4
+        with:
+          path: |
+            .git/modules/uclibc-ng
+            uclibc-ng
+          key: mode-uclibc
+
+      - name: Cache Always Required Submodules
+        uses: actions/cache@v4
+        with:
+          path: |
+            .git/modules/binutils
+            .git/modules/gdb
+            binutils
+            gdb
+          key: general-dependencies
+
+      - name: Clone needed submodules
+        run: |
+          git submodule update --init --progress --depth 1 --jobs $(nproc) binutils gdb gcc llvm newlib glibc musl
+          git submodule update --init --progress uclibc-ng
+
+
+    
   build:
+    name: Build Toolchain Variants
     runs-on: ${{ matrix.os }}
+    needs: [cache]
     strategy:
       matrix:
         os:     [ubuntu-22.04, ubuntu-24.04]
@@ -32,12 +105,68 @@ jobs:
           echo "-- After --"
           df -h
 
+      - name: Generate Required Submodules
+        id: required-submodules
+        run: |
+          case "${{ matrix.mode }}" in
+            "linux")
+              MODE_SUBMODULE="glibc";;
+            "musl")
+              MODE_SUBMODULE="musl";;
+            "uclibc")
+              MODE_SUBMODULE="uclibc-ng";;
+            "newlib")
+              MODE_SUBMODULE="newlib";;
+            *)
+              echo "Invalid Mode"; exit 1;;
+          esac
+          echo "MODE_SUBMODULE=$MODE_SUBMODULE" >> $GITHUB_OUTPUT
+          case "${{ matrix.compiler }}" in
+            "gcc")
+              COMPILER_SUBMODULE="gcc";;
+            "llvm")
+              COMPILER_SUBMODULE="llvm";;
+            *)
+              echo "Invalid Compiler"; exit 1;;
+          esac
+          echo "COMPILER_SUBMODULE=$COMPILER_SUBMODULE" >> $GITHUB_OUTPUT
+
       - uses: actions/checkout@v4
 
-      - name: install dependencies
+      - name: Load Compiler Submodule from Cache
+        uses: actions/cache/restore@v4
+        env:
+          submodule: ${{ steps.required-submodules.outputs.COMPILER_SUBMODULE }}
+        with:
+          path: |
+            .git/modules/${{ env.submodule }}
+            ${{ env.submodule }}
+          key: compiler-${{ matrix.compiler }}
+
+      - name: Load Mode Submodule from Cache
+        uses: actions/cache/restore@v4
+        env:
+          submodule: ${{ steps.required-submodules.outputs.MODE_SUBMODULE }}
+        with:
+          path: |
+            .git/modules/${{ env.submodule }}
+            ${{ env.submodule }}
+          key: mode-${{ matrix.mode }}
+      
+      - name: Load Always Required Submodules from Cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            .git/modules/binutils
+            .git/modules/gdb
+            binutils
+            gdb
+          key: general-dependencies
+
+      - name: Install Dependencies
         run: sudo ./.github/setup-apt.sh
 
-      - name: build toolchain
+      - name: Build Toolchain
         run: |
           TARGET_TUPLE=($(echo ${{ matrix.target }} | tr "-" "\n"))
           BUILD_TOOLCHAIN="./configure --prefix=/opt/riscv --with-arch=${TARGET_TUPLE[0]} --with-abi=${TARGET_TUPLE[1]}"
@@ -48,7 +177,7 @@ jobs:
           fi
           sudo make -j $(nproc) ${{ matrix.mode }}
 
-      - name: make report
+      - name: Generate Report
         if: |
           matrix.os == 'ubuntu-24.04'
           && (matrix.mode == 'linux' || matrix.mode == 'newlib')
@@ -56,16 +185,16 @@ jobs:
         run: |
           sudo make report-${{ matrix.mode }} -j $(nproc)
 
-      - name: recover space
+      - name: Recover Space
         run: |
           sudo du -hs / 2> /dev/null || true
           sudo rm -rf binutils dejagnu gcc gdb glibc llvm musl newlib pk qemu spike uclibc-ng || true
           sudo du -hs / 2> /dev/null || true
 
-      - name: tarball build
+      - name: Tar Toolchain
         run: tar czvf riscv.tar.gz -C /opt/ riscv/
 
-      - name: generate prebuilt toolchain name
+      - name: Generate Prebuilt Toolchain Name
         id:   toolchain-name-generator
         run: |
           if [[ "${{ matrix.target }}" == *"32"* ]]; then BITS=32; else BITS=64; fi
@@ -87,6 +216,7 @@ jobs:
           path: riscv.tar.gz
 
   test-sim:
+    name: Test Simulation
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -106,16 +236,16 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: install dependencies
+      - name: Install Dependencies
         run: sudo ./.github/setup-apt.sh
 
-      - name: build toolchain
+      - name: Build Toolchain
         run: |
           TARGET_TUPLE=($(echo ${{ matrix.target }} | tr "-" "\n"))
           ./configure --prefix=/opt/riscv --with-arch=${TARGET_TUPLE[0]} --with-abi=${TARGET_TUPLE[1]} --with-sim=${{ matrix.sim }}
           make -j $(nproc) ${{ matrix.mode }}
 
-      - name: make report
+      - name: Generate Report
         run: make report-${{ matrix.mode }} -j $(nproc)
 
   build-multilib:
