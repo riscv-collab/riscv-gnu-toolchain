@@ -7,75 +7,55 @@ on:
   pull_request:
     branches:
       - master
-
+env:
+  cache-path: |
+    .git/modules
+    binutils
+    gdb
+    gcc
+    llvm
+    newlib
+    glibc
+    musl
+    uclib-ng
+    dejagnu
+    pk
+    qemu
+    spike
 jobs:
   cache:
     name: Update Submodule Cache
     runs-on: ubuntu-24.04
+    outputs:
+      key: submodules-${{ steps.submodule-hash.outputs.HASH }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache GCC
-        uses: actions/cache@v4
-        with:
-          path: |
-            .git/modules/gcc
-            gcc
-          key: compiler-gcc
+      - name: Generate Submodule Hash
+        id: submodule-hash
+        run: echo "HASH=$(git submodule | sha1sum | head -c 40)" >> $GITHUB_OUTPUT
 
-      - name: Cache LLVM
-        uses: actions/cache@v4
+      - name: Check is Cache Exists for Exact Submodule Configuration
+        id: cache-check
+        uses: actions/cache/restore@v4
         with:
-          path: |
-            .git/modules/llvm
-            llvm
-          key: compiler-llvm
-      
-      - name: Cache Newlib
-        uses: actions/cache@v4
-        with:
-          path: |
-            .git/modules/newlib
-            newlib
-          key: mode-newlib
+          path: ${{ env.cache-path }}
+          key: submodules-${{ steps.submodule-hash.outputs.HASH }}
+          lookup-only: true
 
-      - name: Cache Linux
+      - name: If no Cache Hit, Update Cache
         uses: actions/cache@v4
+        if: steps.cache-check.outputs.cache-hit != 'true'
         with:
-          path: |
-            .git/modules/glibc
-            glibc
-          key: mode-linux
+          path: ${{ env.cache-path }}
+          key: submodules-${{ steps.submodule-hash.outputs.HASH }}
+          restore-keys: |
+            submodules-
 
-      - name: Cache musl
-        uses: actions/cache@v4
-        with:
-          path: |
-            .git/modules/musl
-            musl
-          key: mode-musl
-
-      - name: Cache uClibc
-        uses: actions/cache@v4
-        with:
-          path: |
-            .git/modules/uclibc-ng
-            uclibc-ng
-          key: mode-uclibc
-
-      - name: Cache Always Required Submodules
-        uses: actions/cache@v4
-        with:
-          path: |
-            .git/modules/binutils
-            .git/modules/gdb
-            binutils
-            gdb
-          key: general-dependencies
-
-      - name: Clone needed submodules
+      - name: Clone submodules
+        if: steps.cache-check.outputs.cache-hit != 'true'
         run: |
-          git submodule update --init --progress --depth 1 --jobs $(nproc) binutils gdb gcc llvm newlib glibc musl
+          git submodule update --init --progress --depth 1 --jobs $(nproc) binutils gdb gcc llvm newlib glibc musl dejagnu pk qemu spike
           git submodule update --init --progress uclibc-ng
 
 
@@ -84,6 +64,8 @@ jobs:
     name: Build Toolchain Variants
     runs-on: ${{ matrix.os }}
     needs: [cache]
+    env:
+      cache-key: ${{ needs.cache.outputs.key }}
     strategy:
       matrix:
         os:     [ubuntu-22.04, ubuntu-24.04]
@@ -105,63 +87,44 @@ jobs:
           echo "-- After --"
           df -h
 
-      - name: Generate Required Submodules
-        id: required-submodules
+      - name: Generate Submodules List
+        id: cache-path
+        if: false
         run: |
+          submodules="gdb:binutils"
           case "${{ matrix.mode }}" in
             "linux")
-              MODE_SUBMODULE="glibc";;
+              submodules="$submodules:glibc";;
             "musl")
-              MODE_SUBMODULE="musl";;
+              submodules="$submodules:musl";;
             "uclibc")
-              MODE_SUBMODULE="uclibc-ng";;
+              submodules="$submodules:uclibc-ng";;
             "newlib")
-              MODE_SUBMODULE="newlib";;
+              submodules="$submodules:newlib";;
             *)
               echo "Invalid Mode"; exit 1;;
           esac
-          echo "MODE_SUBMODULE=$MODE_SUBMODULE" >> $GITHUB_OUTPUT
           case "${{ matrix.compiler }}" in
             "gcc")
-              COMPILER_SUBMODULE="gcc";;
+              submodules="$submodules:gcc";;
             "llvm")
-              COMPILER_SUBMODULE="llvm";;
+              submodules="$submodules:llvm";;
             *)
               echo "Invalid Compiler"; exit 1;;
           esac
-          echo "COMPILER_SUBMODULE=$COMPILER_SUBMODULE" >> $GITHUB_OUTPUT
+          submodules=$(echo $submodules | sed 's/:/\n/g')
+          submodules=$submodules$'\n'$(echo "$submodules" | sed -e 's/^/.git\/modules\//')
+          echo 'submodules<<EOF' >> $GITHUB_OUTPUT
+          echo "$submodules" >> $GITHUB_OUTPUT
+          echo 'EOF' >> $GITHUB_OUTPUT
 
       - uses: actions/checkout@v4
 
-      - name: Load Compiler Submodule from Cache
-        uses: actions/cache/restore@v4
-        env:
-          submodule: ${{ steps.required-submodules.outputs.COMPILER_SUBMODULE }}
-        with:
-          path: |
-            .git/modules/${{ env.submodule }}
-            ${{ env.submodule }}
-          key: compiler-${{ matrix.compiler }}
-
-      - name: Load Mode Submodule from Cache
-        uses: actions/cache/restore@v4
-        env:
-          submodule: ${{ steps.required-submodules.outputs.MODE_SUBMODULE }}
-        with:
-          path: |
-            .git/modules/${{ env.submodule }}
-            ${{ env.submodule }}
-          key: mode-${{ matrix.mode }}
-      
-      - name: Load Always Required Submodules from Cache
+      - name: Load Cache
         uses: actions/cache/restore@v4
         with:
-          path: |
-            .git/modules/binutils
-            .git/modules/gdb
-            binutils
-            gdb
-          key: general-dependencies
+          path: ${{ env.cache-path }}
+          key: ${{ env.cache-key }}
 
       - name: Install Dependencies
         run: sudo ./.github/setup-apt.sh
@@ -218,6 +181,9 @@ jobs:
   test-sim:
     name: Test Simulation
     runs-on: ${{ matrix.os }}
+    needs: [cache]
+    env:
+      cache-key: ${{ needs.cache.outputs.key }}
     strategy:
       matrix:
         os:     [ubuntu-24.04]
@@ -235,6 +201,11 @@ jobs:
           df -h
 
       - uses: actions/checkout@v4
+
+      - uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.cache-path }}
+          key: ${{ env.cache-key }}
 
       - name: Install Dependencies
         run: sudo ./.github/setup-apt.sh
