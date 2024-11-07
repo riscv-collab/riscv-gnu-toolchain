@@ -7,10 +7,53 @@ on:
   pull_request:
     branches:
       - master
-
+env:
+  cache-path: |
+    .git/modules
 jobs:
+  cache:
+    name: Update Submodule Cache
+    runs-on: ubuntu-24.04
+    outputs:
+      key: submodules-${{ steps.submodule-hash.outputs.HASH }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate Submodule Hash
+        id: submodule-hash
+        run: echo "HASH=$(git submodule | sha1sum | head -c 40)" >> $GITHUB_OUTPUT
+
+      - name: Check if Cache Exists for Exact Submodule Configuration
+        id: cache-check
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.cache-path }}
+          key: submodules-${{ steps.submodule-hash.outputs.HASH }}
+          lookup-only: true
+
+      - name: If Cache Misses, Update Cache
+        uses: actions/cache@v4
+        if: steps.cache-check.outputs.cache-hit != 'true'
+        with:
+          path: ${{ env.cache-path }}
+          key: submodules-${{ steps.submodule-hash.outputs.HASH }}
+          restore-keys: |
+            submodules-
+
+      - name: Clone Submodules
+        if: steps.cache-check.outputs.cache-hit != 'true'
+        run: |
+          git submodule update --init --progress uclibc-ng
+          git submodule update --init --progress --depth 1 --jobs $(nproc)
+
+
+    
   build:
+    name: Build Toolchain Variants
     runs-on: ${{ matrix.os }}
+    needs: [cache]
+    env:
+      cache-key: ${{ needs.cache.outputs.key }}
     strategy:
       matrix:
         os:     [ubuntu-22.04, ubuntu-24.04]
@@ -34,10 +77,16 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: install dependencies
+      - name: Restore Submodule Cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.cache-path }}
+          key: ${{ env.cache-key }}
+
+      - name: Install Dependencies
         run: sudo ./.github/setup-apt.sh
 
-      - name: build toolchain
+      - name: Build Toolchain
         run: |
           TARGET_TUPLE=($(echo ${{ matrix.target }} | tr "-" "\n"))
           BUILD_TOOLCHAIN="./configure --prefix=/opt/riscv --with-arch=${TARGET_TUPLE[0]} --with-abi=${TARGET_TUPLE[1]}"
@@ -48,7 +97,7 @@ jobs:
           fi
           sudo make -j $(nproc) ${{ matrix.mode }}
 
-      - name: make report
+      - name: Generate Report
         if: |
           matrix.os == 'ubuntu-24.04'
           && (matrix.mode == 'linux' || matrix.mode == 'newlib')
@@ -56,16 +105,16 @@ jobs:
         run: |
           sudo make report-${{ matrix.mode }} -j $(nproc)
 
-      - name: recover space
+      - name: Recover Space
         run: |
           sudo du -hs / 2> /dev/null || true
           sudo rm -rf binutils dejagnu gcc gdb glibc llvm musl newlib pk qemu spike uclibc-ng || true
           sudo du -hs / 2> /dev/null || true
 
-      - name: tarball build
+      - name: Tar Toolchain
         run: tar czvf riscv.tar.gz -C /opt/ riscv/
 
-      - name: generate prebuilt toolchain name
+      - name: Generate Prebuilt Toolchain Name
         id:   toolchain-name-generator
         run: |
           if [[ "${{ matrix.target }}" == *"32"* ]]; then BITS=32; else BITS=64; fi
@@ -87,7 +136,11 @@ jobs:
           path: riscv.tar.gz
 
   test-sim:
+    name: Test Simulation
     runs-on: ${{ matrix.os }}
+    needs: [cache]
+    env:
+      cache-key: ${{ needs.cache.outputs.key }}
     strategy:
       matrix:
         os:     [ubuntu-24.04]
@@ -106,16 +159,22 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: install dependencies
+      - name: Restore Submodule Cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.cache-path }}
+          key: ${{ env.cache-key }}
+
+      - name: Install Dependencies
         run: sudo ./.github/setup-apt.sh
 
-      - name: build toolchain
+      - name: Build Toolchain
         run: |
           TARGET_TUPLE=($(echo ${{ matrix.target }} | tr "-" "\n"))
           ./configure --prefix=/opt/riscv --with-arch=${TARGET_TUPLE[0]} --with-abi=${TARGET_TUPLE[1]} --with-sim=${{ matrix.sim }}
           make -j $(nproc) ${{ matrix.mode }}
 
-      - name: make report
+      - name: Generate Report
         run: make report-${{ matrix.mode }} -j $(nproc)
 
   build-multilib:
