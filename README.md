@@ -216,7 +216,7 @@ the following command should suffice:
 
 On Arch Linux, executing the following command should suffice:
 
-    $ sudo pacman -Syyu python-pyelftools
+    $ sudo pacman -Syyu python-pyelftools python-sphinx python-sphinx_rtd_theme ninja
 
 If your distribution/OS does not have pyelftools package, you can install
 it using PIP.
