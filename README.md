@@ -190,6 +190,29 @@ rv64imac with lp64 and rv64imafc with lp64 will reuse this multi-lib set.
 ./configure --with-multilib-generator="rv64ima-lp64--f*c"
 ```
 
+#### Enabling QEMU System Targets
+
+The `--enable-qemu-system` configuration flag allows you to include QEMU system emulation targets in addition to the default user-mode emulation.
+
+- **Enabled targets**:
+  - `riscv64-linux-user`
+  - `riscv32-linux-user`
+  - `riscv64-softmmu`
+  - `riscv32-softmmu`
+
+- **Default targets** (without this flag):
+  - `riscv64-linux-user`
+  - `riscv32-linux-user`
+
+Use this option if you need full system emulation for RISC-V. Example configuration:
+
+```bash
+./configure --enable-qemu-system --prefix=/opt/riscv
+make build-sim SIM=qemu
+```
+
+This flag is particularly useful for developers testing and emulating full RISC-V systems rather than just user-space applications.
+
 ### Test Suite
 
 The Dejagnu test suite has been ported to RISC-V. This can be run with a
