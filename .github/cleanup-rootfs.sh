@@ -5,7 +5,9 @@
 # before we install dependencies later on, but it'll only give us a 1-3GBs so
 # we can skip it.
 WAIT=0
-RMONLY=1
+RM=1
+APT=0
+DOCKER=0
 
 PACKAGES=(
 	"firefox"
@@ -36,7 +38,7 @@ PATHS=(
 
 function cleanup_packages()
 {
-	if [[ ${RMONLY} == 0 ]]; then
+	if [[ ${APT} == 1 ]]; then
 		apt-get purge -y "${PACKAGES[@]}"
 		apt-get autoremove --purge -y
 		apt-get clean
@@ -45,11 +47,23 @@ function cleanup_packages()
 
 function cleanup_paths()
 {
-	for i in "${PATHS[@]}"; do
-		rm -rf "${i}" &
-	done
-	if [[ ${WAIT} == 1 ]]; then
-		wait
+	if [[ ${RM} == 1 ]]; then
+		for i in "${PATHS[@]}"; do
+			rm -rf "${i}" &
+		done
+		if [[ ${WAIT} == 1 ]]; then
+			wait
+		fi
+	fi
+}
+
+function cleanup_docker()
+{
+	if [[ ${DOCKER} == 1 ]]; then
+		docker image prune --all --force &
+		if [[ ${WAIT} == 1 ]]; then
+			wait
+		fi
 	fi
 }
 
@@ -58,9 +72,11 @@ if [[ ${WAIT} == 1 ]]; then
 	df -hT
 	cleanup_packages
 	cleanup_paths
+	cleanup_docker
 	echo "---=== After ===---"
 	df -hT
 else
 	cleanup_packages
 	cleanup_paths
+	cleanup_docker
 fi
