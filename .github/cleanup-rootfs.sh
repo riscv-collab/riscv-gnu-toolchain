@@ -7,7 +7,7 @@
 WAIT=0
 RM=1
 APT=0
-DOCKER=0
+DOCKER=1
 
 PACKAGES=(
 	"firefox"
