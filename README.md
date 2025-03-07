@@ -126,7 +126,7 @@ is case-sensitive.  A build on a case-insensitive filesystem will fail when
 building glibc because \*.os and \*.oS files will clobber each other during
 the build eventually resulting in confusing link errors.
 
-Centos (and RHEL) provide old GNU tools versions that may be too old to build
+CentOS (and RHEL) provide old GNU tools versions that may be too old to build
 a RISC-V toolchain.  There is an alternate toolset provided that includes
 current versions of the GNU tools.  This is the devtoolset provided as part
 of the Software Collection service.  For more info, see the
@@ -271,7 +271,7 @@ Note:
 
 By default GCC will execute all tests of its regression test suite.
 While running them in parallel (e.g. `make -j$(nproc) report`) will
-significanlty speed up the execution time on multi-processor systems,
+significantly speed up the execution time on multi-processor systems,
 the required time for executing all tests is usually too high for
 typical development cycles. Therefore GCC allows to select the tests
 that are being executed using the environment variable `RUNTESTFLAGS`.
