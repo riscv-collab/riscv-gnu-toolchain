@@ -422,7 +422,7 @@ toolchain with your own source tree.
 #### Update Source Tree
 
 `riscv-gnu-toolchain` contain stable but not latest source for each submodule,
-in case you want to using latest develoment tree, you can use following command
+in case you want to using latest development tree, you can use following command
 to upgrade all submodule.
 
     git submodule update --remote
