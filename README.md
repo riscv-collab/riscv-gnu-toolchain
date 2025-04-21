@@ -16,7 +16,7 @@ so `--recursive` or `git submodule update --init --recursive` is not needed.
 
 ### Prerequisites
 
-Several standard packages are needed to build the toolchain.  
+Several standard packages are needed to build the toolchain.
 
 On Ubuntu, executing the following command should suffice:
 
@@ -25,7 +25,7 @@ On Ubuntu, executing the following command should suffice:
 On Fedora/CentOS/RHEL OS, executing the following command should suffice:
 
     $ sudo yum install autoconf automake python3 libmpc-devel mpfr-devel gmp-devel gawk  bison flex texinfo patchutils gcc gcc-c++ zlib-devel expat-devel libslirp-devel
-    
+
 On Arch Linux, executing the following command should suffice:
 
     $ sudo pacman -Syu curl python3 libmpc mpfr gmp base-devel texinfo gperf patchutils bc zlib expat libslirp
@@ -91,7 +91,7 @@ To build either cross-compiler with support for both 32-bit and
 64-bit, run the following command:
 
     ./configure --prefix=/opt/riscv --enable-multilib
-    
+
 And then either `make`, `make linux` or `make musl` for the Newlib, Linux
 glibc-based or Linux musl libc-based cross-compiler, respectively.
 
@@ -104,7 +104,7 @@ using the `--print-multi-lib` flag on either cross-compiler.
 Linux toolchain has an additional option `--enable-default-pie` to control the
 default PIE enablement for GCC, which is disable by default.
 
-To customize the enabled languages, use option `--with-languages=`. For example, 
+To customize the enabled languages, use option `--with-languages=`. For example,
 if you want to enable `c,c++,fortran`, use `./configure --with-languages=c,c++,fortran`.
 This option only takes effect for the GNU toolchain.
 
@@ -218,8 +218,8 @@ This flag is particularly useful for developers testing and emulating full RISC-
 The Dejagnu test suite has been ported to RISC-V. This can be run with a
 simulator for the elf and linux toolchains. The simulator can be selected
 by the SIM variable in the Makefile, e.g. SIM=qemu, SIM=gdb, or SIM=spike
-(experimental).In addition, the simulator can also be selected with the 
-configure time option `--with-sim=`.However, the testsuite allowlist is 
+(experimental).In addition, the simulator can also be selected with the
+configure time option `--with-sim=`.However, the testsuite allowlist is
 only maintained for qemu.Other simulators might get extra failures.
 
 #### Additional Prerequisite
@@ -279,12 +279,12 @@ that are being executed using the environment variable `RUNTESTFLAGS`.
 To restrict a test run to only RISC-V specific tests
 the following command can be used:
 
- RUNTESTFLAGS="riscv.exp" make report
+    RUNTESTFLAGS="riscv.exp" make report
 
 To restrict a test run to only RISC-V specific tests with match the
 pattern "zb*.c" and "sm*.c" the following command can be used:
 
- RUNTESTFLAGS="riscv.exp=zb*.c\ sm*.c" make report
+    RUNTESTFLAGS="riscv.exp=zb*.c\ sm*.c" make report
 
 #### Testing GCC, Binutils, and glibc of a Linux toolchain
 
@@ -490,8 +490,8 @@ sources is among them.  The flag `--enable-host-gcc` does exaclty that:
 
 ### FAQ
 #### Ensuring Code Model Consistency
-If parts of newlib are going to be replaced with an external library (such as with [libgloss-htif](https://github.com/ucb-bar/libgloss-htif) for Berkeley Host-Target Interface), 
-you should take care to ensure that both newlib and the external library are built using the same code model. For more information about RISC-V code models, 
+If parts of newlib are going to be replaced with an external library (such as with [libgloss-htif](https://github.com/ucb-bar/libgloss-htif) for Berkeley Host-Target Interface),
+you should take care to ensure that both newlib and the external library are built using the same code model. For more information about RISC-V code models,
 [read this SiFive blog article](https://www.sifive.com/blog/all-aboard-part-4-risc-v-code-models).
 
 Errors that indicate a code model mismatch include "relocation overflow" or "relocation truncated" errors from the linker being unable to successfully relocate symbols in the executable.
