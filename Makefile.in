@@ -158,6 +158,7 @@ ifeq (@enable_llvm@,--enable-llvm)
 all: stamps/build-llvm-@default_target@
 newlib: stamps/build-llvm-newlib
 linux: stamps/build-llvm-linux
+musl: stamps/build-llvm-musl
 ifeq (@multilib_flags@,--enable-multilib)
 $(error "Setting multilib flags for LLVM builds is not supported.")
 endif
@@ -1206,6 +1207,84 @@ stamps/build-llvm-linux: $(LLVM_SRCDIR) $(LLVM_SRC_GIT) $(BINUTILS_SRCDIR) $(BIN
 	cp $(notdir $@)/lib/riscv$(XLEN)-unknown-linux-gnu/libc++* $(SYSROOT)/lib
 	cp $(notdir $@)/lib/LLVMgold.$(SHARED_LIB_SUFFIX) $(INSTALL_DIR)/lib
 	cd $(INSTALL_DIR)/bin && ln -s -f clang $(LINUX_TUPLE)-clang && ln -s -f clang++ $(LINUX_TUPLE)-clang++
+	mkdir -p $(dir $@) && touch $@
+
+stamps/build-llvm-musl: $(LLVM_SRCDIR) $(LLVM_SRC_GIT) $(BINUTILS_SRCDIR) $(BINUTILS_SRC_GIT) \
+                         stamps/build-gcc-musl-stage2
+	# We have the following situation:
+	# - sysroot directory: $(INSTALL_DIR)/sysroot
+	# - GCC install directory: $(INSTALL_DIR)
+	# However, LLVM does not allow to set a GCC install prefix
+	# (-DGCC_INSTALL_PREFIX) if a sysroot (-DDEFAULT_SYSROOT) is set
+	# (the GCC install prefix will be ignored silently).
+	# Without a proper sysroot path feature.h won't be found by clang.
+	# Without a proper GCC install directory libgcc won't be found.
+	# As a workaround we have to merge both paths:
+	mkdir -p $(SYSROOT)/lib/
+	ln -s -f $(INSTALL_DIR)/lib/gcc $(SYSROOT)/lib/gcc
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	cd $(notdir $@) && ln -f -s $(SYSROOT) sysroot
+	cd $(notdir $@) && \
+	    cmake $(LLVM_SRCDIR)/llvm \
+	    -DCMAKE_INSTALL_PREFIX=$(INSTALL_DIR) \
+	    -DCMAKE_BUILD_TYPE=Release \
+	    -DLLVM_TARGETS_TO_BUILD="RISCV" \
+	    -DLLVM_ENABLE_PROJECTS="clang;lld" \
+	    -DLLVM_ENABLE_RUNTIMES="compiler-rt;libcxx;libcxxabi;libunwind" \
+	    -DLLVM_DEFAULT_TARGET_TRIPLE="$(MUSL_TUPLE)" \
+	    -DDEFAULT_SYSROOT="../sysroot" \
+	    -DLLVM_RUNTIME_TARGETS=$(call make_tuple,$(XLEN),linux-musl) \
+	    -DLLVM_INSTALL_TOOLCHAIN_ONLY=On \
+	    -DLLVM_BINUTILS_INCDIR=$(BINUTILS_SRCDIR)/include \
+	    -DLLVM_PARALLEL_LINK_JOBS=4 \
+	    -DLIBCXX_HAS_MUSL_LIBC=On
+	$(MAKE) -C $(notdir $@)
+	$(MAKE) -C $(notdir $@) install
+	# Build shared/static OpenMP libraries on RV64.
+	if test $(XLEN) -eq 64; then \
+	    mkdir $(notdir $@)/openmp-shared; \
+	    cmake -S$(LLVM_SRCDIR)/openmp \
+	        -B$(notdir $@)/openmp-shared \
+	        -DCMAKE_INSTALL_PREFIX=$(SYSROOT) \
+	        -DCMAKE_C_COMPILER=$(INSTALL_DIR)/bin/clang \
+	        -DCMAKE_CXX_COMPILER=$(INSTALL_DIR)/bin/clang++ \
+	        -DOPENMP_ENABLE_LIBOMPTARGET=Off \
+	        -DCMAKE_BUILD_TYPE=Release \
+	        -DLIBOMP_ARCH=riscv64 \
+	        -DLIBOMP_HAVE_WARN_SHARED_TEXTREL_FLAG=On \
+	        -DLIBOMP_HAVE_AS_NEEDED_FLAG=On \
+	        -DLIBOMP_HAVE_VERSION_SCRIPT_FLAG=On \
+	        -DLIBOMP_HAVE_STATIC_LIBGCC_FLAG=On \
+	        -DLIBOMP_HAVE_Z_NOEXECSTACK_FLAG=On \
+	        -DDISABLE_OMPD_GDB_PLUGIN=On \
+	        -DLIBOMP_OMPD_GDB_SUPPORT=Off \
+	        -DLIBOMP_ENABLE_SHARED=On; \
+	    $(MAKE) -C $(notdir $@)/openmp-shared; \
+	    $(MAKE) -C $(notdir $@)/openmp-shared install; \
+	    mkdir $(notdir $@)/openmp-static; \
+	    cmake -S$(LLVM_SRCDIR)/openmp \
+	        -B$(notdir $@)/openmp-static \
+	        -DCMAKE_INSTALL_PREFIX=$(SYSROOT) \
+	        -DCMAKE_C_COMPILER=$(INSTALL_DIR)/bin/clang \
+	        -DCMAKE_CXX_COMPILER=$(INSTALL_DIR)/bin/clang++ \
+	        -DOPENMP_ENABLE_LIBOMPTARGET=Off \
+	        -DCMAKE_BUILD_TYPE=Release \
+	        -DLIBOMP_ARCH=riscv64 \
+	        -DLIBOMP_HAVE_WARN_SHARED_TEXTREL_FLAG=On \
+	        -DLIBOMP_HAVE_AS_NEEDED_FLAG=On \
+	        -DLIBOMP_HAVE_VERSION_SCRIPT_FLAG=On \
+	        -DLIBOMP_HAVE_STATIC_LIBGCC_FLAG=On \
+	        -DLIBOMP_HAVE_Z_NOEXECSTACK_FLAG=On \
+	        -DDISABLE_OMPD_GDB_PLUGIN=On \
+	        -DLIBOMP_OMPD_GDB_SUPPORT=Off \
+	        -DLIBOMP_ENABLE_SHARED=Off; \
+	    $(MAKE) -C $(notdir $@)/openmp-static; \
+	    $(MAKE) -C $(notdir $@)/openmp-static install; \
+	fi
+	cp $(notdir $@)/lib/riscv$(XLEN)-unknown-linux-musl/libc++* $(SYSROOT)/lib
+	cp $(notdir $@)/lib/LLVMgold.$(SHARED_LIB_SUFFIX) $(INSTALL_DIR)/lib
+	cd $(INSTALL_DIR)/bin && ln -s -f clang $(MUSL_TUPLE)-clang && ln -s -f clang++ $(MUSL_TUPLE)-clang++
 	mkdir -p $(dir $@) && touch $@
 
 stamps/build-llvm-newlib: $(LLVM_SRCDIR) $(LLVM_SRC_GIT) $(BINUTILS_SRCDIR) $(BINUTILS_SRC_GIT) \
