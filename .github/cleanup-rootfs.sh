@@ -4,7 +4,7 @@
 # while the process moves forward (for apt we'll need to wait for it to finish
 # before we install dependencies later on, but it'll only give us a 1-3GBs so
 # we can skip it.
-WAIT=0 # Set to 1 if you want to wait for the cleanup to finish before proceeding.
+WAIT=1 # Set to 1 if you want to wait for the cleanup to finish before proceeding.
 
 PACKAGES=(
 	"firefox"
