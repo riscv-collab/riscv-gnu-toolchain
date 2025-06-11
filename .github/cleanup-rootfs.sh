@@ -4,10 +4,7 @@
 # while the process moves forward (for apt we'll need to wait for it to finish
 # before we install dependencies later on, but it'll only give us a 1-3GBs so
 # we can skip it.
-WAIT=0
-RM=1
-APT=0
-DOCKER=1
+WAIT=0 # Set to 1 if you want to wait for the cleanup to finish before proceeding.
 
 PACKAGES=(
 	"firefox"
@@ -38,32 +35,26 @@ PATHS=(
 
 function cleanup_packages()
 {
-	if [[ ${APT} == 1 ]]; then
-		apt-get purge -y "${PACKAGES[@]}"
-		apt-get autoremove --purge -y
-		apt-get clean
-	fi
+	apt-get purge -y "${PACKAGES[@]}"
+	apt-get autoremove --purge -y
+	apt-get clean
 }
 
 function cleanup_paths()
 {
-	if [[ ${RM} == 1 ]]; then
-		for i in "${PATHS[@]}"; do
-			rm -rf "${i}" &
-		done
-		if [[ ${WAIT} == 1 ]]; then
-			wait
-		fi
+	for i in "${PATHS[@]}"; do
+		rm -rf "${i}" &
+	done
+	if [[ ${WAIT} == 1 ]]; then
+		wait
 	fi
 }
 
 function cleanup_docker()
 {
-	if [[ ${DOCKER} == 1 ]]; then
-		docker image prune --all --force &
-		if [[ ${WAIT} == 1 ]]; then
-			wait
-		fi
+	docker image prune --all --force &
+	if [[ ${WAIT} == 1 ]]; then
+		wait
 	fi
 }
 
