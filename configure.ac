@@ -94,11 +94,17 @@ AC_ARG_WITH(abi,
 	)
 
 AC_ARG_WITH(tune,
-	[AS_HELP_STRING([--with-tune=rocket],
-		[Set the base RISC-V CPU, defaults to rocket])],
-	[],
-	[with_tune=rocket]
+	[AS_HELP_STRING([--with-tune=generic],
+		[Set the base RISC-V CPU, defaults to GCC's default])],
+	[]
 	)
+
+if test "x$with_tune" != "x"; then
+  WITH_TUNE="--with-tune=$with_tune"
+else
+  WITH_TUNE=""
+
+fi
 
 AC_ARG_WITH(isa-spec,
 	[AS_HELP_STRING([--with-isa-spec=20191213],
@@ -134,7 +140,7 @@ AS_IF([test "x$with_abi" = xdefault],
 
 AC_SUBST(WITH_ARCH, --with-arch=$with_arch)
 AC_SUBST(WITH_ABI, --with-abi=$with_abi)
-AC_SUBST(WITH_TUNE, --with-tune=$with_tune)
+AC_SUBST(WITH_TUNE)
 AC_SUBST(WITH_ISA_SPEC, --with-isa-spec=$with_isa_spec)
 AC_SUBST(WITH_SIM, $with_sim)
 AC_SUBST(WITH_LANGUAGES, $with_languages)
