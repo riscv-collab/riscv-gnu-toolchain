@@ -293,6 +293,20 @@ AS_IF([test "x$enable_host_gcc" != xyes],
 	[AC_SUBST(enable_host_gcc, --disable-host-gcc)],
 	[AC_SUBST(enable_host_gcc, --enable-host-gcc)])
 
+AC_ARG_ENABLE(strip,
+	[AS_HELP_STRING([--enable-strip],
+		[Strip debug symbols at install time])],
+	[enable_strip=yes],
+	[]
+	)
+
+AS_IF([test "x$enable_strip" != xyes],
+	[AC_SUBST(install_target, install)],
+	[AC_SUBST(install_target, install-strip)])
+
+AS_IF([test "x$enable_strip" = xyes],
+	[AC_SUBST(enable_strip_qemu, -Dstrip=true)])
+
 AC_DEFUN([AX_ARG_WITH_SRC],
 	[{m4_pushdef([opt_name], with_$1_src)
 	  AC_ARG_WITH($1-src,

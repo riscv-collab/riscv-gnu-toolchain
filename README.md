@@ -108,6 +108,9 @@ To customize the enabled languages, use option `--with-languages=`. For example,
 if you want to enable `c,c++,fortran`, use `./configure --with-languages=c,c++,fortran`.
 This option only takes effect for the GNU toolchain.
 
+The toolchain has an option `--enable-strip` to control strip of host binaries,
+strip is disabled by default.
+
 ### Troubleshooting Build Problems
 
 Builds work best if installing into an empty directory.  If you build a
