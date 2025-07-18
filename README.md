@@ -140,7 +140,10 @@ devtoolset-7 works.
 There are a number of additional options that may be passed to
 configure.  See './configure --help' for more details.
 
-Also you can define extra flags to pass to specific projects: ```BINUTILS_NATIVE_FLAGS_EXTRA, BINUTILS_TARGET_FLAGS_EXTRA, GCC_EXTRA_CONFIGURE_FLAGS, GDB_NATIVE_FLAGS_EXTRA, GDB_TARGET_FLAGS_EXTRA, GLIBC_TARGET_FLAGS_EXTRA, NEWLIB_TARGET_FLAGS_EXTRA, LLVM_EXTRA_CONFIGURE_FLAGS```.
+Also you can define extra flags to pass to specific projects: ```BINUTILS_NATIVE_FLAGS_EXTRA,
+BINUTILS_TARGET_FLAGS_EXTRA, GCC_EXTRA_CONFIGURE_FLAGS, GDB_NATIVE_FLAGS_EXTRA,
+GDB_TARGET_FLAGS_EXTRA, GLIBC_TARGET_FLAGS_EXTRA, NEWLIB_TARGET_FLAGS_EXTRA,
+LLVM_EXTRA_CONFIGURE_FLAGS, QEMU_EXTRA_CONFIGURE_FLAGS```.
 Example: ```GCC_EXTRA_CONFIGURE_FLAGS=--with-gmp=/opt/gmp make linux```
 
 #### Set default ISA spec version
