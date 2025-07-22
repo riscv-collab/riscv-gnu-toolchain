@@ -59,11 +59,6 @@ AC_ARG_ENABLE(debug_info,
 	)
 
 AS_IF([test "x$enable_debug_info" != xyes],
-	[disable_debug_info=yes],
-	[disable_debug_info=no]
-	)
-
-AS_IF([test "x$enable_debug_info" != xyes],
 	[AC_SUBST(debug_info, "")],
 	[AC_SUBST(debug_info, "-g")])
 
