@@ -81,9 +81,13 @@ AC_ARG_WITH(abi,
 AC_ARG_WITH(tune,
 	[AS_HELP_STRING([--with-tune=generic],
 		[Set the base RISC-V CPU, defaults to GCC's default])],
-	[AC_SUBST(WITH_TUNE,--with-tune=$with_tune)],
-	[AC_SUBST(WITH_TUNE,"")]
+	[],
+	[with_tune=no]
 	)
+
+AS_IF([test "x$with_tune" != xno],
+	[AC_SUBST(WITH_TUNE,--with-tune=$with_tune)],
+	[AC_SUBST(WITH_TUNE,"")])
 
 AC_ARG_WITH(isa-spec,
 	[AS_HELP_STRING([--with-isa-spec=20191213],
