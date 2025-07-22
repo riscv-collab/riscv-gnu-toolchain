@@ -177,10 +177,10 @@ AC_ARG_WITH(cmodel,
 	[AS_HELP_STRING([--with-cmodel],
 		[Select the code model to use when building libc and libgcc @<:@--with-cmodel=medlow@:>@])],
 	[],
-	[]
+	[with_cmodel=no]
 	)
 
-AS_IF([test "x$with_cmodel" != x],
+AS_IF([test "x$with_cmodel" != xno],
 	[AC_SUBST(cmodel, -mcmodel=$with_cmodel)],
 	[AC_SUBST(cmodel, -mcmodel=medlow)])
 
