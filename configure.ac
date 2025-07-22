@@ -22,14 +22,14 @@ AC_SUBST([GSED], [$ac_cv_path_GSED])
 
 need_gcc_external_libraries="no"
 AC_CHECK_LIB(gmp, __gmpz_init, ,
-        [need_gcc_external_libraries="yes"])
+	[need_gcc_external_libraries="yes"])
 AC_CHECK_LIB(mpfr, mpfr_init, ,
-        [need_gcc_external_libraries="yes"])
+	[need_gcc_external_libraries="yes"])
 AC_CHECK_LIB(mpc, mpc_init2, ,
-        [need_gcc_external_libraries="yes"])
+	[need_gcc_external_libraries="yes"])
 AS_IF([test x"$need_gcc_external_libraries" != xno],
-      [AC_SUBST(NEED_GCC_EXTERNAL_LIBRARIES,true)],
-      [AC_SUBST(NEED_GCC_EXTERNAL_LIBRARIES,false)])
+	[AC_SUBST(NEED_GCC_EXTERNAL_LIBRARIES,true)],
+	[AC_SUBST(NEED_GCC_EXTERNAL_LIBRARIES,false)])
 
 AC_PATH_PROG([CURL], [curl], [no])
 AC_PATH_PROG([WGET], [wget], [no])
@@ -41,38 +41,38 @@ AS_IF([test x"$CURL" != xno], [FETCHER="$CURL -L -o - --ftp-pasv --retry 10"],
 AC_SUBST(FETCHER)
 
 AC_ARG_ENABLE(linux,
-        [AS_HELP_STRING([--enable-linux],
+	[AS_HELP_STRING([--enable-linux],
 		[set linux as the default make target @<:@--disable-linux@:>@])],
-        [],
-        [enable_linux=no]
-        )
+	[],
+	[enable_linux=no]
+	)
 
 AS_IF([test "x$enable_linux" != xno],
 	[AC_SUBST(default_target, linux)],
 	[AC_SUBST(default_target, newlib)])
 
 AC_ARG_ENABLE(debug_info,
-        [AS_HELP_STRING([--enable-debug-info],
+	[AS_HELP_STRING([--enable-debug-info],
 		[build glibc/musl/newlibc/libgcc with debug information])],
-        [enable_debug_info=yes],
-        [enable_debug_info=no]
-        )
+	[enable_debug_info=yes],
+	[enable_debug_info=no]
+	)
 
 AS_IF([test "x$enable_debug_info" != xyes],
-        [disable_debug_info=yes],
-        [disable_debug_info=no]
-        )
+	[disable_debug_info=yes],
+	[disable_debug_info=no]
+	)
 
 AS_IF([test "x$enable_debug_info" != xyes],
 	[AC_SUBST(debug_info, "")],
 	[AC_SUBST(debug_info, "-g")])
 
 AC_ARG_ENABLE(default-pie,
-        [AS_HELP_STRING([--enable-default-pie],
+	[AS_HELP_STRING([--enable-default-pie],
 		[build linux toolchain with default PIE @<:@--enable-default-pie@:>@])],
-        [],
-        [enable_default_pie=no]
-        )
+	[],
+	[enable_default_pie=no]
+	)
 
 AS_IF([test "x$enable_default_pie" != xyes],
 	[AC_SUBST(enable_default_pie, "--disable-default-pie")],
@@ -121,10 +121,10 @@ AC_ARG_WITH(sim,
 	)
 
 AC_ARG_WITH(languages,
-        [AS_HELP_STRING([--with-languages=],
-                [Sets the enabled languages for GNU toolchain, defaults to c,c++,fortran for Linux/native and Linux/glibc or c,c++ for Bare-metal, Linux/musl and Linux/uClibc])],
-        []
-        ) 
+	[AS_HELP_STRING([--with-languages=],
+		[Sets the enabled languages for GNU toolchain, defaults to c,c++,fortran for Linux/native and Linux/glibc or c,c++ for Bare-metal, Linux/musl and Linux/uClibc])],
+	[]
+	) 
 
 AS_IF([test "x$with_abi" = xdefault],
 	[AS_CASE([$with_arch],
@@ -167,35 +167,35 @@ AC_ARG_WITH(extra-multilib-test,
 	)
 
 AS_IF([test "x$with_multilib_generator" != xno],
-        [AC_SUBST(multilib_gen,"$with_multilib_generator")],
-        [AC_SUBST(multilib_gen,"")])
+	[AC_SUBST(multilib_gen,"$with_multilib_generator")],
+	[AC_SUBST(multilib_gen,"")])
 
 AS_IF([test "x$with_extra_multilib_test" != xno],
-        [AC_SUBST(extra_multilib_test,"$with_extra_multilib_test")],
-        [AC_SUBST(extra_multilib_test,"")])
+	[AC_SUBST(extra_multilib_test,"$with_extra_multilib_test")],
+	[AC_SUBST(extra_multilib_test,"")])
 
 AS_IF([test "x$enable_multilib" != xno || test "x$with_multilib_generator" != xno],
-        [AC_SUBST(multilib_flags,--enable-multilib)],
+	[AC_SUBST(multilib_flags,--enable-multilib)],
 	[AC_SUBST(multilib_flags,--disable-multilib)])
 
 AS_IF([test "x$enable_multilib" != xno],
-        [AC_SUBST(glibc_multilib_names,"rv32imac-ilp32 rv32gc-ilp32d rv64imac-lp64 rv64gc-lp64d rv64gcv-lp64d")],
-        [AC_SUBST(glibc_multilib_names,"$with_arch-$with_abi")])
+	[AC_SUBST(glibc_multilib_names,"rv32imac-ilp32 rv32gc-ilp32d rv64imac-lp64 rv64gc-lp64d rv64gcv-lp64d")],
+	[AC_SUBST(glibc_multilib_names,"$with_arch-$with_abi")])
 
 AS_IF([test "x$enable_multilib" != xno],
-        [AC_SUBST(newlib_multilib_names,"rv32i-ilp32 rv32iac-ilp32 rv32im-ilp32 rv32imac-ilp32 rv32imafc-ilp32f rv64imac-lp64 rv64gc-lp64d")],
-        [AC_SUBST(newlib_multilib_names,"$with_arch-$with_abi")])
+	[AC_SUBST(newlib_multilib_names,"rv32i-ilp32 rv32iac-ilp32 rv32im-ilp32 rv32imac-ilp32 rv32imafc-ilp32f rv64imac-lp64 rv64gc-lp64d")],
+	[AC_SUBST(newlib_multilib_names,"$with_arch-$with_abi")])
 
 AS_IF([test "x$enable_multilib" != xno],
-        [AC_SUBST(musl_multilib_names,"rv32imac-ilp32 rv32gc-ilp32d rv64imac-lp64 rv64gc-lp64d")],
-        [AC_SUBST(musl_multilib_names,"$with_arch-$with_abi")])
+	[AC_SUBST(musl_multilib_names,"rv32imac-ilp32 rv32gc-ilp32d rv64imac-lp64 rv64gc-lp64d")],
+	[AC_SUBST(musl_multilib_names,"$with_arch-$with_abi")])
 
 AC_ARG_ENABLE(gcc-checking,
-        [AS_HELP_STRING([--enable-gcc-checking],
+	[AS_HELP_STRING([--enable-gcc-checking],
 		[Enable gcc internal checking, it will make gcc very slow, only enable it when developing gcc @<:@--disable-gcc-checking@:>@])],
-        [],
-        []
-        )
+	[],
+	[]
+	)
 AS_IF([test "x$enable_gcc_checking" != x],
 	[AC_SUBST(gcc_checking, --enable-checking=$enable_gcc_checking)],
 	[AC_SUBST(gcc_checking, "")])
@@ -231,7 +231,7 @@ AC_CONFIG_FILES([scripts/wrapper/sed/sed], [chmod +x scripts/wrapper/sed/sed])
 
 AC_ARG_WITH(host,
 	[AS_HELP_STRING([--with-host=x86_64-w64-mingw32],
-			[Sets the host for the tools, you probably want nothing])],
+		[Sets the host for the tools, you probably want nothing])],
 	[],
 	[with_host=default]
 	)
