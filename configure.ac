@@ -42,37 +42,27 @@ AC_SUBST(FETCHER)
 
 AC_ARG_ENABLE(linux,
 	[AS_HELP_STRING([--enable-linux],
-		[set linux as the default make target @<:@--disable-linux@:>@])],
-	[],
-	[enable_linux=no]
-	)
+		[set linux as the default make target @<:@--disable-linux@:>@])])
 
-AS_IF([test "x$enable_linux" != xno],
+AS_IF([test "x$enable_linux" = xyes],
 	[AC_SUBST(default_target, linux)],
 	[AC_SUBST(default_target, newlib)])
 
 AC_ARG_ENABLE(debug_info,
 	[AS_HELP_STRING([--enable-debug-info],
-		[build glibc/musl/newlibc/libgcc with debug information])],
-	[enable_debug_info=yes],
-	[enable_debug_info=no]
-	)
+		[build glibc/musl/newlibc/libgcc with debug information])])
 
-AS_IF([test "x$enable_debug_info" != xyes],
-	[AC_SUBST(debug_info, "")],
-	[AC_SUBST(debug_info, "-g")])
+AS_IF([test "x$enable_debug_info" = xyes],
+	[AC_SUBST(debug_info, "-g")],
+	[AC_SUBST(debug_info, "")])
 
 AC_ARG_ENABLE(default-pie,
 	[AS_HELP_STRING([--enable-default-pie],
-		[build linux toolchain with default PIE @<:@--enable-default-pie@:>@])],
-	[],
-	[enable_default_pie=no]
-	)
+		[build linux toolchain with default PIE @<:@--enable-default-pie@:>@])])
 
-AS_IF([test "x$enable_default_pie" != xyes],
-	[AC_SUBST(enable_default_pie, "--disable-default-pie")],
-	[AC_SUBST(enable_default_pie, "--enable-default-pie")])
-
+AS_IF([test "x$enable_default_pie" = xyes],
+	[AC_SUBST(enable_default_pie, "--enable-default-pie")],
+	[AC_SUBST(enable_default_pie, "--disable-default-pie")])
 
 AC_ARG_WITH(arch,
 	[AS_HELP_STRING([--with-arch=rv64gc],
@@ -142,10 +132,7 @@ AC_SUBST(WITH_LANGUAGES, $with_languages)
 
 AC_ARG_ENABLE(multilib,
 	[AS_HELP_STRING([--enable-multilib],
-		[build both RV32 and RV64 runtime libraries @<:@--disable-multilib@:>@])],
-	[],
-	[enable_multilib=no]
-	)
+		[build both RV32 and RV64 runtime libraries @<:@--disable-multilib@:>@])])
 
 AC_ARG_WITH(multilib-generator,
 	[AS_HELP_STRING([--with-multilib-generator],
@@ -169,30 +156,28 @@ AS_IF([test "x$with_extra_multilib_test" != xno],
 	[AC_SUBST(extra_multilib_test,"$with_extra_multilib_test")],
 	[AC_SUBST(extra_multilib_test,"")])
 
-AS_IF([test "x$enable_multilib" != xno || test "x$with_multilib_generator" != xno],
+AS_IF([test "x$enable_multilib" = xyes || test "x$with_multilib_generator" != xno],
 	[AC_SUBST(multilib_flags,--enable-multilib)],
 	[AC_SUBST(multilib_flags,--disable-multilib)])
 
-AS_IF([test "x$enable_multilib" != xno],
+AS_IF([test "x$enable_multilib" = xyes],
 	[AC_SUBST(glibc_multilib_names,"rv32imac-ilp32 rv32gc-ilp32d rv64imac-lp64 rv64gc-lp64d rv64gcv-lp64d")],
 	[AC_SUBST(glibc_multilib_names,"$with_arch-$with_abi")])
 
-AS_IF([test "x$enable_multilib" != xno],
+AS_IF([test "x$enable_multilib" = xyes],
 	[AC_SUBST(newlib_multilib_names,"rv32i-ilp32 rv32iac-ilp32 rv32im-ilp32 rv32imac-ilp32 rv32imafc-ilp32f rv64imac-lp64 rv64gc-lp64d")],
 	[AC_SUBST(newlib_multilib_names,"$with_arch-$with_abi")])
 
-AS_IF([test "x$enable_multilib" != xno],
+AS_IF([test "x$enable_multilib" = xyes],
 	[AC_SUBST(musl_multilib_names,"rv32imac-ilp32 rv32gc-ilp32d rv64imac-lp64 rv64gc-lp64d")],
 	[AC_SUBST(musl_multilib_names,"$with_arch-$with_abi")])
 
 AC_ARG_ENABLE(gcc-checking,
 	[AS_HELP_STRING([--enable-gcc-checking],
-		[Enable gcc internal checking, it will make gcc very slow, only enable it when developing gcc @<:@--disable-gcc-checking@:>@])],
-	[],
-	[]
-	)
-AS_IF([test "x$enable_gcc_checking" != x],
-	[AC_SUBST(gcc_checking, --enable-checking=$enable_gcc_checking)],
+		[Enable gcc internal checking, it will make gcc very slow, only enable it when developing gcc @<:@--disable-gcc-checking@:>@])])
+
+AS_IF([test "x$enable_gcc_checking" = xyes],
+	[AC_SUBST(gcc_checking, --enable-checking)],
 	[AC_SUBST(gcc_checking, "")])
 
 AC_ARG_WITH(cmodel,
@@ -201,6 +186,7 @@ AC_ARG_WITH(cmodel,
 	[],
 	[]
 	)
+
 AS_IF([test "x$with_cmodel" != x],
 	[AC_SUBST(cmodel, -mcmodel=$with_cmodel)],
 	[AC_SUBST(cmodel, -mcmodel=medlow)])
@@ -258,10 +244,7 @@ AS_IF([test "x$with_guile" != xdefault],
 
 AC_ARG_ENABLE(gdb,
 	[AS_HELP_STRING([--disable-gdb],
-		[Don't build GDB, as it's not upstream])],
-	[],
-	[enable_gdb=yes]
-	)
+		[Don't build GDB, as it's not upstream])])
 
 AS_IF([test "x$enable_gdb" != xno],
 	[AC_SUBST(enable_gdb, --enable-gdb)],
@@ -269,35 +252,27 @@ AS_IF([test "x$enable_gdb" != xno],
 
 AC_ARG_ENABLE(llvm,
 	[AS_HELP_STRING([--enable-llvm],
-		[Build LLVM (clang)])],
-	[enable_llvm=yes],
-	[]
-	)
+		[Build LLVM (clang)])])
 
-AS_IF([test "x$enable_llvm" != xyes],
-	[AC_SUBST(enable_llvm, --disable-llvm)],
-	[AC_SUBST(enable_llvm, --enable-llvm)])
+AS_IF([test "x$enable_llvm" = xyes],
+	[AC_SUBST(enable_llvm, --enable-llvm)],
+	[AC_SUBST(enable_llvm, --disable-llvm)])
 
 AC_ARG_ENABLE(host-gcc,
 	[AS_HELP_STRING([--enable-host-gcc],
-		[Build host GCC to build cross toolchain])],
-	[enable_host_gcc=yes],
-	[])
+		[Build host GCC to build cross toolchain])])
 
-AS_IF([test "x$enable_host_gcc" != xyes],
-	[AC_SUBST(enable_host_gcc, --disable-host-gcc)],
-	[AC_SUBST(enable_host_gcc, --enable-host-gcc)])
+AS_IF([test "x$enable_host_gcc" = xyes],
+	[AC_SUBST(enable_host_gcc, --enable-host-gcc)],
+	[AC_SUBST(enable_host_gcc, --disable-host-gcc)])
 
 AC_ARG_ENABLE(strip,
 	[AS_HELP_STRING([--enable-strip],
-		[Strip debug symbols at install time])],
-	[enable_strip=yes],
-	[]
-	)
+		[Strip debug symbols at install time])])
 
-AS_IF([test "x$enable_strip" != xyes],
-	[AC_SUBST(install_target, install)],
-	[AC_SUBST(install_target, install-strip)])
+AS_IF([test "x$enable_strip" = xyes],
+	[AC_SUBST(install_target, install-strip)],
+	[AC_SUBST(install_target, install)])
 
 AS_IF([test "x$enable_strip" = xyes],
 	[AC_SUBST(enable_strip_qemu, -Dstrip=true)])
@@ -340,23 +315,17 @@ AS_IF([test "x$with_linux_headers_src" != xdefault],
 
 AC_ARG_ENABLE(libsanitizer,
 	[AS_HELP_STRING([--enable-libsanitizer],
-		[Build libsanitizer, which only supports rv64])],
-	[],
-	[enable_libsanitizer=no]
-	)
+		[Build libsanitizer, which only supports rv64])])
 
-AS_IF([test "x$enable_libsanitizer" != xno],
+AS_IF([test "x$enable_libsanitizer" = xyes],
 	[AC_SUBST(enable_libsanitizer, --enable-libsanitizer)],
 	[AC_SUBST(enable_libsanitizer, --disable-libsanitizer)])
 
 AC_ARG_ENABLE(qemu_system,
 	[AS_HELP_STRING([--enable-qemu-system],
-		[Build qemu with system-mode emulation])],
-	[],
-	[enable_qemu_system=no]
-	)
+		[Build qemu with system-mode emulation])])
 
-AS_IF([test "x$enable_qemu_system" != xno],
+AS_IF([test "x$enable_qemu_system" = xyes],
 	[AC_SUBST(qemu_targets, [riscv64-linux-user,riscv32-linux-user,riscv64-softmmu,riscv32-softmmu])],
 	[AC_SUBST(qemu_targets, [riscv64-linux-user,riscv32-linux-user])])
 
