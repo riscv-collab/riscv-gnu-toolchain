@@ -2,33 +2,22 @@
 report:
 
 # The list of target tuples that we want to test.
-TARGETS  =
-TARGETS += newlib-rv32i-ilp32-medlow
-TARGETS += newlib-rv32im-ilp32-medlow
-TARGETS += newlib-rv32iac-ilp32-medlow
-TARGETS += newlib-rv32imac-ilp32-medlow
-TARGETS += newlib-rv32imafc-ilp32f-medlow
-TARGETS += newlib-rv64imac-lp64-medlow
-TARGETS += newlib-rv64imafdc-lp64d-medlow
-TARGETS += linux-rv32imac-ilp32-medlow
-TARGETS += linux-rv32imafdc-ilp32-medlow
-TARGETS += linux-rv32imafdc-ilp32d-medlow
-TARGETS += linux-rv64imac-lp64-medlow
-TARGETS += linux-rv64imafdc-lp64-medlow
-TARGETS += linux-rv64imafdc-lp64d-medlow
-TARGETS += newlib-rv32i-ilp32-medany
-TARGETS += newlib-rv32im-ilp32-medany
-TARGETS += newlib-rv32iac-ilp32-medany
-TARGETS += newlib-rv32imac-ilp32-medany
-TARGETS += newlib-rv32imafc-ilp32f-medany
-TARGETS += newlib-rv64imac-lp64-medany
-TARGETS += newlib-rv64imafdc-lp64d-medany
-TARGETS += linux-rv32imac-ilp32-medany
-TARGETS += linux-rv32imafdc-ilp32-medany
-TARGETS += linux-rv32imafdc-ilp32d-medany
-TARGETS += linux-rv64imac-lp64-medany
-TARGETS += linux-rv64imafdc-lp64-medany
-TARGETS += linux-rv64imafdc-lp64d-medany
+TARGET_BASES = \
+	newlib-rv32i-ilp32      \
+	newlib-rv32im-ilp32     \
+	newlib-rv32iac-ilp32    \
+	newlib-rv32imac-ilp32   \
+	newlib-rv32imafc-ilp32f \
+	newlib-rv64imac-lp64    \
+	newlib-rv64imafdc-lp64d \
+	linux-rv32imac-ilp32    \
+	linux-rv32imafdc-ilp32  \
+	linux-rv32imafdc-ilp32d \
+	linux-rv64imac-lp64     \
+	linux-rv64imafdc-lp64   \
+	linux-rv64imafdc-lp64d
+TARGET_CODE_MODELS = medlow medany
+TARGETS ?= $(foreach CODE_MODEL,$(TARGET_CODE_MODELS), $(addsuffix -$(CODE_MODEL),$(TARGET_BASES)))
 
 # This is the link between the report targets and the actual testsuite
 # build/test runs.  It's setup with a level of indirection here to make sure
