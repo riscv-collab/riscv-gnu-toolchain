@@ -89,12 +89,15 @@ AS_IF([test "x$with_tune" != xno],
 	[AC_SUBST(WITH_TUNE,--with-tune=$with_tune)],
 	[AC_SUBST(WITH_TUNE,"")])
 
-AC_ARG_WITH(isa-spec,
-	[AS_HELP_STRING([--with-isa-spec=20191213],
-		[Set the default ISA spec version, default to 20191213, available options: 2.2, 20190608, 20191213])],
+AC_ARG_WITH(profiles,
+	[AS_HELP_STRING([--with-profiles=rva23u64],
+		[Set the default RISC-V Profiles, available options: rvi20u64, rvi20u32, rva20u64, rva22u64, rva23s64, rvb23u64, rvb23s64])],
 	[],
-	[with_isa_spec=20191213]
+	[with_profiles=rva23u64]
 	)
+
+AS_IF([test "x$with_profiles" != x],
+  [with_arch=$with_profiles])
 
 AC_ARG_WITH(sim,
 	[AS_HELP_STRING([--with-sim=qemu],
@@ -111,7 +114,7 @@ AC_ARG_WITH(languages,
 
 AS_IF([test "x$with_abi" = xdefault],
 	[AS_CASE([$with_arch],
-		[*rv64g* | *rv64*d*], [with_abi=lp64d],
+		[*rv64g* | *rv64*d* | *rva*64* | *rvb*64* | *rvi*64*], [with_abi=lp64d],
 		[*rv64*f*], [with_abi=lp64f],
 		[*rv64*], [with_abi=lp64],
 		[*rv32e*], [with_abi=ilp32e],
@@ -123,7 +126,7 @@ AS_IF([test "x$with_abi" = xdefault],
 
 AC_SUBST(WITH_ARCH, --with-arch=$with_arch)
 AC_SUBST(WITH_ABI, --with-abi=$with_abi)
-AC_SUBST(WITH_ISA_SPEC, --with-isa-spec=$with_isa_spec)
+AC_SUBST(WITH_PROFILES, --with-profile=$with_profiles)
 AC_SUBST(WITH_SIM, $with_sim)
 AC_SUBST(WITH_LANGUAGES, $with_languages)
 
