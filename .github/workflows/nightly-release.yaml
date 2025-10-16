@@ -2,7 +2,7 @@ name: Nightly Release
 
 on:
   schedule:
-    - cron:  '0 0 * * ?'
+    - cron:  '0 0 * * *'
 
 
 jobs:
@@ -12,28 +12,37 @@ jobs:
     outputs:
       stale: ${{ steps.activity_check.outputs.stale }}
     steps:
+      - uses: actions/checkout@v4
       - name:  Activity check
         id: activity_check
         run:   |
-          curl -sL https://api.github.com/repos/$GITHUB_REPOSITORY/commits | jq -r '[.[]][0]' > $HOME/commit.json
-          date="$(jq -r '.commit.committer.date' $HOME/commit.json)"
-          timestamp=$(date --utc -d "$date" +%s)
-          author="$(jq -r '.commit.author.name' $HOME/commit.json)"
-          url="$(jq -r '.html_url' $HOME/commit.json)"
-          hours=$(( ( $(date --utc +%s) - $timestamp ) / 3600 ))
-          rm -f $HOME/commit.json
-          echo "Latest Repository activity : $timestamp $author $url"
+          # get the author and timestamp of the latest commit
+          AUTHOR=$(git log -1 --pretty=format:'%an')
+          # Get the commit date in ISO 8601 format (UTC)
+          COMMIT_DATE=$(git log -1 --pretty=format:'%cI')
+          echo "Commit date: $COMMIT_DATE"
+          # Convert both dates to epoch seconds
+          COMMIT_EPOCH=$(date -d "$COMMIT_DATE" +%s)
+          NOW_EPOCH=$(date -u +%s)
+
+          # Calculate difference in seconds
+          AGE_SECONDS=$(( NOW_EPOCH - COMMIT_EPOCH ))
+
+          # 86400 seconds = 24 hours
+          echo "Latest Repository activity : $COMMIT_DATE $AUTHOR, $AGE_SECONDS seconds ago"
 
           STALE=false
           if [ "${{ github.event_name }}" == "repository_dispatch" ]; then
               echo "[WARNING] Ignoring activity limits : workflow triggered manually"
+              STALE=false
+          elif [ "$AGE_SECONDS" -gt 86400 ]; then
+            echo "[ERROR] Repository not updated : event<${{ github.event_name }}> not allowed to modify stale repository"
+            echo "Commit is stale (older than 24 hours)"
+            STALE=true
           else
-              echo Repository active last $hours hours ago
-              if [ $hours -ge 24 ]; then
-                echo "[ERROR] Repository not updated : event<${{ github.event_name }}> not allowed to modify stale repository"
-                STALE=true
-              fi
-          fi
+            echo "Commit is fresh (within last 24 hours)"
+            STALE=false
+          fi          
           echo "stale=$STALE" >> $GITHUB_OUTPUT
 
           if [ "$STALE" == "true" ]; then
@@ -41,180 +50,51 @@ jobs:
           fi
         shell: bash
 
-
+  
   build:
-    needs: activity-check
+    needs: [activity-check]
     if: needs.activity-check.outputs.stale != 'true'
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os:       [ubuntu-22.04, ubuntu-24.04]
-        mode:     [newlib, linux, musl, uclibc]
-        target:   [rv32gc-ilp32d, rv64gc-lp64d]
-        compiler: [gcc, llvm]
-        exclude:
-          - mode: musl
-            compiler: llvm
-
-          - mode: uclibc
-            compiler: llvm
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Remove unneeded frameworks to recover disk space
-        run: sudo ./.github/cleanup-rootfs.sh
-
-      - name: install apt dependencies
-        run: sudo ./.github/setup-apt.sh
-
-      - name: build toolchain
-        run: |
-          TARGET_TUPLE=($(echo ${{ matrix.target }} | tr "-" "\n"))
-          BUILD_TOOLCHAIN="./configure --prefix=/mnt/riscv --with-arch=${TARGET_TUPLE[0]} --with-abi=${TARGET_TUPLE[1]}"
-          if [ "${{ matrix.compiler }}" == "llvm" ]; then # build toolchain with llvm
-            $BUILD_TOOLCHAIN --enable-llvm
-          else
-            $BUILD_TOOLCHAIN
-          fi
-          sudo mkdir /mnt/riscv
-          sudo chown runner:runner /mnt/riscv
-          make -j $(nproc) ${{ matrix.mode }}
-
-      - name: tarball build
-        run: |
-          du -s -h /mnt/riscv
-          ./.github/dedup-dir.sh /mnt/riscv/
-          XZ_OPT="-e -T0" tar cJvf riscv.tar.xz -C /mnt/ riscv/
-
-      - name: generate prebuilt toolchain name
-        id:   toolchain-name-generator
-        run: |
-          if [[ "${{ matrix.target }}" == *"32"* ]]; then BITS=32; else BITS=64; fi
-          case "${{ matrix.mode }}" in
-            "linux")
-              MODE="glibc";;
-            "musl")
-              MODE="musl";;
-            "uclibc")
-              MODE="uclibc-ng";;
-            *)
-              MODE="elf";;
-          esac
-          echo "TOOLCHAIN_NAME=riscv$BITS-$MODE-${{ matrix.os }}-${{ matrix.compiler }}-nightly" >> $GITHUB_OUTPUT
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.toolchain-name-generator.outputs.TOOLCHAIN_NAME }}
-          path: riscv.tar.xz
-
+    uses: ./.github/workflows/build-reusable.yaml
+    with:
+      artifact-name: nightly
 
   create-release:
-    needs: build
+    needs: [build]
     runs-on: ubuntu-latest
     outputs:
       upload_url: ${{ steps.create_release.outputs.upload_url }}
-      asset_matrix: ${{ steps.asset_names.outputs.asset_matrix }}
       datestamp: ${{ env.DATESTAMP }}
+    env:
+      ARTIFACTS_DIR: /mnt/artifacts/
     steps:
-      - name: Remove unneeded frameworks to recover disk space
-        run: |
-          echo "-- Before --"
-          df -h
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          echo "-- After --"
-          df -h
       - name:  Run Configuration Commands
+        id: metadata
         run: |
           DATESTAMP="$(date --utc '+%Y.%m.%d')"
           echo "Version: ${DATESTAMP}-nightly"
 
-          # Setup Artifacts Directory
-          ARTIFACTS_DIR="/mnt/artifacts/"
-          sudo mkdir -p $ARTIFACTS_DIR
-          sudo chown runner:runner $ARTIFACTS_DIR
-
           # Setup environment variables
-          echo "DATESTAMP=${DATESTAMP}" >> $GITHUB_ENV
-          echo "DATEWORD=$(date --utc '+%B %d, %Y')" >> $GITHUB_ENV
-          echo "ARTIFACTS_DIR=${ARTIFACTS_DIR}" >> $GITHUB_ENV
+          echo "datestamp=${DATESTAMP}" >> $GITHUB_OUTPUT
+          echo "dateword=$(date --utc '+%B %d, %Y')" >> $GITHUB_OUTPUT
         shell: bash
-
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ env.DATESTAMP }}
-          release_name: "Nightly: ${{ env.DATEWORD }}"
-          body: |
-            **Automated Nightly Release**
-            ${{ env.DATESTAMP }}-nightly
-          draft: false
-          prerelease: true
-
       - name: Download Built Artifacts
         uses: actions/download-artifact@v4
         with:
           path: ${{ env.ARTIFACTS_DIR }}
-
-      # IMPORTANT: Each artifact must only have one file
-      - name: Designate Asset Names
-        id: asset_names
+      - name: List downloaded artifacts
         run: |
-          ASSET_MATRIX=$(
-            find ${ARTIFACTS_DIR} -mindepth 2 -maxdepth 2 -type f |
-            awk '{
-              fs_n=split($0, fs, "/")   # Split file paths
-              art_name=fs[fs_n-1]       # Get artifact name
-              fname=fs[fs_n]            # Get file name from the artifact
-              ext = substr(fs[fs_n], index(fs[fs_n],"."))   # File Extension
+          echo "Contents of ${{ env.ARTIFACTS_DIR }}"
+          ls -R ${{ env.ARTIFACTS_DIR }}
 
-              print art_name ":" fname ":" ext # format <artifact name : artifact file : file extension>
-            }' |
-            jq -R -s -c 'split("\n") | .[:-1] | {   # Split by newlines (remove last entry)
-              include: [
-                .[] | split(":") | {    # Put it in JSON format
-                  artifact: .[0],
-                  file: .[1],
-                  extension: .[2]
-                }
-              ]
-            }'
-          )
-
-          echo "asset_matrix=${ASSET_MATRIX}" >> $GITHUB_OUTPUT
-        shell: bash
-
-
-  upload-assets:
-    needs: create-release
-    runs-on: ubuntu-latest
-    strategy:
-      matrix: ${{ fromJson( needs.create-release.outputs.asset_matrix ) }}
-    name: upload ${{ matrix.artifact }}
-    steps:
-
-      - name: Remove unneeded frameworks to recover disk space
-        run: |
-          echo "-- Before --"
-          df -h
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          echo "-- After --"
-          df -h
-
-      - uses: actions/download-artifact@v4
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
         with:
-          name: ${{ matrix.artifact }}
-
-      - uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ${{ matrix.file }}
-          asset_name: ${{ matrix.artifact }}-${{ needs.create-release.outputs.datestamp }}-nightly${{ matrix.extension }}
-          asset_content_type: application/x-xz
+          tag_name: ${{ steps.metadata.outputs.datestamp }}
+          name: "Nightly: ${{ steps.metadata.outputs.dateword }}"
+          body: |
+            **Automated Nightly Release**
+            ${{ steps.metadata.outputs.datestamp }}-nightly
+          draft: false
+          files: |
+            ${{ env.ARTIFACTS_DIR }}/*

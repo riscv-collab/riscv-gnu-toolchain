@@ -9,231 +9,27 @@ on:
     branches:
       - master
 
-env:
-  submodule_paths: |
-    binutils
-    dejagnu
-    gcc
-    gdb
-    glibc
-    llvm
-    musl
-    newlib
-    pk
-    qemu
-    spike
-    uclibc-ng
-    .git/modules
-
 jobs:
-  submodule_cache:
-    name: Initialize submodule cache
-    runs-on: ubuntu-latest
-    outputs:
-      key: ${{ steps.keygen.outputs.smcache_key }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Remove unneeded frameworks to recover disk space
-        run: sudo ./.github/cleanup-rootfs.sh
-
-      - name: Generate submodule cache key
-        id: keygen
-        run: echo "smcache_key=smcache-$(printf $(git submodule | sha1sum))" >> $GITHUB_OUTPUT
-
-      - name: Setup submodule cache
-        id: smcache
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.submodule_paths }}
-          key: ${{ steps.keygen.outputs.smcache_key }}
-
-      - name: Checkout required submodules
-        if: steps.smcache.outputs.cache-hit != 'true'
-        run: git submodule update --init -j $(nproc) --depth 1 $(echo ${submodule_paths} | sed '$d' | tr '\n' ' ')
-
-      - name: Storage size optimization
-        if: steps.smcache.outputs.cache-hit != 'true'
-        run: |
-          git submodule foreach 'git maintenance run'
-
   build:
-    runs-on: ${{ matrix.os }}
-    needs: [submodule_cache]
-    env:
-      smcache_key: ${{ needs.submodule_cache.outputs.key }}
-    strategy:
-      matrix:
-        os:     [ubuntu-22.04, ubuntu-24.04]
-        mode:   [newlib, linux, musl, uclibc]
-        target: [rv32gc-ilp32d, rv64gc-lp64d]
-        compiler: [gcc, llvm]
-        exclude:
-          - mode: musl
-            compiler: llvm
-          - mode: uclibc
-            compiler: llvm
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Remove unneeded frameworks to recover disk space
-        run: sudo ./.github/cleanup-rootfs.sh
-
-      - name: install dependencies
-        run: sudo ./.github/setup-apt.sh
-
-      - name: Load submodule cache
-        uses: actions/cache/restore@v4
-        with:
-          path: ${{ env.submodule_paths }}
-          key: ${{ env.smcache_key }}
-
-      - name: build toolchain
-        run: |
-          TARGET_TUPLE=($(echo ${{ matrix.target }} | tr "-" "\n"))
-          BUILD_TOOLCHAIN="./configure --prefix=/mnt/riscv --with-arch=${TARGET_TUPLE[0]} --with-abi=${TARGET_TUPLE[1]}"
-          if [ "${{ matrix.compiler }}" == "llvm" ]; then # build toolchain with llvm
-            $BUILD_TOOLCHAIN --enable-llvm
-          else
-            $BUILD_TOOLCHAIN
-          fi
-          sudo mkdir /mnt/riscv
-          sudo chown runner:runner /mnt/riscv
-          make -j $(nproc) ${{ matrix.mode }}
-
-      - name: tarball build
-        run: |
-          du -s -h /mnt/riscv
-          ./.github/dedup-dir.sh /mnt/riscv/
-          XZ_OPT="-e -T0" tar cJvf riscv.tar.xz -C /mnt/ riscv/
-
-      - name: make report
-        if: |
-          matrix.os == 'ubuntu-24.04'
-          && (matrix.mode == 'linux' || matrix.mode == 'newlib')
-          && matrix.compiler == 'gcc'
-        run: |
-          make report-${{ matrix.mode }} -j $(nproc)
-
-      - name: generate prebuilt toolchain name
-        id:   toolchain-name-generator
-        run: |
-          if [[ "${{ matrix.target }}" == *"32"* ]]; then BITS=32; else BITS=64; fi
-          case "${{ matrix.mode }}" in
-            "linux")
-              MODE="glibc";;
-            "musl")
-              MODE="musl";;
-            "uclibc")
-              MODE="uclibc-ng";;
-            *)
-              MODE="elf";;
-          esac
-          echo "TOOLCHAIN_NAME=riscv$BITS-$MODE-${{ matrix.os }}-${{ matrix.compiler }}-nightly" >> $GITHUB_OUTPUT
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.toolchain-name-generator.outputs.TOOLCHAIN_NAME }}
-          path: riscv.tar.xz
+    uses: ./.github/workflows/build-reusable.yaml
+    with:
+      artifact-name: build
 
   test-sim:
-    runs-on: ${{ matrix.os }}
-    needs: [submodule_cache]
-    env:
-      smcache_key: ${{ needs.submodule_cache.outputs.key }}
-    strategy:
-      matrix:
-        os:     [ubuntu-24.04]
-        mode:   [newlib]
-        target: [rv64gc-lp64d]
-        sim:    [spike]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Remove unneeded frameworks to recover disk space
-        run: sudo ./.github/cleanup-rootfs.sh
-
-      - name: install dependencies
-        run: sudo ./.github/setup-apt.sh
-
-      - name: Load submodule cache
-        uses: actions/cache/restore@v4
-        with:
-          path: ${{ env.submodule_paths }}
-          key: ${{ env.smcache_key }}
-
-      - name: build toolchain
-        run: |
-          TARGET_TUPLE=($(echo ${{ matrix.target }} | tr "-" "\n"))
-          ./configure --prefix=/mnt/riscv --with-arch=${TARGET_TUPLE[0]} --with-abi=${TARGET_TUPLE[1]} --with-sim=${{ matrix.sim }}
-          sudo mkdir /mnt/riscv
-          sudo chown runner:runner /mnt/riscv
-          make -j $(nproc) ${{ matrix.mode }}
-
-      - name: make report
-        run: make report-${{ matrix.mode }} -j $(nproc)
+    uses: ./.github/workflows/build-reusable.yaml
+    with:
+      artifact-name: sim
+      os: '["ubuntu-24.04"]'
+      mode: '["newlib"]'
+      target: '["rv64gc-lp64d"]'
+      sim: '["spike"]'
 
   build-multilib:
     if: ${{ false }} # Disable until multilib errors are triaged
-    runs-on: ${{ matrix.os }}
-    needs: [submodule_cache]
-    env:
-      smcache_key: ${{ needs.submodule_cache.outputs.key }}
-    strategy:
-      matrix:
-        os:     [ubuntu-24.04]
-        mode:   [newlib, linux]
-        target: [rv64gc-lp64d]
-    steps:
-      - uses: actions/checkout@v4
+    uses: ./.github/workflows/build-reusable.yaml
+    with:
+      artifact-name: multilib
+      os: '["ubuntu-24.04"]'
+      mode: '["newlib","linux"]'
+      target: '["rv64gc-lp64d"]'
 
-      - name: Remove unneeded frameworks to recover disk space
-        run: sudo ./.github/cleanup-rootfs.sh
-
-      - name: install dependencies
-        run: sudo ./.github/setup-apt.sh
-
-      - name: Load submodule cache
-        uses: actions/cache/restore@v4
-        with:
-          path: ${{ env.submodule_paths }}
-          key: ${{ env.smcache_key }}
-
-      - name: build toolchain
-        run: |
-          TARGET_TUPLE=($(echo ${{ matrix.target }} | tr "-" "\n"))
-          ./configure --prefix=/mnt/riscv --with-arch=${TARGET_TUPLE[0]} --with-abi=${TARGET_TUPLE[1]} --enable-multilib
-          sudo mkdir /mnt/riscv
-          sudo chown runner:runner /mnt/riscv
-          make -j $(nproc) ${{ matrix.mode }}
-
-      - name: tarball build
-        run: |
-          du -s -h /mnt/riscv
-          ./.github/dedup-dir.sh /mnt/riscv/
-          XZ_OPT="-e -T0" tar cJvf riscv.tar.xz -C /mnt/ riscv/
-
-      - name: make report
-        run: |
-          make report-${{ matrix.mode }} -j $(nproc)
-
-      - name: generate prebuilt toolchain name
-        id:   toolchain-name-generator
-        run: |
-          if [[ "${{ matrix.target }}" == *"32"* ]]; then BITS=32; else BITS=64; fi
-          case "${{ matrix.mode }}" in
-            "linux")
-              MODE="glibc";;
-            "musl")
-              MODE="musl";;
-            "uclibc")
-              MODE="uclibc-ng";;
-            *)
-              MODE="elf";;
-          esac
-          echo "TOOLCHAIN_NAME=riscv$BITS-$MODE-${{ matrix.os }}-multilib-nightly" >> $GITHUB_OUTPUT
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.toolchain-name-generator.outputs.TOOLCHAIN_NAME }}
-          path: riscv.tar.xz
