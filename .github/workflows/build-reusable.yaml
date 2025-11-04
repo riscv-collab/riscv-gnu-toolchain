@@ -30,6 +30,10 @@ on:
         description: "Languages list"
         type: string
         default: '[""]'
+      strip:
+        description: "Options to build unstripped, stripped or both, must be one of 'unstripped', 'stripped', 'both'"
+        type: string
+        default: 'unstripped'
       report:
         description: "Generate build report"
         type: boolean
@@ -69,10 +73,23 @@ jobs:
           echo "C model list:   ${{ inputs.cmodel }}"
           echo "Report:         ${{ inputs.report }}"
           echo "Languages list: ${{ inputs.languages }}"
+          echo "Strip:          ${{ inputs.strip }}"
           echo "Simulator:      ${{ inputs.sim }}"
+
+  validate_inputs:
+    name: Validate inputs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check strip input
+        run: |
+          if [[ "${{ inputs.strip }}" != "unstripped" && "${{ inputs.strip }}" != "stripped" && "${{ inputs.strip }}" != "both" ]]; then
+            echo "Invalid strip option: ${{ inputs.strip }}. Must be one of 'unstripped', 'stripped', 'both'."
+            exit 1
+          fi
 
   submodule_cache:
     name: Initialize submodule cache
+    needs: [validate_inputs]
     runs-on: ubuntu-latest
     outputs:
       key: ${{ steps.keygen.outputs.smcache_key }}
@@ -104,7 +121,7 @@ jobs:
 
   build:
     runs-on: ${{ matrix.os }}
-    needs: [submodule_cache]
+    needs: [submodule_cache,validate_inputs]
     env:
       smcache_key: ${{ needs.submodule_cache.outputs.key }}
     strategy:
@@ -158,17 +175,13 @@ jobs:
           if [ -n "${{ matrix.languages }}" ]; then
             ARGS="$ARGS --enable-languages=${{ matrix.languages }}"
           fi
+          if [ "${{ matrix.strip }}" = "true" ]; then
+            ARGS="$ARGS --enable-strip"
+          fi
           $BUILD_TOOLCHAIN $ARGS
           sudo mkdir /mnt/riscv
           sudo chown runner:runner /mnt/riscv
           make -j $(nproc) ${{ matrix.mode }}
-
-      - name: tarball build
-        run: |
-          du -s -h /mnt/riscv
-          ./.github/dedup-dir.sh /mnt/riscv/
-          XZ_OPT="-e -T0" tar cJvf riscv.tar.xz -C /mnt/ riscv/
-
       - name: make report
         if: |
           matrix.os == 'ubuntu-24.04'
@@ -196,12 +209,32 @@ jobs:
           if [ -n "$ARTIFACT_NAME" ]; then
             ARTIFACT_NAME="-${ARTIFACT_NAME}"
           fi
-          echo "TOOLCHAIN_NAME=riscv$BITS-$MODE-${{ matrix.os }}-${{ matrix.compiler }}${ARTIFACT_NAME}" >> $GITHUB_OUTPUT
-
-      - name: Move output to representative name
+          BASE_NAME="riscv$BITS-$MODE-${{ matrix.os }}-${{ matrix.compiler }}"
+          echo "TOOLCHAIN_NAME=${BASE_NAME}${ARTIFACT_NAME}" >> $GITHUB_OUTPUT
+          echo "TOOLCHAIN_NAME_STRIPPED=${BASE_NAME}-stripped${ARTIFACT_NAME}" >> $GITHUB_OUTPUT
+      - name: tarball build unstripped
+        if: ${{ inputs.strip == 'unstripped' || inputs.strip == 'both' }}
         run: |
+          du -s -h /mnt/riscv
+          ./.github/dedup-dir.sh /mnt/riscv/
+          XZ_OPT="-e -T0" tar cJvf riscv.tar.xz -C /mnt/ riscv/
           mv riscv.tar.xz ${{ steps.toolchain-name-generator.outputs.TOOLCHAIN_NAME }}.tar.xz
+      - name: strip binaries
+        run: |
+          find /mnt/riscv -type f -exec strip {} \;
+      - name: tarball build stripped
+        if: ${{ inputs.strip == 'stripped' || inputs.strip == 'both' }}
+        run: |
+          du -s -h /mnt/riscv
+          XZ_OPT="-e -T0" tar cJvf riscv-stripped.tar.xz -C /mnt/ riscv/
+          mv riscv-stripped.tar.xz ${{ steps.toolchain-name-generator.outputs.TOOLCHAIN_NAME_STRIPPED }}.tar.xz
       - uses: actions/upload-artifact@v4
+        if: ${{ inputs.strip == 'unstripped' || inputs.strip == 'both' }}
         with:
           name: ${{ steps.toolchain-name-generator.outputs.TOOLCHAIN_NAME }}
           path: ${{ steps.toolchain-name-generator.outputs.TOOLCHAIN_NAME }}.tar.xz
+      - uses: actions/upload-artifact@v4
+        if: ${{ inputs.strip == 'stripped' || inputs.strip == 'both' }}
+        with:
+          name: ${{ steps.toolchain-name-generator.outputs.TOOLCHAIN_NAME_STRIPPED }}
+          path: ${{ steps.toolchain-name-generator.outputs.TOOLCHAIN_NAME_STRIPPED }}.tar.xz
