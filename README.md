@@ -111,6 +111,15 @@ This option only takes effect for the GNU toolchain.
 The toolchain has an option `--enable-strip` to control strip of host binaries,
 strip is disabled by default.
 
+### Big Endian configuration
+
+To build either cross-compiler with support for big endian targets, run the following command:
+
+```
+./configure --prefix=/opt/riscv --with-endian=big
+make (target)
+```
+
 ### Troubleshooting Build Problems
 
 Builds work best if installing into an empty directory.  If you build a
