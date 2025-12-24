@@ -155,13 +155,16 @@ In file included from /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/in
       |                ^
 ```
 
-Then, cd into the `binutils` directory and update the repository to commit `f15240d71414ee624222bf13ccef73334e565506`:
+Then, upate the `binutils` repository to commit `f15240d71414ee624222bf13ccef73334e565506`. The easiest way to do this is (in the `riscv-gnu-toolchain` folder):
 
 ```bash
-git fetch origin
+rm -rf binutils
+git clone https://github.com/bminor/binutils-gdb binutils
+cd binutils
 git reset --hard f15240d71414ee624222bf13ccef73334e565506
+cd ..
 ```
-(Commit `f15240d71414ee624222bf13ccef73334e565506` was last tested to be working on MacOS Tahoe TODO on an M2 Max machine model A2779)
+(Commit `f15240d71414ee624222bf13ccef73334e565506` was last tested to be working on MacOS Tahoe 26.2 (25C56) on an M2 Max machine model A2779)
 
 Then, raise the limit of open files. Run: `ulimit -n 65536`
 
