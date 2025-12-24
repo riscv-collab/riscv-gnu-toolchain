@@ -34,7 +34,7 @@ Also available for Arch users on the AUR: [https://aur.archlinux.org/packages/ri
 
 On macOS, you can use [Homebrew](http://brew.sh) to install the dependencies:
 
-    $ brew install python3 gawk gnu-sed make gmp mpfr libmpc isl zlib expat texinfo flock libslirp ncurses
+    $ brew install python3 gawk gnu-sed make gmp mpfr libmpc isl zlib expat texinfo flock libslirp ncurses ninja bison m4 wget
 
 When executing the instructions in this README, please use `gmake` instead of `make` to use the newly installed version of make.
 To build the glibc (Linux) on macOS, you will need to build within a case-sensitive file
@@ -110,6 +110,25 @@ This option only takes effect for the GNU toolchain.
 
 The toolchain has an option `--enable-strip` to control strip of host binaries,
 strip is disabled by default.
+
+### Installation (MacOS ARM)
+
+First, ensure you have cloned the toolchain repository in a case-sensitive volume. 
+
+Now source `macos.zsh` to setup the PATH variable so that the build scripts can use the tools from homebrew, which are needed to build the GNU toolchain.
+
+Then, run configure with your desired flags - For example:
+```
+./configure --prefix=/Volumes/case-sensitive/opt/riscv --with-arch=rv64gc_zifencei --with-abi=lp64d --enable-linux --disable-gdb
+```
+
+Then, raise the limit of open files. Run: `ulimit -n 65536`
+
+Builds on MacOS are highly specific to OS versions and the versions of the developer tools installed. We recommend running `make check-binutils` first, which will help surface a some of the more frequent build errors we've seen without having to start a full build.
+
+If `make check-binutils` errors, check the [following documentation](./macos-build.md) for a list of common errors when building on MacOS and their solutions.
+
+When `make check-binutils` finishes successfully, you run the build normally with `make` or `make linux`.
 
 ### Troubleshooting Build Problems
 
