@@ -149,16 +149,15 @@ GDB_TARGET_FLAGS_EXTRA, GLIBC_TARGET_FLAGS_EXTRA, NEWLIB_TARGET_FLAGS_EXTRA,
 LLVM_EXTRA_CONFIGURE_FLAGS, QEMU_EXTRA_CONFIGURE_FLAGS```.
 Example: ```GCC_EXTRA_CONFIGURE_FLAGS=--with-gmp=/opt/gmp make linux```
 
-#### Set default ISA spec version
+#### Set default RISC-V Profiles
 
-`--with-isa-spec=` can specify the default version of the RISC-V Unprivileged
-(formerly User-Level) ISA specification.
+`--with-profiles=` can specify the default  RISC-V Profiles like RVA23 feature.
 
-Possible options are: `2.2`, `20190608` and `20191213`.
+Possible options are: `rvi20u64`, `rvi20u32`, `rva20u64`, `rva22u64`, `rva23u64`, `rva23s64`, `rvb23u64`, `rvb23s64`.
 
-The default version is `20191213`.
+The default version is `rva23u64`.
 
-More details about this option you can refer this post [RISC-V GNU toolchain bumping default ISA spec to 20191213](https://groups.google.com/a/groups.riscv.org/g/sw-dev/c/aE1ZeHHCYf4).
+More details about this option you can refer this repo [RISC-V Profiles](https://github.com/riscv/riscv-profiles).
 
 #### Build with customized multi-lib configure.
 
