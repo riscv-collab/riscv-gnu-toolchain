@@ -34,9 +34,7 @@ Also available for Arch users on the AUR: [https://aur.archlinux.org/packages/ri
 
 On macOS, you can use [Homebrew](http://brew.sh) to install the dependencies:
 
-    $ brew install python3 gawk gnu-sed make gmp mpfr libmpc isl zlib expat texinfo flock libslirp ninja bison m4 wget gcc@15
-
-<!-- On macos, we're going to manually pin the gcc at v15 for consistency, otherwise files may not compile due to breaking changes in newer versions -->
+    $ brew install python3 gawk gnu-sed make gmp mpfr libmpc isl zlib expat texinfo flock libslirp ninja bison m4 wget
 
 When executing the instructions in this README, please use `gmake` instead of `make` to use the newly installed version of make.
 To build the glibc (Linux) on macOS, you will need to build within a case-sensitive file
@@ -117,67 +115,20 @@ strip is disabled by default.
 
 First, ensure you have cloned the toolchain repository in a case-sensitive volume. 
 
-Set the following environment variables and aliases:
-
-```bash
-echo 'export PATH="/opt/homebrew/opt/bison/bin:$PATH"' >> ~/.zshrc
-echo 'export PATH="/opt/homebrew/opt/gawk/libexec/gnubin:$PATH"' >> ~/.zshrc
-echo 'export PATH="/opt/homebrew/opt/gnu-sed/libexec/gnubin:$PATH"' >> ~/.zshrc
-echo 'export PATH="/opt/homebrew/opt/make/libexec/gnubin:$PATH"' >> ~/.zshrc
-echo 'export PATH="/opt/homebrew/opt/expat/bin:$PATH"' >> ~/.zshrc
-echo 'export PATH="opt/homebrew/opt/bison/bin:$PATH"' >> ~/.zshrc
-echo "export GNUMAKE=/opt/homebrew/opt/make/libexec/gnubin/make" >> ~/.zshrc
-echo "export MAKE=/opt/homebrew/opt/make/libexec/gnubin/make" >> ~/.zshrc
-echo 'export PATH="/opt/homebrew/opt/m4:bin$PATH"' >> ~/.zshrc
-echo 'alias gcc="/opt/homebrew/bin/gcc-15"' >> ~/.zshrc
-echo 'alias gmp="opt/homebrew/Cellar/gmp/6.3.0/include/"' >> ~/.zshrc
-```
+Now source `macos.zsh` to setup the PATH variable so that the build scripts can use the tools from homebrew, which are needed to build the GNU toolchain.
 
 Then, run configure with your desired flags - For example:
 ```
 ./configure --prefix=/Volumes/case-sensitive/opt/riscv --with-arch=rv64gc_zifencei --with-abi=lp64d --enable-linux --disable-gdb
 ```
 
-Then, run `make check-binutils`. This will then fail with the following error:
-
-```bash
-In file included from /Volumes/case-sensitive/riscv-gnu-toolchain/binutils/zlib/zlib/zutil.c:10:
-In file included from /Volumes/case-sensitive/riscv-gnu-toolchain/binutils/zlib/zlib/gzguts.h:21:
-In file included from /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/stdio.h:61:
-/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/_stdio.h:322:7: error: expected identifier or '('
-  322 | FILE    *fdopen(int, const char *) __DARWIN_ALIAS_STARTING(__MAC_10_6, __IPHONE_2_0, __DARWIN_ALIAS(fdopen));
-      |          ^
-/Volumes/case-sensitive/riscv-gnu-toolchain/binutils/zlib/zlib/zutil.h:147:33: note: expanded from macro 'fdopen'
-  147 | #        define fdopen(fd,mode) NULL /* No fdopen() */
-      |                                 ^
-/Library/Developer/CommandLineTools/usr/lib/clang/17/include/__stddef_null.h:26:16: note: expanded from macro 'NULL'
-   26 | #define NULL ((void*)0)
-      |                ^
-```
-
-Then, upate the `binutils` repository to commit `f15240d71414ee624222bf13ccef73334e565506`. The easiest way to do this is (in the `riscv-gnu-toolchain` folder):
-
-```bash
-rm -rf binutils
-git clone https://github.com/bminor/binutils-gdb binutils
-cd binutils
-git reset --hard f15240d71414ee624222bf13ccef73334e565506
-cd ..
-```
-(Commit `f15240d71414ee624222bf13ccef73334e565506` was last tested to be working on MacOS Tahoe 26.2 (25C56) on an M2 Max machine model A2779)
-
 Then, raise the limit of open files. Run: `ulimit -n 65536`
 
-Then, run `make` or `make linux` again. It should build successfully.
+Builds on MacOS are highly specific to OS versions and the versions of the developer tools installed. We recommend running `make check-binutils` first, which will help surface a some of the more frequent build errors we've seen without having to start a full build.
 
-Another common error you may see is:
-```
-clang: error: no such file or directory: '/Volumes/case-sensitive/riscv-gnu-toolchain/binutils/binutils/sysinfo.c'
-clang: error: no input files
-gmake[3]: *** [Makefile:1897: sysinfo.o] Error 1
-gmake[3]: Leaving directory '/Volumes/case-sensitive/riscv-gnu-toolchain/build-binutils-newlib/binutils'
-```
-To fix this, you need to run some files manually through Bison in YACC mode. See [this issue](https://github.com/riscv-collab/riscv-gnu-toolchain/issues/1780#issuecomment-3380245822) for the solution.
+If `make check-binutils` errors, check the [following documentation](./macos-build.md) for a list of common errors when building on MacOS and their solutions.
+
+When `make check-binutils` finishes successfully, you run the build normally with `make` or `make linux`.
 
 ### Troubleshooting Build Problems
 
