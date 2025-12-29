@@ -188,6 +188,10 @@ AS_IF([test "x$with_cmodel" != xno],
 	[AC_SUBST(cmodel, -mcmodel=$with_cmodel)],
 	[AC_SUBST(cmodel, -mcmodel=medlow)])
 
+AS_IF([test "x$with_endian" != x],
+	[AC_SUBST(endian, endian=$with_endian)],
+	[AC_SUBST(endian, endian=little)])
+
 AC_ARG_WITH(target_cflags,
 	[AS_HELP_STRING([--with-target-cflags],
 		[Add extra target flags for C for library code])],
