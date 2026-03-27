@@ -14,6 +14,32 @@ QEMU_SRCDIR := @with_qemu_src@
 SPIKE_SRCDIR := @with_spike_src@
 PK_SRCDIR := @with_pk_src@
 LLVM_SRCDIR := @with_llvm_src@
+LLVM_LINUX_COMMON_CMAKE_FLAGS = \
+    -DCMAKE_INSTALL_PREFIX=$(INSTALL_DIR) \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DLLVM_TARGETS_TO_BUILD="RISCV" \
+    -DLLVM_ENABLE_PROJECTS="llvm;clang;lld" \
+    -DLLVM_ENABLE_RUNTIMES="compiler-rt;libcxx;libcxxabi;libunwind" \
+    -DDEFAULT_SYSROOT="../sysroot" \
+    -DLLVM_INSTALL_TOOLCHAIN_ONLY=On \
+    -DLLVM_BINUTILS_INCDIR=$(BINUTILS_SRCDIR)/include \
+    -DLLVM_PARALLEL_LINK_JOBS=4
+define LLVM_LINUX_SYSROOT_SETUP
+	# We have the following situation:
+	# - sysroot directory: $(INSTALL_DIR)/sysroot
+	# - GCC install directory: $(INSTALL_DIR)
+	# However, LLVM does not allow to set a GCC install prefix
+	# (-DGCC_INSTALL_PREFIX) if a sysroot (-DDEFAULT_SYSROOT) is set
+	# (the GCC install prefix will be ignored silently).
+	# Without a proper sysroot path feature.h won't be found by clang.
+	# Without a proper GCC install directory libgcc won't be found.
+	# As a workaround we have to merge both paths:
+	mkdir -p $(SYSROOT)/lib/
+	ln -s -f ../../lib/gcc $(SYSROOT)/lib/gcc
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	cd $(notdir $@) && ln -f -s $(SYSROOT) sysroot
+endef
 DEJAGNU_SRCDIR := @with_dejagnu_src@
 DEBUG_INFO := @debug_info@
 ENABLE_DEFAULT_PIE := @enable_default_pie@
@@ -159,6 +185,7 @@ ifeq (@enable_llvm@,--enable-llvm)
 all: stamps/build-llvm-@default_target@
 newlib: stamps/build-llvm-newlib
 linux: stamps/build-llvm-linux
+musl: stamps/build-llvm-musl
 ifeq (@multilib_flags@,--enable-multilib)
 $(error "Setting multilib flags for LLVM builds is not supported.")
 endif
@@ -1145,33 +1172,12 @@ stamps/build-qemu: $(QEMU_SRCDIR) $(QEMU_SRC_GIT) $(PREPARATION_STAMP)
 
 stamps/build-llvm-linux: $(LLVM_SRCDIR) $(LLVM_SRC_GIT) $(BINUTILS_SRCDIR) $(BINUTILS_SRC_GIT) \
                          stamps/build-gcc-linux-stage2
-	# We have the following situation:
-	# - sysroot directory: $(INSTALL_DIR)/sysroot
-	# - GCC install directory: $(INSTALL_DIR)
-	# However, LLVM does not allow to set a GCC install prefix
-	# (-DGCC_INSTALL_PREFIX) if a sysroot (-DDEFAULT_SYSROOT) is set
-	# (the GCC install prefix will be ignored silently).
-	# Without a proper sysroot path feature.h won't be found by clang.
-	# Without a proper GCC install directory libgcc won't be found.
-	# As a workaround we have to merge both paths:
-	mkdir -p $(SYSROOT)/lib/
-	ln -s -f $(INSTALL_DIR)/lib/gcc $(SYSROOT)/lib/gcc
-	rm -rf $@ $(notdir $@)
-	mkdir $(notdir $@)
-	cd $(notdir $@) && ln -f -s $(SYSROOT) sysroot
+	$(LLVM_LINUX_SYSROOT_SETUP)
 	cd $(notdir $@) && \
 	    cmake $(LLVM_SRCDIR)/llvm \
-	    -DCMAKE_INSTALL_PREFIX=$(INSTALL_DIR) \
-	    -DCMAKE_BUILD_TYPE=Release \
-	    -DLLVM_TARGETS_TO_BUILD="RISCV" \
-	    -DLLVM_ENABLE_PROJECTS="llvm;clang;lld" \
-	    -DLLVM_ENABLE_RUNTIMES="compiler-rt;libcxx;libcxxabi;libunwind" \
-	    -DLLVM_DEFAULT_TARGET_TRIPLE="$(LINUX_TUPLE)" \
-	    -DDEFAULT_SYSROOT="../sysroot" \
-	    -DLLVM_RUNTIME_TARGETS=$(call make_tuple,$(XLEN),linux-gnu) \
-	    -DLLVM_INSTALL_TOOLCHAIN_ONLY=On \
-	    -DLLVM_BINUTILS_INCDIR=$(BINUTILS_SRCDIR)/include \
-	    -DLLVM_PARALLEL_LINK_JOBS=4 \
+	    $(LLVM_LINUX_COMMON_CMAKE_FLAGS) \
+	    -DLLVM_DEFAULT_TARGET_TRIPLE=$(LINUX_TUPLE) \
+	    -DLLVM_RUNTIME_TARGETS=$(LINUX_TUPLE) \
 	    $(LLVM_EXTRA_CONFIGURE_FLAGS)
 	$(MAKE) -C $(notdir $@)
 	$(MAKE) -C $(notdir $@) $(subst -,/,$(INSTALL_TARGET))
@@ -1216,9 +1222,26 @@ stamps/build-llvm-linux: $(LLVM_SRCDIR) $(LLVM_SRC_GIT) $(BINUTILS_SRCDIR) $(BIN
 	    $(MAKE) -C $(notdir $@)/openmp-static; \
 	    $(MAKE) -C $(notdir $@)/openmp-static install; \
 	fi
-	cp $(notdir $@)/lib/riscv$(XLEN)-unknown-linux-gnu/libc++* $(SYSROOT)/lib
-	cp $(notdir $@)/lib/riscv$(XLEN)-unknown-linux-gnu/libunwind* $(SYSROOT)/lib
+	cp $(notdir $@)/lib/$(LINUX_TUPLE)/libc++* $(SYSROOT)/lib
+	cp $(notdir $@)/lib/$(LINUX_TUPLE)/libunwind* $(SYSROOT)/lib
 	cd $(INSTALL_DIR)/bin && ln -s -f clang $(LINUX_TUPLE)-clang && ln -s -f clang++ $(LINUX_TUPLE)-clang++
+	mkdir -p $(dir $@) && touch $@
+
+stamps/build-llvm-musl: $(LLVM_SRCDIR) $(LLVM_SRC_GIT) $(BINUTILS_SRCDIR) $(BINUTILS_SRC_GIT) \
+                         stamps/build-gcc-musl-stage2
+	$(LLVM_LINUX_SYSROOT_SETUP)
+	cd $(notdir $@) && \
+	    cmake $(LLVM_SRCDIR)/llvm \
+	    $(LLVM_LINUX_COMMON_CMAKE_FLAGS) \
+	    -DLLVM_DEFAULT_TARGET_TRIPLE=$(MUSL_TUPLE) \
+	    -DLLVM_RUNTIME_TARGETS=$(MUSL_TUPLE) \
+	    -DRUNTIMES_$(MUSL_TUPLE)_LIBCXX_HAS_MUSL_LIBC=On \
+	    $(LLVM_EXTRA_CONFIGURE_FLAGS)
+	$(MAKE) -C $(notdir $@)
+	$(MAKE) -C $(notdir $@) $(subst -,/,$(INSTALL_TARGET))
+	cp $(notdir $@)/lib/$(MUSL_TUPLE)/libc++* $(SYSROOT)/lib
+	cp $(notdir $@)/lib/$(MUSL_TUPLE)/libunwind* $(SYSROOT)/lib
+	cd $(INSTALL_DIR)/bin && ln -s -f clang $(MUSL_TUPLE)-clang && ln -s -f clang++ $(MUSL_TUPLE)-clang++
 	mkdir -p $(dir $@) && touch $@
 
 stamps/build-llvm-newlib: $(LLVM_SRCDIR) $(LLVM_SRC_GIT) $(BINUTILS_SRCDIR) $(BINUTILS_SRC_GIT) \
