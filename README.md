@@ -414,8 +414,10 @@ configure flag `--enable-llvm` can be used.
 E.g. to build LLVM on top of a RV64 Linux toolchain the following commands
 can be used:
 
-  ./configure --prefix=$RISCV --enable-llvm --enable-linux
-  make
+```
+./configure --prefix=$RISCV --enable-llvm --enable-linux
+make
+```
 
 Note, that a combination of `--enable-llvm` and multilib configuration flags
 is not supported.
