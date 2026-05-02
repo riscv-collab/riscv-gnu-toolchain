@@ -127,6 +127,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     needs: [submodule_cache,validate_inputs]
     env:
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CCACHE_DIR: /mnt/ccache
+      CCACHE_MAXSIZE: 2G
       smcache_key: ${{ needs.submodule_cache.outputs.key }}
     strategy:
       matrix:
@@ -156,11 +160,34 @@ jobs:
       - name: install dependencies
         run: sudo ./.github/setup-apt.sh
 
+      - name: Enable ccache compiler wrappers
+        run: echo "/usr/lib/ccache" >> "${GITHUB_PATH}"
+
+      - name: Prepare ccache directory
+        run: |
+          sudo mkdir -p "${CCACHE_DIR}"
+          sudo chown runner:runner "${CCACHE_DIR}"
+
+      - name: Restore ccache
+        id: ccache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-v1-${{ matrix.os }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-v1-${{ matrix.os }}-
+
       - name: Load submodule cache
         uses: actions/cache/restore@v5
         with:
           path: ${{ env.submodule_paths }}
           key: ${{ env.smcache_key }}
+
+      - name: Initialize ccache
+        run: |
+          ccache -M "${CCACHE_MAXSIZE}"
+          ccache -z
+          ccache -s
 
       - name: build toolchain
         run: |
@@ -199,6 +226,24 @@ jobs:
           && matrix.report == true
         run: |
           make report-${{ matrix.mode }} -j $(nproc)
+
+      - name: Show ccache statistics
+        if: always()
+        run: ccache -s
+
+      - name: Save ccache
+        if: |
+          always()
+          && !cancelled()
+          && github.event_name != 'pull_request'
+          && matrix.mode == 'linux'
+          && matrix.target == 'rv64gc-lp64d'
+          && matrix.compiler == 'llvm'
+          && matrix.sim == ''
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-v1-${{ matrix.os }}-${{ github.run_id }}
 
       - name: generate prebuilt toolchain name
         id:   toolchain-name-generator
