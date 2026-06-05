@@ -179,14 +179,16 @@ AS_IF([test "x$enable_gcc_checking" = xyes],
 
 AC_ARG_WITH(cmodel,
 	[AS_HELP_STRING([--with-cmodel],
-		[Select the code model to use when building libc and libgcc @<:@--with-cmodel=medlow@:>@])],
+		[Set the default code model. Sets the GCC driver default via --with-specs and, when --with-multilib-generator does not specify --cmodel variants, also sets CFLAGS_FOR_TARGET. @<:@--with-cmodel=medlow@:>@])],
 	[],
 	[with_cmodel=no]
 	)
 
 AS_IF([test "x$with_cmodel" != xno],
-	[AC_SUBST(cmodel, -mcmodel=$with_cmodel)],
-	[AC_SUBST(cmodel, -mcmodel=medlow)])
+	[AC_SUBST(cmodel, -mcmodel=$with_cmodel)
+	 AC_SUBST(gcc_with_specs, "--with-specs='%{!mcmodel*:-mcmodel=$with_cmodel}'")],
+	[AC_SUBST(cmodel, -mcmodel=medlow)
+	 AC_SUBST(gcc_with_specs, "--with-specs='%{!mcmodel*:-mcmodel=medlow}'")])
 
 AS_IF([test "x$with_endian" != x],
 	[AC_SUBST(endian, endian=$with_endian)],
