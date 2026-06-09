@@ -85,6 +85,19 @@ Supported ABIs are ilp32 (32-bit soft-float), ilp32d (32-bit hard-float),
 ilp32f (32-bit with single-precision in registers and double in memory, niche
 use only), lp64 lp64f lp64d (same but with 64-bit long and pointers).
 
+### Build with RISC-V Profiles
+
+The top-level `--with-arch` option accepts RISC-V profile names and profile
+strings combined with additional ISA extensions as the default architecture:
+
+    ./configure --prefix=/opt/riscv --enable-linux --with-arch=rva20u64
+    ./configure --prefix=/opt/riscv --enable-linux --with-arch=rva23u64
+    ./configure --prefix=/opt/riscv --enable-linux --with-arch=rva23u64_zacas
+
+If `--with-abi` is omitted, the ABI is inferred from the profile base. For
+example, `rva20u64`, `rva22u64`, `rva23u64`, and `rva23u64_zacas` default to
+`lp64d`.
+
 ### Installation (Newlib/Linux multilib)
 
 To build either cross-compiler with support for both 32-bit and

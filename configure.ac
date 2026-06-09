@@ -65,8 +65,8 @@ AS_IF([test "x$enable_default_pie" = xyes],
 	[AC_SUBST(enable_default_pie, "--disable-default-pie")])
 
 AC_ARG_WITH(arch,
-	[AS_HELP_STRING([--with-arch=rv64gc],
-		[Sets the base RISC-V ISA, defaults to rv64gc])],
+	[AS_HELP_STRING([--with-arch=ISA|PROFILE],
+		[Sets the default RISC-V ISA or profile string, defaults to rv64gc])],
 	[],
 	[with_arch=rv64gc]
 	)
@@ -108,6 +108,21 @@ AC_ARG_WITH(languages,
 		[Sets the enabled languages for GNU toolchain, defaults to c,c++,fortran for Linux/native and Linux/glibc or c,c++ for Bare-metal, Linux/musl and Linux/uClibc])],
 	[]
 	) 
+
+riscv_profile_base=no
+riscv_arch_base=`echo "$with_arch" | sed 's/_.*//'`
+AS_CASE([$riscv_arch_base],
+	[rvi20u32 | rvi20u64 | rva20u64 | rva22u64 | rva23u64 | rva23s64 | rvb23u64 | rvb23s64],
+		[riscv_profile_base=$riscv_arch_base],
+	[rvi* | rva* | rvb*],
+		[AC_MSG_ERROR([unsupported RISC-V profile '$riscv_arch_base' in --with-arch=$with_arch])])
+
+AS_IF([test "x$with_abi" = xdefault],
+	[AS_CASE([$riscv_profile_base],
+		[rvi20u32], [with_abi=ilp32],
+		[rvi20u64], [with_abi=lp64],
+		[rva20u64 | rva22u64 | rva23u64 | rva23s64 | rvb23u64 | rvb23s64], [with_abi=lp64d])
+	])
 
 AS_IF([test "x$with_abi" = xdefault],
 	[AS_CASE([$with_arch],
