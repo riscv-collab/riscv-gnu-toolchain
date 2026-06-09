@@ -136,6 +136,20 @@ AS_IF([test "x$with_abi" = xdefault],
 		[AC_MSG_ERROR([Unknown arch])]
 	)])
 
+AS_CASE([$riscv_profile_base],
+	[rvi20u32],
+		[AS_CASE([$with_abi],
+			[ilp32], [],
+			[AC_MSG_ERROR([ABI '$with_abi' is incompatible with RISC-V profile '$riscv_profile_base' in --with-arch=$with_arch; expected ilp32])])],
+	[rvi20u64],
+		[AS_CASE([$with_abi],
+			[lp64], [],
+			[AC_MSG_ERROR([ABI '$with_abi' is incompatible with RISC-V profile '$riscv_profile_base' in --with-arch=$with_arch; expected lp64])])],
+	[rva20u64 | rva22u64 | rva23u64 | rva23s64 | rvb23u64 | rvb23s64],
+		[AS_CASE([$with_abi],
+			[lp64 | lp64f | lp64d], [],
+			[AC_MSG_ERROR([ABI '$with_abi' is incompatible with RISC-V profile '$riscv_profile_base' in --with-arch=$with_arch; expected lp64, lp64f, or lp64d])])])
+
 AC_SUBST(WITH_ARCH, --with-arch=$with_arch)
 AC_SUBST(WITH_ABI, --with-abi=$with_abi)
 AC_SUBST(WITH_ISA_SPEC, --with-isa-spec=$with_isa_spec)
