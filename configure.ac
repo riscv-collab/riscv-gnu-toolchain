@@ -112,16 +112,14 @@ AC_ARG_WITH(languages,
 riscv_profile_base=no
 riscv_arch_base=`echo "$with_arch" | sed 's/_.*//'`
 AS_CASE([$riscv_arch_base],
-	[rvi20u32 | rvi20u64 | rva20u64 | rva22u64 | rva23u64 | rva23s64 | rvb23u64 | rvb23s64],
-		[riscv_profile_base=$riscv_arch_base],
 	[rvi* | rva* | rvb*],
-		[AC_MSG_ERROR([unsupported RISC-V profile '$riscv_arch_base' in --with-arch=$with_arch])])
+		[riscv_profile_base=$riscv_arch_base])
 
 AS_IF([test "x$with_abi" = xdefault],
 	[AS_CASE([$riscv_profile_base],
-		[rvi20u32], [with_abi=ilp32],
-		[rvi20u64], [with_abi=lp64],
-		[rva20u64 | rva22u64 | rva23u64 | rva23s64 | rvb23u64 | rvb23s64], [with_abi=lp64d])
+		[rvi*u32], [with_abi=ilp32],
+		[rvi*u64], [with_abi=lp64],
+		[rva*u64 | rva*s64 | rvb*u64 | rvb*s64], [with_abi=lp64d])
 	])
 
 AS_IF([test "x$with_abi" = xdefault],
@@ -137,15 +135,15 @@ AS_IF([test "x$with_abi" = xdefault],
 	)])
 
 AS_CASE([$riscv_profile_base],
-	[rvi20u32],
+	[rvi*u32],
 		[AS_CASE([$with_abi],
 			[ilp32], [],
 			[AC_MSG_ERROR([ABI '$with_abi' is incompatible with RISC-V profile '$riscv_profile_base' in --with-arch=$with_arch; expected ilp32])])],
-	[rvi20u64],
+	[rvi*u64],
 		[AS_CASE([$with_abi],
 			[lp64], [],
 			[AC_MSG_ERROR([ABI '$with_abi' is incompatible with RISC-V profile '$riscv_profile_base' in --with-arch=$with_arch; expected lp64])])],
-	[rva20u64 | rva22u64 | rva23u64 | rva23s64 | rvb23u64 | rvb23s64],
+	[rva*u64 | rva*s64 | rvb*u64 | rvb*s64],
 		[AS_CASE([$with_abi],
 			[lp64 | lp64f | lp64d], [],
 			[AC_MSG_ERROR([ABI '$with_abi' is incompatible with RISC-V profile '$riscv_profile_base' in --with-arch=$with_arch; expected lp64, lp64f, or lp64d])])])
