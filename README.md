@@ -24,17 +24,17 @@ On Ubuntu, executing the following command should suffice:
 
 On Fedora/CentOS/RHEL OS, executing the following command should suffice:
 
-    $ sudo yum install autoconf automake python3 libmpc-devel mpfr-devel gmp-devel gawk  bison flex texinfo patchutils gcc gcc-c++ zlib-devel expat-devel libslirp-devel ncurses-devel
+    $ sudo yum install autoconf automake python3 libmpc-devel mpfr-devel gmp-devel gawk  bison flex texinfo patchutils gcc gcc-c++ zlib-devel expat-devel libslirp-devel ncurses-devel ninja-build cmake
 
 On Arch Linux, executing the following command should suffice:
 
-    $ sudo pacman -Syu curl python3 libmpc mpfr gmp base-devel texinfo gperf patchutils bc zlib expat libslirp ncurses
+    $ sudo pacman -Syu curl python3 libmpc mpfr gmp base-devel texinfo gperf patchutils bc zlib expat libslirp ncurses ninja cmake
 
 Also available for Arch users on the AUR: [https://aur.archlinux.org/packages/riscv-gnu-toolchain-bin](https://aur.archlinux.org/packages/riscv-gnu-toolchain-bin)
 
 On macOS, you can use [Homebrew](http://brew.sh) to install the dependencies:
 
-    $ brew install python3 gawk gnu-sed make gmp mpfr libmpc isl zlib expat texinfo flock libslirp ncurses ninja bison m4 wget
+    $ brew install python3 gawk gnu-sed make gmp mpfr libmpc isl zlib expat texinfo flock libslirp ncurses ninja cmake bison m4 wget
 
 When executing the instructions in this README, please use `gmake` instead of `make` to use the newly installed version of make.
 To build the glibc (Linux) on macOS, you will need to build within a case-sensitive file
@@ -422,6 +422,13 @@ make
 
 Note, that a combination of `--enable-llvm` and multilib configuration flags
 is not supported.
+
+The LLVM builds use the `Ninja` CMake generator by default. Set
+`LLVM_GENERATOR="Unix Makefiles"` to use make instead:
+
+```
+make -j$(nproc) LLVM_GENERATOR="Unix Makefiles" all
+```
 
 Below are examples how to build a rv64gc Linux/newlib toolchain with LLVM support,
 how to use it to build a C and a C++ application using clang, and how to

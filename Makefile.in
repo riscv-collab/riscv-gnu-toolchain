@@ -14,7 +14,19 @@ QEMU_SRCDIR := @with_qemu_src@
 SPIKE_SRCDIR := @with_spike_src@
 PK_SRCDIR := @with_pk_src@
 LLVM_SRCDIR := @with_llvm_src@
+# CMake generator for the LLVM builds. Use Ninja for faster builds.
+LLVM_GENERATOR ?= Ninja
+# Most ninja builds do not use the make jobserver, so read -jN from MAKEFLAGS
+# and pass it to ninja; else ninja uses all cores. Unix Makefiles gets -jN from
+# the `+` recipe lines below, so it must not get -jN here.
+LLVM_PARALLEL_JOBS ?= $(patsubst -j%,%,$(filter -j%,$(MAKEFLAGS)))
+ifeq ($(LLVM_GENERATOR),Ninja)
+LLVM_BUILD_TOOL = ninja $(if $(LLVM_PARALLEL_JOBS),-j$(LLVM_PARALLEL_JOBS)) -C
+else
+LLVM_BUILD_TOOL = $(MAKE) -C
+endif
 LLVM_LINUX_COMMON_CMAKE_FLAGS = \
+    -G "$(LLVM_GENERATOR)" \
     -DCMAKE_INSTALL_PREFIX=$(INSTALL_DIR) \
     -DCMAKE_BUILD_TYPE=Release \
     -DLLVM_TARGETS_TO_BUILD="RISCV" \
@@ -29,6 +41,7 @@ define LLVM_BUILD_OPENMP
 	    mkdir $(notdir $@)/openmp-shared; \
 	    cmake -S$(LLVM_SRCDIR)/runtimes \
 	        -B$(notdir $@)/openmp-shared \
+	        -G "$(LLVM_GENERATOR)" \
 	        -DLLVM_ENABLE_RUNTIMES=openmp \
 	        -DLLVM_DEFAULT_TARGET_TRIPLE=$(1) \
 	        -DCMAKE_INSTALL_PREFIX=$(SYSROOT) \
@@ -48,11 +61,12 @@ define LLVM_BUILD_OPENMP
 	        -DLIBOMP_OMPD_GDB_SUPPORT=Off \
 	        -DLIBOMP_ENABLE_SHARED=On \
 	        $(LLVM_OPENMP_EXTRA_CONFIGURE_FLAGS); \
-	    $(MAKE) -C $(notdir $@)/openmp-shared; \
-	    $(MAKE) -C $(notdir $@)/openmp-shared install; \
+	    $(LLVM_BUILD_TOOL) $(notdir $@)/openmp-shared; \
+	    $(LLVM_BUILD_TOOL) $(notdir $@)/openmp-shared install; \
 	    mkdir $(notdir $@)/openmp-static; \
 	    cmake -S$(LLVM_SRCDIR)/runtimes \
 	        -B$(notdir $@)/openmp-static \
+	        -G "$(LLVM_GENERATOR)" \
 	        -DLLVM_ENABLE_RUNTIMES=openmp \
 	        -DLLVM_DEFAULT_TARGET_TRIPLE=$(1) \
 	        -DCMAKE_INSTALL_PREFIX=$(SYSROOT) \
@@ -72,8 +86,8 @@ define LLVM_BUILD_OPENMP
 	        -DLIBOMP_OMPD_GDB_SUPPORT=Off \
 	        -DLIBOMP_ENABLE_SHARED=Off \
 	        $(LLVM_OPENMP_EXTRA_CONFIGURE_FLAGS); \
-	    $(MAKE) -C $(notdir $@)/openmp-static; \
-	    $(MAKE) -C $(notdir $@)/openmp-static install; \
+	    $(LLVM_BUILD_TOOL) $(notdir $@)/openmp-static; \
+	    $(LLVM_BUILD_TOOL) $(notdir $@)/openmp-static install; \
 	fi
 endef
 define LLVM_LINUX_SYSROOT_SETUP
@@ -1261,9 +1275,9 @@ stamps/build-llvm-linux: $(LLVM_SRCDIR) $(LLVM_SRC_GIT) $(BINUTILS_SRCDIR) $(BIN
 	    "-DRUNTIMES_$(LINUX_TUPLE)_CMAKE_C_FLAGS=$(LLVM_CFLAGS_FOR_TARGET)" \
 	    "-DRUNTIMES_$(LINUX_TUPLE)_CMAKE_CXX_FLAGS=$(LLVM_CXXFLAGS_FOR_TARGET)" \
 	    $(LLVM_EXTRA_CONFIGURE_FLAGS)
-	$(MAKE) -C $(notdir $@)
-	$(MAKE) -C $(notdir $@) $(subst -,/,$(INSTALL_TARGET))
-	$(call LLVM_BUILD_OPENMP,$(LINUX_TUPLE))
+	+$(LLVM_BUILD_TOOL) $(notdir $@)
+	+$(LLVM_BUILD_TOOL) $(notdir $@) $(subst -,/,$(INSTALL_TARGET))
+	+$(call LLVM_BUILD_OPENMP,$(LINUX_TUPLE))
 	cp $(notdir $@)/lib/$(LINUX_TUPLE)/libc++* $(SYSROOT)/lib
 	cp $(notdir $@)/lib/$(LINUX_TUPLE)/libunwind* $(SYSROOT)/lib
 	cd $(INSTALL_DIR)/bin && ln -s -f clang $(LINUX_TUPLE)-clang && ln -s -f clang++ $(LINUX_TUPLE)-clang++
@@ -1282,9 +1296,9 @@ stamps/build-llvm-musl: $(LLVM_SRCDIR) $(LLVM_SRC_GIT) $(BINUTILS_SRCDIR) $(BINU
 	    "-DRUNTIMES_$(MUSL_TUPLE)_CMAKE_C_FLAGS=$(LLVM_CFLAGS_FOR_TARGET)" \
 	    "-DRUNTIMES_$(MUSL_TUPLE)_CMAKE_CXX_FLAGS=$(LLVM_CXXFLAGS_FOR_TARGET)" \
 	    $(LLVM_EXTRA_CONFIGURE_FLAGS)
-	$(MAKE) -C $(notdir $@)
-	$(MAKE) -C $(notdir $@) $(subst -,/,$(INSTALL_TARGET))
-	$(call LLVM_BUILD_OPENMP,$(MUSL_TUPLE))
+	+$(LLVM_BUILD_TOOL) $(notdir $@)
+	+$(LLVM_BUILD_TOOL) $(notdir $@) $(subst -,/,$(INSTALL_TARGET))
+	+$(call LLVM_BUILD_OPENMP,$(MUSL_TUPLE))
 	cp $(notdir $@)/lib/$(MUSL_TUPLE)/libc++* $(SYSROOT)/lib
 	cp $(notdir $@)/lib/$(MUSL_TUPLE)/libunwind* $(SYSROOT)/lib
 	cd $(INSTALL_DIR)/bin && ln -s -f clang $(MUSL_TUPLE)-clang && ln -s -f clang++ $(MUSL_TUPLE)-clang++
@@ -1296,6 +1310,7 @@ stamps/build-llvm-newlib: $(LLVM_SRCDIR) $(LLVM_SRC_GIT) $(BINUTILS_SRCDIR) $(BI
 	mkdir $(notdir $@)
 	cd $(notdir $@) && \
 	    cmake $(LLVM_SRCDIR)/llvm \
+	    -G "$(LLVM_GENERATOR)" \
 	    -DCMAKE_INSTALL_PREFIX=$(INSTALL_DIR) \
 	    -DCMAKE_BUILD_TYPE=Release \
 	    -DLLVM_TARGETS_TO_BUILD="RISCV" \
@@ -1305,8 +1320,8 @@ stamps/build-llvm-newlib: $(LLVM_SRCDIR) $(LLVM_SRC_GIT) $(BINUTILS_SRCDIR) $(BI
 	    -DLLVM_BINUTILS_INCDIR=$(BINUTILS_SRCDIR)/include \
 	    -DLLVM_PARALLEL_LINK_JOBS=4 \
 	    $(LLVM_EXTRA_CONFIGURE_FLAGS)
-	$(MAKE) -C $(notdir $@)
-	$(MAKE) -C $(notdir $@) $(subst -,/,$(INSTALL_TARGET))
+	+$(LLVM_BUILD_TOOL) $(notdir $@)
+	+$(LLVM_BUILD_TOOL) $(notdir $@) $(subst -,/,$(INSTALL_TARGET))
 	cd $(INSTALL_DIR)/bin && ln -s -f clang $(NEWLIB_TUPLE)-clang && \
 	    ln -s -f clang++ $(NEWLIB_TUPLE)-clang++
 	mkdir -p $(dir $@) && touch $@
