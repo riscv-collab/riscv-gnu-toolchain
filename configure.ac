@@ -137,16 +137,12 @@ AS_IF([test "x$with_abi" = xdefault],
 AS_CASE([$riscv_profile_base],
 	[rvi*u32],
 		[AS_CASE([$with_abi],
-			[ilp32], [],
-			[AC_MSG_ERROR([ABI '$with_abi' is incompatible with RISC-V profile '$riscv_profile_base' in --with-arch=$with_arch; expected ilp32])])],
-	[rvi*u64],
-		[AS_CASE([$with_abi],
-			[lp64], [],
-			[AC_MSG_ERROR([ABI '$with_abi' is incompatible with RISC-V profile '$riscv_profile_base' in --with-arch=$with_arch; expected lp64])])],
-	[rva*u64 | rva*s64 | rvb*u64 | rvb*s64],
+			[ilp32 | ilp32f | ilp32d], [],
+			[AC_MSG_ERROR([ABI '$with_abi' is incompatible with 32-bit RISC-V profile '$riscv_profile_base' in --with-arch=$with_arch; expected ilp32, ilp32f, or ilp32d])])],
+	[rvi*u64 | rva*u64 | rva*s64 | rvb*u64 | rvb*s64],
 		[AS_CASE([$with_abi],
 			[lp64 | lp64f | lp64d], [],
-			[AC_MSG_ERROR([ABI '$with_abi' is incompatible with RISC-V profile '$riscv_profile_base' in --with-arch=$with_arch; expected lp64, lp64f, or lp64d])])])
+			[AC_MSG_ERROR([ABI '$with_abi' is incompatible with 64-bit RISC-V profile '$riscv_profile_base' in --with-arch=$with_arch; expected lp64, lp64f, or lp64d])])])
 
 AC_SUBST(WITH_ARCH, --with-arch=$with_arch)
 AC_SUBST(WITH_ABI, --with-abi=$with_abi)
