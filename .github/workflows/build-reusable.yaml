@@ -46,6 +46,10 @@ on:
         description: "Build simulator and include in the toolchain"
         type: boolean
         default: false
+      baremetal-multilib:
+        description: "Whether to build multi-lib for baremetal (newlib) mode"
+        type: string
+        default: "rv32i-ilp32--c;rv32im-ilp32--c;rv32iac-ilp32--;rv32imac-ilp32--;rv32imafc-ilp32f-rv32imafdc-;rv64imac-lp64--;rv64imafdc-lp64d--;--cmodel;medany,large"
 
 env:
   submodule_paths: |
@@ -147,6 +151,8 @@ jobs:
           - ${{ inputs.report }}
         build-sim:
           - ${{ inputs.build-sim }}
+        baremetal-multilib:
+          - ${{ inputs.baremetal-multilib }}
 
         exclude:
           - mode: uclibc
@@ -212,40 +218,57 @@ jobs:
           ccache -s
 
       - name: build toolchain
+        env:
+          MATRIX_MODE: ${{ matrix.mode }}
+          MATRIX_COMPILER: ${{ matrix.compiler }}
+          MATRIX_TARGET: ${{ matrix.target }}
+          MATRIX_BAREMETAL_MULTILIB: ${{ matrix.baremetal-multilib }}
+          MATRIX_SIM: ${{ matrix.sim }}
+          MATRIX_CMODEL: ${{ matrix.cmodel }}
+          MATRIX_LANGUAGES: ${{ matrix.languages }}
+          MATRIX_STRIP: ${{ matrix.strip }}
+          # Halve LLVM link parallelism (default 4) to cut peak memory
+          LLVM_PARALLEL_LINK_JOBS: 2
         run: |
-          TARGET_TUPLE=($(echo ${{ matrix.target }} | tr "-" "\n"))
-          BUILD_TOOLCHAIN="./configure --prefix=/mnt/riscv --with-arch=${TARGET_TUPLE[0]} --with-abi=${TARGET_TUPLE[1]}"
-          ARGS=""
-          if [ "${{ matrix.compiler }}" == "llvm" ]; then # build toolchain with llvm
-            ARGS="$ARGS --enable-llvm"
+          # Halve LLVM compile parallelism
+          export LLVM_PARALLEL_JOBS=$(( $(nproc) / 2 > 0 ? $(nproc) / 2 : 1 ))
+          TARGET_TUPLE=($(echo "$MATRIX_TARGET" | tr "-" "\n"))
+          ARGS=(--prefix=/mnt/riscv --with-arch="${TARGET_TUPLE[0]}" --with-abi="${TARGET_TUPLE[1]}")
+          if [ "$MATRIX_MODE" == "newlib" ] && [ "$MATRIX_COMPILER" != "llvm" ] && [ -n "$MATRIX_BAREMETAL_MULTILIB" ]; then
+            ARGS+=(--with-multilib-generator="$MATRIX_BAREMETAL_MULTILIB")
           fi
-          if [ -n "${{ matrix.sim }}" ]; then
-            ARGS="$ARGS --with-sim=${{ matrix.sim }}"
+          if [ "$MATRIX_COMPILER" == "llvm" ]; then # build toolchain with llvm
+            ARGS+=(--enable-llvm)
           fi
-          if [ -n "${{ matrix.cmodel }}" ]; then
-            ARGS="$ARGS --with-cmodel=${{ matrix.cmodel }}"
+          if [ -n "$MATRIX_SIM" ]; then
+            ARGS+=(--with-sim="$MATRIX_SIM")
           fi
-          if [ -n "${{ matrix.languages }}" ]; then
-            ARGS="$ARGS --with-languages=${{ matrix.languages }}"
+          if [ -n "$MATRIX_CMODEL" ]; then
+            ARGS+=(--with-cmodel="$MATRIX_CMODEL")
           fi
-          if [ "${{ matrix.strip }}" = "true" ]; then
-            ARGS="$ARGS --enable-strip"
+          if [ -n "$MATRIX_LANGUAGES" ]; then
+            ARGS+=(--with-languages="$MATRIX_LANGUAGES")
           fi
-          $BUILD_TOOLCHAIN $ARGS
+          if [ "$MATRIX_STRIP" = "true" ]; then
+            ARGS+=(--enable-strip)
+          fi
+          ./configure "${ARGS[@]}"
           sudo mkdir /mnt/riscv
           sudo chown runner:runner /mnt/riscv
-          make -j $(nproc) ${{ matrix.mode }}
+          make -j $(nproc) "$MATRIX_MODE"
       - name: build simulator
         if: |
           matrix.build-sim == true
         run: |
           make -j $(nproc) build-sim
       - name: make report
+        # Skip newlib multilib report which overruns the 6h job limit
         if: |
           matrix.os == 'ubuntu-24.04'
           && (matrix.mode == 'linux' || matrix.mode == 'newlib')
           && matrix.compiler == 'gcc'
           && matrix.report == true
+          && !(matrix.mode == 'newlib' && matrix.baremetal-multilib != '')
         run: |
           make report-${{ matrix.mode }} -j $(nproc)
 
