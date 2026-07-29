@@ -40,12 +40,30 @@ AS_IF([test x"$CURL" != xno], [FETCHER="$CURL -L -o - --ftp-pasv --retry 10"],
 	[AC_MSG_ERROR([no file transfer utility found])])
 AC_SUBST(FETCHER)
 
+AC_ARG_ENABLE(newlib,
+	[AS_HELP_STRING([--enable-newlib],
+		[set newlib as the default make target @<:@--disable-newlib@:>@])])
+
 AC_ARG_ENABLE(linux,
 	[AS_HELP_STRING([--enable-linux],
 		[set linux as the default make target @<:@--disable-linux@:>@])])
 
+AC_ARG_ENABLE(musl,
+	[AS_HELP_STRING([--enable-musl],
+		[set musl as the default make target @<:@--disable-musl@:>@])])
+
+AC_ARG_ENABLE(uclibc,
+	[AS_HELP_STRING([--enable-uclibc],
+		[set uclibc as the default make target @<:@--disable-uclibc@:>@])])
+
 AS_IF([test "x$enable_linux" = xyes],
 	[AC_SUBST(default_target, linux)],
+	[test "x$enable_musl" = xyes],
+	[AC_SUBST(default_target, musl)],
+	[test "x$enable_uclibc" = xyes],
+	[AC_SUBST(default_target, uclibc)],
+	[test "x$enable_newlib" = xyes],
+	[AC_SUBST(default_target, newlib)],
 	[AC_SUBST(default_target, newlib)])
 
 AC_ARG_ENABLE(debug_info,
