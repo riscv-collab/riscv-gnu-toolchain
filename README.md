@@ -1,9 +1,9 @@
 RISC-V GNU Compiler Toolchain
 =============================
 
-This is the RISC-V C and C++ cross-compiler. It supports two build modes:
-a generic ELF/Newlib toolchain and a more sophisticated Linux-ELF/glibc
-toolchain.
+This is the RISC-V C and C++ cross-compiler. It can build a bare-metal
+ELF toolchain (using Newlib) or a Linux-ELF toolchain (using glibc, musl,
+or uClibc).
 
 ###  Getting the sources
 
@@ -47,36 +47,35 @@ upstream sources exists in $(DISTDIR), it will be used; the default location
 is /var/cache/distfiles.  Your computer will need about 8 GiB of disk space to
 complete the process.
 
-### Installation (Newlib)
+### Installation
 
-To build the Newlib cross-compiler, pick an install path (that is writeable).
-If you choose, say, `/opt/riscv`, then add `/opt/riscv/bin` to your `PATH`.
-Then, simply run the following command:
-
-    ./configure --prefix=/opt/riscv
-    make
-
-You should now be able to use riscv64-unknown-elf-gcc and its cousins.
-
-Note: If you're planning to use an external library that replaces part of newlib (for example `libgloss-htif`), [read the FAQ](#ensuring-code-model-consistency).
-
-### Installation (Linux)
-
-To build the Linux cross-compiler, pick an install path (that is writeable).
-If you choose, say, `/opt/riscv`, then add `/opt/riscv/bin` to your `PATH`.
-Then, simply run the following command:
+Pick an install path that is writeable — say `/opt/riscv` — and add
+`/opt/riscv/bin` to your `PATH`.  Then configure:
 
     ./configure --prefix=/opt/riscv
-    make linux
 
-The build defaults to targeting RV64GC (64-bit) with glibc, even on a 32-bit
-build environment. To build the 32-bit RV32GC toolchain, use:
+and build the C library you want:
+
+| C library      | build         |
+| -------------- | ------------- |
+| Newlib         | `make`        |
+| Linux (glibc)  | `make linux`  |
+| Linux (musl)   | `make musl`   |
+| Linux (uClibc) | `make uclibc` |
+
+You should now be able to use, e.g., `riscv64-unknown-elf-gcc` and its
+cousins.  The bare-metal (Newlib) tools are prefixed `riscv64-unknown-elf-`,
+the Linux tools `riscv64-unknown-linux-{gnu,musl,uclibc}-`.
+
+A plain `make` builds the default target, which is Newlib.  To make a
+different libc the default — so that `make` on its own builds it — configure
+with `--enable-newlib`, `--enable-linux`, `--enable-musl` or
+`--enable-uclibc`.
+
+The build defaults to targeting RV64GC (64-bit), even on a 32-bit build
+environment.  To build a 32-bit toolchain, pass the arch and ABI, e.g.:
 
     ./configure --prefix=/opt/riscv --with-arch=rv32gc --with-abi=ilp32d
-    make linux
-
-In case you prefer musl libc over glibc, configure just like above and opt for
-`make musl` instead of `make linux`.
 
 Supported architectures are rv32i or rv64i plus standard extensions (a)tomics,
 (m)ultiplication and division, (f)loat, (d)ouble, or (g)eneral for MAFD.
@@ -85,21 +84,24 @@ Supported ABIs are ilp32 (32-bit soft-float), ilp32d (32-bit hard-float),
 ilp32f (32-bit with single-precision in registers and double in memory, niche
 use only), lp64 lp64f lp64d (same but with 64-bit long and pointers).
 
-### Installation (Newlib/Linux multilib)
+Note: If you're planning to use an external library that replaces part of newlib (for example `libgloss-htif`), [read the FAQ](#ensuring-code-model-consistency).
 
-To build either cross-compiler with support for both 32-bit and
-64-bit, run the following command:
+### Multilib
+
+Add `--enable-multilib` to build runtime libraries for both 32-bit and
+64-bit:
 
     ./configure --prefix=/opt/riscv --enable-multilib
 
-And then either `make`, `make linux` or `make musl` for the Newlib, Linux
-glibc-based or Linux musl libc-based cross-compiler, respectively.
+The resulting compiler can target both 32-bit and 64-bit systems and
+supports the most common `-march`/`-mabi` options, which can be seen with
+the `--print-multi-lib` flag.
 
-The multilib compiler will have the prefix riscv64-unknown-elf- or
-riscv64-unknown-linux-gnu- but will be able to target both 32-bit and 64-bit
-systems.
-It will support the most common `-march`/`-mabi` options, which can be seen by
-using the `--print-multi-lib` flag on either cross-compiler.
+Multilib is only available for the Newlib and Linux/glibc toolchains; the
+musl and uClibc toolchains build a single variant, and configuring them
+with `--enable-multilib` is rejected.  Building them explicitly (e.g.
+`make musl`) in a tree configured for multilib still yields a single
+variant.
 
 Linux toolchain has an additional option `--enable-default-pie` to control the
 default PIE enablement for GCC, which is disable by default.
@@ -256,6 +258,9 @@ by the SIM variable in the Makefile, e.g. SIM=qemu, SIM=gdb, or SIM=spike
 (experimental).In addition, the simulator can also be selected with the
 configure time option `--with-sim=`.However, the testsuite allowlist is
 only maintained for qemu.Other simulators might get extra failures.
+
+The `make check` and `make report` targets are wired only for the Newlib
+and Linux/glibc toolchains.
 
 #### Additional Prerequisite
 
