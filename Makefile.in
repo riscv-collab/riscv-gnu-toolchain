@@ -5,6 +5,7 @@ INSTALL_DIR := @prefix@
 GCC_SRCDIR := @with_gcc_src@
 BINUTILS_SRCDIR := @with_binutils_src@
 NEWLIB_SRCDIR := @with_newlib_src@
+PICOLIBC_SRCDIR := @with_picolibc_src@
 GLIBC_SRCDIR := @with_glibc_src@
 MUSL_SRCDIR := @with_musl_src@
 UCLIBC_SRCDIR := @with_uclibc_src@
@@ -199,6 +200,7 @@ endif
 
 make_tuple = riscv$(1)$(ENDIAN_POSTFIX)-unknown-$(2)
 NEWLIB_TUPLE ?= $(call make_tuple,$(XLEN),elf)
+PICOLIBC_TUPLE ?= $(call make_tuple,$(XLEN),elf)
 LINUX_TUPLE  ?= $(call make_tuple,$(XLEN),linux-gnu)
 MUSL_TUPLE ?= $(call make_tuple,$(XLEN),linux-musl)
 UCLIBC_TUPLE ?= $(call make_tuple,$(XLEN),linux-uclibc)
@@ -249,6 +251,8 @@ NEWLIB_NANO_TARGET_BOARDS ?= $(shell $(srcdir)/scripts/generate_target_board \
   --extra-test-arch-abi-flags-list "$(EXTRA_MULTILIB_TEST)")
 NEWLIB_CC_FOR_MULTILIB_INFO := $(NEWLIB_CC_FOR_TARGET)
 
+PICOLIBC_TARGET_FLAGS := $(PICOLIBC_TARGET_FLAGS_EXTRA)
+
 GLIBC_TARGET_FLAGS := $(GLIBC_TARGET_FLAGS_EXTRA)
 GLIBC_CC_FOR_TARGET ?= $(LINUX_TUPLE)-gcc
 GLIBC_CXX_FOR_TARGET ?= $(LINUX_TUPLE)-g++
@@ -279,11 +283,13 @@ PATH := $(builddir)/install-host-gcc/bin:$(PATH)
 GCC_CHECKING_FLAGS := $(GCC_CHECKING_FLAGS) --enable-werror-always
 endif
 newlib: stamps/build-gcc-newlib-stage2
+picolibc: stamps/build-gcc-picolibc-stage2
 linux: stamps/build-gcc-linux-stage2
 musl: stamps/build-gcc-musl-stage2
 uclibc: stamps/build-gcc-uclibc-stage2
 ifeq (@enable_gdb@,--enable-gdb)
 newlib: stamps/build-gdb-newlib
+picolibc: stamps/build-gdb-picolibc
 linux: stamps/build-gdb-linux
 musl: stamps/build-gdb-musl
 endif
@@ -311,8 +317,12 @@ else
 ifeq (@default_target@,uclibc)
 build-libc: stamps/build-uclibc-linux
 else
+ifeq (@default_target@,picolibc)
+build-libc: stamps/build-picolibc
+else
 build-libc: stamps/build-newlib stamps/build-newlib-nano \
 	stamps/merge-newlib-nano
+endif
 endif
 endif
 endif
@@ -436,6 +446,12 @@ ifeq ($(findstring $(srcdir),$(NEWLIB_SRCDIR)),$(srcdir))
 NEWLIB_SRC_GIT := $(NEWLIB_SRCDIR)/.git
 else
 NEWLIB_SRC_GIT :=
+endif
+
+ifeq ($(findstring $(srcdir),$(PICOLIBC_SRCDIR)),$(srcdir))
+PICOLIBC_SRC_GIT := $(PICOLIBC_SRCDIR)/.git
+else
+PICOLIBC_SRC_GIT :=
 endif
 
 ifeq ($(findstring $(srcdir),$(GLIBC_SRCDIR)),$(srcdir))
@@ -930,6 +946,118 @@ stamps/build-gcc-newlib-stage2: $(GCC_SRCDIR) $(GCC_SRC_GIT) stamps/build-newlib
 		$(WITH_ARCH) \
 		$(WITH_TUNE) \
 		$(WITH_ISA_SPEC) \
+		$(GCC_WITH_SPECS) \
+		$(GCC_EXTRA_CONFIGURE_FLAGS) \
+		CFLAGS_FOR_TARGET="-Os $(CFLAGS_FOR_TARGET)" \
+		CXXFLAGS_FOR_TARGET="-Os $(CXXFLAGS_FOR_TARGET)"
+	$(MAKE) -C $(notdir $@)
+	$(MAKE) -C $(notdir $@) $(INSTALL_TARGET)
+	mkdir -p $(dir $@) && touch $@
+
+#
+# PICOLIBC
+#
+
+# Picolibc shares the bare-metal ELF target tuple with newlib, so its
+# binutils and gdb builds are identical.  Reuse the newlib ones instead
+# of building the same tools twice.
+stamps/build-binutils-picolibc: stamps/build-binutils-newlib
+	mkdir -p $(dir $@) && touch $@
+
+stamps/build-gdb-picolibc: stamps/build-gdb-newlib
+	mkdir -p $(dir $@) && touch $@
+
+GCC_PICOLIBC_CONFIGURE_FLAGS = \
+		--target=$(PICOLIBC_TUPLE) \
+		$(CONFIGURE_HOST) \
+		--prefix=$(INSTALL_DIR) \
+		--disable-shared \
+		--disable-threads \
+		@with_system_zlib@ \
+		--enable-tls \
+		--with-newlib \
+		--with-picolibc \
+		--with-sysroot=$(INSTALL_DIR)/$(PICOLIBC_TUPLE) \
+		--disable-libmudflap \
+		--disable-libssp \
+		--disable-libquadmath \
+		--disable-libgomp \
+		--disable-nls \
+		--disable-tm-clone-registry \
+		--src=$(gccsrcdir) \
+		$(GCC_CHECKING_FLAGS) \
+		--disable-multilib \
+		$(WITH_ABI) \
+		$(WITH_ARCH) \
+		$(WITH_TUNE) \
+		$(WITH_ISA_SPEC)
+
+stamps/build-gcc-picolibc-stage1: $(GCC_SRCDIR) $(GCC_SRC_GIT) stamps/build-binutils-picolibc
+	if test -f $</contrib/download_prerequisites && test "@NEED_GCC_EXTERNAL_LIBRARIES@" = "true"; then cd $< && ./contrib/download_prerequisites; fi
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	cd $(notdir $@) && $</configure \
+		$(GCC_PICOLIBC_CONFIGURE_FLAGS) \
+		--enable-languages=c,c++ \
+		$(GCC_EXTRA_CONFIGURE_FLAGS) \
+		CFLAGS_FOR_TARGET="-Os $(CFLAGS_FOR_TARGET)" \
+		CXXFLAGS_FOR_TARGET="-Os $(CXXFLAGS_FOR_TARGET)"
+	$(MAKE) -C $(notdir $@) all-gcc
+	$(MAKE) -C $(notdir $@) $(INSTALL_TARGET)-gcc
+	mkdir -p $(dir $@) && touch $@
+
+# Meson needs a cross file describing the toolchain; generate it inline
+# from the target tuple.  Target flags (code model included) come from
+# CFLAGS_FOR_TARGET, plus picolibc's own -msave-restore and -fno-common.
+stamps/build-picolibc: $(PICOLIBC_SRCDIR) $(PICOLIBC_SRC_GIT) stamps/build-gcc-picolibc-stage1
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	cpu_family=riscv64; endian=little; \
+	case $(PICOLIBC_TUPLE) in riscv32*) cpu_family=riscv32 ;; esac; \
+	case $(PICOLIBC_TUPLE) in *be-*) endian=big ;; esac; \
+	cargs="'-msave-restore', '-fno-common'"; \
+	for f in $(CFLAGS_FOR_TARGET); do cargs="$$cargs, '$$f'"; done; \
+	tool=$(INSTALL_DIR)/bin/$(PICOLIBC_TUPLE); \
+	{ \
+	  echo "[binaries]"; \
+	  echo "c = ['$$tool-gcc', '-nostdlib']"; \
+	  echo "cpp = ['$$tool-g++', '-nostdlib']"; \
+	  echo "ar = '$$tool-ar'"; \
+	  echo "as = '$$tool-as'"; \
+	  echo "nm = '$$tool-nm'"; \
+	  echo "strip = '$$tool-strip'"; \
+	  echo "[host_machine]"; \
+	  echo "system = 'unknown'"; \
+	  echo "cpu_family = '$$cpu_family'"; \
+	  echo "cpu = '$$cpu_family'"; \
+	  echo "endian = '$$endian'"; \
+	  echo "[properties]"; \
+	  echo "c_args = [$$cargs]"; \
+	  echo "cpp_args = [$$cargs]"; \
+	  echo "skip_sanity_check = true"; \
+	} > $(notdir $@)/cross.txt
+	meson setup $(notdir $@) $(PICOLIBC_SRCDIR) \
+		--cross-file $(notdir $@)/cross.txt \
+		--buildtype=minsize \
+		--prefix=$(INSTALL_DIR)/$(PICOLIBC_TUPLE) \
+		-Dincludedir=include \
+		-Dlibdir=lib \
+		-Dsysroot-install=true \
+		-Dsystem-libc=true \
+		-Dtests=false \
+		$(PICOLIBC_TARGET_FLAGS)
+	ninja -C $(notdir $@) install
+	mkdir -p $(dir $@) && touch $@
+
+stamps/build-gcc-picolibc-stage2: ENABLED_LANGUAGES?="c,c++"
+stamps/build-gcc-picolibc-stage2: $(GCC_SRCDIR) $(GCC_SRC_GIT) stamps/build-picolibc
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	cd $(notdir $@) && $</configure \
+		$(GCC_PICOLIBC_CONFIGURE_FLAGS) \
+		--enable-languages=$(ENABLED_LANGUAGES) \
+		--with-pkgversion="$(GCCPKGVER)" \
+		--with-native-system-header-dir=/include \
 		$(GCC_WITH_SPECS) \
 		$(GCC_EXTRA_CONFIGURE_FLAGS) \
 		CFLAGS_FOR_TARGET="-Os $(CFLAGS_FOR_TARGET)" \
