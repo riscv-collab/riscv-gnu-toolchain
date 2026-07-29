@@ -279,6 +279,21 @@ AS_IF([test "x$enable_llvm" = xyes],
 	[AC_SUBST(enable_llvm, --enable-llvm)],
 	[AC_SUBST(enable_llvm, --disable-llvm)])
 
+# The musl and uClibc toolchains build a single-variant GCC
+# (--disable-multilib) and wire no per-variant runtime, so multilib is not
+# available for them.  Reject it rather than silently ignoring the request.
+AS_IF([test "x$multilib_flags" = x--enable-multilib],
+	[AS_CASE([$default_target],
+		[musl | uclibc],
+		[AC_MSG_ERROR([multilib is not supported for the $default_target toolchain])])])
+
+# There is no Clang runtime build for the uClibc toolchain, so --enable-llvm
+# would configure cleanly and then fail at make time.  Reject it up front.
+AS_IF([test "x$enable_llvm" = x--enable-llvm],
+	[AS_CASE([$default_target],
+		[uclibc],
+		[AC_MSG_ERROR([LLVM is not supported for the $default_target toolchain])])])
+
 AC_ARG_ENABLE(host-gcc,
 	[AS_HELP_STRING([--enable-host-gcc],
 		[Build host GCC to build cross toolchain])])
