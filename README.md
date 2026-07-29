@@ -2,8 +2,8 @@ RISC-V GNU Compiler Toolchain
 =============================
 
 This is the RISC-V C and C++ cross-compiler. It can build a bare-metal
-ELF toolchain (using Newlib) or a Linux-ELF toolchain (using glibc, musl,
-or uClibc).
+ELF toolchain (using Newlib or Picolibc) or a Linux-ELF toolchain
+(using glibc, musl, or uClibc).
 
 ###  Getting the sources
 
@@ -20,21 +20,21 @@ Several standard packages are needed to build the toolchain.
 
 On Ubuntu, executing the following command should suffice:
 
-    $ sudo apt-get install autoconf automake autotools-dev curl python3 python3-pip python3-tomli libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo gperf libtool patchutils bc zlib1g-dev libexpat-dev ninja-build git cmake libglib2.0-dev expect device-tree-compiler libslirp-dev libzstd-dev libncurses-dev
+    $ sudo apt-get install autoconf automake autotools-dev curl python3 python3-pip python3-tomli libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo gperf libtool patchutils bc zlib1g-dev libexpat-dev meson ninja-build git cmake libglib2.0-dev expect device-tree-compiler libslirp-dev libzstd-dev libncurses-dev
 
 On Fedora/CentOS/RHEL OS, executing the following command should suffice:
 
-    $ sudo yum install autoconf automake python3 libmpc-devel mpfr-devel gmp-devel gawk  bison flex texinfo patchutils gcc gcc-c++ zlib-devel expat-devel libslirp-devel ncurses-devel ninja-build cmake
+    $ sudo yum install autoconf automake python3 libmpc-devel mpfr-devel gmp-devel gawk  bison flex texinfo patchutils gcc gcc-c++ zlib-devel expat-devel libslirp-devel ncurses-devel meson ninja-build cmake
 
 On Arch Linux, executing the following command should suffice:
 
-    $ sudo pacman -Syu curl python3 libmpc mpfr gmp base-devel texinfo gperf patchutils bc zlib expat libslirp ncurses ninja cmake
+    $ sudo pacman -Syu curl python3 libmpc mpfr gmp base-devel texinfo gperf patchutils bc zlib expat libslirp ncurses meson ninja cmake
 
 Also available for Arch users on the AUR: [https://aur.archlinux.org/packages/riscv-gnu-toolchain-bin](https://aur.archlinux.org/packages/riscv-gnu-toolchain-bin)
 
 On macOS, you can use [Homebrew](http://brew.sh) to install the dependencies:
 
-    $ brew install python3 gawk gnu-sed make gmp mpfr libmpc isl zlib expat texinfo flock libslirp ncurses ninja cmake bison m4 wget
+    $ brew install python3 gawk gnu-sed make gmp mpfr libmpc isl zlib expat texinfo flock libslirp ncurses meson ninja cmake bison m4 wget
 
 When executing the instructions in this README, please use `gmake` instead of `make` to use the newly installed version of make.
 To build the glibc (Linux) on macOS, you will need to build within a case-sensitive file
@@ -56,21 +56,22 @@ Pick an install path that is writeable — say `/opt/riscv` — and add
 
 and build the C library you want:
 
-| C library      | build         |
-| -------------- | ------------- |
-| Newlib         | `make`        |
-| Linux (glibc)  | `make linux`  |
-| Linux (musl)   | `make musl`   |
-| Linux (uClibc) | `make uclibc` |
+| C library      | build           |
+| -------------- | --------------- |
+| Newlib         | `make`          |
+| Picolibc       | `make picolibc` |
+| Linux (glibc)  | `make linux`    |
+| Linux (musl)   | `make musl`     |
+| Linux (uClibc) | `make uclibc`   |
 
 You should now be able to use, e.g., `riscv64-unknown-elf-gcc` and its
-cousins.  The bare-metal (Newlib) tools are prefixed `riscv64-unknown-elf-`,
-the Linux tools `riscv64-unknown-linux-{gnu,musl,uclibc}-`.
+cousins.  The bare-metal (Newlib, Picolibc) tools are prefixed
+`riscv64-unknown-elf-`, the Linux tools `riscv64-unknown-linux-{gnu,musl,uclibc}-`.
 
 A plain `make` builds the default target, which is Newlib.  To make a
 different libc the default — so that `make` on its own builds it — configure
-with `--enable-newlib`, `--enable-linux`, `--enable-musl` or
-`--enable-uclibc`.
+with `--enable-newlib`, `--enable-linux`, `--enable-musl`, `--enable-uclibc`
+or `--enable-picolibc`.
 
 The build defaults to targeting RV64GC (64-bit), even on a 32-bit build
 environment.  To build a 32-bit toolchain, pass the arch and ABI, e.g.:
@@ -98,8 +99,8 @@ supports the most common `-march`/`-mabi` options, which can be seen with
 the `--print-multi-lib` flag.
 
 Multilib is only available for the Newlib and Linux/glibc toolchains; the
-musl and uClibc toolchains build a single variant, and configuring them
-with `--enable-multilib` is rejected.  Building them explicitly (e.g.
+musl, uClibc and Picolibc toolchains build a single variant, and configuring
+them with `--enable-multilib` is rejected.  Building them explicitly (e.g.
 `make musl`) in a tree configured for multilib still yields a single
 variant.
 
@@ -522,6 +523,7 @@ Here is the list of configure options for specifying alternative sources for the
     --with-llvm-src
     --with-musl-src
     --with-newlib-src
+    --with-picolibc-src
     --with-pk-src
     --with-qemu-src
     --with-spike-src
