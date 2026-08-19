@@ -116,7 +116,21 @@ jobs:
 
       - name: Checkout required submodules
         if: steps.smcache.outputs.cache-hit != 'true'
-        run: git submodule update --init -j $(nproc) --depth 1 $(git submodule | awk '{print $2}')
+        run: |
+          # git retries a failed clone once, roughly half a minute later, and
+          # then aborts the whole command. That is too short for a server-side
+          # error to clear, and it fails the job even when every other submodule
+          # cloned fine. Retry the update itself with a growing delay; it is
+          # resumable and skips submodules that are already checked out.
+          for i in 1 2 3 4 5; do
+            if git submodule update --init -j $(nproc) --depth 1 \
+                 $(git submodule | awk '{print $2}'); then
+              exit 0
+            fi
+            echo "submodule checkout failed (attempt ${i}), retrying in $((i * 30))s"
+            sleep $((i * 30))
+          done
+          exit 1
 
       - name: Storage size optimization
         if: steps.smcache.outputs.cache-hit != 'true'
