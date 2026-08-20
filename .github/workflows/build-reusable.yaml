@@ -46,6 +46,13 @@ on:
         description: "Build simulator and include in the toolchain"
         type: boolean
         default: false
+      use-prebuilt-gnu:
+        description: >-
+          Do not build the GNU toolchain, take it from the artifact that the
+          gcc job of the same workflow run published, and build only LLVM on
+          top of it. Requires compiler '["llvm"]'.
+        type: boolean
+        default: false
 
 env:
   submodule_paths: |
@@ -88,6 +95,23 @@ jobs:
         run: |
           if [[ "${{ inputs.strip }}" != "unstripped" && "${{ inputs.strip }}" != "stripped" && "${{ inputs.strip }}" != "both" ]]; then
             echo "Invalid strip option: ${{ inputs.strip }}. Must be one of 'unstripped', 'stripped', 'both'."
+            exit 1
+          fi
+
+      - name: Check use-prebuilt-gnu input
+        if: ${{ inputs.use-prebuilt-gnu }}
+        run: |
+          # Only LLVM rows have a GNU toolchain to take from somewhere else. Any
+          # other row would download an artifact that does not exist and skip
+          # the build it is supposed to perform, so require exactly ["llvm"].
+          if [ "$(echo '${{ inputs.compiler }}' | tr -d '[]\" ')" != "llvm" ]; then
+            echo "use-prebuilt-gnu requires compiler '[\"llvm\"]', got ${{ inputs.compiler }}."
+            exit 1
+          fi
+          # The prebuilt path downloads the unstripped artifact, which is not
+          # published when only stripped tarballs are built.
+          if [[ "${{ inputs.strip }}" == "stripped" ]]; then
+            echo "use-prebuilt-gnu needs strip 'unstripped' or 'both', got 'stripped'."
             exit 1
           fi
 
@@ -168,6 +192,31 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: generate prebuilt toolchain name
+        id:   toolchain-name-generator
+        run: |
+          if [[ "${{ matrix.target }}" == *"32"* ]]; then BITS=32; else BITS=64; fi
+          case "${{ matrix.mode }}" in
+            "linux")
+              MODE="glibc";;
+            "musl")
+              MODE="musl";;
+            "uclibc")
+              MODE="uclibc-ng";;
+            *)
+              MODE="elf";;
+          esac
+          ARTIFACT_NAME=${{ inputs.artifact-name }}
+          if [ -n "$ARTIFACT_NAME" ]; then
+            ARTIFACT_NAME="-${ARTIFACT_NAME}"
+          fi
+          BASE_NAME="riscv$BITS-$MODE-${{ matrix.os }}-${{ matrix.compiler }}"
+          echo "TOOLCHAIN_NAME=${BASE_NAME}${ARTIFACT_NAME}" >> $GITHUB_OUTPUT
+          echo "TOOLCHAIN_NAME_STRIPPED=${BASE_NAME}-stripped${ARTIFACT_NAME}" >> $GITHUB_OUTPUT
+          # Same name, but for the gcc build of this row: what the prebuilt
+          # GNU toolchain is published as.
+          echo "GNU_NAME=riscv$BITS-$MODE-${{ matrix.os }}-gcc${ARTIFACT_NAME}" >> $GITHUB_OUTPUT
+
       - name: Remove unneeded frameworks to recover disk space
         run: sudo ./.github/cleanup-rootfs.sh
 
@@ -223,6 +272,13 @@ jobs:
           ccache -z
           ccache -s
 
+      - name: Download prebuilt GNU toolchain
+        if: ${{ inputs.use-prebuilt-gnu }}
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ steps.toolchain-name-generator.outputs.GNU_NAME }}
+          path: prebuilt-gnu
+
       - name: Configure toolchain
         run: |
           TARGET_TUPLE=($(echo ${{ matrix.target }} | tr "-" "\n"))
@@ -247,8 +303,34 @@ jobs:
           sudo mkdir /mnt/riscv
           sudo chown runner:runner /mnt/riscv
 
+      - name: Restore prebuilt GNU toolchain
+        if: ${{ inputs.use-prebuilt-gnu }}
+        run: |
+          tar xJf prebuilt-gnu/${{ steps.toolchain-name-generator.outputs.GNU_NAME }}.tar.xz -C /mnt/
+          rm -rf prebuilt-gnu
+          # Fail here rather than somewhere inside the LLVM configure.
+          ls /mnt/riscv/bin/*-gcc >/dev/null 2>&1 || {
+            echo "error: the restored artifact contains no cross gcc in /mnt/riscv/bin"
+            exit 1
+          }
+
       - name: Build toolchain
+        if: ${{ !inputs.use-prebuilt-gnu }}
         run: make -j $(nproc) ${{ matrix.mode }}
+
+      # Build the LLVM stamp directly instead of the "<mode>" aggregate, so that
+      # this does not have to track whatever else "<mode>" pulls in. The only
+      # prerequisite of stamps/build-llvm-<mode> that the artifact restored above
+      # already provides is the stage2 stamp; "-o" marks it up to date without
+      # remaking it. This deliberately short-circuits the dependency graph and is
+      # only valid because the artifact comes from the gcc job of this same
+      # workflow run, built from the same commit.
+      - name: Build LLVM on the prebuilt GNU toolchain
+        if: ${{ inputs.use-prebuilt-gnu }}
+        run: |
+          make -j $(nproc) \
+            -o stamps/build-gcc-${{ matrix.mode }}-stage2 \
+            stamps/build-llvm-${{ matrix.mode }}
 
       - name: build simulator
         if: |
@@ -282,27 +364,6 @@ jobs:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-v1-${{ matrix.os }}-${{ github.run_id }}
 
-      - name: generate prebuilt toolchain name
-        id:   toolchain-name-generator
-        run: |
-          if [[ "${{ matrix.target }}" == *"32"* ]]; then BITS=32; else BITS=64; fi
-          case "${{ matrix.mode }}" in
-            "linux")
-              MODE="glibc";;
-            "musl")
-              MODE="musl";;
-            "uclibc")
-              MODE="uclibc-ng";;
-            *)
-              MODE="elf";;
-          esac
-          ARTIFACT_NAME=${{ inputs.artifact-name }}
-          if [ -n "$ARTIFACT_NAME" ]; then
-            ARTIFACT_NAME="-${ARTIFACT_NAME}"
-          fi
-          BASE_NAME="riscv$BITS-$MODE-${{ matrix.os }}-${{ matrix.compiler }}"
-          echo "TOOLCHAIN_NAME=${BASE_NAME}${ARTIFACT_NAME}" >> $GITHUB_OUTPUT
-          echo "TOOLCHAIN_NAME_STRIPPED=${BASE_NAME}-stripped${ARTIFACT_NAME}" >> $GITHUB_OUTPUT
       - name: Remove build trees before packaging
         run: |
           rm -rf build-* stamps install-host-gcc install-newlib-nano
