@@ -1,50 +1,114 @@
-from tqdm import tqdm
+#!/usr/bin/env python3
+# Regenerate the GCC CI allowlists from downloaded workflow logs.
+#
+# Usage: drop the CI *.txt logs into this directory, then run:
+#   python3 gen.py
+#
+# The script merges newly observed failures into the existing allowlists,
+# only adding entries, never dropping them. Safe when CI fail-fast left some
+# logs missing. To rebuild from scratch, delete the *.log files first.
+#
+# Completeness check: a CI log is considered complete only when it contains a
+# "# of unexpected failures" summary line (written by dejagnu at the very end).
+# An incomplete log (job cancelled mid-run) is excluded from the intersection
+# recompute so that per-file categorization stays stable. Its base entries
+# (read from the existing allowlist files) are still carried forward.
+
+import glob
+import os
 import re
+from tqdm import tqdm
 
-def processlog(filename: str) -> set:
-    with open(filename, "r", encoding='utf-8') as f:
-        data = f.readlines()
-    set1 = set()
-    for line in tqdm(data):
-        result = re.match('^.*((FAIL|UNRESOLVED): .*.c) .*$',line)     #使用正则表达式筛选每一行的数据,自行查找正则表达式
-        if result:
-            t = (result.group(1))                        #group(1)将正则表达式的(/d.*/d)提取出来
-            set1.add(t)
-    return set1
+STATUS_RE = re.compile(r'^.*((FAIL|UNRESOLVED|XPASS): .*\.(c|C|cc|cpp|f90|f95|f03|f08)) .*$')
+# Also capture gcov prime-paths continuation lines (no filename, e.g. "FAIL: expected covered: '{...}'")
+GCOV_PRIMEPATH_RE = re.compile(r'^.*(FAIL: expected covered: .*)$')
+COMPLETE_RE = re.compile(r'# of unexpected failures')
 
-def writeset(filename: str, set1: set) -> None:
-    if len(set1)!=0:
-        with open(filename, "a", encoding='utf-8') as f1:   
-            for t in tqdm(set1):
-                f1.write(t+'\n')
+# config -> (keywords selecting its CI log, allowlist files that config loads)
+CONFIGS = {
+    "newlib64": (["ubuntu-24.04", "newlib", "rv64gc-lp64d", "gcc"],
+                 ["common.log", "newlib.log", "rv64.lp64d.log", "newlib.rv64.lp64d.log"]),
+    "newlib32": (["ubuntu-24.04", "newlib", "rv32gc-ilp32d", "gcc"],
+                 ["common.log", "newlib.log", "rv32.ilp32d.log", "newlib.rv32.ilp32d.log"]),
+    "linux64":  (["ubuntu-24.04", "linux", "rv64gc-lp64d", "gcc"],
+                 ["common.log", "glibc.log", "rv64.lp64d.log", "glibc.rv64.lp64d.log"]),
+    "linux32":  (["ubuntu-24.04", "linux", "rv32gc-ilp32d", "gcc"],
+                 ["common.log", "glibc.log", "rv32.ilp32d.log", "glibc.rv32.ilp32d.log"]),
+}
 
-newlib64=processlog("10_build (ubuntu-24.04, newlib, rv64gc-lp64d, gcc).txt")
-newlib32=processlog("25_build (ubuntu-24.04, newlib, rv32gc-ilp32d, gcc).txt")
-linux64=processlog("24_build (ubuntu-24.04, linux, rv64gc-lp64d, gcc).txt")
-linux32=processlog("15_build (ubuntu-24.04, linux, rv32gc-ilp32d, gcc).txt")
 
-# common should be 4 intersection
-commonerror=set.intersection(newlib64, newlib32, linux64, linux32)
-writeset("res/common.log",commonerror)
-# rv32
-rv32=set.intersection(newlib32, linux32)
-rv32=rv32-commonerror
-writeset("res/rv32.log",rv32)
-# rv64
-rv64=set.intersection(newlib64, linux64)
-rv64=rv64-commonerror
-writeset("res/rv64.log",rv64)
-# glibc
-glibc=set.intersection(linux32, linux64)
-glibc=glibc-commonerror
-writeset("res/glibc.log",glibc)
-# newlib
-newlib=set.intersection(newlib64, newlib32)
-newlib=newlib-commonerror
-writeset("res/newlib.log",newlib)
+def parse(lines):
+    return {l.strip() for l in lines if l.strip() and not l.startswith("#")}
 
-# everything out of it
-writeset("res/glibc.rv32.log",linux32-rv32-glibc-commonerror)
-writeset("res/glibc.rv64.log",linux64-rv64-glibc-commonerror)
-writeset("res/newlib.rv32.log",newlib32-rv32-newlib-commonerror)
-writeset("res/newlib.rv64.log",newlib64-rv64-newlib-commonerror)
+
+def read_log(keywords):
+    """Return (failures, is_complete) for the first *.txt matching all keywords.
+
+    is_complete is True only when the log contains dejagnu's end-of-run summary
+    line "# of unexpected failures".  An incomplete log (cancelled job) should
+    not participate in the intersection recompute — its entries have already
+    been committed into the allowlist files from a previous complete run.
+    """
+    for f in glob.glob("*.txt"):
+        if all(k in f for k in keywords):
+            with open(f, encoding="utf-8", errors="replace") as fh:
+                lines = fh.readlines()
+            failures = {m.group(1) for m in (STATUS_RE.match(l) for l in tqdm(lines, desc=f)) if m}
+            # Also capture gcov prime-paths continuation lines
+            failures |= {m.group(1) for m in (GCOV_PRIMEPATH_RE.match(l) for l in lines) if m}
+            complete = any(COMPLETE_RE.search(l) for l in lines)
+            if not complete:
+                print(f"  WARNING: {f} looks incomplete (no dejagnu summary); "
+                      "skipping its failures from intersection recompute")
+            return failures, complete
+    return set(), False
+
+
+def read_allowlist(fname):
+    if os.path.exists(fname):
+        with open(fname, encoding="utf-8") as fh:
+            return parse(fh.readlines())
+    return set()
+
+
+def write(fname, entries):
+    if entries:
+        with open(fname, "w", encoding="utf-8") as f:
+            f.write("\n".join(sorted(entries)) + "\n")
+    elif os.path.exists(fname):
+        os.remove(fname)
+
+
+s = {}
+for name, (keywords, files) in CONFIGS.items():
+    base = set().union(*(read_allowlist(f) for f in files))
+    failures, complete = read_log(keywords)
+    if complete:
+        # Full run: merge new failures and allow intersection to reclassify.
+        s[name] = base | failures
+    else:
+        # Incomplete run (cancelled job): carry the base forward unchanged.
+        # Do NOT add the partial failures — they would skew the intersection
+        # and scatter entries across the wrong per-file buckets.
+        s[name] = base
+
+newlib_rv64 = s["newlib64"]
+newlib_rv32 = s["newlib32"]
+linux_rv64 = s["linux64"]
+linux_rv32 = s["linux32"]
+
+common = newlib_rv64 & newlib_rv32 & linux_rv64 & linux_rv32
+rv32 = (newlib_rv32 & linux_rv32) - common
+rv64 = (newlib_rv64 & linux_rv64) - common
+glibc = (linux_rv32 & linux_rv64) - common
+newlib = (newlib_rv64 & newlib_rv32) - common
+
+write("common.log", common)
+write("rv32.ilp32d.log", rv32)
+write("rv64.lp64d.log", rv64)
+write("glibc.log", glibc)
+write("newlib.log", newlib)
+write("glibc.rv32.ilp32d.log", linux_rv32 - rv32 - glibc - common)
+write("glibc.rv64.lp64d.log", linux_rv64 - rv64 - glibc - common)
+write("newlib.rv32.ilp32d.log", newlib_rv32 - rv32 - newlib - common)
+write("newlib.rv64.lp64d.log", newlib_rv64 - rv64 - newlib - common)
