@@ -40,12 +40,36 @@ AS_IF([test x"$CURL" != xno], [FETCHER="$CURL -L -o - --ftp-pasv --retry 10"],
 	[AC_MSG_ERROR([no file transfer utility found])])
 AC_SUBST(FETCHER)
 
+AC_ARG_ENABLE(newlib,
+	[AS_HELP_STRING([--enable-newlib],
+		[set newlib as the default make target @<:@--disable-newlib@:>@])])
+
 AC_ARG_ENABLE(linux,
 	[AS_HELP_STRING([--enable-linux],
 		[set linux as the default make target @<:@--disable-linux@:>@])])
 
+AC_ARG_ENABLE(musl,
+	[AS_HELP_STRING([--enable-musl],
+		[set musl as the default make target @<:@--disable-musl@:>@])])
+
+AC_ARG_ENABLE(uclibc,
+	[AS_HELP_STRING([--enable-uclibc],
+		[set uclibc as the default make target @<:@--disable-uclibc@:>@])])
+
+AC_ARG_ENABLE(picolibc,
+	[AS_HELP_STRING([--enable-picolibc],
+		[set picolibc as the default make target @<:@--disable-picolibc@:>@])])
+
 AS_IF([test "x$enable_linux" = xyes],
 	[AC_SUBST(default_target, linux)],
+	[test "x$enable_musl" = xyes],
+	[AC_SUBST(default_target, musl)],
+	[test "x$enable_uclibc" = xyes],
+	[AC_SUBST(default_target, uclibc)],
+	[test "x$enable_picolibc" = xyes],
+	[AC_SUBST(default_target, picolibc)],
+	[test "x$enable_newlib" = xyes],
+	[AC_SUBST(default_target, newlib)],
 	[AC_SUBST(default_target, newlib)])
 
 AC_ARG_ENABLE(debug_info,
@@ -105,7 +129,7 @@ AC_ARG_WITH(sim,
 
 AC_ARG_WITH(languages,
 	[AS_HELP_STRING([--with-languages=],
-		[Sets the enabled languages for GNU toolchain, defaults to c,c++,fortran for Linux/native and Linux/glibc or c,c++ for Bare-metal, Linux/musl and Linux/uClibc])],
+		[Sets the enabled languages for GNU toolchain, defaults to c,c++,fortran for Linux/native and Linux/glibc or c,c++ for Bare-metal (Newlib and Picolibc), Linux/musl and Linux/uClibc])],
 	[]
 	) 
 
@@ -284,6 +308,21 @@ AS_IF([test "x$enable_llvm" = xyes],
 	[AC_SUBST(enable_llvm, --enable-llvm)],
 	[AC_SUBST(enable_llvm, --disable-llvm)])
 
+# The musl and uClibc toolchains build a single-variant GCC
+# (--disable-multilib) and wire no per-variant runtime, so multilib is not
+# available for them.  Reject it rather than silently ignoring the request.
+AS_IF([test "x$multilib_flags" = x--enable-multilib],
+	[AS_CASE([$default_target],
+		[musl | uclibc | picolibc],
+		[AC_MSG_ERROR([multilib is not supported for the $default_target toolchain])])])
+
+# There is no Clang runtime build for the uClibc toolchain, so --enable-llvm
+# would configure cleanly and then fail at make time.  Reject it up front.
+AS_IF([test "x$enable_llvm" = x--enable-llvm],
+	[AS_CASE([$default_target],
+		[uclibc | picolibc],
+		[AC_MSG_ERROR([LLVM is not supported for the $default_target toolchain])])])
+
 AC_ARG_ENABLE(host-gcc,
 	[AS_HELP_STRING([--enable-host-gcc],
 		[Build host GCC to build cross toolchain])])
@@ -319,6 +358,7 @@ AC_DEFUN([AX_ARG_WITH_SRC],
 AX_ARG_WITH_SRC(gcc, gcc)
 AX_ARG_WITH_SRC(binutils, binutils)
 AX_ARG_WITH_SRC(newlib, newlib)
+AX_ARG_WITH_SRC(picolibc, picolibc)
 AX_ARG_WITH_SRC(glibc, glibc)
 AX_ARG_WITH_SRC(musl, musl)
 AX_ARG_WITH_SRC(uclibc, uclibc-ng)

@@ -1,9 +1,9 @@
 RISC-V GNU Compiler Toolchain
 =============================
 
-This is the RISC-V C and C++ cross-compiler. It supports two build modes:
-a generic ELF/Newlib toolchain and a more sophisticated Linux-ELF/glibc
-toolchain.
+This is the RISC-V C and C++ cross-compiler. It can build a bare-metal
+ELF toolchain (using Newlib or Picolibc) or a Linux-ELF toolchain
+(using glibc, musl, or uClibc).
 
 ###  Getting the sources
 
@@ -20,21 +20,21 @@ Several standard packages are needed to build the toolchain.
 
 On Ubuntu, executing the following command should suffice:
 
-    $ sudo apt-get install autoconf automake autotools-dev curl python3 python3-pip python3-tomli libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo gperf libtool patchutils bc zlib1g-dev libexpat-dev ninja-build git cmake libglib2.0-dev libslirp-dev libncurses-dev
+    $ sudo apt-get install autoconf automake autotools-dev curl python3 python3-pip python3-tomli libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo gperf libtool patchutils bc zlib1g-dev libexpat-dev meson ninja-build git cmake libglib2.0-dev expect device-tree-compiler libslirp-dev libzstd-dev libncurses-dev
 
 On Fedora/CentOS/RHEL OS, executing the following command should suffice:
 
-    $ sudo yum install autoconf automake python3 libmpc-devel mpfr-devel gmp-devel gawk  bison flex texinfo patchutils gcc gcc-c++ zlib-devel expat-devel libslirp-devel ncurses-devel
+    $ sudo yum install autoconf automake python3 libmpc-devel mpfr-devel gmp-devel gawk  bison flex texinfo patchutils gcc gcc-c++ zlib-devel expat-devel libslirp-devel ncurses-devel meson ninja-build cmake
 
 On Arch Linux, executing the following command should suffice:
 
-    $ sudo pacman -Syu curl python3 libmpc mpfr gmp base-devel texinfo gperf patchutils bc zlib expat libslirp ncurses
+    $ sudo pacman -Syu curl python3 libmpc mpfr gmp base-devel texinfo gperf patchutils bc zlib expat libslirp ncurses meson ninja cmake
 
 Also available for Arch users on the AUR: [https://aur.archlinux.org/packages/riscv-gnu-toolchain-bin](https://aur.archlinux.org/packages/riscv-gnu-toolchain-bin)
 
 On macOS, you can use [Homebrew](http://brew.sh) to install the dependencies:
 
-    $ brew install python3 gawk gnu-sed make gmp mpfr libmpc isl zlib expat texinfo flock libslirp ncurses ninja bison m4 wget
+    $ brew install python3 gawk gnu-sed make gmp mpfr libmpc isl zlib expat texinfo flock libslirp ncurses meson ninja cmake bison m4 wget
 
 When executing the instructions in this README, please use `gmake` instead of `make` to use the newly installed version of make.
 To build the glibc (Linux) on macOS, you will need to build within a case-sensitive file
@@ -47,36 +47,36 @@ upstream sources exists in $(DISTDIR), it will be used; the default location
 is /var/cache/distfiles.  Your computer will need about 8 GiB of disk space to
 complete the process.
 
-### Installation (Newlib)
+### Installation
 
-To build the Newlib cross-compiler, pick an install path (that is writeable).
-If you choose, say, `/opt/riscv`, then add `/opt/riscv/bin` to your `PATH`.
-Then, simply run the following command:
-
-    ./configure --prefix=/opt/riscv
-    make
-
-You should now be able to use riscv64-unknown-elf-gcc and its cousins.
-
-Note: If you're planning to use an external library that replaces part of newlib (for example `libgloss-htif`), [read the FAQ](#ensuring-code-model-consistency).
-
-### Installation (Linux)
-
-To build the Linux cross-compiler, pick an install path (that is writeable).
-If you choose, say, `/opt/riscv`, then add `/opt/riscv/bin` to your `PATH`.
-Then, simply run the following command:
+Pick an install path that is writeable — say `/opt/riscv` — and add
+`/opt/riscv/bin` to your `PATH`.  Then configure:
 
     ./configure --prefix=/opt/riscv
-    make linux
 
-The build defaults to targeting RV64GC (64-bit) with glibc, even on a 32-bit
-build environment. To build the 32-bit RV32GC toolchain, use:
+and build the C library you want:
+
+| C library      | build           |
+| -------------- | --------------- |
+| Newlib         | `make`          |
+| Picolibc       | `make picolibc` |
+| Linux (glibc)  | `make linux`    |
+| Linux (musl)   | `make musl`     |
+| Linux (uClibc) | `make uclibc`   |
+
+You should now be able to use, e.g., `riscv64-unknown-elf-gcc` and its
+cousins.  The bare-metal (Newlib, Picolibc) tools are prefixed
+`riscv64-unknown-elf-`, the Linux tools `riscv64-unknown-linux-{gnu,musl,uclibc}-`.
+
+A plain `make` builds the default target, which is Newlib.  To make a
+different libc the default — so that `make` on its own builds it — configure
+with `--enable-newlib`, `--enable-linux`, `--enable-musl`, `--enable-uclibc`
+or `--enable-picolibc`.
+
+The build defaults to targeting RV64GC (64-bit), even on a 32-bit build
+environment.  To build a 32-bit toolchain, pass the arch and ABI, e.g.:
 
     ./configure --prefix=/opt/riscv --with-arch=rv32gc --with-abi=ilp32d
-    make linux
-
-In case you prefer musl libc over glibc, configure just like above and opt for
-`make musl` instead of `make linux`.
 
 Supported architectures are rv32i or rv64i plus standard extensions (a)tomics,
 (m)ultiplication and division, (f)loat, (d)ouble, or (g)eneral for MAFD.
@@ -99,20 +99,24 @@ example, `rva20u64`, `rva22u64`, `rva23u64`, and `rva23u64_zacas` default to
 `lp64d`.
 
 ### Installation (Newlib/Linux multilib)
+Note: If you're planning to use an external library that replaces part of newlib (for example `libgloss-htif`), [read the FAQ](#ensuring-code-model-consistency).
 
-To build either cross-compiler with support for both 32-bit and
-64-bit, run the following command:
+### Multilib
+
+Add `--enable-multilib` to build runtime libraries for both 32-bit and
+64-bit:
 
     ./configure --prefix=/opt/riscv --enable-multilib
 
-And then either `make`, `make linux` or `make musl` for the Newlib, Linux
-glibc-based or Linux musl libc-based cross-compiler, respectively.
+The resulting compiler can target both 32-bit and 64-bit systems and
+supports the most common `-march`/`-mabi` options, which can be seen with
+the `--print-multi-lib` flag.
 
-The multilib compiler will have the prefix riscv64-unknown-elf- or
-riscv64-unknown-linux-gnu- but will be able to target both 32-bit and 64-bit
-systems.
-It will support the most common `-march`/`-mabi` options, which can be seen by
-using the `--print-multi-lib` flag on either cross-compiler.
+Multilib is only available for the Newlib and Linux/glibc toolchains; the
+musl, uClibc and Picolibc toolchains build a single variant, and configuring
+them with `--enable-multilib` is rejected.  Building them explicitly (e.g.
+`make musl`) in a tree configured for multilib still yields a single
+variant.
 
 Linux toolchain has an additional option `--enable-default-pie` to control the
 default PIE enablement for GCC, which is disable by default.
@@ -187,7 +191,8 @@ configure.  See './configure --help' for more details.
 Also you can define extra flags to pass to specific projects: ```BINUTILS_NATIVE_FLAGS_EXTRA,
 BINUTILS_TARGET_FLAGS_EXTRA, GCC_EXTRA_CONFIGURE_FLAGS, GDB_NATIVE_FLAGS_EXTRA,
 GDB_TARGET_FLAGS_EXTRA, GLIBC_TARGET_FLAGS_EXTRA, NEWLIB_TARGET_FLAGS_EXTRA,
-LLVM_EXTRA_CONFIGURE_FLAGS, QEMU_EXTRA_CONFIGURE_FLAGS```.
+LLVM_EXTRA_CONFIGURE_FLAGS, LLVM_OPENMP_EXTRA_CONFIGURE_FLAGS,
+QEMU_EXTRA_CONFIGURE_FLAGS```.
 Example: ```GCC_EXTRA_CONFIGURE_FLAGS=--with-gmp=/opt/gmp make linux```
 
 #### Set default ISA spec version
@@ -268,6 +273,9 @@ by the SIM variable in the Makefile, e.g. SIM=qemu, SIM=gdb, or SIM=spike
 (experimental).In addition, the simulator can also be selected with the
 configure time option `--with-sim=`.However, the testsuite allowlist is
 only maintained for qemu.Other simulators might get extra failures.
+
+The `make check` and `make report` targets are wired only for the Newlib
+and Linux/glibc toolchains.
 
 #### Additional Prerequisite
 
@@ -435,6 +443,13 @@ make
 Note, that a combination of `--enable-llvm` and multilib configuration flags
 is not supported.
 
+The LLVM builds use the `Ninja` CMake generator by default. Set
+`LLVM_GENERATOR="Unix Makefiles"` to use make instead:
+
+```
+make -j$(nproc) LLVM_GENERATOR="Unix Makefiles" all
+```
+
 Below are examples how to build a rv64gc Linux/newlib toolchain with LLVM support,
 how to use it to build a C and a C++ application using clang, and how to
 execute the generated binaries using QEMU.
@@ -522,6 +537,7 @@ Here is the list of configure options for specifying alternative sources for the
     --with-llvm-src
     --with-musl-src
     --with-newlib-src
+    --with-picolibc-src
     --with-pk-src
     --with-qemu-src
     --with-spike-src

@@ -5,6 +5,7 @@ INSTALL_DIR := @prefix@
 GCC_SRCDIR := @with_gcc_src@
 BINUTILS_SRCDIR := @with_binutils_src@
 NEWLIB_SRCDIR := @with_newlib_src@
+PICOLIBC_SRCDIR := @with_picolibc_src@
 GLIBC_SRCDIR := @with_glibc_src@
 MUSL_SRCDIR := @with_musl_src@
 UCLIBC_SRCDIR := @with_uclibc_src@
@@ -14,26 +15,50 @@ QEMU_SRCDIR := @with_qemu_src@
 SPIKE_SRCDIR := @with_spike_src@
 PK_SRCDIR := @with_pk_src@
 LLVM_SRCDIR := @with_llvm_src@
+# CMake generator for the LLVM builds. Use Ninja for faster builds.
+LLVM_GENERATOR ?= Ninja
+# Most ninja builds do not use the make jobserver, so read -jN from MAKEFLAGS
+# and pass it to ninja; else ninja uses all cores. Unix Makefiles gets -jN from
+# the `+` recipe lines below, so it must not get -jN here.
+LLVM_PARALLEL_JOBS ?= $(patsubst -j%,%,$(filter -j%,$(MAKEFLAGS)))
+# Concurrent link jobs in the LLVM builds (Ninja only). Links are the memory
+# peak of an LLVM build, so lower this where they exhaust the available RAM.
+LLVM_PARALLEL_LINK_JOBS ?= 4
+# Concurrent Flang compile jobs (Ninja only). Some Flang sources need a lot of
+# memory to compile. Empty is the LLVM default and means no extra limit, so
+# these compiles are bounded by the -j of the build like every other job.
+FLANG_PARALLEL_COMPILE_JOBS ?=
+ifeq ($(LLVM_GENERATOR),Ninja)
+LLVM_BUILD_TOOL = ninja $(if $(LLVM_PARALLEL_JOBS),-j$(LLVM_PARALLEL_JOBS)) -C
+else
+LLVM_BUILD_TOOL = $(MAKE) -C
+endif
 LLVM_LINUX_COMMON_CMAKE_FLAGS = \
+    -G "$(LLVM_GENERATOR)" \
     -DCMAKE_INSTALL_PREFIX=$(INSTALL_DIR) \
     -DCMAKE_BUILD_TYPE=Release \
     -DLLVM_TARGETS_TO_BUILD="RISCV" \
-    -DLLVM_ENABLE_PROJECTS="llvm;clang;lld" \
+    -DLLVM_ENABLE_PROJECTS="$(LLVM_LINUX_ENABLE_PROJECTS_LIST)" \
     -DLLVM_ENABLE_RUNTIMES="compiler-rt;libcxx;libcxxabi;libunwind" \
     -DDEFAULT_SYSROOT="../sysroot" \
     -DLLVM_INSTALL_TOOLCHAIN_ONLY=On \
     -DLLVM_BINUTILS_INCDIR=$(BINUTILS_SRCDIR)/include \
-    -DLLVM_PARALLEL_LINK_JOBS=4
+    -DLLVM_PARALLEL_LINK_JOBS=$(LLVM_PARALLEL_LINK_JOBS) \
+    -DFLANG_PARALLEL_COMPILE_JOBS=$(FLANG_PARALLEL_COMPILE_JOBS)
 define LLVM_BUILD_OPENMP
 	if test $(XLEN) -eq 64; then \
 	    mkdir $(notdir $@)/openmp-shared; \
-	    cmake -S$(LLVM_SRCDIR)/openmp \
+	    cmake -S$(LLVM_SRCDIR)/runtimes \
 	        -B$(notdir $@)/openmp-shared \
+	        -G "$(LLVM_GENERATOR)" \
+	        -DLLVM_ENABLE_RUNTIMES=openmp \
+	        -DLLVM_DEFAULT_TARGET_TRIPLE=$(1) \
 	        -DCMAKE_INSTALL_PREFIX=$(SYSROOT) \
 	        -DCMAKE_C_COMPILER=$(LLVM_CC_FOR_TARGET) \
 	        -DCMAKE_CXX_COMPILER=$(LLVM_CXX_FOR_TARGET) \
 	        -DCMAKE_C_FLAGS="$(LLVM_CFLAGS_FOR_TARGET)" \
 	        -DCMAKE_CXX_FLAGS="$(LLVM_CXXFLAGS_FOR_TARGET)" \
+	        -DCMAKE_ASM_FLAGS="$(LLVM_ASMFLAGS_FOR_TARGET)" \
 	        -DOPENMP_ENABLE_LIBOMPTARGET=Off \
 	        -DCMAKE_BUILD_TYPE=Release \
 	        -DLIBOMP_ARCH=riscv64 \
@@ -44,17 +69,22 @@ define LLVM_BUILD_OPENMP
 	        -DLIBOMP_HAVE_Z_NOEXECSTACK_FLAG=On \
 	        -DDISABLE_OMPD_GDB_PLUGIN=On \
 	        -DLIBOMP_OMPD_GDB_SUPPORT=Off \
-	        -DLIBOMP_ENABLE_SHARED=On; \
-	    $(MAKE) -C $(notdir $@)/openmp-shared; \
-	    $(MAKE) -C $(notdir $@)/openmp-shared install; \
+	        -DLIBOMP_ENABLE_SHARED=On \
+	        $(LLVM_OPENMP_EXTRA_CONFIGURE_FLAGS); \
+	    $(LLVM_BUILD_TOOL) $(notdir $@)/openmp-shared; \
+	    $(LLVM_BUILD_TOOL) $(notdir $@)/openmp-shared install; \
 	    mkdir $(notdir $@)/openmp-static; \
-	    cmake -S$(LLVM_SRCDIR)/openmp \
+	    cmake -S$(LLVM_SRCDIR)/runtimes \
 	        -B$(notdir $@)/openmp-static \
+	        -G "$(LLVM_GENERATOR)" \
+	        -DLLVM_ENABLE_RUNTIMES=openmp \
+	        -DLLVM_DEFAULT_TARGET_TRIPLE=$(1) \
 	        -DCMAKE_INSTALL_PREFIX=$(SYSROOT) \
 	        -DCMAKE_C_COMPILER=$(LLVM_CC_FOR_TARGET) \
 	        -DCMAKE_CXX_COMPILER=$(LLVM_CXX_FOR_TARGET) \
 	        -DCMAKE_C_FLAGS="$(LLVM_CFLAGS_FOR_TARGET)" \
 	        -DCMAKE_CXX_FLAGS="$(LLVM_CXXFLAGS_FOR_TARGET)" \
+	        -DCMAKE_ASM_FLAGS="$(LLVM_ASMFLAGS_FOR_TARGET)" \
 	        -DOPENMP_ENABLE_LIBOMPTARGET=Off \
 	        -DCMAKE_BUILD_TYPE=Release \
 	        -DLIBOMP_ARCH=riscv64 \
@@ -65,9 +95,10 @@ define LLVM_BUILD_OPENMP
 	        -DLIBOMP_HAVE_Z_NOEXECSTACK_FLAG=On \
 	        -DDISABLE_OMPD_GDB_PLUGIN=On \
 	        -DLIBOMP_OMPD_GDB_SUPPORT=Off \
-	        -DLIBOMP_ENABLE_SHARED=Off; \
-	    $(MAKE) -C $(notdir $@)/openmp-static; \
-	    $(MAKE) -C $(notdir $@)/openmp-static install; \
+	        -DLIBOMP_ENABLE_SHARED=Off \
+	        $(LLVM_OPENMP_EXTRA_CONFIGURE_FLAGS); \
+	    $(LLVM_BUILD_TOOL) $(notdir $@)/openmp-static; \
+	    $(LLVM_BUILD_TOOL) $(notdir $@)/openmp-static install; \
 	fi
 endef
 define LLVM_LINUX_SYSROOT_SETUP
@@ -163,13 +194,20 @@ ifneq ($(XLEN),32)
 	XLEN := 64
 endif
 
+# LLVM Flang's RISC-V codegen only implements riscv64
+LLVM_LINUX_ENABLE_PROJECTS_LIST := llvm;clang;lld;polly
+ifeq ($(XLEN),64)
+LLVM_LINUX_ENABLE_PROJECTS_LIST := $(LLVM_LINUX_ENABLE_PROJECTS_LIST);flang
+endif
+
 ifeq (@endian@,big)
 ENDIAN_POSTFIX := be
 endif
 
 make_tuple = riscv$(1)$(ENDIAN_POSTFIX)-unknown-$(2)
-LINUX_TUPLE  ?= $(call make_tuple,$(XLEN),linux-gnu)
 NEWLIB_TUPLE ?= $(call make_tuple,$(XLEN),elf)
+PICOLIBC_TUPLE ?= $(call make_tuple,$(XLEN),elf)
+LINUX_TUPLE  ?= $(call make_tuple,$(XLEN),linux-gnu)
 MUSL_TUPLE ?= $(call make_tuple,$(XLEN),linux-musl)
 UCLIBC_TUPLE ?= $(call make_tuple,$(XLEN),linux-uclibc)
 
@@ -196,20 +234,12 @@ LLVM_TARGET_FLAGS := $(if $(LLVM_TARGET_ARCH),-march=$(LLVM_TARGET_ARCH)) \
 	$(if $(LLVM_TARGET_TUNE),-mtune=$(LLVM_TARGET_TUNE))
 LLVM_CFLAGS_FOR_TARGET := $(strip $(LLVM_TARGET_FLAGS) $(CFLAGS_FOR_TARGET))
 LLVM_CXXFLAGS_FOR_TARGET := $(strip $(LLVM_TARGET_FLAGS) $(CXXFLAGS_FOR_TARGET))
+LLVM_ASMFLAGS_FOR_TARGET := $(LLVM_TARGET_FLAGS)
 # --with-expat is required to enable XML support used by OpenOCD.
 BINUTILS_TARGET_FLAGS := --with-expat=yes $(BINUTILS_TARGET_FLAGS_EXTRA)
 BINUTILS_NATIVE_FLAGS := $(BINUTILS_NATIVE_FLAGS_EXTRA)
 GDB_TARGET_FLAGS := --with-expat=yes $(GDB_TARGET_FLAGS_EXTRA)
 GDB_NATIVE_FLAGS := $(GDB_NATIVE_FLAGS_EXTRA)
-
-GLIBC_TARGET_FLAGS := $(GLIBC_TARGET_FLAGS_EXTRA)
-GLIBC_CC_FOR_TARGET ?= $(LINUX_TUPLE)-gcc
-GLIBC_CXX_FOR_TARGET ?= $(LINUX_TUPLE)-g++
-GLIBC_TARGET_BOARDS ?= $(shell $(srcdir)/scripts/generate_target_board \
-  --sim-name riscv-sim \
-  --cmodel $(shell echo @cmodel@ | cut -d '=' -f2) \
-  --build-arch-abi "$(GLIBC_MULTILIB_NAMES)" \
-  --extra-test-arch-abi-flags-list "$(EXTRA_MULTILIB_TEST)")
 
 NEWLIB_TARGET_FLAGS := $(NEWLIB_TARGET_FLAGS_EXTRA)
 NEWLIB_CC_FOR_TARGET ?= $(NEWLIB_TUPLE)-gcc
@@ -226,6 +256,17 @@ NEWLIB_NANO_TARGET_BOARDS ?= $(shell $(srcdir)/scripts/generate_target_board \
   --build-arch-abi "$(NEWLIB_MULTILIB_NAMES)" \
   --extra-test-arch-abi-flags-list "$(EXTRA_MULTILIB_TEST)")
 NEWLIB_CC_FOR_MULTILIB_INFO := $(NEWLIB_CC_FOR_TARGET)
+
+PICOLIBC_TARGET_FLAGS := $(PICOLIBC_TARGET_FLAGS_EXTRA)
+
+GLIBC_TARGET_FLAGS := $(GLIBC_TARGET_FLAGS_EXTRA)
+GLIBC_CC_FOR_TARGET ?= $(LINUX_TUPLE)-gcc
+GLIBC_CXX_FOR_TARGET ?= $(LINUX_TUPLE)-g++
+GLIBC_TARGET_BOARDS ?= $(shell $(srcdir)/scripts/generate_target_board \
+  --sim-name riscv-sim \
+  --cmodel $(shell echo @cmodel@ | cut -d '=' -f2) \
+  --build-arch-abi "$(GLIBC_MULTILIB_NAMES)" \
+  --extra-test-arch-abi-flags-list "$(EXTRA_MULTILIB_TEST)")
 
 MUSL_TARGET_FLAGS := $(MUSL_TARGET_FLAGS_EXTRA)
 MUSL_CC_FOR_TARGET ?= $(MUSL_TUPLE)-gcc
@@ -248,11 +289,13 @@ PATH := $(builddir)/install-host-gcc/bin:$(PATH)
 GCC_CHECKING_FLAGS := $(GCC_CHECKING_FLAGS) --enable-werror-always
 endif
 newlib: stamps/build-gcc-newlib-stage2
+picolibc: stamps/build-gcc-picolibc-stage2
 linux: stamps/build-gcc-linux-stage2
 musl: stamps/build-gcc-musl-stage2
 uclibc: stamps/build-gcc-uclibc-stage2
 ifeq (@enable_gdb@,--enable-gdb)
 newlib: stamps/build-gdb-newlib
+picolibc: stamps/build-gdb-picolibc
 linux: stamps/build-gdb-linux
 musl: stamps/build-gdb-musl
 endif
@@ -274,8 +317,20 @@ build-gcc%: stamps/build-gcc-@default_target@-stage%
 ifeq (@default_target@,linux)
 build-libc: $(addprefix stamps/build-glibc-linux-,$(GLIBC_MULTILIB_NAMES))
 else
+ifeq (@default_target@,musl)
+build-libc: stamps/build-musl-linux
+else
+ifeq (@default_target@,uclibc)
+build-libc: stamps/build-uclibc-linux
+else
+ifeq (@default_target@,picolibc)
+build-libc: stamps/build-picolibc
+else
 build-libc: stamps/build-newlib stamps/build-newlib-nano \
 	stamps/merge-newlib-nano
+endif
+endif
+endif
 endif
 build-qemu: stamps/build-qemu
 build-llvm: stamps/build-llvm-@default_target@
@@ -398,6 +453,12 @@ ifeq ($(findstring $(srcdir),$(NEWLIB_SRCDIR)),$(srcdir))
 NEWLIB_SRC_GIT := $(NEWLIB_SRCDIR)/.git
 else
 NEWLIB_SRC_GIT :=
+endif
+
+ifeq ($(findstring $(srcdir),$(PICOLIBC_SRCDIR)),$(srcdir))
+PICOLIBC_SRC_GIT := $(PICOLIBC_SRCDIR)/.git
+else
+PICOLIBC_SRC_GIT :=
 endif
 
 ifeq ($(findstring $(srcdir),$(GLIBC_SRCDIR)),$(srcdir))
@@ -901,6 +962,118 @@ stamps/build-gcc-newlib-stage2: $(GCC_SRCDIR) $(GCC_SRC_GIT) stamps/build-newlib
 	mkdir -p $(dir $@) && touch $@
 
 #
+# PICOLIBC
+#
+
+# Picolibc shares the bare-metal ELF target tuple with newlib, so its
+# binutils and gdb builds are identical.  Reuse the newlib ones instead
+# of building the same tools twice.
+stamps/build-binutils-picolibc: stamps/build-binutils-newlib
+	mkdir -p $(dir $@) && touch $@
+
+stamps/build-gdb-picolibc: stamps/build-gdb-newlib
+	mkdir -p $(dir $@) && touch $@
+
+GCC_PICOLIBC_CONFIGURE_FLAGS = \
+		--target=$(PICOLIBC_TUPLE) \
+		$(CONFIGURE_HOST) \
+		--prefix=$(INSTALL_DIR) \
+		--disable-shared \
+		--disable-threads \
+		@with_system_zlib@ \
+		--enable-tls \
+		--with-newlib \
+		--with-picolibc \
+		--with-sysroot=$(INSTALL_DIR)/$(PICOLIBC_TUPLE) \
+		--disable-libmudflap \
+		--disable-libssp \
+		--disable-libquadmath \
+		--disable-libgomp \
+		--disable-nls \
+		--disable-tm-clone-registry \
+		--src=$(gccsrcdir) \
+		$(GCC_CHECKING_FLAGS) \
+		--disable-multilib \
+		$(WITH_ABI) \
+		$(WITH_ARCH) \
+		$(WITH_TUNE) \
+		$(WITH_ISA_SPEC)
+
+stamps/build-gcc-picolibc-stage1: $(GCC_SRCDIR) $(GCC_SRC_GIT) stamps/build-binutils-picolibc
+	if test -f $</contrib/download_prerequisites && test "@NEED_GCC_EXTERNAL_LIBRARIES@" = "true"; then cd $< && ./contrib/download_prerequisites; fi
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	cd $(notdir $@) && $</configure \
+		$(GCC_PICOLIBC_CONFIGURE_FLAGS) \
+		--enable-languages=c,c++ \
+		$(GCC_EXTRA_CONFIGURE_FLAGS) \
+		CFLAGS_FOR_TARGET="-Os $(CFLAGS_FOR_TARGET)" \
+		CXXFLAGS_FOR_TARGET="-Os $(CXXFLAGS_FOR_TARGET)"
+	$(MAKE) -C $(notdir $@) all-gcc
+	$(MAKE) -C $(notdir $@) $(INSTALL_TARGET)-gcc
+	mkdir -p $(dir $@) && touch $@
+
+# Meson needs a cross file describing the toolchain; generate it inline
+# from the target tuple.  Target flags (code model included) come from
+# CFLAGS_FOR_TARGET, plus picolibc's own -msave-restore and -fno-common.
+stamps/build-picolibc: $(PICOLIBC_SRCDIR) $(PICOLIBC_SRC_GIT) stamps/build-gcc-picolibc-stage1
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	cpu_family=riscv64; endian=little; \
+	case $(PICOLIBC_TUPLE) in riscv32*) cpu_family=riscv32 ;; esac; \
+	case $(PICOLIBC_TUPLE) in *be-*) endian=big ;; esac; \
+	cargs="'-msave-restore', '-fno-common'"; \
+	for f in $(CFLAGS_FOR_TARGET); do cargs="$$cargs, '$$f'"; done; \
+	tool=$(INSTALL_DIR)/bin/$(PICOLIBC_TUPLE); \
+	{ \
+	  echo "[binaries]"; \
+	  echo "c = ['$$tool-gcc', '-nostdlib']"; \
+	  echo "cpp = ['$$tool-g++', '-nostdlib']"; \
+	  echo "ar = '$$tool-ar'"; \
+	  echo "as = '$$tool-as'"; \
+	  echo "nm = '$$tool-nm'"; \
+	  echo "strip = '$$tool-strip'"; \
+	  echo "[host_machine]"; \
+	  echo "system = 'unknown'"; \
+	  echo "cpu_family = '$$cpu_family'"; \
+	  echo "cpu = '$$cpu_family'"; \
+	  echo "endian = '$$endian'"; \
+	  echo "[properties]"; \
+	  echo "c_args = [$$cargs]"; \
+	  echo "cpp_args = [$$cargs]"; \
+	  echo "skip_sanity_check = true"; \
+	} > $(notdir $@)/cross.txt
+	meson setup $(notdir $@) $(PICOLIBC_SRCDIR) \
+		--cross-file $(notdir $@)/cross.txt \
+		--buildtype=minsize \
+		--prefix=$(INSTALL_DIR)/$(PICOLIBC_TUPLE) \
+		-Dincludedir=include \
+		-Dlibdir=lib \
+		-Dsysroot-install=true \
+		-Dsystem-libc=true \
+		-Dtests=false \
+		$(PICOLIBC_TARGET_FLAGS)
+	ninja -C $(notdir $@) install
+	mkdir -p $(dir $@) && touch $@
+
+stamps/build-gcc-picolibc-stage2: ENABLED_LANGUAGES?="c,c++"
+stamps/build-gcc-picolibc-stage2: $(GCC_SRCDIR) $(GCC_SRC_GIT) stamps/build-picolibc
+	rm -rf $@ $(notdir $@)
+	mkdir $(notdir $@)
+	cd $(notdir $@) && $</configure \
+		$(GCC_PICOLIBC_CONFIGURE_FLAGS) \
+		--enable-languages=$(ENABLED_LANGUAGES) \
+		--with-pkgversion="$(GCCPKGVER)" \
+		--with-native-system-header-dir=/include \
+		$(GCC_WITH_SPECS) \
+		$(GCC_EXTRA_CONFIGURE_FLAGS) \
+		CFLAGS_FOR_TARGET="-Os $(CFLAGS_FOR_TARGET)" \
+		CXXFLAGS_FOR_TARGET="-Os $(CXXFLAGS_FOR_TARGET)"
+	$(MAKE) -C $(notdir $@)
+	$(MAKE) -C $(notdir $@) $(INSTALL_TARGET)
+	mkdir -p $(dir $@) && touch $@
+
+#
 # MUSL
 #
 
@@ -1261,10 +1434,12 @@ stamps/build-llvm-linux: $(LLVM_SRCDIR) $(LLVM_SRC_GIT) $(BINUTILS_SRCDIR) $(BIN
 	    -DLLVM_RUNTIME_TARGETS=$(LINUX_TUPLE) \
 	    "-DRUNTIMES_$(LINUX_TUPLE)_CMAKE_C_FLAGS=$(LLVM_CFLAGS_FOR_TARGET)" \
 	    "-DRUNTIMES_$(LINUX_TUPLE)_CMAKE_CXX_FLAGS=$(LLVM_CXXFLAGS_FOR_TARGET)" \
+	    "-DRUNTIMES_$(LINUX_TUPLE)_CMAKE_ASM_FLAGS=$(LLVM_ASMFLAGS_FOR_TARGET)" \
+	    -DRUNTIMES_$(LINUX_TUPLE)_FLANG_RT_INCLUDE_TESTS=OFF \
 	    $(LLVM_EXTRA_CONFIGURE_FLAGS)
-	$(MAKE) -C $(notdir $@)
-	$(MAKE) -C $(notdir $@) $(subst -,/,$(INSTALL_TARGET))
-	$(LLVM_BUILD_OPENMP)
+	+$(LLVM_BUILD_TOOL) $(notdir $@)
+	+$(LLVM_BUILD_TOOL) $(notdir $@) $(subst -,/,$(INSTALL_TARGET))
+	+$(call LLVM_BUILD_OPENMP,$(LINUX_TUPLE))
 	cp $(notdir $@)/lib/$(LINUX_TUPLE)/libc++* $(SYSROOT)/lib
 	cp $(notdir $@)/lib/$(LINUX_TUPLE)/libunwind* $(SYSROOT)/lib
 	cd $(INSTALL_DIR)/bin && ln -s -f clang $(LINUX_TUPLE)-clang && ln -s -f clang++ $(LINUX_TUPLE)-clang++
@@ -1282,10 +1457,12 @@ stamps/build-llvm-musl: $(LLVM_SRCDIR) $(LLVM_SRC_GIT) $(BINUTILS_SRCDIR) $(BINU
 	    -DRUNTIMES_$(MUSL_TUPLE)_COMPILER_RT_BUILD_SANITIZERS=Off \
 	    "-DRUNTIMES_$(MUSL_TUPLE)_CMAKE_C_FLAGS=$(LLVM_CFLAGS_FOR_TARGET)" \
 	    "-DRUNTIMES_$(MUSL_TUPLE)_CMAKE_CXX_FLAGS=$(LLVM_CXXFLAGS_FOR_TARGET)" \
+	    "-DRUNTIMES_$(MUSL_TUPLE)_CMAKE_ASM_FLAGS=$(LLVM_ASMFLAGS_FOR_TARGET)" \
+	    -DRUNTIMES_$(MUSL_TUPLE)_FLANG_RT_INCLUDE_TESTS=OFF \
 	    $(LLVM_EXTRA_CONFIGURE_FLAGS)
-	$(MAKE) -C $(notdir $@)
-	$(MAKE) -C $(notdir $@) $(subst -,/,$(INSTALL_TARGET))
-	$(LLVM_BUILD_OPENMP)
+	+$(LLVM_BUILD_TOOL) $(notdir $@)
+	+$(LLVM_BUILD_TOOL) $(notdir $@) $(subst -,/,$(INSTALL_TARGET))
+	+$(call LLVM_BUILD_OPENMP,$(MUSL_TUPLE))
 	cp $(notdir $@)/lib/$(MUSL_TUPLE)/libc++* $(SYSROOT)/lib
 	cp $(notdir $@)/lib/$(MUSL_TUPLE)/libunwind* $(SYSROOT)/lib
 	cd $(INSTALL_DIR)/bin && ln -s -f clang $(MUSL_TUPLE)-clang && ln -s -f clang++ $(MUSL_TUPLE)-clang++
@@ -1297,6 +1474,7 @@ stamps/build-llvm-newlib: $(LLVM_SRCDIR) $(LLVM_SRC_GIT) $(BINUTILS_SRCDIR) $(BI
 	mkdir $(notdir $@)
 	cd $(notdir $@) && \
 	    cmake $(LLVM_SRCDIR)/llvm \
+	    -G "$(LLVM_GENERATOR)" \
 	    -DCMAKE_INSTALL_PREFIX=$(INSTALL_DIR) \
 	    -DCMAKE_BUILD_TYPE=Release \
 	    -DLLVM_TARGETS_TO_BUILD="RISCV" \
@@ -1304,10 +1482,10 @@ stamps/build-llvm-newlib: $(LLVM_SRCDIR) $(LLVM_SRC_GIT) $(BINUTILS_SRCDIR) $(BI
 	    -DLLVM_DEFAULT_TARGET_TRIPLE="$(NEWLIB_TUPLE)" \
 	    -DLLVM_INSTALL_TOOLCHAIN_ONLY=On \
 	    -DLLVM_BINUTILS_INCDIR=$(BINUTILS_SRCDIR)/include \
-	    -DLLVM_PARALLEL_LINK_JOBS=4 \
+	    -DLLVM_PARALLEL_LINK_JOBS=$(LLVM_PARALLEL_LINK_JOBS) \
 	    $(LLVM_EXTRA_CONFIGURE_FLAGS)
-	$(MAKE) -C $(notdir $@)
-	$(MAKE) -C $(notdir $@) $(subst -,/,$(INSTALL_TARGET))
+	+$(LLVM_BUILD_TOOL) $(notdir $@)
+	+$(LLVM_BUILD_TOOL) $(notdir $@) $(subst -,/,$(INSTALL_TARGET))
 	cd $(INSTALL_DIR)/bin && ln -s -f clang $(NEWLIB_TUPLE)-clang && \
 	    ln -s -f clang++ $(NEWLIB_TUPLE)-clang++
 	mkdir -p $(dir $@) && touch $@

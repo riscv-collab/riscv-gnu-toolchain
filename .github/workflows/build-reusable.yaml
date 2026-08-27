@@ -13,7 +13,7 @@ on:
       mode:
         description: "Mode list"
         type: string
-        default: '["newlib","linux","musl","uclibc"]'
+        default: '["newlib","linux","musl","uclibc","picolibc"]'
       target:
         description: "Target list"
         type: string
@@ -46,6 +46,13 @@ on:
         description: "Build simulator and include in the toolchain"
         type: boolean
         default: false
+      use-prebuilt-gnu:
+        description: >-
+          Do not build the GNU toolchain, take it from the artifact that the
+          gcc job of the same workflow run published, and build only LLVM on
+          top of it. Requires compiler '["llvm"]'.
+        type: boolean
+        default: false
 
 env:
   submodule_paths: |
@@ -57,6 +64,7 @@ env:
     llvm
     musl
     newlib
+    picolibc
     pk
     qemu
     spike
@@ -91,6 +99,23 @@ jobs:
             exit 1
           fi
 
+      - name: Check use-prebuilt-gnu input
+        if: ${{ inputs.use-prebuilt-gnu }}
+        run: |
+          # Only LLVM rows have a GNU toolchain to take from somewhere else. Any
+          # other row would download an artifact that does not exist and skip
+          # the build it is supposed to perform, so require exactly ["llvm"].
+          if [ "$(echo '${{ inputs.compiler }}' | tr -d '[]\" ')" != "llvm" ]; then
+            echo "use-prebuilt-gnu requires compiler '[\"llvm\"]', got ${{ inputs.compiler }}."
+            exit 1
+          fi
+          # The prebuilt path downloads the unstripped artifact, which is not
+          # published when only stripped tarballs are built.
+          if [[ "${{ inputs.strip }}" == "stripped" ]]; then
+            echo "use-prebuilt-gnu needs strip 'unstripped' or 'both', got 'stripped'."
+            exit 1
+          fi
+
   submodule_cache:
     name: Initialize submodule cache
     needs: [validate_inputs]
@@ -117,8 +142,20 @@ jobs:
       - name: Checkout required submodules
         if: steps.smcache.outputs.cache-hit != 'true'
         run: |
-          git submodule update --init dejagnu
-          git submodule update --init -j $(nproc) --depth 1 $(git submodule | awk '$2 != "dejagnu" {print $2}')
+          # git retries a failed clone once, roughly half a minute later, and
+          # then aborts the whole command. That is too short for a server-side
+          # error to clear, and it fails the job even when every other submodule
+          # cloned fine. Retry the update itself with a growing delay; it is
+          # resumable and skips submodules that are already checked out.
+          for i in 1 2 3 4 5; do
+            if git submodule update --init -j $(nproc) --depth 1 \
+                 $(git submodule | awk '{print $2}'); then
+              exit 0
+            fi
+            echo "submodule checkout failed (attempt ${i}), retrying in $((i * 30))s"
+            sleep $((i * 30))
+          done
+          exit 1
 
       - name: Storage size optimization
         if: steps.smcache.outputs.cache-hit != 'true'
@@ -151,13 +188,62 @@ jobs:
         exclude:
           - mode: uclibc
             compiler: llvm
+          - mode: picolibc
+            compiler: llvm
     outputs:
       toolchain-name: ${{ steps.toolchain-name-generator.outputs.TOOLCHAIN_NAME }}
     steps:
       - uses: actions/checkout@v6
 
+      - name: generate prebuilt toolchain name
+        id:   toolchain-name-generator
+        run: |
+          if [[ "${{ matrix.target }}" == *"32"* ]]; then BITS=32; else BITS=64; fi
+          case "${{ matrix.mode }}" in
+            "linux")
+              MODE="glibc";;
+            "musl")
+              MODE="musl";;
+            "uclibc")
+              MODE="uclibc-ng";;
+            "picolibc")
+              MODE="elf-picolibc";;
+            *)
+              MODE="elf";;
+          esac
+          ARTIFACT_NAME=${{ inputs.artifact-name }}
+          if [ -n "$ARTIFACT_NAME" ]; then
+            ARTIFACT_NAME="-${ARTIFACT_NAME}"
+          fi
+          BASE_NAME="riscv$BITS-$MODE-${{ matrix.os }}-${{ matrix.compiler }}"
+          echo "TOOLCHAIN_NAME=${BASE_NAME}${ARTIFACT_NAME}" >> $GITHUB_OUTPUT
+          echo "TOOLCHAIN_NAME_STRIPPED=${BASE_NAME}-stripped${ARTIFACT_NAME}" >> $GITHUB_OUTPUT
+          # Same name, but for the gcc build of this row: what the prebuilt
+          # GNU toolchain is published as.
+          echo "GNU_NAME=riscv$BITS-$MODE-${{ matrix.os }}-gcc${ARTIFACT_NAME}" >> $GITHUB_OUTPUT
+
       - name: Remove unneeded frameworks to recover disk space
         run: sudo ./.github/cleanup-rootfs.sh
+
+      - name: Configure swap space
+        run: |
+          # Hopefully improves CI stability under peak memory pressure.
+          echo "Memory before swap:"
+          free -h
+          swapon --show
+          # GitHub-hosted runners already ship with an active /swapfile, so
+          # disable and remove it before allocating a larger replacement.
+          if swapon --noheadings --show=NAME | grep -qx /swapfile; then
+            sudo swapoff /swapfile
+          fi
+          sudo rm -f /swapfile
+          sudo fallocate -l 8G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          echo "Memory after swap:"
+          free -h
+          swapon --show
 
       - name: install dependencies
         run: sudo ./.github/setup-apt.sh
@@ -191,7 +277,14 @@ jobs:
           ccache -z
           ccache -s
 
-      - name: build toolchain
+      - name: Download prebuilt GNU toolchain
+        if: ${{ inputs.use-prebuilt-gnu }}
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ steps.toolchain-name-generator.outputs.GNU_NAME }}
+          path: prebuilt-gnu
+
+      - name: Configure toolchain
         run: |
           TARGET_TUPLE=($(echo ${{ matrix.target }} | tr "-" "\n"))
           BUILD_TOOLCHAIN="./configure --prefix=/mnt/riscv --with-arch=${TARGET_TUPLE[0]} --with-abi=${TARGET_TUPLE[1]}"
@@ -214,7 +307,40 @@ jobs:
           $BUILD_TOOLCHAIN $ARGS
           sudo mkdir /mnt/riscv
           sudo chown runner:runner /mnt/riscv
-          make -j $(nproc) ${{ matrix.mode }}
+
+      - name: Restore prebuilt GNU toolchain
+        if: ${{ inputs.use-prebuilt-gnu }}
+        run: |
+          tar xJf prebuilt-gnu/${{ steps.toolchain-name-generator.outputs.GNU_NAME }}.tar.xz -C /mnt/
+          rm -rf prebuilt-gnu
+          # Fail here rather than somewhere inside the LLVM configure.
+          ls /mnt/riscv/bin/*-gcc >/dev/null 2>&1 || {
+            echo "error: the restored artifact contains no cross gcc in /mnt/riscv/bin"
+            exit 1
+          }
+
+      - name: Build toolchain
+        if: ${{ !inputs.use-prebuilt-gnu }}
+        run: make -j $(nproc) ${{ matrix.mode }}
+
+      # Build the LLVM stamp directly instead of the "<mode>" aggregate, so that
+      # this does not have to track whatever else "<mode>" pulls in. The only
+      # prerequisite of stamps/build-llvm-<mode> that the artifact restored above
+      # already provides is the stage2 stamp; "-o" marks it up to date without
+      # remaking it. This deliberately short-circuits the dependency graph and is
+      # only valid because the artifact comes from the gcc job of this same
+      # workflow run, built from the same commit.
+      - name: Build LLVM on the prebuilt GNU toolchain
+        if: ${{ inputs.use-prebuilt-gnu }}
+        run: |
+          # Some Flang sources need a lot of memory to compile, so limit how many
+          # of them are compiled at once, proportional to the runner's CPU count.
+          FLANG_PARALLEL_COMPILE_JOBS=$(( ($(nproc) + 1) / 2 ))
+          make -j $(nproc) \
+            FLANG_PARALLEL_COMPILE_JOBS=$FLANG_PARALLEL_COMPILE_JOBS \
+            -o stamps/build-gcc-${{ matrix.mode }}-stage2 \
+            stamps/build-llvm-${{ matrix.mode }}
+
       - name: build simulator
         if: |
           matrix.build-sim == true
@@ -233,6 +359,10 @@ jobs:
         if: always()
         run: ccache -s
 
+      # One job per OS writes the cache, and it is a GNU one. A second namespace
+      # for the LLVM half would not fit: CCACHE_MAXSIZE is 2G, so two namespaces
+      # for two OS versions are 8G, and together with the ~1.7G submodule cache
+      # that exceeds GitHub's 10G per repository.
       - name: Save ccache
         if: |
           always()
@@ -240,34 +370,13 @@ jobs:
           && github.event_name != 'pull_request'
           && matrix.mode == 'linux'
           && matrix.target == 'rv64gc-lp64d'
-          && matrix.compiler == 'llvm'
+          && matrix.compiler == 'gcc'
           && matrix.sim == ''
         uses: actions/cache/save@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-v1-${{ matrix.os }}-${{ github.run_id }}
 
-      - name: generate prebuilt toolchain name
-        id:   toolchain-name-generator
-        run: |
-          if [[ "${{ matrix.target }}" == *"32"* ]]; then BITS=32; else BITS=64; fi
-          case "${{ matrix.mode }}" in
-            "linux")
-              MODE="glibc";;
-            "musl")
-              MODE="musl";;
-            "uclibc")
-              MODE="uclibc-ng";;
-            *)
-              MODE="elf";;
-          esac
-          ARTIFACT_NAME=${{ inputs.artifact-name }}
-          if [ -n "$ARTIFACT_NAME" ]; then
-            ARTIFACT_NAME="-${ARTIFACT_NAME}"
-          fi
-          BASE_NAME="riscv$BITS-$MODE-${{ matrix.os }}-${{ matrix.compiler }}"
-          echo "TOOLCHAIN_NAME=${BASE_NAME}${ARTIFACT_NAME}" >> $GITHUB_OUTPUT
-          echo "TOOLCHAIN_NAME_STRIPPED=${BASE_NAME}-stripped${ARTIFACT_NAME}" >> $GITHUB_OUTPUT
       - name: Remove build trees before packaging
         run: |
           rm -rf build-* stamps install-host-gcc install-newlib-nano
