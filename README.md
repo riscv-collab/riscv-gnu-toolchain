@@ -24,7 +24,7 @@ On Ubuntu, executing the following command should suffice:
 
 On Fedora/CentOS/RHEL OS, executing the following command should suffice:
 
-    $ sudo yum install autoconf automake python3 libmpc-devel mpfr-devel gmp-devel gawk  bison flex texinfo patchutils gcc gcc-c++ zlib-devel expat-devel libslirp-devel ncurses-devel meson ninja-build cmake
+    $ sudo yum install autoconf automake python3 libmpc-devel mpfr-devel gmp-devel gawk  bison flex texinfo patchutils gcc gcc-c++ zlib-devel expat-devel libslirp-devel ncurses-devel meson ninja-build cmake dtc
 
 On Arch Linux, executing the following command should suffice:
 
