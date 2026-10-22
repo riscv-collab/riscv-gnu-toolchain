@@ -53,6 +53,10 @@ on:
           top of it. Requires compiler '["llvm"]'.
         type: boolean
         default: false
+      multilib-generator:
+        description: "Multilib generator string passed to --with-multilib-generator (newlib only)"
+        type: string
+        default: ""
 
 env:
   submodule_paths: |
@@ -184,6 +188,8 @@ jobs:
           - ${{ inputs.report }}
         build-sim:
           - ${{ inputs.build-sim }}
+        multilib-generator:
+          - ${{ inputs.multilib-generator }}
 
         exclude:
           - mode: uclibc
@@ -285,26 +291,37 @@ jobs:
           path: prebuilt-gnu
 
       - name: Configure toolchain
+        env:
+          MATRIX_MODE: ${{ matrix.mode }}
+          MATRIX_COMPILER: ${{ matrix.compiler }}
+          MATRIX_TARGET: ${{ matrix.target }}
+          MATRIX_MULTILIB_GENERATOR: ${{ matrix.multilib-generator }}
+          MATRIX_SIM: ${{ matrix.sim }}
+          MATRIX_CMODEL: ${{ matrix.cmodel }}
+          MATRIX_LANGUAGES: ${{ matrix.languages }}
+          MATRIX_STRIP: ${{ matrix.strip }}
         run: |
-          TARGET_TUPLE=($(echo ${{ matrix.target }} | tr "-" "\n"))
-          BUILD_TOOLCHAIN="./configure --prefix=/mnt/riscv --with-arch=${TARGET_TUPLE[0]} --with-abi=${TARGET_TUPLE[1]}"
-          ARGS=""
-          if [ "${{ matrix.compiler }}" == "llvm" ]; then # build toolchain with llvm
-            ARGS="$ARGS --enable-llvm"
+          TARGET_TUPLE=($(echo "$MATRIX_TARGET" | tr "-" "\n"))
+          ARGS=(--prefix=/mnt/riscv --with-arch="${TARGET_TUPLE[0]}" --with-abi="${TARGET_TUPLE[1]}")
+          if [ "$MATRIX_MODE" == "newlib" ] && [ "$MATRIX_COMPILER" != "llvm" ] && [ -n "$MATRIX_MULTILIB_GENERATOR" ]; then
+            ARGS+=(--with-multilib-generator="$MATRIX_MULTILIB_GENERATOR")
           fi
-          if [ -n "${{ matrix.sim }}" ]; then
-            ARGS="$ARGS --with-sim=${{ matrix.sim }}"
+          if [ "$MATRIX_COMPILER" == "llvm" ]; then # build toolchain with llvm
+            ARGS+=(--enable-llvm)
           fi
-          if [ -n "${{ matrix.cmodel }}" ]; then
-            ARGS="$ARGS --with-cmodel=${{ matrix.cmodel }}"
+          if [ -n "$MATRIX_SIM" ]; then
+            ARGS+=(--with-sim="$MATRIX_SIM")
           fi
-          if [ -n "${{ matrix.languages }}" ]; then
-            ARGS="$ARGS --with-languages=${{ matrix.languages }}"
+          if [ -n "$MATRIX_CMODEL" ]; then
+            ARGS+=(--with-cmodel="$MATRIX_CMODEL")
           fi
-          if [ "${{ matrix.strip }}" = "true" ]; then
-            ARGS="$ARGS --enable-strip"
+          if [ -n "$MATRIX_LANGUAGES" ]; then
+            ARGS+=(--with-languages="$MATRIX_LANGUAGES")
           fi
-          $BUILD_TOOLCHAIN $ARGS
+          if [ "$MATRIX_STRIP" = "true" ]; then
+            ARGS+=(--enable-strip)
+          fi
+          ./configure "${ARGS[@]}"
           sudo mkdir /mnt/riscv
           sudo chown runner:runner /mnt/riscv
 
@@ -321,7 +338,9 @@ jobs:
 
       - name: Build toolchain
         if: ${{ !inputs.use-prebuilt-gnu }}
-        run: make -j $(nproc) ${{ matrix.mode }}
+        env:
+          MATRIX_MODE: ${{ matrix.mode }}
+        run: make -j $(nproc) "$MATRIX_MODE"
 
       # Build the LLVM stamp directly instead of the "<mode>" aggregate, so that
       # this does not have to track whatever else "<mode>" pulls in. The only
@@ -346,10 +365,13 @@ jobs:
           matrix.build-sim == true
         run: |
           make -j $(nproc) build-sim
+      # Skip report for newlib multilib builds: running the full testsuite
+      # across every multilib variant overruns the 6h job limit. Non-multilib
+      # newlib and linux builds get reports.
       - name: make report
         if: |
           matrix.os == 'ubuntu-24.04'
-          && (matrix.mode == 'linux' || matrix.mode == 'newlib')
+          && (matrix.mode == 'linux' || (matrix.mode == 'newlib' && matrix.multilib-generator == ''))
           && matrix.compiler == 'gcc'
           && matrix.report == true
         run: |
