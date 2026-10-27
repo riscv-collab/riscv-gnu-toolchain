@@ -1,4 +1,4 @@
-## Process this file with autoconf 2.69. Other versions may not work.
+## Process this file with autoconf 2.71. Other versions may not work.
 AC_INIT([riscv-toolchain],[1.0])
 
 AC_PROG_CC
@@ -151,6 +151,17 @@ AC_SUBST(WITH_ISA_SPEC, --with-isa-spec=$with_isa_spec)
 AC_SUBST(WITH_SIM, $with_sim)
 AC_SUBST(WITH_LANGUAGES, $with_languages)
 
+AC_ARG_WITH(endian,
+	[AS_HELP_STRING([--with-endian],
+		[Select the target endianess @<:@--with-endian=little@:>@])],
+	[]
+	)
+
+AS_IF([test "x$with_endian" != x],
+	[AC_SUBST(endian, $with_endian)],
+	[AC_SUBST(endian, little)])
+AC_SUBST(endian)
+
 AC_ARG_ENABLE(multilib,
 	[AS_HELP_STRING([--enable-multilib],
 		[build both RV32 and RV64 runtime libraries @<:@--disable-multilib@:>@])])
@@ -181,8 +192,11 @@ AS_IF([test "x$enable_multilib" = xyes || test "x$with_multilib_generator" != xn
 	[AC_SUBST(multilib_flags,--enable-multilib)],
 	[AC_SUBST(multilib_flags,--disable-multilib)])
 
-AS_IF([test "x$enable_multilib" = xyes],
+# Vector extension is currently not supported on Big-endian systems.
+AS_IF([test "x$enable_multilib" = xyes && test "x$endian" = xlittle],
 	[AC_SUBST(glibc_multilib_names,"rv32imac-ilp32 rv32gc-ilp32d rv64imac-lp64 rv64gc-lp64d rv64gcv-lp64d")],
+	[test "x$enable_multilib" = xyes],
+	[AC_SUBST(glibc_multilib_names,"rv32imac-ilp32 rv32gc-ilp32d rv64imac-lp64 rv64gc-lp64d")],
 	[AC_SUBST(glibc_multilib_names,"$with_arch-$with_abi")])
 
 AS_IF([test "x$enable_multilib" = xyes],
@@ -197,8 +211,11 @@ AC_ARG_ENABLE(gcc-checking,
 	[AS_HELP_STRING([--enable-gcc-checking],
 		[Enable gcc internal checking, it will make gcc very slow, only enable it when developing gcc @<:@--disable-gcc-checking@:>@])])
 
-AS_IF([test "x$enable_gcc_checking" = xyes],
+# FIXME: Stage1 self-tests fail on BE builds due to lack of RVV support. Disable them for now.
+AS_IF([test "x$enable_gcc_checking" = xyes && "x$endian" = xlittle],
 	[AC_SUBST(gcc_checking, --enable-checking)],
+	[test "x$endian" = xbig],
+	[AC_SUBST(gcc_checking, "--enable-checking=no --disable-stage1-checking")],
 	[AC_SUBST(gcc_checking, "")])
 
 AC_ARG_WITH(cmodel,
@@ -210,13 +227,9 @@ AC_ARG_WITH(cmodel,
 
 AS_IF([test "x$with_cmodel" != xno],
 	[AC_SUBST(cmodel, -mcmodel=$with_cmodel)
-	 AC_SUBST(gcc_with_specs, "--with-specs='%{!mcmodel*:-mcmodel=$with_cmodel}'")],
+  AC_SUBST(gcc_with_specs, "--with-specs='%{!mcmodel*:-mcmodel=$with_cmodel}'")],
 	[AC_SUBST(cmodel, -mcmodel=medlow)
-	 AC_SUBST(gcc_with_specs, "--with-specs='%{!mcmodel*:-mcmodel=medlow}'")])
-
-AS_IF([test "x$with_endian" != x],
-	[AC_SUBST(endian, endian=$with_endian)],
-	[AC_SUBST(endian, endian=little)])
+  AC_SUBST(gcc_with_specs, "--with-specs='%{!mcmodel*:-mcmodel=medlow}'")])
 
 AC_ARG_WITH(target_cflags,
 	[AS_HELP_STRING([--with-target-cflags],
