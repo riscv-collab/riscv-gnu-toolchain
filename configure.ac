@@ -226,10 +226,12 @@ AC_ARG_WITH(cmodel,
 	)
 
 AS_IF([test "x$with_cmodel" != xno],
-	[AC_SUBST(cmodel, -mcmodel=$with_cmodel)
-	 AC_SUBST(gcc_with_specs, "--with-specs='%{!mcmodel*:-mcmodel=$with_cmodel}'")],
-	[AC_SUBST(cmodel, -mcmodel=medlow)
-	 AC_SUBST(gcc_with_specs, "--with-specs='%{!mcmodel*:-mcmodel=medlow}'")])
+	[cmodel=-mcmodel=$with_cmodel
+  gcc_with_specs="--with-specs='%{!mcmodel*:-mcmodel=$with_cmodel}'"],
+	[cmodel=-mcmodel=medlow
+  gcc_with_specs="--with-specs='%{!mcmodel*:-mcmodel=medlow}'"])
+AC_SUBST(cmodel)
+AC_SUBST(gcc_with_specs)
 
 AC_ARG_WITH(target_cflags,
 	[AS_HELP_STRING([--with-target-cflags],
@@ -333,17 +335,17 @@ AS_IF([test "x$enable_strip" = xyes],
 	[AC_SUBST(enable_strip_qemu, -Dstrip=true)])
 
 AC_DEFUN([AX_ARG_WITH_SRC],
-	[{m4_pushdef([opt_name], with_$1_src)
-	  AC_ARG_WITH($1-src,
-		[AS_HELP_STRING([--with-$1-src],[Set $1 source path, use builtin source by default])],
-		[],
-		[opt_name=default]
-		)
-	  AS_IF([test "x$opt_name" != xdefault],
-		[AC_SUBST(opt_name,$opt_name)],
-		[AC_SUBST(opt_name,"\$(srcdir)/$2")])
-	  m4_popdef([opt_name])
-	}])
+  [{m4_pushdef([opt_name], with_$1_src)
+  AC_ARG_WITH($1-src,
+	[AS_HELP_STRING([--with-$1-src],[Set $1 source path, use builtin source by default])],
+	[],
+	[opt_name=default]
+	)
+AS_IF([test "x$opt_name" != xdefault],
+	[AC_SUBST(opt_name,$opt_name)],
+	[AC_SUBST(opt_name,"\$(srcdir)/$2")])
+m4_popdef([opt_name])
+}])
 
 AX_ARG_WITH_SRC(gcc, gcc)
 AX_ARG_WITH_SRC(binutils, binutils)
