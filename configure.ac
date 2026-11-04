@@ -1,4 +1,4 @@
-## Process this file with autoconf 2.69. Other versions may not work.
+## Process this file with autoconf 2.71. Other versions may not work.
 AC_INIT([riscv-toolchain],[1.0])
 
 AC_PROG_CC
@@ -88,6 +88,44 @@ AS_IF([test "x$enable_default_pie" = xyes],
 	[AC_SUBST(enable_default_pie, "--enable-default-pie")],
 	[AC_SUBST(enable_default_pie, "--disable-default-pie")])
 
+AC_ARG_ENABLE(host-static-libs,
+	[AS_HELP_STRING([--enable-host-static-libs],
+		[link the host GMP/MPFR/MPC/ISL libraries statically into the
+		 host GCC binaries (default off)])])
+
+dnl Each library needs a matching --with-<name>-lib in the GCC configure.
+host_static_lib_list="gmp mpfr mpc isl"
+
+dnl Symlinks live in a .a-only directory, so -L picks the archive even where
+dnl the .so is installed too; gcc-flags.mk carries the resulting flags.
+host_static_libs=no
+host_static_lib_dir=
+AC_SUBST(host_static_libs)
+AC_SUBST(host_static_lib_dir)
+
+AS_IF([test "x$enable_host_static_libs" = xyes],
+	[host_static_libs=yes
+	 host_static_lib_dir=`pwd`/host-static-libs
+	 rm -rf host-static-libs
+	 mkdir -p host-static-libs
+	 : > host-static-libs/gcc-flags.mk
+	 AC_MSG_CHECKING([for host static libraries])
+	 found_libs=""
+	 for lib in $host_static_lib_list; do
+	   libpath=`$CC --print-file-name=lib${lib}.a 2>/dev/null || echo ""`
+	   case "$libpath" in
+	     /*)
+	       ln -sf "$libpath" host-static-libs/lib${lib}.a
+	       echo "HOST_STATIC_LIB_FLAGS += --with-${lib}-lib=$host_static_lib_dir" >> host-static-libs/gcc-flags.mk
+	       found_libs="$found_libs $lib"
+	       ;;
+	     *)
+	       AC_MSG_WARN([lib${lib}.a not found, ${lib} will be linked dynamically])
+	       ;;
+	   esac
+	 done
+	 AC_MSG_RESULT([$found_libs])])
+
 AC_ARG_WITH(arch,
 	[AS_HELP_STRING([--with-arch=rv64gc],
 		[Sets the base RISC-V ISA, defaults to rv64gc])],
@@ -151,6 +189,17 @@ AC_SUBST(WITH_ISA_SPEC, --with-isa-spec=$with_isa_spec)
 AC_SUBST(WITH_SIM, $with_sim)
 AC_SUBST(WITH_LANGUAGES, $with_languages)
 
+AC_ARG_WITH(endian,
+	[AS_HELP_STRING([--with-endian],
+		[Select the target endianess @<:@--with-endian=little@:>@])],
+	[]
+	)
+
+AS_IF([test "x$with_endian" != x],
+	[AC_SUBST(endian, $with_endian)],
+	[AC_SUBST(endian, little)])
+AC_SUBST(endian)
+
 AC_ARG_ENABLE(multilib,
 	[AS_HELP_STRING([--enable-multilib],
 		[build both RV32 and RV64 runtime libraries @<:@--disable-multilib@:>@])])
@@ -181,8 +230,11 @@ AS_IF([test "x$enable_multilib" = xyes || test "x$with_multilib_generator" != xn
 	[AC_SUBST(multilib_flags,--enable-multilib)],
 	[AC_SUBST(multilib_flags,--disable-multilib)])
 
-AS_IF([test "x$enable_multilib" = xyes],
+# Vector extension is currently not supported on Big-endian systems.
+AS_IF([test "x$enable_multilib" = xyes && test "x$endian" = xlittle],
 	[AC_SUBST(glibc_multilib_names,"rv32imac-ilp32 rv32gc-ilp32d rv64imac-lp64 rv64gc-lp64d rv64gcv-lp64d")],
+	[test "x$enable_multilib" = xyes],
+	[AC_SUBST(glibc_multilib_names,"rv32imac-ilp32 rv32gc-ilp32d rv64imac-lp64 rv64gc-lp64d")],
 	[AC_SUBST(glibc_multilib_names,"$with_arch-$with_abi")])
 
 AS_IF([test "x$enable_multilib" = xyes],
@@ -197,8 +249,11 @@ AC_ARG_ENABLE(gcc-checking,
 	[AS_HELP_STRING([--enable-gcc-checking],
 		[Enable gcc internal checking, it will make gcc very slow, only enable it when developing gcc @<:@--disable-gcc-checking@:>@])])
 
-AS_IF([test "x$enable_gcc_checking" = xyes],
+# FIXME: Stage1 self-tests fail on BE builds due to lack of RVV support. Disable them for now.
+AS_IF([test "x$enable_gcc_checking" = xyes && test "x$endian" = xlittle],
 	[AC_SUBST(gcc_checking, --enable-checking)],
+	[test "x$endian" = xbig],
+	[AC_SUBST(gcc_checking, "--enable-checking=no --disable-stage1-checking")],
 	[AC_SUBST(gcc_checking, "")])
 
 AC_ARG_WITH(cmodel,
@@ -209,14 +264,12 @@ AC_ARG_WITH(cmodel,
 	)
 
 AS_IF([test "x$with_cmodel" != xno],
-	[AC_SUBST(cmodel, -mcmodel=$with_cmodel)
-	 AC_SUBST(gcc_with_specs, "--with-specs='%{!mcmodel*:-mcmodel=$with_cmodel}'")],
-	[AC_SUBST(cmodel, -mcmodel=medlow)
-	 AC_SUBST(gcc_with_specs, "--with-specs='%{!mcmodel*:-mcmodel=medlow}'")])
-
-AS_IF([test "x$with_endian" != x],
-	[AC_SUBST(endian, endian=$with_endian)],
-	[AC_SUBST(endian, endian=little)])
+	[cmodel=-mcmodel=$with_cmodel
+  gcc_with_specs="--with-specs='%{!mcmodel*:-mcmodel=$with_cmodel}'"],
+	[cmodel=-mcmodel=medlow
+  gcc_with_specs="--with-specs='%{!mcmodel*:-mcmodel=medlow}'"])
+AC_SUBST(cmodel)
+AC_SUBST(gcc_with_specs)
 
 AC_ARG_WITH(target_cflags,
 	[AS_HELP_STRING([--with-target-cflags],
@@ -320,17 +373,17 @@ AS_IF([test "x$enable_strip" = xyes],
 	[AC_SUBST(enable_strip_qemu, -Dstrip=true)])
 
 AC_DEFUN([AX_ARG_WITH_SRC],
-	[{m4_pushdef([opt_name], with_$1_src)
-	  AC_ARG_WITH($1-src,
-		[AS_HELP_STRING([--with-$1-src],[Set $1 source path, use builtin source by default])],
-		[],
-		[opt_name=default]
-		)
-	  AS_IF([test "x$opt_name" != xdefault],
-		[AC_SUBST(opt_name,$opt_name)],
-		[AC_SUBST(opt_name,"\$(srcdir)/$2")])
-	  m4_popdef([opt_name])
-	}])
+  [{m4_pushdef([opt_name], with_$1_src)
+  AC_ARG_WITH($1-src,
+	[AS_HELP_STRING([--with-$1-src],[Set $1 source path, use builtin source by default])],
+	[],
+	[opt_name=default]
+	)
+AS_IF([test "x$opt_name" != xdefault],
+	[AC_SUBST(opt_name,$opt_name)],
+	[AC_SUBST(opt_name,"\$(srcdir)/$2")])
+m4_popdef([opt_name])
+}])
 
 AX_ARG_WITH_SRC(gcc, gcc)
 AX_ARG_WITH_SRC(binutils, binutils)

@@ -114,6 +114,17 @@ This option only takes effect for the GNU toolchain.
 The toolchain has an option `--enable-strip` to control strip of host binaries,
 strip is disabled by default.
 
+Add `--enable-host-static-libs` to link the host GMP/MPFR/MPC/ISL libraries
+statically into the installed GCC binaries, so the cross compiler does not
+depend on the host's GMP/MPFR/MPC/ISL shared libraries:
+
+    ./configure --prefix=/opt/riscv --enable-host-static-libs
+
+Configure looks for `libgmp.a`/`libmpfr.a`/`libmpc.a`/`libisl.a` next to the
+host compiler and symlinks them into `host-static-libs/`. A library that the
+host does not have (for example `libisl.a` without the static package) is
+skipped with a warning and stays linked dynamically.
+
 ### Installation (MacOS ARM)
 
 First, ensure you have cloned the toolchain repository in a case-sensitive volume. 
