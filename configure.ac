@@ -88,6 +88,44 @@ AS_IF([test "x$enable_default_pie" = xyes],
 	[AC_SUBST(enable_default_pie, "--enable-default-pie")],
 	[AC_SUBST(enable_default_pie, "--disable-default-pie")])
 
+AC_ARG_ENABLE(host-static-libs,
+	[AS_HELP_STRING([--enable-host-static-libs],
+		[link the host GMP/MPFR/MPC/ISL libraries statically into the
+		 host GCC binaries (default off)])])
+
+dnl Each library needs a matching --with-<name>-lib in the GCC configure.
+host_static_lib_list="gmp mpfr mpc isl"
+
+dnl Symlinks live in a .a-only directory, so -L picks the archive even where
+dnl the .so is installed too; gcc-flags.mk carries the resulting flags.
+host_static_libs=no
+host_static_lib_dir=
+AC_SUBST(host_static_libs)
+AC_SUBST(host_static_lib_dir)
+
+AS_IF([test "x$enable_host_static_libs" = xyes],
+	[host_static_libs=yes
+	 host_static_lib_dir=`pwd`/host-static-libs
+	 rm -rf host-static-libs
+	 mkdir -p host-static-libs
+	 : > host-static-libs/gcc-flags.mk
+	 AC_MSG_CHECKING([for host static libraries])
+	 found_libs=""
+	 for lib in $host_static_lib_list; do
+	   libpath=`$CC --print-file-name=lib${lib}.a 2>/dev/null || echo ""`
+	   case "$libpath" in
+	     /*)
+	       ln -sf "$libpath" host-static-libs/lib${lib}.a
+	       echo "HOST_STATIC_LIB_FLAGS += --with-${lib}-lib=$host_static_lib_dir" >> host-static-libs/gcc-flags.mk
+	       found_libs="$found_libs $lib"
+	       ;;
+	     *)
+	       AC_MSG_WARN([lib${lib}.a not found, ${lib} will be linked dynamically])
+	       ;;
+	   esac
+	 done
+	 AC_MSG_RESULT([$found_libs])])
+
 AC_ARG_WITH(arch,
 	[AS_HELP_STRING([--with-arch=rv64gc],
 		[Sets the base RISC-V ISA, defaults to rv64gc])],
